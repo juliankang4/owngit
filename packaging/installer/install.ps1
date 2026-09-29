@@ -146,8 +146,9 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
         if (-not $existing) { throw "$Dir is on a drive that does not exist." }
     }
     Require-Way $existing 'choose a folder that only you can change with -Dir'
-    $tempParent = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    Require-Way $tempParent.TrimEnd('\') 'set TEMP to a folder that only you can change'
+    # Not trimmed: a drive root such as C:\ would become C:, which names
+    # that drive's current folder.
+    Require-Way ([IO.Path]::GetFullPath([IO.Path]::GetTempPath())) 'set TEMP to a folder that only you can change'
 
     # The digest and the archive name come from the release's SHA256SUMS.
     # Without -Version, the name of the latest release's archive gives its

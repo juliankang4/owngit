@@ -1059,6 +1059,18 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		if !strings.Contains(output, "Installed OwnGit 2.0.0 in "+letter+`\owngit_2.0.0_windows_amd64.`) {
 			t.Errorf("output:\n%s", output)
 		}
+
+		// TEMP at a drive root is checked as that root, not as the drive's
+		// current folder: PowerShell runs from a private folder on the
+		// drive, and only the root (not its content) lets Users change it.
+		private := filepath.Join(mapped, "private")
+		noErr(t, os.Mkdir(private, 0o755))
+		if output, err := exec.Command("icacls", mapped, "/grant", "*S-1-5-32-545:M").CombinedOutput(); err != nil {
+			t.Fatalf("icacls %s: %v\n%s", mapped, err, output)
+		}
+		dir := filepath.Join(run.home, "og")
+		run.home = letter + `\private`
+		run.mustFail(t, []string{"TEMP=" + letter + `\`, "TMP=" + letter + `\`}, "Another account can change "+letter+`\ (BUILTIN\Users can change it); set TEMP`, "-Dir", psQuote(dir))
 	})
 
 	// The rule is the OwnGit folder of the 64-bit Program Files, which
