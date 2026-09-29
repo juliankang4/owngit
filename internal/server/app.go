@@ -129,6 +129,9 @@ type App struct {
 	// sanitized owner-visible startup status. Empty code means available.
 	CheckRuntimeUnavailableCode   string
 	CheckRuntimeUnavailableReason string
+	// httpsSeen is the base URL that a trusted proxy has passed a request
+	// for over HTTPS since this server started. See noteHTTPS.
+	httpsSeen atomic.Pointer[string]
 	// activity caches activity observations by ref key. See activityCache.
 	activity activityCache
 	// unreadable remembers the repositories already logged as unreadable.
@@ -312,6 +315,7 @@ type failedReader struct{ err error }
 func (reader failedReader) Read([]byte) (int, error) { return 0, reader.err }
 
 func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
+	app.noteHTTPS(request)
 	if request.URL.Path == HealthPath {
 		app.handleHealth(writer, request)
 		return
@@ -355,6 +359,9 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	}
 	if settings.Initialized && (request.URL.Path == "/setup/redeem" || ((request.URL.Path == "/setup" || request.URL.Path == "/setup/approval") && request.Method != http.MethodGet)) {
 		app.renderError(writer, request, http.StatusConflict, webui.MsgSetupAlreadyDone, "")
+		return
+	}
+	if app.redirectToHTTPS(writer, request) {
 		return
 	}
 
