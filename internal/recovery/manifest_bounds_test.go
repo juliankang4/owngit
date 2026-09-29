@@ -91,7 +91,7 @@ func TestBackupRefusesAStateLargerThanABackupHolds(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	runner := &recordingRecoveryRunner{delegate: manager.Git}
 	output := filepath.Join(root, "backup")
-	err := create(ctx, store, manager, runner, output, 100)
+	_, err := create(ctx, store, manager, runner, output, 100)
 	if err == nil || !strings.Contains(err.Error(), "cannot back up this state: its OwnGit records take 1 MiB, and a backup holds at most 0 MiB") {
 		t.Fatalf("backup of a state above the limit err=%v", err)
 	}

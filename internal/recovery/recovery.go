@@ -368,16 +368,38 @@ type commandRunner interface {
 	Run(context.Context, string, io.Reader, ...string) (gitexec.Result, error)
 }
 
+// Create writes a backup of an OwnGit that is not running. It first
+// recovers unfinished pull request work, as a start of OwnGit would.
 func Create(ctx context.Context, store *state.Store, manager *repository.Manager, output string) error {
 	service := &pullrequest.Service{Store: store, Repositories: manager}
 	if err := service.ReconcileAll(ctx); err != nil {
 		return fmt.Errorf("reconcile pull request state before backup: %w", err)
 	}
+	_, err := create(ctx, store, manager, manager.Git, output, manifestLimit)
+	return err
+}
+
+// CreateWhileServing writes a backup while OwnGit serves. manager must be
+// the serving process's manager, whose locks every Git writer takes; it has
+// already recovered each repository while preparing it. Git writes wait
+// only while the backup reads refs; the report says how long.
+func CreateWhileServing(ctx context.Context, store *state.Store, manager *repository.Manager, output string) (CaptureReport, error) {
 	return create(ctx, store, manager, manager.Git, output, manifestLimit)
 }
 
 // create writes a backup whose manifest holds at most limit bytes.
-func create(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string, limit int64) error {
+func create(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string, limit int64) (CaptureReport, error) {
+	var report CaptureReport
+	err := createBackup(ctx, store, manager, runner, output, limit, &report)
+	// A full disk is no defect of OwnGit's data; the stage is gone and the
+	// message names the folder.
+	if diskFull(err) {
+		err = &SpaceError{Dir: filepath.Dir(output), Err: err}
+	}
+	return report, err
+}
+
+func createBackup(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string, limit int64, report *CaptureReport) error {
 	// The output is held until create returns; see state.Destination for
 	// why its stage is then used by path.
 	destination, err := state.OpenDestination(output)
@@ -400,49 +422,46 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if pathsOverlap(absolute, stateRoot) || pathsOverlap(absolute, repositoryRoot) {
 		return errors.New("backup destination must not overlap state or repository storage")
 	}
-	snapshot, err := store.RecoverySnapshot(ctx)
+	hold, err := manager.HoldForBackup()
 	if err != nil {
 		return err
 	}
+	defer hold.Close()
+	captured, err := capture(ctx, store, manager, runner, hold, report)
+	if err != nil {
+		return err
+	}
+	snapshot := captured.snapshot
+	report.Repositories = len(captured.repositories)
 	manifest := Manifest{
-		Format: backupFormat, CreatedAt: time.Now().UTC(),
+		Format: backupFormat, CreatedAt: captured.at,
 		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
 	}
 	addPullRequestState(&manifest, snapshot)
 	addCheckState(&manifest, snapshot)
 	addImportState(&manifest, snapshot)
-	repositoryPaths := make([]string, 0, len(snapshot.Repositories))
-	for _, stored := range snapshot.Repositories {
-		if err := repository.ValidateID(stored.ID); err != nil {
-			return fmt.Errorf("repository %q has an unsupported ID: %w", stored.ID, err)
+	objectFormats := make([]string, len(captured.repositories))
+	for index := range captured.repositories {
+		item := &captured.repositories[index].item
+		folder := captured.repositories[index].path
+		if err := refuseBorrowedObjects(ctx, runner, item.ID, folder); err != nil {
+			return err
 		}
-		repositoryPath, _, exists, err := manager.ExistingPath(ctx, stored.ID)
-		if err != nil || !exists {
-			if err == nil {
-				err = errors.New("repository not found")
-			}
-			return fmt.Errorf("open repository %q: %w", stored.ID, err)
-		}
-		item, err := inspectRepository(ctx, runner, repositoryPath, stored)
-		if err != nil {
-			return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
+		if objectFormats[index], err = manager.ObjectFormat(ctx, folder); err != nil {
+			return fmt.Errorf("inspect repository %q: %w", item.ID, err)
 		}
 		if item.Empty {
-			format, err := manager.ObjectFormat(ctx, repositoryPath)
-			if err != nil {
-				return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
-			}
-			if format == repository.ObjectFormatSHA256 {
-				item.ObjectFormat = format
+			hold.Release(item.ID)
+			if objectFormats[index] == repository.ObjectFormatSHA256 {
+				item.ObjectFormat = objectFormats[index]
 			}
 		} else {
-			item.Bundle = path.Join("repositories", stored.ID+".bundle")
+			item.Bundle = path.Join("repositories", item.ID+".bundle")
 			// Replaced by the bundle's digest, which has the same length,
 			// so the size checked below is the size written.
 			item.SHA256 = strings.Repeat("0", sha256.Size*2)
 		}
-		manifest.Repositories = append(manifest.Repositories, item)
-		repositoryPaths = append(repositoryPaths, repositoryPath)
+		manifest.Repositories = append(manifest.Repositories, *item)
 	}
 	addRepositoryRecords(&manifest, snapshot)
 	// A state too large for a backup is refused before anything is written.
@@ -471,18 +490,18 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err := os.Mkdir(bundles, 0o700); err != nil {
 		return err
 	}
+	captureRoot := filepath.Join(stage, "capture")
+	if err := os.Mkdir(captureRoot, 0o700); err != nil {
+		return err
+	}
 	for index := range manifest.Repositories {
 		item := &manifest.Repositories[index]
 		if item.Empty {
 			continue
 		}
 		bundlePath := filepath.Join(stage, filepath.FromSlash(item.Bundle))
-		arguments := []string{"--git-dir", ".", "bundle", "create", bundlePath, "--all"}
-		if item.Head.OID != "" {
-			arguments = append(arguments, "HEAD")
-		}
-		if _, err := runner.Run(ctx, repositoryPaths[index], nil, arguments...); err != nil {
-			return fmt.Errorf("bundle repository %q: %w", item.ID, err)
+		if err := bundleCaptured(ctx, runner, captured.repositories[index], objectFormats[index], captureRoot, bundlePath); err != nil {
+			return err
 		}
 		if err := syncRegularFile(bundlePath); err != nil {
 			return err
@@ -490,6 +509,11 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 		if item.SHA256, err = fileSHA256(bundlePath); err != nil {
 			return err
 		}
+		// The bundle holds every object it needs now.
+		hold.Release(item.ID)
+	}
+	if err := os.Remove(captureRoot); err != nil {
+		return err
 	}
 	manifest.Version = version
 	if err := validateManifest(manifest); err != nil {
@@ -807,16 +831,22 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 		return RepositoryManifest{}, err
 	}
 	item.Refs = refs
+	// Only a symbolic HEAD can name a branch that does not exist yet, so a
+	// repository is empty only when HEAD is symbolic and no ref exists. Any
+	// other failure to read HEAD fails, so history is never left out.
 	symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "HEAD")
 	if err == nil {
 		item.Head.Symbolic = strings.TrimSpace(string(symbolic.Stdout))
-	} else {
-		detached, detachedErr := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "HEAD")
-		if detachedErr == nil {
-			item.Head.OID = strings.TrimSpace(string(detached.Stdout))
-		} else if len(refs) != 0 {
-			return RepositoryManifest{}, errors.New("repository HEAD cannot be resolved")
+	} else if code, ok := gitexec.ExitCode(err); ok && code == 1 {
+		// Exit status 1 without a message: HEAD is detached. ^{object}
+		// requires the object to exist, which a full ID alone does not.
+		detached, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-parse", "--verify", "HEAD^{object}")
+		if err != nil {
+			return RepositoryManifest{}, fmt.Errorf("detached HEAD cannot be resolved: %w", err)
 		}
+		item.Head.OID = strings.TrimSpace(string(detached.Stdout))
+	} else {
+		return RepositoryManifest{}, fmt.Errorf("read HEAD: %w", err)
 	}
 	item.Empty = len(refs) == 0 && item.Head.OID == ""
 	return item, nil

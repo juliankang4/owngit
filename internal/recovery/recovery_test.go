@@ -784,7 +784,7 @@ func TestBackupPublishesOnlyAfterBundleSuccessAndCleansCanceledStages(t *testing
 	defer store.Close()
 
 	failedOutput := filepath.Join(root, "failed-backup")
-	err := create(context.Background(), store, manager, bundleFailingRunner{delegate: manager.Git}, failedOutput, manifestLimit)
+	_, err := create(context.Background(), store, manager, bundleFailingRunner{delegate: manager.Git}, failedOutput, manifestLimit)
 	if err == nil || !strings.Contains(err.Error(), "injected bundle failure") {
 		t.Fatalf("bundle failure error=%v", err)
 	}

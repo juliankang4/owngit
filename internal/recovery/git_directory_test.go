@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -57,8 +58,11 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 
 	backupRunner := &recordingRecoveryRunner{delegate: runner}
 	backup := filepath.Join(t.TempDir(), "backup")
-	noErr(t, create(ctx, store, manager, backupRunner, backup, manifestLimit))
-	assertRecoveryBareCalls(t, backupRunner.calls, repositoryPath)
+	_, err = create(ctx, store, manager, backupRunner, backup, manifestLimit)
+	noErr(t, err)
+	// The bundle is made in a repository of its own inside the backup
+	// stage, which reads the source's objects.
+	assertRecoveryBareCalls(t, backupRunner.calls, repositoryPath, filepath.Join("capture", "project.git"))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if len(manifest.Repositories) != 1 || manifest.Repositories[0].Empty {
@@ -72,7 +76,7 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 	if len(restoredPath) != 250 {
 		t.Fatalf("restored bare path length=%d want=250", len(restoredPath))
 	}
-	assertRecoveryBareCalls(t, restoreRunner.calls, restoredPath)
+	assertRecoveryBareCalls(t, restoreRunner.calls, restoredPath, "")
 }
 
 type recoveryRunnerCall struct {
@@ -82,11 +86,14 @@ type recoveryRunnerCall struct {
 
 type recordingRecoveryRunner struct {
 	delegate commandRunner
+	mu       sync.Mutex
 	calls    []recoveryRunnerCall
 }
 
 func (runner *recordingRecoveryRunner) Run(ctx context.Context, directory string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
+	runner.mu.Lock()
 	runner.calls = append(runner.calls, recoveryRunnerCall{directory: directory, arguments: append([]string(nil), arguments...)})
+	runner.mu.Unlock()
 	return runner.delegate.Run(ctx, directory, stdin, arguments...)
 }
 
@@ -106,7 +113,10 @@ func recoveryRepositoryRootAtLength(t *testing.T, target int, repositoryID strin
 	return root
 }
 
-func assertRecoveryBareCalls(t *testing.T, calls []recoveryRunnerCall, repositoryPath string) {
+// assertRecoveryBareCalls requires every bare Git call to run in
+// repositoryPath, or in a folder whose path ends with otherSuffix when it is
+// not empty.
+func assertRecoveryBareCalls(t *testing.T, calls []recoveryRunnerCall, repositoryPath, otherSuffix string) {
 	t.Helper()
 	bareCalls := 0
 	bundlePaths := 0
@@ -114,7 +124,8 @@ func assertRecoveryBareCalls(t *testing.T, calls []recoveryRunnerCall, repositor
 		for index, argument := range call.arguments {
 			if argument == "--git-dir" {
 				bareCalls++
-				if index+1 >= len(call.arguments) || call.arguments[index+1] != "." || call.directory != repositoryPath {
+				if index+1 >= len(call.arguments) || call.arguments[index+1] != "." ||
+					(call.directory != repositoryPath && (otherSuffix == "" || !strings.HasSuffix(call.directory, string(filepath.Separator)+otherSuffix))) {
 					t.Fatalf("bare Git call directory=%q arguments=%q", call.directory, call.arguments)
 				}
 			}

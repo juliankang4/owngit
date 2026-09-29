@@ -9,8 +9,8 @@ import (
 	"strings"
 )
 
-// SpaceError is a restore that a folder has no room for. It says nothing
-// about the backup.
+// SpaceError is a restore or a backup that a folder has no room for. It
+// says nothing about the backup or the state being copied.
 type SpaceError struct {
 	Dir string
 	// Needed and Free are the estimate that refused the restore before it
