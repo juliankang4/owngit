@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -215,6 +216,34 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 	host.printf("The OwnGit icon is in the menu bar and opens when you sign in. \"owngit tray off\" hides it; OwnGit keeps running.\n")
 }
 
+// closeIcon quits OwnGit.app, the menu bar icon, of the given programs and
+// turns off its opening at sign-in, since the service it shows is gone.
+// Each app is asked once; a failure is reported and does not undo the
+// uninstall.
+func (host *launchAgentHost) closeIcon(programs ...string) {
+	ctx := context.Background()
+	done := map[string]bool{}
+	for _, program := range programs {
+		app := service.AppPath(program)
+		if app == "" || done[app] {
+			continue
+		}
+		done[app] = true
+		launcher := service.AppLauncher(app)
+		// pkill exits 1 when no icon runs, which is fine.
+		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-f", "^"+regexp.QuoteMeta(launcher))
+		if err := requireProtectedPath(launcher); err != nil {
+			host.printf("OwnGit did not turn off opening its icon at sign-in, because %v. Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err)
+			continue
+		}
+		if output, err := serviceRunner(ctx, launcher, service.AppSignInOff); err != nil {
+			host.printf("The OwnGit icon is closed, but it could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err, strings.TrimSpace(string(output)))
+			continue
+		}
+		host.printf("The OwnGit icon is closed and no longer opens at sign-in.\n")
+	}
+}
+
 // trayHiddenIn reports whether the owner hid the icon for stateDir. A state
 // directory that cannot be read yet, as before the first start, has not
 // hidden it.
@@ -338,6 +367,7 @@ func (host *launchAgentHost) uninstall() error {
 		if err := host.brewServices("stop"); err != nil {
 			return err
 		}
+		host.closeIcon(host.agentExecutable)
 		host.printf("The Homebrew service is stopped and no longer starts. The data stays in %s.\n", mustAbs(defaultStateDir()))
 		return nil
 	case !found:
@@ -351,6 +381,7 @@ func (host *launchAgentHost) uninstall() error {
 	if err := service.UninstallLaunchAgent(context.Background(), serviceRunner, host.uid, installed.UnitPath); err != nil {
 		return err
 	}
+	host.closeIcon(installed.Executable, host.agentExecutable)
 	host.printf("The OwnGit service is stopped and removed. The state stays in %s", installed.StateDir)
 	if repositories := savedRepositoryRoot(installed.StateDir); repositories != "" {
 		host.printf(", the repositories in %s", repositories)

@@ -548,6 +548,17 @@ private func runCommand(_ executable: URL, _ arguments: [String]) -> HelperResul
 @main
 struct OwnGitLauncher {
     static func main() {
+        // "owngit service uninstall" runs the launcher with this argument:
+        // the icon stops opening at sign-in, and nothing is shown.
+        if CommandLine.arguments.dropFirst().first == signInOffArgument {
+            do {
+                try SMAppService.mainApp.unregister()
+            } catch {
+                FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+                exit(1)
+            }
+            exit(0)
+        }
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate

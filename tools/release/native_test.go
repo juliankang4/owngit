@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/service"
 	"owngit/internal/state"
 )
 
@@ -491,6 +492,10 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	status := readText(t, filepath.Join(root, "packaging", "macos", "TrayStatus.swift"))
 	if !strings.Contains(status, `app.appendingPathComponent("`+appHelperPath+`")`) {
 		t.Fatalf("macOS launcher does not look for the binary at %s", appHelperPath)
+	}
+	// owngit service uninstall turns off the icon's sign-in with this argument.
+	if !strings.Contains(status, `let signInOffArgument = "`+service.AppSignInOff+`"`) {
+		t.Fatalf("the launcher does not take %s", service.AppSignInOff)
 	}
 	assertDesktopLaunchCommand(t, readText(t, filepath.Join(root, "packaging", "linux", "owngit.desktop")))
 }

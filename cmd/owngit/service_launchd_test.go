@@ -57,7 +57,7 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 	serviceRunner = func(_ context.Context, name string, args ...string) ([]byte, error) {
 		fake.calls = append(fake.calls, name+" "+strings.Join(args, " "))
 		switch {
-		case name == "/usr/bin/open":
+		case name == "/usr/bin/open", filepath.Base(name) == "OwnGitLauncher":
 			return nil, nil
 		case len(args) == 0:
 		case args[0] == "enable":
@@ -431,6 +431,38 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 	plain.openIcon(stateDir, false)
 	if len(fake.calls) != 0 {
 		t.Errorf("a program without an app ran %v", fake.calls)
+	}
+}
+
+// service uninstall quits the icon of the removed service and turns off its
+// opening at sign-in, as the Windows uninstall removes the icon's task.
+func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
+	fake := recordLaunchctl(t)
+	host, out := testLaunchAgentHost(t, macDesktop(), "")
+	app := filepath.Join(filepath.Dir(host.agentExecutable), "OwnGit.app")
+	noErr(t, os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755))
+	noErr(t, os.WriteFile(service.AppLauncher(app), nil, 0o755))
+	agent, err := service.RenderLaunchAgent(host.agentPlan(filepath.Join(t.TempDir(), "state"), nil, service.Installed{}, false))
+	noErr(t, err)
+	noErr(t, os.MkdirAll(filepath.Dir(host.agentPath), 0o755))
+	noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
+
+	noErr(t, host.uninstall())
+	launcher := service.AppLauncher(app)
+	var quit, off int
+	for _, call := range fake.calls {
+		if strings.HasPrefix(call, "/usr/bin/pkill -f ^") && strings.Contains(call, "OwnGitLauncher") {
+			quit++
+		}
+		if call == launcher+" "+service.AppSignInOff {
+			off++
+		}
+	}
+	if quit != 1 || off != 1 || !strings.Contains(out.String(), "no longer opens at sign-in") || !strings.Contains(out.String(), "stopped and removed") {
+		t.Fatalf("uninstall ran %v and printed:\n%s", fake.calls, out)
+	}
+	if _, err := os.Stat(host.agentPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the agent is still there: %v", err)
 	}
 }
 

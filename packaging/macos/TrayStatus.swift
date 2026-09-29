@@ -301,6 +301,10 @@ func helperArguments(_ repair: String?) -> [String]? {
     return Array(repair.split(separator: " ").dropFirst().map(String.init))
 }
 
+/// signInOffArgument makes the launcher turn off opening at sign-in and
+/// exit (service.AppSignInOff).
+let signInOffArgument = "--sign-in-off"
+
 /// ownGitProgram is the owngit program the icon runs: the one inside the
 /// app (Contents/Helpers, where tools/release places it in the disk image),
 /// else the one beside the app, as a release archive, the installer and npm

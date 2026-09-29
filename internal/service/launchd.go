@@ -400,6 +400,10 @@ func AppPath(executable string) string {
 // AppName is the folder name of the icon app.
 const AppName = "OwnGit.app"
 
+// AppSignInOff is the launcher argument that turns off opening the icon at
+// sign-in and exits without showing anything.
+const AppSignInOff = "--sign-in-off"
+
 // AppLauncher is the icon's executable inside app.
 func AppLauncher(app string) string {
 	return filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")
