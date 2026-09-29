@@ -184,6 +184,11 @@ func (release *syntheticRelease) versionOf(t *testing.T, path string) string {
 	return "other"
 }
 
+// shellQuoteForTest quotes a word for a POSIX shell.
+func shellQuoteForTest(word string) string {
+	return "'" + strings.ReplaceAll(word, "'", `'\''`) + "'"
+}
+
 func digestLine(data []byte, name string) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:]) + "  " + name
@@ -254,23 +259,17 @@ func dirNames(t *testing.T, dir string) []string {
 // shInstall is one run of install.sh, read from standard input as
 // "curl ... | sh -s -- ARGS" reads it. Its output is not a terminal.
 type shInstall struct {
-	home, log, sudoLog string
-	env                []string
+	home, log string
+	env       []string
 }
 
 func newShInstall(t *testing.T, release *syntheticRelease) *shInstall {
 	home := t.TempDir()
-	run := &shInstall{home: home, log: filepath.Join(home, "owngit.log"), sudoLog: filepath.Join(home, "sudo.log")}
-	fakeBin := filepath.Join(home, "fakebin")
-	noErr(t, os.Mkdir(fakeBin, 0o755))
-	// sudo lets the command write the folder the test locked, runs it,
-	// and records it.
-	sudo := "#!/bin/sh\nprintf '%s\\n' \"$*\" >>\"$FAKE_SUDO_LOG\"\nchmod u+w \"$FAKE_SUDO_DIR\"\n\"$@\"; status=$?\nchmod u-w \"$FAKE_SUDO_DIR\"\nexit $status\n"
-	noErr(t, os.WriteFile(filepath.Join(fakeBin, "sudo"), []byte(sudo), 0o755))
+	run := &shInstall{home: home, log: filepath.Join(home, "owngit.log")}
 	run.env = []string{
-		"HOME=" + home, "PATH=" + fakeBin + ":/usr/bin:/bin:/usr/sbin:/sbin",
+		"HOME=" + home, "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
 		"OWNGIT_RELEASES=" + release.url(), "CURL_CA_BUNDLE=" + release.caFile,
-		"OWNGIT_FAKE_LOG=" + run.log, "FAKE_SUDO_LOG=" + run.sudoLog,
+		"OWNGIT_FAKE_LOG=" + run.log,
 	}
 	return run
 }
@@ -345,9 +344,6 @@ func TestInstallSh(t *testing.T) {
 		}
 		if log := readLog(t, run.log); log != "2.0.0 service install\n" {
 			t.Errorf("owngit ran as %q, want one service install", log)
-		}
-		if log := readLog(t, run.sudoLog); log != "" {
-			t.Errorf("sudo ran for a folder this account can write: %q", log)
 		}
 		if names := dirNames(t, filepath.Dir(target)); len(names) != 1 {
 			t.Errorf("the folder holds %v, want only owngit", names)
@@ -454,26 +450,63 @@ func TestInstallSh(t *testing.T) {
 		}
 	})
 
+	// The installer uses the real sudo, which it finds at its system path,
+	// so this runs only where sudo asks for no password (as on CI runners).
 	t.Run("sudo only for a folder this account cannot write", func(t *testing.T) {
 		if root {
 			t.Skip("root can write every folder")
 		}
+		if exec.Command("sudo", "-n", "true").Run() != nil {
+			t.Skip("needs sudo without a password")
+		}
 		run := newShInstall(t, release)
 		dir := filepath.Join(run.home, "locked")
 		target := filepath.Join(dir, "owngit")
-		run.must(t, nil, "--version", "1.0.0", "--to", target)
-		noErr(t, os.Chmod(dir, 0o555))
-		t.Cleanup(func() { os.Chmod(dir, 0o755) })
-		output := run.must(t, []string{"FAKE_SUDO_DIR=" + dir}, "--to", target)
+		old := filepath.Join(run.home, "owngit-1.0.0")
+		noErr(t, os.WriteFile(old, release.program["1.0.0"], 0o755))
+		for _, command := range [][]string{{"install", "-d", "-m", "0755", "-o", "root", "-g", "0", dir}, {"install", "-m", "0755", "-o", "root", "-g", "0", old, target}} {
+			if output, err := exec.Command("sudo", append([]string{"-n"}, command...)...).CombinedOutput(); err != nil {
+				t.Fatalf("sudo %v: %v\n%s", command, err, output)
+			}
+		}
+		t.Cleanup(func() { exec.Command("sudo", "-n", "chown", "-R", fmt.Sprint(os.Getuid()), dir).Run() })
+		output := run.must(t, nil, "--to", target)
 		if got := release.versionOf(t, target); got != "2.0.0" {
 			t.Fatalf("installed %q, want 2.0.0:\n%s", got, output)
 		}
 		if !strings.Contains(output, "This account cannot write "+dir+", so sudo puts owngit there.") {
 			t.Errorf("output does not say why sudo runs:\n%s", output)
 		}
-		sudo := readLog(t, run.sudoLog)
-		if !strings.Contains(sudo, "install -m 0755 ") || !strings.Contains(sudo, "mv -f ") || strings.Contains(sudo, "service") {
-			t.Errorf("sudo ran %q; want install -m 0755 and mv, and never the service", sudo)
+		info, err := os.Stat(target)
+		noErr(t, err)
+		if owner := fileOwner(info); owner != 0 || info.Mode().Perm() != 0o755 {
+			t.Errorf("the program belongs to %d with mode %v, want root and 0755", owner, info.Mode().Perm())
+		}
+		if names := dirNames(t, dir); len(names) != 1 {
+			t.Errorf("the folder holds %v, want only owngit", names)
+		}
+		if log := readLog(t, run.log); log != "2.0.0 service install\n" {
+			t.Errorf("owngit ran as %q", log)
+		}
+	})
+
+	// Programs earlier in PATH with the names of the tools the installer
+	// uses are never run: it takes its tools from the system folders.
+	t.Run("tools come from the system folders, not PATH", func(t *testing.T) {
+		run := newShInstall(t, release)
+		fakes := filepath.Join(run.home, "fakes")
+		marker := filepath.Join(run.home, "fake-ran")
+		noErr(t, os.Mkdir(fakes, 0o755))
+		for _, name := range []string{"curl", "tar", "sha256sum", "shasum", "install", "mktemp", "id", "sudo", "grep", "cut", "dirname", "mv", "rm", "mkdir", "ls", "uname", "readlink", "sysctl", "sh"} {
+			noErr(t, os.WriteFile(filepath.Join(fakes, name), []byte("#!/bin/sh\necho \"$0 $*\" >>"+shellQuoteForTest(marker)+"\nexit 1\n"), 0o755))
+		}
+		target := filepath.Join(run.home, "bin", "owngit")
+		output := run.must(t, []string{"PATH=" + fakes + ":/usr/bin:/bin:/usr/sbin:/sbin"}, "--to", target)
+		if got := release.versionOf(t, target); got != "2.0.0" {
+			t.Fatalf("installed %q, want 2.0.0:\n%s", got, output)
+		}
+		if ran := readLog(t, marker); ran != "" {
+			t.Fatalf("the installer ran programs from PATH:\n%s", ran)
 		}
 	})
 

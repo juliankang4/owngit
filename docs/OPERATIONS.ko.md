@@ -9,7 +9,7 @@
 설치 스크립트는 릴리스를 내려받아 확인하고 설치한 뒤 서비스로 실행하는 일을 명령 하나로, 아무것도 묻지 않고 처리합니다. Linux와 macOS에서는 다음과 같이 실행합니다.
 
 ```sh
-curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh
 ```
 
 Windows에서는 PowerShell에서 실행합니다.
@@ -18,7 +18,7 @@ Windows에서는 PowerShell에서 실행합니다.
 irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 ```
 
-curl 옵션은 모든 요청과 리디렉션을 HTTPS로만 하게 하고, `-MaximumRedirection 0`은 PowerShell이 리디렉션을 따라가지 않게 하므로 스크립트가 평문 HTTP로 오는 일은 없습니다. 스크립트는 다음 순서로 진행합니다.
+curl 옵션은 모든 요청과 리디렉션을 HTTPS로만 하게 하고, `-MaximumRedirection 0`은 PowerShell이 리디렉션을 따라가지 않게 하므로 스크립트가 평문 HTTP로 오는 일은 없습니다. `curl`과 `sh`는 시스템 경로로 부르고 설치 스크립트도 시스템 폴더의 도구만 쓰므로, `PATH` 앞쪽 폴더에 있는 같은 이름의 프로그램이 대신 실행되지 않습니다. 스크립트는 다음 순서로 진행합니다.
 
 1. 최신 릴리스나 지정한 릴리스에서 이 컴퓨터에 맞는 압축 파일(Linux x64나 ARM64, Apple silicon Mac, Windows x64)을 고릅니다.
 2. 그 릴리스의 `SHA256SUMS`와 압축 파일을 HTTPS로 내려받고(리디렉션도 HTTPS로만 따라갑니다) 압축 파일의 SHA-256을 대조합니다. 내려받기에 실패하거나 값이 맞지 않으면 그 자리에서 멈추며 컴퓨터에는 아무것도 바뀌지 않습니다.
@@ -31,10 +31,10 @@ curl 옵션은 모든 요청과 리디렉션을 HTTPS로만 하게 하고, `-Max
 | `--no-service` | `-NoService` | 프로그램만 설치하고 서비스 등록이나 실행은 하지 않습니다. 다음에 할 일 두 가지를 알려 줍니다. 지금 바로 실행하려면 `owngit serve`, 서비스로 실행하려면 `owngit service install`입니다. |
 | `--to PATH` | `-Dir FOLDER` | 프로그램을 `PATH`에 두거나 릴리스 폴더를 `FOLDER` 안에 만듭니다. |
 
-옵션은 `sh -s --` 뒤에 붙이고 PowerShell에서는 스크립트 블록에 넘깁니다.
+옵션은 `/bin/sh -s --` 뒤에 붙이고 PowerShell에서는 스크립트 블록에 넘깁니다.
 
 ```sh
-curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh -s -- --version 1.1.3 --no-service
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh -s -- --version 1.1.3 --no-service
 ```
 
 ```powershell
@@ -195,7 +195,7 @@ OwnGit은 어떻게 설치됐는지 짐작하지 않고 이 컴퓨터에서 확�
 | Homebrew | 프로그램이 Homebrew의 `Cellar/owngit` 안에 있습니다 | `brew upgrade owngit` | `brew uninstall owngit` |
 | npm | 프로그램이 `node_modules` 안 `owngit-<플랫폼>` 패키지의 `bin/owngit`입니다 | `npm install -g owngit@X.Y.Z`. 내 계정이 전역 `node_modules` 폴더에 쓸 수 없으면 `sudo npm`으로 실행합니다 | `npm uninstall -g owngit`(쓸 수 없으면 `sudo`를 붙입니다) |
 | Arch Linux 패키지 | root만 바꿀 수 있는 `/usr/bin/pacman`의 `-Qo`가 프로그램이 든 패키지를 알려 줍니다 | `owngit-bin`이면 새 임시 폴더에서 새 릴리스의 `PKGBUILD`를 `makepkg -si`로 빌드합니다. 다른 패키지라면 릴리스 `PKGBUILD`가 그 패키지를 바꿔 버리므로 명령을 보여 주지 않습니다. 설치한 방법 그대로 업데이트하세요 | `sudo pacman -R`과 패키지 이름 |
-| 릴리스 압축 파일이나 [한 줄 설치](#한-줄-설치) | 위 어디에도 해당하지 않습니다 | 새 릴리스의 설치 스크립트를 이 프로그램에 대해 실행합니다. `curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/vX.Y.Z/packaging/installer/install.sh \| sh -s -- --version X.Y.Z --to <프로그램>`이고, Windows에서는 그 릴리스의 `install.ps1`을 `-Version X.Y.Z -Dir <폴더>`로 실행합니다. 스크립트는 무엇이든 바꾸기 전에 압축 파일을 `SHA256SUMS`와 대조하고 내 계정이 프로그램 폴더에 쓸 수 없을 때만 `sudo`를 씁니다. 그래서 root가 소유한 프로그램은 계속 root 소유로 남습니다. root가 설치한 서비스는 root만 바꿀 수 있는 프로그램만 실행하기 때문입니다. Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
+| 릴리스 압축 파일이나 [한 줄 설치](#한-줄-설치) | 위 어디에도 해당하지 않습니다 | 새 릴리스의 설치 스크립트를 이 프로그램에 대해 실행합니다. `/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/vX.Y.Z/packaging/installer/install.sh \| /bin/sh -s -- --version X.Y.Z --to <프로그램>`이고, Windows에서는 그 릴리스의 `install.ps1`을 `-Version X.Y.Z -Dir <폴더>`로 실행합니다. 스크립트는 무엇이든 바꾸기 전에 압축 파일을 `SHA256SUMS`와 대조하고 내 계정이 프로그램 폴더에 쓸 수 없을 때만 `sudo`를 씁니다. 그래서 root가 소유한 프로그램은 계속 root 소유로 남습니다. root가 설치한 서비스는 root만 바꿀 수 있는 프로그램만 실행하기 때문입니다. Windows에서는 새 릴리스를 지금 폴더 옆에 릴리스 이름으로 된 폴더에 풉니다 | 파일을 지웁니다(따로 만든 폴더에 풀었다면 그 폴더도) |
 
 내 계정의 서비스가 이 프로그램을 실행하고 있으면 명령이 `owngit service install`도 실행해 서비스를 새 버전에 맞게 다시 쓰고 다시 시작합니다. 압축 파일이라면 이 명령은 설치 스크립트가 실행합니다. 그런 서비스가 없으면 명령에 `--no-service`(Windows에서는 `-NoService`)가 붙습니다. Homebrew 서비스는 전처럼 `brew services restart owngit`으로 다시 시작합니다. Windows에서 로그인 작업이 npm 프로그램을 직접 실행하고 있으면 명령이 `owngit service stop`으로 시작합니다. Windows에서는 실행 중인 프로그램 파일을 npm이 바꿀 수 없기 때문입니다. 서비스가 다른 OwnGit을 실행하고 있다면(예를 들어 서비스는 압축 파일로 받은 것을 돌리는데 npm 쪽을 업데이트할 때) 명령은 이 프로그램만 업데이트하고 서비스는 건드리지 않으며 `owngit update`가 그렇다고 알려 줍니다. 서비스 없이 실행 중이라면 업데이트한 뒤 OwnGit을 직접 다시 시작하세요. Windows에서 압축 파일로 업데이트했다면 명령이 알려 주는 새 폴더의 `owngit.exe`로 시작합니다. 명령이 로그인 작업을 멈춘 뒤 npm이 실패했다면 `owngit service start`로 예전 버전을 다시 시작할 수 있습니다. macOS 앱 번들이나 릴리스 압축 파일이 없는 플랫폼에는 명령이 없으며 `owngit update`가 대신 할 일을 알려 줍니다. `makepkg`는 root로 실행되지 않으므로 root에게도 Arch Linux 명령을 보여 주지 않습니다. 평소 쓰는 계정으로 `owngit update`를 실행하세요. Windows에서 npm 명령의 각 단계는 앞 단계가 성공했을 때만 실행됩니다. Windows PowerShell과 PowerShell 7 모두 같습니다.
 

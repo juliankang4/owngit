@@ -134,7 +134,9 @@ const releaseDownloads = "https://github.com/juliankang4/owngit/releases/downloa
 const installerSource = "https://raw.githubusercontent.com/juliankang4/owngit/v"
 
 // httpsOnly keeps curl on HTTPS for the first request and every redirect.
-const httpsOnly = "curl --proto '=https' --proto-redir '=https' "
+// curl and sh are named by their system paths, so a folder earlier in PATH
+// cannot supply them.
+const httpsOnly = "/usr/bin/curl --proto '=https' --proto-redir '=https' "
 
 // releaseTargets are the platforms with a release archive, and its format.
 var releaseTargets = map[string]string{
@@ -232,7 +234,7 @@ func (install Install) installerCommand(version string, platform Platform) strin
 		}
 		return command
 	}
-	command := httpsOnly + "-fsSL " + installerSource + version + "/packaging/installer/install.sh | sh -s -- --version " + version + " --to " + shellWord(install.Executable)
+	command := httpsOnly + "-fsSL " + installerSource + version + "/packaging/installer/install.sh | /bin/sh -s -- --version " + version + " --to " + shellWord(install.Executable)
 	if !platform.Service {
 		command += " --no-service"
 	}

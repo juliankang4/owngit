@@ -15,10 +15,27 @@
 
 set -eu
 
+# Tools come from the system folders only, never from a folder earlier in
+# the inherited PATH; that PATH is kept only to tell whether owngit is on it.
+user_path=${PATH-}
+PATH=/usr/bin:/bin:/usr/sbin:/sbin
+export PATH
+
 say() { printf '%s\n' "$*"; }
 fail() {
 	printf 'owngit install: %s\n' "$*" >&2
 	exit 1
+}
+
+# system prints the fixed path of a system tool, or fails.
+system() {
+	for folder in /usr/bin /bin /usr/sbin /sbin; do
+		if [ -x "$folder/$1" ]; then
+			printf '%s\n' "$folder/$1"
+			return 0
+		fi
+	done
+	return 1
 }
 
 usage() {
@@ -74,18 +91,21 @@ main() {
 	fi
 	[ "$os/$arch" != darwin/amd64 ] || fail "OwnGit for macOS needs an Apple silicon Mac; on this Mac build OwnGit from source"
 
-	command -v curl >/dev/null 2>&1 || fail "curl is needed to download OwnGit"
-	command -v tar >/dev/null 2>&1 || fail "tar is needed to unpack OwnGit"
-	if command -v sha256sum >/dev/null 2>&1; then
-		digest_of() { sha256sum "$1" | cut -d ' ' -f 1; }
-	elif command -v shasum >/dev/null 2>&1; then
-		digest_of() { shasum -a 256 "$1" | cut -d ' ' -f 1; }
+	curl=$(system curl) || fail "curl is needed to download OwnGit"
+	tar=$(system tar) || fail "tar is needed to unpack OwnGit"
+	install=$(system install) || fail "install is needed to put OwnGit in place"
+	mktemp=$(system mktemp) || fail "mktemp is needed for a private download folder"
+	id=$(system id) || fail "id is needed to tell who runs the installer"
+	if sha=$(system sha256sum); then
+		digest_of() { "$sha" "$1" | cut -d ' ' -f 1; }
+	elif sha=$(system shasum); then
+		digest_of() { "$sha" -a 256 "$1" | cut -d ' ' -f 1; }
 	else
 		fail "sha256sum or shasum is needed to check the download"
 	fi
 
 	if [ -z "$target" ]; then
-		if [ "$(id -u)" = 0 ]; then target=/usr/local/bin/owngit; else target=$HOME/.local/bin/owngit; fi
+		if [ "$("$id" -u)" = 0 ]; then target=/usr/local/bin/owngit; else target=$HOME/.local/bin/owngit; fi
 	fi
 	case $target in /*) ;; *) target=$(pwd)/$target ;; esac
 	[ ! -d "$target" ] || fail "--to names the program file, such as $target/owngit, not a folder"
@@ -95,10 +115,10 @@ main() {
 		fail "$target is a link to $(readlink "$target"), which another install may own; update that install its own way, or choose a regular file with --to"
 	dir=$(dirname "$target")
 
-	tmp=$(mktemp -d)
+	tmp=$("$mktemp" -d)
 	trap 'rm -f "$tmp/SHA256SUMS" "$tmp/archive.tar.gz" "$tmp/owngit"; rmdir "$tmp"' EXIT
 	fetch() {
-		curl --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 -o "$2" "$1" ||
+		"$curl" --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 -o "$2" "$1" ||
 			fail "could not download $1; nothing was changed"
 	}
 
@@ -126,7 +146,7 @@ main() {
 	actual=$(digest_of "$tmp/archive.tar.gz")
 	[ "$actual" = "$digest" ] ||
 		fail "$name does not match the release's SHA256SUMS (got $actual, expected $digest); nothing was changed"
-	tar -xzf "$tmp/archive.tar.gz" -C "$tmp" owngit || fail "could not unpack owngit from $name; nothing was changed"
+	"$tar" -xzf "$tmp/archive.tar.gz" -C "$tmp" owngit || fail "could not unpack owngit from $name; nothing was changed"
 
 	# sudo only when this account cannot write the folder (or the nearest
 	# folder that exists, when it has to be made). A copy that sudo puts
@@ -135,9 +155,8 @@ main() {
 	while [ ! -d "$existing" ]; do existing=$(dirname "$existing"); done
 	sudo=""
 	if [ ! -w "$existing" ]; then
-		command -v sudo >/dev/null 2>&1 ||
+		sudo=$(system sudo) ||
 			fail "this account cannot write $existing; run the installer as root, or choose a folder you can write with --to"
-		sudo=sudo
 		say "This account cannot write $existing, so sudo puts owngit there."
 	fi
 	# A file that cannot be read counts as different and is replaced.
@@ -149,16 +168,16 @@ main() {
 		# running the old file until it restarts.
 		staged=$dir/.owngit-$version-$$
 		$sudo mkdir -p "$dir" || fail "could not create $dir"
-		if ! $sudo install -m 0755 "$tmp/owngit" "$staged" || ! $sudo mv -f "$staged" "$target"; then
+		if ! $sudo "$install" -m 0755 "$tmp/owngit" "$staged" || ! $sudo mv -f "$staged" "$target"; then
 			$sudo rm -f "$staged"
 			fail "could not put owngit at $target"
 		fi
 		say "Installed OwnGit $version at $target."
 	fi
 
-	case ":$PATH:" in
+	case ":$user_path:" in
 	*":$dir:"*)
-		found=$(command -v owngit || true)
+		found=$(PATH=$user_path && command -v owngit || true)
 		[ "$found" = "$target" ] || [ -z "$found" ] || say "Note: \"owngit\" on your PATH is $found, not this one."
 		;;
 	*) say "$dir is not on your PATH, so run OwnGit as $target, or add $dir to PATH." ;;

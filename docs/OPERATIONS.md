@@ -9,7 +9,7 @@ This page is for the person who installs and runs OwnGit. It covers setup, runni
 The installer downloads a release, checks it, installs it and runs it as a service, in one command and without questions. On Linux and macOS:
 
 ```sh
-curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh
 ```
 
 On Windows, in PowerShell:
@@ -18,7 +18,7 @@ On Windows, in PowerShell:
 irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 ```
 
-The curl options keep every request and redirect on HTTPS, and `-MaximumRedirection 0` keeps PowerShell from following a redirect, so the script never arrives over plain HTTP. It takes these steps:
+The curl options keep every request and redirect on HTTPS, and `-MaximumRedirection 0` keeps PowerShell from following a redirect, so the script never arrives over plain HTTP. `curl` and `sh` are named by their system paths, and the installer runs tools from the system folders only, so a folder earlier in your `PATH` cannot stand in for them. It takes these steps:
 
 1. It picks the archive for this computer (Linux x64 or ARM64, macOS on Apple silicon, Windows x64) from the latest release, or from the release you name.
 2. It downloads that release's `SHA256SUMS` and the archive over HTTPS, following redirects only to HTTPS, and checks the archive's SHA-256 against it. When a download fails or the archive does not match, it stops, and nothing on the computer has changed.
@@ -31,10 +31,10 @@ The curl options keep every request and redirect on HTTPS, and `-MaximumRedirect
 | `--no-service` | `-NoService` | Installs the program only and registers and starts nothing. It prints the two next steps: `owngit serve` runs OwnGit now, and `owngit service install` runs it as a service. |
 | `--to PATH` | `-Dir FOLDER` | Puts the program at `PATH`, or the release folders in `FOLDER`. |
 
-Options go after `sh -s --`, or to the script block in PowerShell:
+Options go after `/bin/sh -s --`, or to the script block in PowerShell:
 
 ```sh
-curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh -s -- --version 1.1.3 --no-service
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh -s -- --version 1.1.3 --no-service
 ```
 
 ```powershell
@@ -195,7 +195,7 @@ OwnGit tells how it was installed from facts on this computer, not from guesses:
 | Homebrew | The program is in Homebrew's `Cellar/owngit` | `brew upgrade owngit` | `brew uninstall owngit` |
 | npm | The program is `bin/owngit` of an `owngit-<platform>` package in `node_modules` | `npm install -g owngit@X.Y.Z`, as `sudo npm` when your account cannot write the global `node_modules` folder | `npm uninstall -g owngit`, with `sudo` in the same case |
 | Arch Linux package | `/usr/bin/pacman -Qo`, a program only root can change, names the package that holds the program | for `owngit-bin`, builds the new release's `PKGBUILD` with `makepkg -si` in a new temporary folder; another package gets no command, because the release `PKGBUILD` would replace it, so update it the way you installed it | `sudo pacman -R` and the package name |
-| Release archive or the [one-line installer](#one-line-installer) | None of the above | runs the new release's installer for this program: `curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/vX.Y.Z/packaging/installer/install.sh \| sh -s -- --version X.Y.Z --to <program>`, or on Windows its `install.ps1` with `-Version X.Y.Z -Dir <folder>`. The installer checks the archive against `SHA256SUMS` before it changes anything and uses `sudo` only when your account cannot write the program's folder, so a program that root owns stays root's, as a service installed by root requires. On Windows it unpacks the new release into a folder named after it beside the current one | delete the file (and the folder you unpacked, if you made one) |
+| Release archive or the [one-line installer](#one-line-installer) | None of the above | runs the new release's installer for this program: `/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/juliankang4/owngit/vX.Y.Z/packaging/installer/install.sh \| /bin/sh -s -- --version X.Y.Z --to <program>`, or on Windows its `install.ps1` with `-Version X.Y.Z -Dir <folder>`. The installer checks the archive against `SHA256SUMS` before it changes anything and uses `sudo` only when your account cannot write the program's folder, so a program that root owns stays root's, as a service installed by root requires. On Windows it unpacks the new release into a folder named after it beside the current one | delete the file (and the folder you unpacked, if you made one) |
 
 When a service of your account runs this program, the command also runs `owngit service install`, which rewrites the service for the new version and restarts it (for an archive the installer runs it, and without such a service the command passes `--no-service`, or `-NoService` on Windows); Homebrew's service goes through `brew services restart owngit` as before. On Windows, when your sign-in task runs the npm program itself, the command starts with `owngit service stop`, because Windows does not let npm replace a running program. When the service runs a different OwnGit, for example a release archive while you update the npm copy, the command updates only this program and leaves the service alone; `owngit update` says so. Without a service, restart OwnGit yourself afterwards; after a Windows archive update, start it from the new folder's `owngit.exe`, which the command names. If npm fails after the command stopped your sign-in task, `owngit service start` starts the old version again. A macOS app bundle or an archive for a platform without a release archive has no command; `owngit update` says what to do instead. Because `makepkg` refuses root, root gets no Arch Linux command either; run `owngit update` as your normal account. On Windows each step of an npm command runs only when the one before it succeeded, in Windows PowerShell and PowerShell 7 alike.
 

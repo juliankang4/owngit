@@ -41,7 +41,7 @@ OwnGit은 홈랩과 로컬 컴퓨터를 위한 셀프 호스팅 Git 서버입니
 한 줄 설치 스크립트는 이 컴퓨터에 맞는 최신 릴리스를 내려받아 같은 릴리스의 `SHA256SUMS`와 대조한 뒤 `owngit`을 설치하고 `owngit service install`로 서비스를 시작합니다. 터미널에서 실행했다면 마지막에 설정 링크가 출력됩니다. Linux(x64, ARM64)와 macOS(Apple silicon)에서는 다음과 같이 실행합니다.
 
 ```sh
-curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | sh
+/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/install.sh | /bin/sh
 ```
 
 Windows(x64)에서는 PowerShell에서 실행합니다.
