@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -310,5 +311,26 @@ func TestVerifyIsNotVerifiedUntilItsFolderIsGone(t *testing.T) {
 	noErr(t, os.Chmod(temporary, 0o700))
 	if err == nil || result.Verified || !strings.Contains(result.Error, "remove the rehearsal folder") || result.CleanupError == "" || result.Database != VerifyPassed {
 		t.Fatalf("result=%+v err=%v", result, err)
+	}
+}
+
+// A restore that its context stopped says that it was interrupted and that
+// nothing was restored, and leaves no target. The command-line test stops
+// one in the middle of its work.
+func TestRestoreSaysItWasInterrupted(t *testing.T) {
+	root := t.TempDir()
+	backup := newTwoRepositoryBackup(t, root)
+	stateTarget, repositoryTarget := filepath.Join(root, "restored-state"), filepath.Join(root, "restored-repositories")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
+	var interrupted *Interrupted
+	if !errors.As(err, &interrupted) || err.Error() != "the restore was interrupted: nothing was restored" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("error=%v", err)
+	}
+	for _, target := range []string{stateTarget, repositoryTarget} {
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("the interrupted restore left %s (%v)", target, err)
+		}
 	}
 }

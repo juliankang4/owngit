@@ -68,6 +68,13 @@ func reportError(stdout io.Writer, err error) int {
 	if errors.As(err, &exit) {
 		return exit.code
 	}
+	// A restore or verification that an interrupt stopped exits as a
+	// process stopped by it does.
+	var interrupted *recovery.Interrupted
+	if errors.As(err, &interrupted) {
+		log.Printf("error: %v", err)
+		return 130
+	}
 	var logged loggedError
 	if !errors.As(err, &logged) && !writeStructuredCommandError(stdout, err) {
 		log.Printf("error: %v", err)
@@ -1043,6 +1050,10 @@ func restoreState(arguments []string) error {
 		if !result.Verified || err != nil {
 			printVerification(os.Stdout, result)
 			printSpaceHint(os.Stdout, err)
+			var interrupted *recovery.Interrupted
+			if errors.As(err, &interrupted) {
+				return &recovery.Interrupted{What: "verification", Detail: "nothing was restored", Cause: err}
+			}
 			return errors.New("the backup was not verified, so nothing was restored")
 		}
 		fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(result.Repositories))

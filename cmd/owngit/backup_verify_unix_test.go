@@ -3,6 +3,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,57 +22,85 @@ import (
 	"owngit/internal/state"
 )
 
-const verifyChildArgumentsEnv = "OWNGIT_TEST_VERIFY_ARGUMENTS"
+const interruptChildArgumentsEnv = "OWNGIT_TEST_INTERRUPT_ARGUMENTS"
 
-// TestBackupVerifyHelperProcess is the child of the interrupt test: it runs
-// backup verify with the arguments it is given and exits as owngit would.
-func TestBackupVerifyHelperProcess(t *testing.T) {
-	arguments := os.Getenv(verifyChildArgumentsEnv)
+// TestInterruptHelperProcess is the child of the interrupt test: it runs
+// the command it is given and exits as owngit would.
+func TestInterruptHelperProcess(t *testing.T) {
+	arguments := os.Getenv(interruptChildArgumentsEnv)
 	if arguments == "" {
-		t.Skip("runs only as the child of TestBackupVerifyInterruptRemovesTheRehearsal")
+		t.Skip("runs only as the child of TestInterruptedRestoreAndVerifyExit130")
 	}
-	os.Exit(reportError(os.Stdout, backupState(append([]string{"verify"}, strings.Split(arguments, "\n")...))))
+	command := strings.Split(arguments, "\n")
+	os.Exit(reportError(os.Stdout, runCommand(command[0], command[1:])))
 }
 
-// An interrupt during the rehearsal stops Git, removes the rehearsal folder
-// and exits 130. A Git wrapper holds the rehearsal at git fsck until the
-// interrupt comes, so the test does not depend on timing.
-func TestBackupVerifyInterruptRemovesTheRehearsal(t *testing.T) {
+// An interrupt stops backup verify, restore and restore --verify alike:
+// Git stops, the rehearsal folder and the restore targets are gone, the
+// message says the work was interrupted, and the exit status is 130. A Git
+// wrapper holds the work at git fsck until the interrupt comes, so the test
+// does not depend on timing.
+func TestInterruptedRestoreAndVerifyExit130(t *testing.T) {
 	root := t.TempDir()
 	backup := newVerifyBackup(t, root)
-
 	realGit, err := exec.LookPath("git")
 	noErr(t, err)
-	marker := filepath.Join(root, "fsck-started")
-	wrapper := filepath.Join(root, "git-wrapper")
-	script := "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = fsck ]; then : > '" + marker + "'; exec sleep 60; fi\ndone\nexec '" + realGit + "' \"$@\"\n"
-	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
-	temporary := filepath.Join(root, "temporary")
-	noErr(t, os.Mkdir(temporary, 0o700))
+	for _, test := range []struct{ name, want string }{
+		{"backup verify", "the verification was interrupted"},
+		{"restore", "the restore was interrupted: nothing was restored"},
+		{"restore --verify", "the verification was interrupted: nothing was restored"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			work := t.TempDir()
+			marker := filepath.Join(work, "fsck-started")
+			wrapper := filepath.Join(work, "git-wrapper")
+			script := "#!/bin/sh\nfor argument in \"$@\"; do\n  if [ \"$argument\" = fsck ]; then : > '" + marker + "'; exec sleep 60; fi\ndone\nexec '" + realGit + "' \"$@\"\n"
+			noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
+			temporary := filepath.Join(work, "temporary")
+			noErr(t, os.Mkdir(temporary, 0o700))
+			restoredState := filepath.Join(work, "restored", "state")
+			restoredRepositories := filepath.Join(work, "restored", "repositories")
+			arguments := map[string][]string{
+				"backup verify":    {"backup", "verify", backup, "--temp-dir", temporary, "--git", wrapper},
+				"restore":          {"restore", "--input", backup, "--state-dir", restoredState, "--repository-root", restoredRepositories, "--git", wrapper},
+				"restore --verify": {"restore", "--input", backup, "--state-dir", restoredState, "--repository-root", restoredRepositories, "--verify", "--temp-dir", temporary, "--git", wrapper},
+			}[test.name]
+			child := exec.Command(os.Args[0], "-test.run=^TestInterruptHelperProcess$")
+			child.Env = append(os.Environ(), interruptChildArgumentsEnv+"="+strings.Join(arguments, "\n"))
+			var output bytes.Buffer
+			child.Stdout, child.Stderr = &output, &output
+			noErr(t, child.Start())
+			for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+				if _, err := os.Stat(marker); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = child.Process.Kill()
+					_ = child.Wait()
+					t.Fatalf("the work never reached git fsck: %s", output.String())
+				}
+			}
+			noErr(t, child.Process.Signal(syscall.SIGINT))
+			err := child.Wait()
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 130 || !strings.Contains(output.String(), test.want) || strings.Contains(output.String(), "context canceled") {
+				t.Fatalf("child exit=%v, output:\n%s", err, output.String())
+			}
+			assertEmptyFolder(t, temporary)
+			// The restore creates the targets' missing parent and leaves it
+			// empty: no target and no stage.
+			if entries, err := os.ReadDir(filepath.Dir(restoredState)); err == nil && len(entries) != 0 || err != nil && !os.IsNotExist(err) {
+				t.Fatalf("the interrupted work left %v (%v)", entries, err)
+			}
+		})
+	}
+}
 
-	child := exec.Command(os.Args[0], "-test.run=^TestBackupVerifyHelperProcess$")
-	child.Env = append(os.Environ(), verifyChildArgumentsEnv+"="+strings.Join([]string{backup, "--temp-dir", temporary, "--git", wrapper}, "\n"))
-	noErr(t, child.Start())
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		if _, err := os.Stat(marker); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			_ = child.Process.Kill()
-			_ = child.Wait()
-			t.Fatal("the rehearsal never reached git fsck")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	noErr(t, child.Process.Signal(syscall.SIGINT))
-	err = child.Wait()
-	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 130 {
-		t.Fatalf("child exit=%v, want 130", err)
-	}
-	if entries, err := os.ReadDir(temporary); err != nil || len(entries) != 0 {
-		t.Fatalf("the interrupted rehearsal left %v (%v)", entries, err)
+// assertEmptyFolder stops the test unless dir holds nothing.
+func assertEmptyFolder(t *testing.T, dir string) {
+	t.Helper()
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("%s holds %v (%v)", dir, entries, err)
 	}
 }
 

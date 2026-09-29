@@ -541,8 +541,41 @@ func defaultRestoreOperations() restoreOperations {
 	}
 }
 
+// Restore restores the backup input into two new folders. When ctx ends
+// first, it stops and returns an *Interrupted error that says what it left.
 func Restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath string) error {
-	return restore(ctx, input, stateDirectory, repositoryRoot, gitPath, defaultRestoreOperations())
+	err := restore(ctx, input, stateDirectory, repositoryRoot, gitPath, defaultRestoreOperations())
+	if err == nil || ctx.Err() == nil {
+		return err
+	}
+	// A restore stopped by its context removed its stages, or rolled the
+	// state back; an error that says otherwise is passed on.
+	if errors.Is(err, ctx.Err()) && absentPath(stateDirectory) && absentPath(repositoryRoot) {
+		return &Interrupted{What: "restore", Detail: "nothing was restored", Cause: err}
+	}
+	return &Interrupted{What: "restore", Detail: err.Error(), Cause: err}
+}
+
+// Interrupted is work that stopped because its context ended. Detail, when
+// set, says what the work left.
+type Interrupted struct {
+	What, Detail string
+	Cause        error
+}
+
+func (e *Interrupted) Error() string {
+	if e.Detail == "" {
+		return fmt.Sprintf("the %s was interrupted", e.What)
+	}
+	return fmt.Sprintf("the %s was interrupted: %s", e.What, e.Detail)
+}
+
+func (e *Interrupted) Unwrap() error { return e.Cause }
+
+// absentPath reports whether nothing exists at path.
+func absentPath(path string) bool {
+	_, err := os.Lstat(path)
+	return errors.Is(err, os.ErrNotExist)
 }
 
 func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath string, operations restoreOperations) error {

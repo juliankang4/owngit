@@ -46,8 +46,9 @@ func verifyBackup(arguments []string) error {
 		printVerification(os.Stdout, result)
 		printSpaceHint(os.Stdout, err)
 	}
+	var interrupted *recovery.Interrupted
 	switch {
-	case ctx.Err() != nil:
+	case errors.As(err, &interrupted):
 		return &checkExit{code: 130, err: err}
 	case err != nil:
 		return &checkExit{code: 1, err: err}

@@ -103,7 +103,7 @@ func verify(ctx context.Context, input, temporary, gitPath string, operations re
 	var space *SpaceError
 	switch {
 	case ctx.Err() != nil:
-		err = fmt.Errorf("the verification was interrupted: %w", ctx.Err())
+		err = &Interrupted{What: "verification", Cause: ctx.Err()}
 	case errors.As(err, &space):
 		// The rehearsal folder is gone when the caller reads this; name
 		// the folder that holds it.
