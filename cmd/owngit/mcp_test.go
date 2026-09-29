@@ -952,7 +952,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 21 {
+	if names, _ := session.toolNames(); len(names) != 22 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {
