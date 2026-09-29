@@ -83,6 +83,47 @@ func TestImportSourceSeparatesIdentityAndExecutionAuthority(t *testing.T) {
 	}
 }
 
+// Every reader of an import source sees its refresh options, and putting
+// back a binding snapshot restores them even when the row was removed.
+func TestImportSourceReadersAndBindingCarryRefreshOptions(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	configureTestImportSource(t, store, "project")
+	noErr(t, store.Exec(ctx, `UPDATE import_sources SET overwrite_diverged=1,follow_upstream_deletions=1,extra_ref_prefixes='["refs/notes/"]'`))
+	carries := func(label string, source ImportSource) {
+		t.Helper()
+		if !source.OverwriteDiverged || !source.FollowUpstreamDeletions || len(source.ExtraRefPrefixes) != 1 || source.ExtraRefPrefixes[0] != "refs/notes/" {
+			t.Fatalf("%s lost the refresh options: %+v", label, source)
+		}
+	}
+	source, exists, err := store.ImportSource(ctx, "project")
+	if err != nil || !exists {
+		t.Fatalf("source exists=%v err=%v", exists, err)
+	}
+	carries("ImportSource", source)
+	sources, err := store.ImportSources(ctx)
+	if err != nil || len(sources) != 1 {
+		t.Fatalf("sources=%+v err=%v", sources, err)
+	}
+	carries("ImportSources", sources[0])
+	configured, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "project", URL: source.URL, Mode: ImportModeCoexistence, Now: testImportNow().Add(time.Minute)})
+	noErr(t, err)
+	carries("ConfigureImportSource", configured)
+
+	snapshot, err := store.ReadImportBinding(ctx, "project")
+	noErr(t, err)
+	noErr(t, store.Exec(ctx, `DELETE FROM import_sources`))
+	noErr(t, store.RestoreImportBinding(ctx, "project", snapshot))
+	source, _, err = store.ImportSource(ctx, "project")
+	noErr(t, err)
+	carries("RestoreImportBinding", source)
+
+	noErr(t, store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes='[1]'`))
+	if _, _, err := store.ImportSource(ctx, "project"); err == nil {
+		t.Fatal("an unreadable extra ref list was read as none")
+	}
+}
+
 func TestDeletedSourceCannotReuseRetainedRunAuthority(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

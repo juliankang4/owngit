@@ -444,16 +444,23 @@ func (s *Store) RestoreImportBinding(ctx context.Context, repositoryID string, s
 		if snapshot.Source.RepositoryID != repositoryID {
 			return errors.New("import binding snapshot belongs to another repository")
 		}
+		prefixes, err := encodeRefPrefixes(snapshot.Source.ExtraRefPrefixes)
+		if err != nil {
+			return err
+		}
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO import_sources(
-			repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?)
+			repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
+			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repository_id) DO UPDATE SET
 			url=excluded.url,source_generation=excluded.source_generation,authority_revision=excluded.authority_revision,
 			credential_generation=excluded.credential_generation,mode=excluded.mode,git_only_consent=excluded.git_only_consent,
-			allow_private_network=excluded.allow_private_network,created_at=excluded.created_at,updated_at=excluded.updated_at`,
+			allow_private_network=excluded.allow_private_network,created_at=excluded.created_at,updated_at=excluded.updated_at,
+			overwrite_diverged=excluded.overwrite_diverged,follow_upstream_deletions=excluded.follow_upstream_deletions,extra_ref_prefixes=excluded.extra_ref_prefixes`,
 			snapshot.Source.RepositoryID, snapshot.Source.URL, snapshot.Source.SourceGeneration, snapshot.Source.AuthorityRevision,
 			snapshot.Source.CredentialGeneration, snapshot.Source.Mode, boolInt(snapshot.Source.GitOnlyConsent), boolInt(snapshot.Source.AllowPrivateNetwork),
-			snapshot.Source.CreatedAt.Unix(), snapshot.Source.UpdatedAt.Unix()); err != nil {
+			snapshot.Source.CreatedAt.Unix(), snapshot.Source.UpdatedAt.Unix(),
+			boolInt(snapshot.Source.OverwriteDiverged), boolInt(snapshot.Source.FollowUpstreamDeletions), prefixes); err != nil {
 			return err
 		}
 	} else if _, err := s.db.ExecContext(ctx, `DELETE FROM import_sources WHERE repository_id=?`, repositoryID); err != nil {

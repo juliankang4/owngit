@@ -263,10 +263,7 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 		return ImportSource{}, err
 	}
 	defer tx.Rollback()
-	var current ImportSource
-	var created, updated int64
-	err = tx.QueryRowContext(ctx, `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at FROM import_sources WHERE repository_id=?`, input.RepositoryID).
-		Scan(&current.RepositoryID, &current.URL, &current.SourceGeneration, &current.AuthorityRevision, &current.CredentialGeneration, &current.Mode, &current.GitOnlyConsent, &current.AllowPrivateNetwork, &created, &updated)
+	current, err := scanImportSource(tx.QueryRowContext(ctx, importSourceSelect+` WHERE repository_id=?`, input.RepositoryID))
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		// A deleted and re-created source must not collide with authority stamped
@@ -288,8 +285,6 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	case err != nil:
 		return ImportSource{}, err
 	default:
-		current.CreatedAt = unixTime(created)
-		current.UpdatedAt = unixTime(updated)
 		changed := current.URL != input.URL || current.Mode != input.Mode || current.GitOnlyConsent != input.GitOnlyConsent || current.AllowPrivateNetwork != input.AllowPrivateNetwork
 		if changed {
 			if current.URL != input.URL {
@@ -317,39 +312,51 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 }
 
 func (s *Store) ImportSource(ctx context.Context, repositoryID string) (ImportSource, bool, error) {
-	var record ImportSource
-	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at FROM import_sources WHERE repository_id=?`, repositoryID).
-		Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.CredentialGeneration, &record.Mode, &record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated)
+	record, err := scanImportSource(s.db.QueryRowContext(ctx, importSourceSelect+` WHERE repository_id=?`, repositoryID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportSource{}, false, nil
 	}
 	if err != nil {
 		return ImportSource{}, false, err
 	}
-	record.CreatedAt = unixTime(created)
-	record.UpdatedAt = unixTime(updated)
 	return record, true, nil
 }
 
 func (s *Store) ImportSources(ctx context.Context) ([]ImportSource, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at FROM import_sources ORDER BY repository_id`)
+	rows, err := s.db.QueryContext(ctx, importSourceSelect+` ORDER BY repository_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var records []ImportSource
 	for rows.Next() {
-		var record ImportSource
-		var created, updated int64
-		if err := rows.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.CredentialGeneration, &record.Mode, &record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated); err != nil {
+		record, err := scanImportSource(rows)
+		if err != nil {
 			return nil, err
 		}
-		record.CreatedAt = unixTime(created)
-		record.UpdatedAt = unixTime(updated)
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+const importSourceSelect = `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
+	overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes FROM import_sources`
+
+func scanImportSource(scanner rowScanner) (ImportSource, error) {
+	var record ImportSource
+	var created, updated int64
+	var prefixes string
+	if err := scanner.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.CredentialGeneration, &record.Mode,
+		&record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated, &record.OverwriteDiverged, &record.FollowUpstreamDeletions, &prefixes); err != nil {
+		return ImportSource{}, err
+	}
+	record.CreatedAt = unixTime(created)
+	record.UpdatedAt = unixTime(updated)
+	var err error
+	if record.ExtraRefPrefixes, err = decodeRefPrefixes(prefixes); err != nil {
+		return ImportSource{}, fmt.Errorf("import source %q: %w", record.RepositoryID, err)
+	}
+	return record, nil
 }
 
 func (s *Store) SetImportGitOnlyConsent(ctx context.Context, repositoryID string, consent bool, now time.Time) (ImportSource, error) {
