@@ -168,3 +168,80 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 		t.Fatalf("raw logs=%d err=%v, want only the newer one", count, err)
 	}
 }
+
+// A cleanup reads the raw logs it removes and stops at the first it keeps:
+// its query walks check_raw_log_starts by key, with no scan of the attempts
+// and no sort. With many attempts and many logs kept, removing a large
+// backlog stays linear, and a cleanup with nothing due returns at once.
+func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+pruneCheckLogBatch, now.Unix(), checkLogPruneBatch)
+	noErr(t, err)
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		noErr(t, rows.Scan(&id, &parent, &unused, &detail))
+		plan = append(plan, detail)
+	}
+	noErr(t, rows.Err())
+	noErr(t, rows.Close())
+	joined := strings.Join(plan, "\n")
+	if strings.Contains(joined, "SCAN") || strings.Contains(joined, "TEMP B-TREE") || !strings.Contains(joined, "check_raw_log_starts USING PRIMARY KEY (started_at<?)") {
+		t.Fatalf("cleanup plan:\n%s", joined)
+	}
+
+	// 20000 older attempts whose logs are gone, 8000 due logs and 8000
+	// logs kept, copied from one recorded attempt.
+	task := newProjectTask(t, store, ctx, now)
+	_, template := recordAttemptWithLog(t, store, attemptFor(task, strings.Repeat("a", 40), now, AttemptFailed), "template")
+	columns, err := store.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('check_attempts')`)
+	noErr(t, err)
+	var names, values []string
+	for columns.Next() {
+		var name string
+		noErr(t, columns.Scan(&name))
+		names = append(names, name)
+		switch name {
+		case "id", "log_id":
+			values = append(values, "printf('%032x',n)")
+		case "created_at":
+			values = append(values, "?+n")
+		default:
+			values = append(values, name)
+		}
+	}
+	noErr(t, columns.Err())
+	noErr(t, columns.Close())
+	copies := `WITH RECURSIVE seq(n) AS (SELECT ? UNION ALL SELECT n+1 FROM seq WHERE n<?)
+		INSERT INTO check_attempts(` + strings.Join(names, ",") + `) SELECT ` + strings.Join(values, ",") + ` FROM seq, check_attempts WHERE id=?`
+	old, recent := now.Add(-400*24*time.Hour).Unix(), now.Add(-24*time.Hour).Unix()
+	noErr(t, store.Exec(ctx, copies, 1, 28000, old, template.ID))
+	noErr(t, store.Exec(ctx, copies, 28001, 36000, recent-28000, template.ID))
+	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_logs(attempt_id,content,expires_at)
+		SELECT id,x'2e',created_at+2592000 FROM check_attempts WHERE id BETWEEN printf('%032x',20001) AND printf('%032x',36000)`))
+	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id)
+		SELECT a.created_at,a.id FROM check_attempts a WHERE a.id BETWEEN printf('%032x',20001) AND printf('%032x',36000)`))
+	week := CheckLogs7Days
+	noErr(t, store.SavePolicies(ctx, PolicyChange{CheckLogs: &week}))
+
+	started := time.Now()
+	removed, err := store.PruneCheckLogs(ctx, now)
+	backlog := time.Since(started)
+	if err != nil || removed != 8000 || backlog > 10*time.Second {
+		t.Fatalf("removing 8000 due logs: removed=%d err=%v in %v", removed, err, backlog)
+	}
+	started = time.Now()
+	removed, err = store.PruneCheckLogs(ctx, now)
+	idle := time.Since(started)
+	if err != nil || removed != 0 || idle > time.Second {
+		t.Fatalf("a cleanup with nothing due: removed=%d err=%v in %v", removed, err, idle)
+	}
+	if kept, err := store.TableRowCount(ctx, "check_raw_logs"); err != nil || kept != 8001 {
+		t.Fatalf("logs kept=%d err=%v, want 8001", kept, err)
+	}
+	if starts, err := store.TableRowCount(ctx, "check_raw_log_starts"); err != nil || starts != 8001 {
+		t.Fatalf("start rows=%d err=%v, want one per log kept", starts, err)
+	}
+	t.Logf("removed 8000 due logs in %v; an idle cleanup took %v", backlog, idle)
+}

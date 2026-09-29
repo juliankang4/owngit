@@ -499,9 +499,21 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			logf("%v", err)
 		}
 	}()
-	if _, err := store.PruneCheckLogs(ctx, time.Now()); err != nil {
-		log.Printf("could not prune expired check logs: %v", err)
-	}
+	// Raw check logs past their retention are removed in the background, so
+	// a large backlog never delays serving. The cleanup is cancelled and
+	// awaited before the store closes.
+	pruneContext, stopPrune := context.WithCancel(ctx)
+	pruned := make(chan struct{})
+	go func() {
+		defer close(pruned)
+		if _, err := store.PruneCheckLogs(pruneContext, time.Now()); err != nil && pruneContext.Err() == nil {
+			log.Printf("could not prune expired check logs: %v", err)
+		}
+	}()
+	defer func() {
+		stopPrune()
+		<-pruned
+	}()
 	gitHandler, err := githttp.New(runner, repositories, backendPath, 4)
 	if err != nil {
 		return err

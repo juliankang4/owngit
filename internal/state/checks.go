@@ -763,6 +763,9 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		if err := ops.insertRawLog(ctx, tx, registered.ID, []byte(completion.Log), expiresAt.Unix()); err != nil {
 			return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id) VALUES(?,?)`, registered.CreatedAt.Unix(), registered.ID); err != nil {
+			return Task{}, CheckAttempt{}, rawLogTransactionError(err)
+		}
 		rawStored = true
 		logID = registered.ID
 		logDigest = submitted.SubmittedLogDigest
@@ -1470,12 +1473,21 @@ func (s *Store) ReadCheckLog(attempt CheckAttempt, retention CheckLogRetention, 
 	return content, CheckLogFound, nil
 }
 
+// pruneCheckLogBatch deletes the raw logs of the oldest checks that started
+// at or before a cutoff, at most a batch. It walks check_raw_log_starts by
+// its key, so it reads only the logs it deletes and the first one it keeps,
+// however many attempts and kept logs there are.
+const pruneCheckLogBatch = `DELETE FROM check_raw_logs WHERE attempt_id IN (
+	SELECT attempt_id FROM check_raw_log_starts WHERE started_at<=? ORDER BY started_at,attempt_id LIMIT ?
+)`
+
 // PruneCheckLogs deletes every raw log the saved retention no longer keeps
 // at now: each one whose check started at least the retention before now.
 // Under Keep indefinitely it deletes nothing. Each transaction reads the
 // retention again, so a choice saved meanwhile applies to the rest, and
-// handles at most 4 MiB of maximum-size logical content. The loop stops
-// only after the due set is empty or an error occurs.
+// handles at most 4 MiB of maximum-size logical content. The whole cleanup
+// reads each log it deletes once. The loop stops only after the due set is
+// empty or an error occurs.
 func (s *Store) PruneCheckLogs(ctx context.Context, now time.Time) (int, error) {
 	removed := 0
 	for {
@@ -1490,10 +1502,7 @@ func (s *Store) PruneCheckLogs(ctx context.Context, now time.Time) (int, error) 
 		if err != nil || retention == KeepCheckLogs {
 			return removed, errors.Join(err, tx.Rollback())
 		}
-		result, err := tx.ExecContext(ctx, `DELETE FROM check_raw_logs WHERE attempt_id IN (
-			SELECT r.attempt_id FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id
-			WHERE a.created_at<=? ORDER BY a.created_at,r.attempt_id LIMIT ?
-		)`, now.Add(-retention.Duration()).Unix(), checkLogPruneBatch)
+		result, err := tx.ExecContext(ctx, pruneCheckLogBatch, now.Add(-retention.Duration()).Unix(), checkLogPruneBatch)
 		if err != nil {
 			return removed, errors.Join(err, tx.Rollback())
 		}

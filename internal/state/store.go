@@ -659,7 +659,8 @@ type schemaStep struct {
 // destinations, version 14 admits the owner_resolved intent status, and
 // version 15 admits closed pull requests, and version 16 adds the durable
 // fields of 1.1.3: pull request text and actors, repository names and
-// policies, import options, share links, scheduled backups and recent pushes.
+// policies, import options, share links, scheduled backups, recent pushes,
+// and the start time of each raw check log for its cleanup.
 // The 1.0.0 to 1.0.2 releases wrote schema 14, and 1.0.3 to 1.1.2 wrote
 // schema 15.
 // Schema 12 has no ownership rows. A missing row never authorizes removal or
@@ -1511,6 +1512,17 @@ var schemaSteps = []schemaStep{
 			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX push_events_repository ON push_events(repository_id,sequence)`,
+		// Each raw check log by the time its check started, which never
+		// changes, so a cleanup reads the logs it removes in order and stops
+		// at the first it keeps. A row goes with its raw log.
+		`CREATE TABLE check_raw_log_starts (
+			started_at INTEGER NOT NULL,
+			attempt_id TEXT NOT NULL UNIQUE,
+			PRIMARY KEY (started_at, attempt_id),
+			FOREIGN KEY (attempt_id) REFERENCES check_raw_logs(attempt_id) ON DELETE CASCADE
+		) WITHOUT ROWID`,
+		`INSERT INTO check_raw_log_starts(started_at,attempt_id)
+			SELECT a.created_at,r.attempt_id FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id`,
 	}},
 }
 

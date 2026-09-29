@@ -60,6 +60,15 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 					t.Fatalf("table %s has %d rows after the upgrade, %d before", table, after[table], count)
 				}
 			}
+			// Every raw log kept is indexed by its check's start, so the
+			// first cleanup reaches the logs the upgrade kept.
+			var unindexed int
+			noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id
+				LEFT JOIN check_raw_log_starts s ON s.attempt_id=r.attempt_id WHERE s.started_at IS NOT a.created_at`).Scan(&unindexed))
+			if unindexed != 0 || after["check_raw_log_starts"] != before["check_raw_logs"] {
+				store.Close()
+				t.Fatalf("raw logs=%d starts=%d unindexed=%d", before["check_raw_logs"], after["check_raw_log_starts"], unindexed)
+			}
 			if _, err := store.RecoverySnapshot(ctx); err != nil {
 				store.Close()
 				t.Fatalf("snapshot of the upgraded state: %v", err)
