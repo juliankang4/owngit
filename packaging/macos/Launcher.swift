@@ -56,6 +56,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         self?.perform(action)
     }
     private var model = PanelModel()
+    /// macOS opened the app because the owner signed in, not because the
+    /// owner opened it.
+    private var openedAtSignIn = false
     private var timer: Timer?
     /// The callers waiting for the check that runs now, or nil when none
     /// runs.
@@ -68,6 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
     }()
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        openedAtSignIn = event?.eventID == kAEOpenApplication
+            && event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         popover.behavior = .transient
@@ -95,6 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             if report.available && report.shown {
                 startVisible()
+            } else if report.available && !openedAtSignIn {
+                // The owner opened the app: that asks for the icon.
+                showAgain()
             } else {
                 hideIcon()
             }
@@ -106,8 +118,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if statusItem != nil {
             showPanel()
-            return false
+        } else {
+            showAgain()
         }
+        return false
+    }
+
+    /// showAgain turns the hidden icon back on for this computer and shows
+    /// it, which also checks the service as opening the app does.
+    private func showAgain() {
         runHelper(["tray", "on", "--json", "--state-dir", stateDir.path]) { [self] result in
             guard result.status == 0 else {
                 fail(String(format: words.readFailed, result.failureText))
@@ -115,7 +134,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             startVisible()
         }
-        return false
     }
 
     // MARK: - Where things are
@@ -294,6 +312,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 case .unauthorized where retry:
                     // A new start wrote a new token.
                     requestStatus(retry: false, done: done)
+                case .noStatus:
+                    done(.unavailable(why: .noStatus))
                 case .unauthorized, .unavailable:
                     done(.unavailable(why: .noAnswer))
                 case .noConnection:
@@ -314,24 +334,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func perform(_ action: PanelAction) {
         switch action {
         case .openDashboard:
-            popover.performClose(nil)
             let accessFile = stateDir.appendingPathComponent("tray-access.json")
-            if let data = try? Data(contentsOf: accessFile),
-               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
-               let url = dashboardURL(access: access.url) {
-                NSWorkspace.shared.open(url)
+            guard let data = try? Data(contentsOf: accessFile),
+                  let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
+                  let url = dashboardURL(access: access.url)
+            else {
+                update { $0.failure = String(format: words.noDashboard, accessFile.path) }
+                return
             }
+            open(url)
         case .finishSetup:
             popover.performClose(nil)
             openSetup()
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-        case .openLink(let address):
-            popover.performClose(nil)
-            if let url = webLink(address) {
-                NSWorkspace.shared.open(url)
-            }
+        case .openLink(let url):
+            open(url)
         case .run(let arguments):
             run(arguments)
         case .hide:
@@ -356,6 +375,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.terminate(nil)
         case .close:
             popover.performClose(nil)
+        }
+    }
+
+    /// open opens an address in the browser and closes the panel, or keeps
+    /// the panel open with the failure.
+    private func open(_ url: URL) {
+        if NSWorkspace.shared.open(url) {
+            popover.performClose(nil)
+        } else {
+            update { $0.failure = String(format: words.openFailed, url.absoluteString) }
         }
     }
 
@@ -394,14 +423,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     /// The icon opens at sign-in by default. The choice is asked of macOS
     /// once; after that it is the owner's, in the panel or in System
-    /// Settings.
+    /// Settings. A registration that fails is tried again at the next open;
+    /// the settings view shows the switch off meanwhile, and turning it on
+    /// there shows the reason.
     private func setUpSignInOnce() {
         let key = "OpenAtSignInConfigured"
         if UserDefaults.standard.bool(forKey: key) {
             return
         }
-        try? SMAppService.mainApp.register()
-        UserDefaults.standard.set(true, forKey: key)
+        if (try? SMAppService.mainApp.register()) != nil {
+            UserDefaults.standard.set(true, forKey: key)
+        }
     }
 
     private func signInState() -> SignIn {

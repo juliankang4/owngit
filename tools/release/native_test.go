@@ -546,9 +546,10 @@ require(PanelState.status(needs).name == .attention && needs.update?.version == 
 
 require(statusAnswer(httpStatus: nil, body: nil) == .noConnection, "no connection")
 require(statusAnswer(httpStatus: 401, body: data("{}")) == .unauthorized, "401")
-for code in [403, 404, 405, 421, 503, -1] {
+for code in [403, 405, 421, 503, -1] {
     require(statusAnswer(httpStatus: code, body: data(running)) == .unavailable, "status \(code) is unavailable")
 }
+require(statusAnswer(httpStatus: 404, body: data("404 page not found")) == .noStatus, "a server without the status route")
 require(statusAnswer(httpStatus: 200, body: data("service unavailable")) == .unavailable, "a body that is not the status")
 require(statusAnswer(httpStatus: 200, body: data(running.replacingOccurrences(of: "\"running\"", with: "\"stopped\""))) == .unavailable, "an unknown state")
 
@@ -571,7 +572,8 @@ require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\",\"repair\":\"owngi
 require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\"}") == .unavailable(why: .silent(restart: [])), "silent without a service")
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}") == .unavailable(why: .addressTaken), "address taken")
 require(doctor("{\"code\":\"doctor.unchecked_server\",\"message\":\"why\",\"unchecked\":true}") == .unavailable(why: .unchecked(detail: "why")), "unchecked")
-require(doctor("", running: true) == .unavailable(why: .noAnswer), "running again")
+require(doctor("", running: true) == .unavailable(why: .noStatus), "a running server that writes no access file is older than the icon")
+require(doctor("") == .unavailable(why: .noAnswer), "not running and nothing named")
 require(doctorState(output: nil) == .unavailable(why: .noAnswer), "doctor failed")
 require(doctorState(output: data("{\"ok\":false}")) == .unavailable(why: .noAnswer), "doctor error JSON")
 
@@ -579,6 +581,7 @@ let helper = "/Applications/OwnGit.app/Contents/Helpers/owngit"
 let ours = InstalledAgent(program: helper, stateDir: nil)
 let otherApp = InstalledAgent(program: "/opt/other/OwnGit.app/Contents/Helpers/owngit", stateDir: nil)
 let brew = InstalledAgent(program: "/opt/homebrew/opt/owngit/bin/owngit", stateDir: nil)
+let earlierLayout = InstalledAgent(program: "/opt/other/OwnGit.app/Contents/Resources/bin/owngit", stateDir: nil)
 let start = PanelState.stopped(start: ["service", "start"])
 require(launchRepair(state: start, agent: nil, helper: helper, version: "1.1.3") == ["service", "start"], "start what doctor names")
 require(launchRepair(state: start, agent: brew, helper: helper, version: "1.1.3") == ["service", "start"], "start a Homebrew binary's service as it is")
@@ -588,6 +591,10 @@ require(launchRepair(state: .status(status), agent: ours, helper: helper, versio
 require(launchRepair(state: .status(status), agent: otherApp, helper: helper, version: "1.1.3") == ["service", "install"], "another app's service")
 require(launchRepair(state: .status(status), agent: brew, helper: helper, version: "1.1.4") == nil, "another program's service is the owner's choice")
 require(launchRepair(state: .unavailable(why: .noAnswer), agent: otherApp, helper: helper, version: "1.1.4") == nil, "nothing when the state is unknown")
+require(launchRepair(state: start, agent: earlierLayout, helper: helper, version: "1.1.3") == ["service", "install"], "a service of an earlier app layout moves to this app")
+require(launchRepair(state: .unavailable(why: .noStatus), agent: ours, helper: helper, version: "1.1.3") == ["service", "install"], "an earlier app's server at this path is restarted with this program")
+require(launchRepair(state: .unavailable(why: .noStatus), agent: earlierLayout, helper: helper, version: "1.1.3") == ["service", "install"], "an earlier app's server moves to this app")
+require(launchRepair(state: .unavailable(why: .noStatus), agent: brew, helper: helper, version: "1.1.3") == nil, "an older Homebrew server is the owner's to update")
 
 let plist = """
 <?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>ProgramArguments</key><array>

@@ -127,6 +127,9 @@ enum StateName: Equatable {
 enum Unavailable: Equatable {
     /// The server did not give a valid status answer.
     case noAnswer
+    /// OwnGit runs but does not offer the icon's status: a version older
+    /// than the icon.
+    case noStatus
     /// OwnGit runs but does not answer; restart holds owngit arguments that
     /// restart it, or is empty.
     case silent(restart: [String])
@@ -141,6 +144,8 @@ enum StatusAnswer: Equatable {
     case status(TrayStatus)
     case unauthorized
     case noConnection
+    /// The server answered without the status route.
+    case noStatus
     case unavailable
 }
 
@@ -152,6 +157,9 @@ func statusAnswer(httpStatus: Int?, body: Data?) -> StatusAnswer {
     }
     if httpStatus == 401 {
         return .unauthorized
+    }
+    if httpStatus == 404 {
+        return .noStatus
     }
     guard httpStatus == 200, let body,
           let status = try? JSONDecoder().decode(TrayStatus.self, from: body), status.ok,
@@ -181,9 +189,10 @@ func doctorState(output: Data?) -> PanelState {
     if let unchecked = codes["doctor.unchecked_server"] {
         return .unavailable(why: .unchecked(detail: unchecked.message))
     }
-    // running without such a finding: the server answers now; the next
-    // status request shows it.
-    return .unavailable(why: .noAnswer)
+    // Running without such a finding, while the status request found no
+    // access file or no server: a server that writes no access file is
+    // older than the icon.
+    return .unavailable(why: report.running ? .noStatus : .noAnswer)
 }
 
 /// The service commands the icon may run for the owner, as doctor names
@@ -207,9 +216,10 @@ struct InstalledAgent: Equatable {
     let program: String
     let stateDir: String?
 
-    /// isAppHelper reports whether the agent runs the helper inside an app
-    /// bundle, which the app that is opened keeps up to date.
-    var isAppHelper: Bool { program.contains(".app/Contents/Helpers/") }
+    /// isAppHelper reports whether the agent runs a program inside an app
+    /// bundle (this layout or an earlier one), which the app that is opened
+    /// keeps up to date.
+    var isAppHelper: Bool { program.contains(".app/Contents/") }
 }
 
 func readInstalledAgent(_ data: Data) -> InstalledAgent? {
@@ -226,18 +236,22 @@ func readInstalledAgent(_ data: Data) -> InstalledAgent? {
 }
 
 /// launchRepair decides what opening the app does about the service: the
-/// app makes sure OwnGit runs, and that a service which runs the helper of
+/// app makes sure OwnGit runs, and that a service which runs a program of
 /// an app runs the helper of this app at this version. A service that runs
 /// another program (Homebrew, npm, a program the owner placed) is left as
 /// it is. It returns the owngit arguments to run, or nil.
 func launchRepair(state: PanelState, agent: InstalledAgent?, helper: String, version: String) -> [String]? {
-    let otherApp = agent.map { $0.isAppHelper && $0.program != helper } ?? false
+    let appAgent = agent?.isAppHelper ?? false
+    let otherApp = appAgent && agent?.program != helper
     switch state {
     case .stopped(let start):
         return otherApp ? ["service", "install"] : start
     case .status(let status):
         let outdated = agent?.program == helper && status.version != version
         return otherApp || outdated ? ["service", "install"] : nil
+    case .unavailable(why: .noStatus):
+        // An earlier app's server still runs, possibly from this very path.
+        return appAgent ? ["service", "install"] : nil
     case .unavailable:
         return nil
     }
@@ -265,7 +279,7 @@ struct Words {
     let openDashboard, finishSetup, setupLine: String
     let updateLine, runInTerminal, copyCommand, howToUpdate, restartAfterUpdate: String
     let stoppedLine, start, restart, working: String
-    let noAnswerLine, silentLine, addressTakenLine, uncheckedLine: String
+    let noAnswerLine, noStatusLine, silentLine, addressTakenLine, uncheckedLine: String
     let hide, hideHelp: String
     let settings, settingsTitle, back: String
     let openAtSignIn, openAtSignInHelp, allowSignIn, openLoginItems: String
@@ -273,6 +287,7 @@ struct Words {
     let moveApp: String
     let failed: String
     let readFailed: String
+    let noDashboard, openFailed: String
 
     static let en = Words(
         lang: "en",
@@ -289,6 +304,7 @@ struct Words {
         stoppedLine: "OwnGit is not running.", start: "Start OwnGit", restart: "Restart OwnGit",
         working: "Working…",
         noAnswerLine: "OwnGit's status could not be read. The icon asks again in a moment.",
+        noStatusLine: "The OwnGit that runs is older than this icon and does not report its status. Update OwnGit, then restart it.",
         silentLine: "OwnGit is running but does not answer.",
         addressTakenLine: "Another program answers at OwnGit's address.",
         uncheckedLine: "OwnGit could not tell whether its server runs: %@",
@@ -300,7 +316,9 @@ struct Words {
         quit: "Quit the icon", quitHelp: "OwnGit keeps running. Open the OwnGit app to see the icon again.",
         moveApp: "Move OwnGit to your Applications folder, then open it from there.",
         failed: "That did not work: %@",
-        readFailed: "OwnGit could not read the icon setting: %@"
+        readFailed: "OwnGit could not read the icon setting: %@",
+        noDashboard: "OwnGit could not read this computer's dashboard address from %@. Start OwnGit and try again.",
+        openFailed: "macOS could not open %@."
     )
 
     static let ko = Words(
@@ -318,6 +336,7 @@ struct Words {
         stoppedLine: "OwnGit이 실행 중이 아닙니다.", start: "OwnGit 시작", restart: "OwnGit 다시 시작",
         working: "처리하는 중…",
         noAnswerLine: "OwnGit 상태를 읽지 못했습니다. 잠시 뒤 다시 확인합니다.",
+        noStatusLine: "실행 중인 OwnGit이 이 아이콘보다 오래된 버전이라 상태를 알려 주지 않습니다. OwnGit을 업데이트한 뒤 다시 시작하세요.",
         silentLine: "OwnGit이 실행 중이지만 응답하지 않습니다.",
         addressTakenLine: "다른 프로그램이 OwnGit 주소에서 응답하고 있습니다.",
         uncheckedLine: "OwnGit 서버가 실행 중인지 확인하지 못했습니다: %@",
@@ -329,7 +348,9 @@ struct Words {
         quit: "아이콘 종료", quitHelp: "OwnGit은 계속 실행됩니다. OwnGit 앱을 다시 열면 아이콘이 나타납니다.",
         moveApp: "OwnGit을 응용 프로그램 폴더로 옮긴 뒤 그곳에서 여세요.",
         failed: "완료하지 못했습니다: %@",
-        readFailed: "OwnGit 아이콘 설정을 읽지 못했습니다: %@"
+        readFailed: "OwnGit 아이콘 설정을 읽지 못했습니다: %@",
+        noDashboard: "%@에서 이 컴퓨터의 대시보드 주소를 읽지 못했습니다. OwnGit을 시작한 뒤 다시 해 보세요.",
+        openFailed: "macOS가 %@ 주소를 열지 못했습니다."
     )
 
     /// forLanguages picks Korean when the first preferred language is

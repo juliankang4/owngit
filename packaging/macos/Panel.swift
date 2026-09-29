@@ -27,7 +27,7 @@ enum PanelAction {
     case openDashboard
     case finishSetup
     case copy(String)
-    case openLink(String)
+    case openLink(URL)
     case run([String])
     case hide
     case settings(Bool)
@@ -241,7 +241,11 @@ final class PanelViewController: NSViewController {
             if let update = status.update {
                 lines.append(label(String(format: words.updateLine, update.version, status.version)))
                 if update.command.isEmpty {
-                    lines.append(PanelButton(title: words.howToUpdate) { [perform] _ in perform(.openLink(update.guide_url)) })
+                    if let guide = webLink(update.guide_url) {
+                        lines.append(PanelButton(title: words.howToUpdate) { [perform] _ in perform(.openLink(guide)) })
+                    } else if !update.guide_url.isEmpty {
+                        lines.append(label(update.guide_url, secondary: true, size: 11, selectable: true))
+                    }
                 } else {
                     lines.append(label(words.runInTerminal, secondary: true, size: 11))
                     lines.append(code(update.command))
@@ -268,6 +272,8 @@ final class PanelViewController: NSViewController {
             switch why {
             case .noAnswer:
                 return [label(words.noAnswerLine)]
+            case .noStatus:
+                return [label(words.noStatusLine)]
             case .silent(let restart):
                 var lines: [NSView] = [label(words.silentLine)]
                 if !restart.isEmpty {
@@ -475,8 +481,8 @@ private func strokeMark(scale: CGFloat, lineWidth: CGFloat) {
 
 /// menuBarImage is the monochrome menu bar icon without a background. A
 /// stopped server dims the mark and adds a slashed circle; attention adds a
-/// dot; an unknown status dims the mark. The image is a template, so macOS
-/// draws it in the menu bar's own color.
+/// dot; an unknown status dims the mark and adds a question mark. The image
+/// is a template, so macOS draws it in the menu bar's own color.
 func menuBarImage(_ name: StateName?) -> NSImage {
     let size: CGFloat = 18
     let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
@@ -484,7 +490,9 @@ func menuBarImage(_ name: StateName?) -> NSImage {
         let dimmed = name == .stopped || name == .unavailable
         NSColor.black.withAlphaComponent(dimmed ? 0.55 : 1).setStroke()
         strokeMark(scale: scale, lineWidth: 3.6)
-        guard name == .stopped || name == .attention, let context = NSGraphicsContext.current else {
+        guard name == .stopped || name == .attention || name == .unavailable,
+              let context = NSGraphicsContext.current
+        else {
             return true
         }
         let badge = NSRect(x: 23.5 * scale, y: 23.5 * scale, width: 17 * scale, height: 17 * scale)
@@ -494,6 +502,13 @@ func menuBarImage(_ name: StateName?) -> NSImage {
         NSColor.black.set()
         if name == .attention {
             NSBezierPath(ovalIn: badge.insetBy(dx: 1.5 * scale, dy: 1.5 * scale)).fill()
+        } else if name == .unavailable {
+            let mark = NSAttributedString(string: "?", attributes: [
+                .font: NSFont.systemFont(ofSize: 21 * scale, weight: .heavy),
+                .foregroundColor: NSColor.black,
+            ])
+            let fits = mark.size()
+            mark.draw(at: NSPoint(x: badge.midX - fits.width / 2, y: badge.midY - fits.height / 2))
         } else {
             let ring = NSBezierPath(ovalIn: badge.insetBy(dx: 1 * scale, dy: 1 * scale))
             ring.lineWidth = 2 * scale
