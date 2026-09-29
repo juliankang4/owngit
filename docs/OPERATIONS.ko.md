@@ -64,9 +64,9 @@ curl 옵션은 모든 요청과 리디렉션을 HTTPS로만 하게 하고 `-Maxi
 
 한 줄 명령은 owngit.app이 HTTPS로 내주는 스크립트를 확인 없이 바로 실행합니다. `SHA256SUMS`에는 압축 파일만 들어 있고, 설치 스크립트와 `proxmox.sh`의 SHA-256은 릴리스의 `manifest.json`에 기록됩니다. 실행하기 전에 스크립트를 확인하려면 이렇게 합니다.
 
-1. 릴리스에서 `install.sh`나 `install.ps1`을 내려받습니다.
+1. 릴리스에서 `install.sh`, `install.ps1`, `proxmox.sh` 중 필요한 파일을 내려받습니다.
 2. 그 SHA-256을 `manifest.json`이나, 릴리스 페이지에서 GitHub가 그 파일에 보여 주는 값과 비교합니다. 그 릴리스 태그의 `packaging/installer/`와 파일을 비교해도 됩니다.
-3. 내용을 읽어 본 뒤 `/bin/sh install.sh`나 `& .\install.ps1`로 실행합니다.
+3. 내용을 읽어 본 뒤 `/bin/sh install.sh`, `& .\install.ps1`, `/bin/sh proxmox.sh`로 실행합니다.
 
 ## 처음 설정하기
 
@@ -414,8 +414,8 @@ Proxmox VE 호스트에서는 명령 하나로 OwnGit용 컨테이너를 만들�
 
 스크립트는 다음 순서로 진행합니다.
 
-1. 비어 있는 다음 ID로 `owngit`이라는 이름의 권한 없는(unprivileged) Debian 13 컨테이너를 만듭니다. 코어 2개, 메모리 1024MB, 스왑 512MB, `local-lvm`(없으면 `local-zfs`)에 8GB 디스크를 두고, 브리지 `vmbr0`에 DHCP로 연결합니다. 컨테이너에는 `owngit` 태그가 붙고, 호스트가 켜질 때 함께 시작하며, `nesting` 기능이 켜집니다. 권한 없는 컨테이너에서 Debian 13의 systemd가 제대로 돌려면 이 기능이 필요합니다.
-2. 호스트에 `debian-13-standard` 템플릿이 없으면 `pveam`으로 최신 템플릿을 내려받습니다. `pveam`은 Proxmox의 서명된 템플릿 목록과 대조해 확인합니다.
+1. 호스트에 `debian-13-standard` 템플릿이 없으면 `pveam`으로 최신 템플릿을 내려받습니다. `pveam`은 Proxmox의 서명된 템플릿 목록과 대조해 확인합니다.
+2. 비어 있는 다음 ID로 `owngit`이라는 이름의 권한 없는(unprivileged) Debian 13 컨테이너를 만듭니다. 코어 2개, 메모리 1024MB, 스왑 512MB, `local-lvm`(없으면 `local-zfs`)에 8GB 디스크를 두고, 브리지 `vmbr0`에 DHCP로 연결합니다. 컨테이너에는 `owngit` 태그가 붙고, 호스트가 켜질 때 함께 시작하며, `nesting` 기능이 켜집니다. 권한 없는 컨테이너에서 Debian 13의 systemd가 제대로 돌려면 이 기능이 필요합니다.
 3. 컨테이너 안에 Git과 설치 스크립트에 필요한 도구를 설치하고 패키지를 업데이트한 뒤 릴리스의 `install.sh`를 실행합니다. [한 줄 설치](#한-줄-설치)에서 설명한 대로 설치 스크립트는 압축 파일을 `SHA256SUMS`와 대조하고, 프로그램을 `/usr/local/bin/owngit`에 둔 뒤 root로 `owngit service install`을 실행합니다. 그래서 서비스는 `owngit` 계정으로 실행되고 상태는 `/var/lib/owngit/state`에 있습니다([root로 설치하기](#root로-설치하기) 참고).
 4. `--repositories`를 주면 호스트의 폴더를 저장소 폴더로 OwnGit에 연결합니다(아래 참고).
 5. OwnGit이 응답할 때까지 기다린 뒤 컨테이너 주소를 보여 줍니다. 터미널에서 실행했다면 설정 링크도 보여 주고, 아니면 링크를 보여 주는 명령을 알려 줍니다.
@@ -435,7 +435,7 @@ OwnGit 릴리스에서 받은 것은 호스트에서 실행되지 않습니다. 
 | `--storage NAME` | 컨테이너 디스크를 이 스토리지에 둡니다. |
 | `--disk GB`, `--cores N`, `--memory MB` | 디스크 크기, CPU 코어 수, 메모리를 정합니다. |
 | `--bridge NAME` | `vmbr0` 대신 이 브리지에 연결합니다. |
-| `--ip ADDRESS/PREFIX`, `--gateway ADDRESS` | DHCP 대신 `192.168.1.50/24` 같은 고정 IPv4 주소를 줍니다. |
+| `--ip ADDRESS/PREFIX`, `--gateway ADDRESS` | DHCP 대신 `192.168.1.50/24` 같은 고정 IPv4 주소와 게이트웨이를 줍니다. 둘 다 주어야 합니다. |
 | `--repositories FOLDER` | 저장소를 호스트의 FOLDER에 둡니다. |
 | `--template VOLUME` | 이미 있는 Debian 13 템플릿을 씁니다. 예: `local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst` |
 | `--version X.Y.Z` | 최신 릴리스 대신 그 릴리스(1.1.3 이상)를 설치합니다. |
@@ -452,7 +452,7 @@ pct exec 105 -- /usr/local/bin/owngit service status
 
 `--repositories /tank/owngit`을 주면 저장소는 호스트의 `/tank/owngit`(예: ZFS 데이터셋)에 남습니다. 컨테이너 안에서는 이 폴더가 설정에서 제안하는 폴더인 `/var/lib/owngit/OwnGit-Repositories`로 보이므로, 설정에서 제안된 폴더를 그대로 쓰세요.
 
-- 폴더는 새 폴더이거나 비어 있어야 하고, 경로에 링크가 끼어 있으면 안 됩니다. 이미 있는 폴더라면 그 폴더와, 그 위의 폴더가 모두 root 소유여야 하고 root만 바꿀 수 있어야 합니다. 그래야 호스트의 다른 계정이 폴더를 다른 곳으로 돌려놓거나, 컨테이너가 넘겨받기 전에 파일을 넣어 둘 수 없습니다. OwnGit용으로 만든 폴더라면 `chown root:root FOLDER && chmod go-w FOLDER`로 이렇게 맞출 수 있습니다.
+- 폴더는 새 폴더이거나 비어 있어야 하고, 경로에 링크가 끼어 있으면 안 됩니다. 이미 있는 폴더라면 그 폴더와, 그 위의 폴더가 모두 root 소유여야 하고 root만 바꿀 수 있어야 합니다. 그래야 호스트의 다른 계정이 폴더를 다른 곳으로 돌려놓거나, 컨테이너가 넘겨받기 전에 파일을 넣어 둘 수 없습니다. OwnGit용으로 만든 폴더라면 `chown root:root FOLDER && chmod go-w FOLDER`로 이렇게 맞출 수 있습니다. 폴더 자체는 없어도 되지만, 바로 위 폴더는 있어야 합니다.
 - 권한 없는 컨테이너에서는 컨테이너 안 계정이 호스트에서 다른 ID(보통 100000을 더한 값)로 보입니다. 스크립트는 컨테이너의 `owngit` 계정이 호스트에서 갖는 ID에게 폴더를 넘기고 모드를 0700으로 하며, 호스트의 다른 것은 바꾸지 않습니다.
 - 폴더를 붙이려고 스크립트는 OwnGit을 설치한 뒤 컨테이너를 한 번 멈췄다가 다시 시작합니다.
 - Proxmox 백업(`vzdump`)에는 호스트 폴더가 들어가지 않습니다. 저장소는 [`owngit backup`](#오프라인-백업)이나 호스트 자체 백업으로 백업하세요. 호스트 폴더가 붙은 컨테이너는 다른 노드로 옮길(migrate) 수 없습니다.

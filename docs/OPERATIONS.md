@@ -64,9 +64,9 @@ The installer is in `packaging/installer/` of the source, and every release carr
 
 The one-line command runs the script that owngit.app serves over HTTPS before anything checks it. `SHA256SUMS` lists only the archives; the release's `manifest.json` records the SHA-256 of the installers and of `proxmox.sh`. To check the script before it runs:
 
-1. Download `install.sh` or `install.ps1` from the release.
+1. Download `install.sh`, `install.ps1` or `proxmox.sh` from the release.
 2. Compare its SHA-256 with `manifest.json`, or with the one GitHub shows for that file on the release page. You can also compare the file with `packaging/installer/` at the release's tag.
-3. Read it, then run the file with `/bin/sh install.sh` or `& .\install.ps1`.
+3. Read it, then run the file with `/bin/sh install.sh`, `& .\install.ps1` or `/bin/sh proxmox.sh`.
 
 ## First-time setup
 
@@ -414,8 +414,8 @@ On a Proxmox VE host, one command creates a container for OwnGit and installs Ow
 
 The script takes these steps:
 
-1. It creates an unprivileged Debian 13 container named `owngit` with the next free ID: 2 cores, 1024 MB of memory, 512 MB of swap, an 8 GB disk on `local-lvm` (or `local-zfs`), and the bridge `vmbr0` with DHCP. The container has the tag `owngit`, starts with the host, and has the `nesting` feature, which systemd in Debian 13 needs in an unprivileged container.
-2. When the host has no `debian-13-standard` template yet, it downloads the newest one with `pveam`, which checks it against Proxmox's signed template list.
+1. When the host has no `debian-13-standard` template yet, it downloads the newest one with `pveam`, which checks it against Proxmox's signed template list.
+2. It creates an unprivileged Debian 13 container named `owngit` with the next free ID: 2 cores, 1024 MB of memory, 512 MB of swap, an 8 GB disk on `local-lvm` (or `local-zfs`), and the bridge `vmbr0` with DHCP. The container has the tag `owngit`, starts with the host, and has the `nesting` feature, which systemd in Debian 13 needs in an unprivileged container.
 3. In the container, it installs Git and the tools the installer needs, updates the packages, and runs the release's `install.sh`. As described in [One-line installer](#one-line-installer), the installer checks the archive against `SHA256SUMS`, puts the program at `/usr/local/bin/owngit` and runs `owngit service install` as root. So the account `owngit` runs the service, with the state in `/var/lib/owngit/state` (see [Installing as root](#installing-as-root)).
 4. With `--repositories`, it gives OwnGit a folder of the host for the repositories (see below).
 5. It waits until OwnGit answers and prints the container's address. Run from a terminal, it also prints the setup link; otherwise it prints the command that shows the link.
@@ -435,7 +435,7 @@ Options go after `/bin/sh -s --`:
 | `--storage NAME` | Puts the container's disk on this storage. |
 | `--disk GB`, `--cores N`, `--memory MB` | Sets the disk size, the CPU cores and the memory. |
 | `--bridge NAME` | Connects the container to this bridge instead of `vmbr0`. |
-| `--ip ADDRESS/PREFIX`, `--gateway ADDRESS` | Gives the container a fixed IPv4 address, such as `192.168.1.50/24`, instead of DHCP. |
+| `--ip ADDRESS/PREFIX`, `--gateway ADDRESS` | Gives the container a fixed IPv4 address, such as `192.168.1.50/24`, and its gateway instead of DHCP. Give both. |
 | `--repositories FOLDER` | Keeps the repositories in FOLDER on the host. |
 | `--template VOLUME` | Uses a Debian 13 template you already have, such as `local:vztmpl/debian-13-standard_13.6-1_amd64.tar.zst`. |
 | `--version X.Y.Z` | Installs that release (1.1.3 or later) instead of the latest one. |
@@ -452,7 +452,7 @@ pct exec 105 -- /usr/local/bin/owngit service status
 
 With `--repositories /tank/owngit`, the repositories stay in `/tank/owngit` on the host, for example on a ZFS dataset. The container sees that folder as `/var/lib/owngit/OwnGit-Repositories`, the folder that setup suggests, so keep the suggested folder in setup.
 
-- The folder must be new or empty, and its path must not go through a link. The folder, when it exists, and every folder above it must belong to root, and only root may be able to change them, so that no other account on the host can redirect the folder or put files in it before the container gets it. For a folder that you made for OwnGit, `chown root:root FOLDER && chmod go-w FOLDER` does that.
+- The folder must be new or empty, and its path must not go through a link. The folder, when it exists, and every folder above it must belong to root, and only root may be able to change them, so that no other account on the host can redirect the folder or put files in it before the container gets it. For a folder that you made for OwnGit, `chown root:root FOLDER && chmod go-w FOLDER` does that. The folder may be missing, but the folder above it must exist.
 - In an unprivileged container, the container's accounts have different IDs on the host, usually 100000 higher. The script gives the folder to the host ID of the container's `owngit` account, with mode 0700, and changes nothing else on the host.
 - To add the folder, the script stops the container once after installing OwnGit and starts it again.
 - Proxmox backups (`vzdump`) do not include a folder of the host. Back up the repositories with [`owngit backup`](#offline-backups) or with the host's own backups. A container with a folder of the host cannot be migrated to another node.
