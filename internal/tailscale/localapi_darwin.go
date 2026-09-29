@@ -65,7 +65,8 @@ func macApp(path string) bool {
 // dialDarwin connects to the app's LocalAPI when the app answers for this
 // user, and otherwise to the open source tailscaled's socket. When neither
 // answers because this account may not read the Standalone app's password,
-// that is the reason given.
+// that is the reason given, unless a socket is there that OwnGit does not
+// trust (KindUntrustedSocket), which is the more specific reason.
 func dialDarwin(ctx context.Context) (net.Conn, string, error) {
 	port, password, appErr := macAppCredentials(ctx)
 	if appErr == nil {
@@ -77,7 +78,7 @@ func dialDarwin(ctx context.Context) (net.Conn, string, error) {
 		return nil, "", ctx.Err()
 	}
 	conn, _, err := unixSocket(openSourceSocket)(ctx)
-	if err != nil && !errors.Is(appErr, errNoMacApp) {
+	if err != nil && KindOf(err) != KindUntrustedSocket && !errors.Is(appErr, errNoMacApp) {
 		return nil, "", appErr
 	}
 	return conn, "", err

@@ -112,6 +112,11 @@ func TestMacLocalAPIFollowsTheTailscaleCommandsOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 		check("Standalone app unreadable, socket", "", false)
+		tailscaledUID = uint32(os.Geteuid()) + 1
+		if _, _, err := dialDarwin(context.Background()); KindOf(err) != KindUntrustedSocket {
+			t.Errorf("Standalone app unreadable, socket of another account: err=%v", err)
+		}
+		tailscaledUID = uint32(os.Geteuid())
 		tailscaled.Close()
 		os.Remove(openSourceSocket)
 		if _, _, err := dialDarwin(context.Background()); KindOf(err) != KindMacAppAdmin {
