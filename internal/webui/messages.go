@@ -680,8 +680,8 @@ var catalog = map[MessageCode]message{
 	// the notice must neither promise safety nor declare every HTTP setup
 	// wholly exposed.
 	MsgSetupInsecureHelp: {
-		en: "OwnGit serves this page over plain HTTP and adds no encryption of its own. On an ordinary LAN with nothing else protecting the connection, passwords, sessions, and repository contents can be read by others on the network. A VPN or similar protection may already cover this path, but OwnGit cannot check that.",
-		ko: "OwnGit은 이 페이지를 일반 HTTP로 제공하며 따로 암호화하지 않습니다. 다른 보호 장치가 없는 일반 LAN에서는 비밀번호와 세션, 저장소 내용을 같은 네트워크의 다른 사람이 읽을 수 있습니다. VPN 같은 보호가 이미 적용되어 있을 수도 있지만 OwnGit은 그 여부를 확인할 수 없습니다.",
+		en: "OwnGit uses plain HTTP and adds no encryption of its own. On an ordinary LAN with nothing else protecting the connection, passwords, sessions, and repository contents can be read by others on the network. A VPN or similar protection may already cover this path, but OwnGit cannot check that.",
+		ko: "OwnGit은 일반 HTTP를 쓰며 따로 암호화하지 않습니다. 다른 보호 장치가 없는 일반 LAN에서는 비밀번호와 세션, 저장소 내용을 같은 네트워크의 다른 사람이 읽을 수 있습니다. VPN 같은 보호가 이미 적용되어 있을 수도 있지만 OwnGit은 그 여부를 확인할 수 없습니다.",
 	},
 	MsgSetupInsecureNeed: {
 		en: "Confirm that you understand OwnGit is not encrypting this connection.",
