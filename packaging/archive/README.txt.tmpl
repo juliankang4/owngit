@@ -13,8 +13,13 @@ Requirements
 
 Start
   {{.Invocation}} serve
-  The first run writes a one-time owner setup file and opens it in a browser.
-  The path is also logged. Add -no-open to print the path without opening it.
+  The first start from a terminal runs setup there. Choose English or Korean,
+  then "Continue in this terminal" or "Open the web dashboard"; in the
+  browser you get a short code to approve in the terminal.
+  Started without a terminal, OwnGit writes an owner-readable setup file in
+  the state directory, logs the file's path, and opens the file in a browser
+  unless it was started with --no-open. {{.Invocation}} setup-link prints a
+  new link.
   The dashboard listens on 127.0.0.1:7654 by default.
 
 {{if .IconApp}}Menu bar icon
