@@ -233,13 +233,17 @@ func sqliteFileURI(path string) string {
 // the database's own schema may call a function with side effects or use a
 // virtual table; OwnGit's schema needs neither. This backs up the catalog
 // check (classifySchema), which is what refuses statements no build wrote.
+// Each connection also enforces foreign keys and waits up to 5 seconds for
+// a lock. They are set here, not once after opening, because database/sql
+// replaces a connection that an interrupted statement left unusable, and
+// the replacement has only what this URI gives it.
 func sqliteURI(path, query string) string {
 	slashPath := filepath.ToSlash(path)
 	if len(slashPath) >= 3 && slashPath[1] == ':' && slashPath[2] == '/' &&
 		(('a' <= slashPath[0] && slashPath[0] <= 'z') || ('A' <= slashPath[0] && slashPath[0] <= 'Z')) {
 		slashPath = "/" + slashPath
 	}
-	return (&url.URL{Scheme: "file", Path: slashPath, RawQuery: query + "&_pragma=trusted_schema(0)"}).String()
+	return (&url.URL{Scheme: "file", Path: slashPath, RawQuery: query + "&_pragma=trusted_schema(0)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"}).String()
 }
 
 // initialize prepares the accepted database. The inspection result selects
@@ -247,15 +251,6 @@ func sqliteURI(path, query string) string {
 // write. A migration candidate is reclassified again inside the immediate
 // write transaction that applies the authorized schema steps.
 func (s *Store) initialize(ctx context.Context, expected schemaClass) error {
-	// Connection settings first, because they are not persistent writes.
-	for _, pragma := range []string{
-		`PRAGMA foreign_keys=ON`,
-		`PRAGMA busy_timeout=5000`,
-	} {
-		if _, err := s.db.ExecContext(ctx, pragma); err != nil {
-			return fmt.Errorf("initialize state database: %w", err)
-		}
-	}
 	// classifySchema reads the schema in several queries. One read
 	// transaction gives them one snapshot, so a migration that another
 	// process commits in between cannot mix an empty and a finished schema.
@@ -546,12 +541,20 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	// SQLite would first delete every child row through ON DELETE CASCADE.
 	// Enforcement is therefore off for the migration connection, which is the
 	// only one, and is checked before commit and restored afterwards. The
-	// pragma has no effect inside a transaction, so it is set around it.
-	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+	// pragma has no effect inside a transaction, so it is set around it. The
+	// migration holds that one connection throughout: a new connection would
+	// enforce foreign keys again (sqliteURI), and a held one that breaks
+	// fails instead of being replaced.
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare state schema migration: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
 		return fmt.Errorf("prepare state schema migration: %w", err)
 	}
 	defer func() {
-		if _, restoreErr := s.db.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`); restoreErr != nil {
+		if _, restoreErr := conn.ExecContext(context.WithoutCancel(ctx), `PRAGMA foreign_keys=ON`); restoreErr != nil {
 			err = errors.Join(err, fmt.Errorf("restore foreign key enforcement after schema migration: %w", restoreErr))
 		}
 	}()
@@ -562,7 +565,7 @@ func (s *Store) migrate(ctx context.Context, expected schemaClass) (err error) {
 	if err != nil {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

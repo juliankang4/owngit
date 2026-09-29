@@ -197,33 +197,10 @@ func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
 	// logs kept, copied from one recorded attempt.
 	task := newProjectTask(t, store, ctx, now)
 	_, template := recordAttemptWithLog(t, store, attemptFor(task, strings.Repeat("a", 40), now, AttemptFailed), "template")
-	columns, err := store.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('check_attempts')`)
-	noErr(t, err)
-	var names, values []string
-	for columns.Next() {
-		var name string
-		noErr(t, columns.Scan(&name))
-		names = append(names, name)
-		switch name {
-		case "id", "log_id":
-			values = append(values, "printf('%032x',n)")
-		case "created_at":
-			values = append(values, "?+n")
-		default:
-			values = append(values, name)
-		}
-	}
-	noErr(t, columns.Err())
-	noErr(t, columns.Close())
-	copies := `WITH RECURSIVE seq(n) AS (SELECT ? UNION ALL SELECT n+1 FROM seq WHERE n<?)
-		INSERT INTO check_attempts(` + strings.Join(names, ",") + `) SELECT ` + strings.Join(values, ",") + ` FROM seq, check_attempts WHERE id=?`
 	old, recent := now.Add(-400*24*time.Hour).Unix(), now.Add(-24*time.Hour).Unix()
-	noErr(t, store.Exec(ctx, copies, 1, 28000, old, template.ID))
-	noErr(t, store.Exec(ctx, copies, 28001, 36000, recent-28000, template.ID))
-	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_logs(attempt_id,content,expires_at)
-		SELECT id,x'2e',created_at+2592000 FROM check_attempts WHERE id BETWEEN printf('%032x',20001) AND printf('%032x',36000)`))
-	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id)
-		SELECT a.created_at,a.id FROM check_attempts a WHERE a.id BETWEEN printf('%032x',20001) AND printf('%032x',36000)`))
+	copyAttempts(t, store, template.ID, 1, 28000, old)
+	copyAttempts(t, store, template.ID, 28001, 36000, recent-28000)
+	addRawLogs(t, store, 20001, 36000)
 	week := CheckLogs7Days
 	noErr(t, store.SavePolicies(ctx, PolicyChange{CheckLogs: &week}))
 
@@ -274,5 +251,78 @@ func TestTransferSecondsAreCheckedBeforeTheyAreConverted(t *testing.T) {
 		if limits, err := store.GitTransferLimits(ctx); !errors.As(err, &policyErr) {
 			t.Errorf("stored %d seconds read as %+v, err=%v", seconds, limits, err)
 		}
+	}
+}
+
+// copyAttempts copies the attempt templateID as attempts from to to, whose
+// IDs are the numbers in hex and whose checks started at base plus the
+// number, in seconds.
+func copyAttempts(t *testing.T, store *Store, templateID string, from, to int, base int64) {
+	t.Helper()
+	ctx := context.Background()
+	columns, err := store.db.QueryContext(ctx, `SELECT name FROM pragma_table_info('check_attempts')`)
+	noErr(t, err)
+	var names, values []string
+	for columns.Next() {
+		var name string
+		noErr(t, columns.Scan(&name))
+		names = append(names, name)
+		switch name {
+		case "id", "log_id":
+			values = append(values, "printf('%032x',n)")
+		case "created_at":
+			values = append(values, "?+n")
+		default:
+			values = append(values, name)
+		}
+	}
+	noErr(t, columns.Err())
+	noErr(t, columns.Close())
+	noErr(t, store.Exec(ctx, `WITH RECURSIVE seq(n) AS (SELECT ? UNION ALL SELECT n+1 FROM seq WHERE n<?)
+		INSERT INTO check_attempts(`+strings.Join(names, ",")+`) SELECT `+strings.Join(values, ",")+` FROM seq, check_attempts WHERE id=?`,
+		from, to, base, templateID))
+}
+
+// addRawLogs gives the copied attempts from to to a one-byte raw log each,
+// as a completion stores it.
+func addRawLogs(t *testing.T, store *Store, from, to int) {
+	t.Helper()
+	ctx := context.Background()
+	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_logs(attempt_id,content,expires_at)
+		SELECT id,x'2e',created_at+2592000 FROM check_attempts WHERE id BETWEEN printf('%032x',?) AND printf('%032x',?)`, from, to))
+	noErr(t, store.Exec(ctx, `INSERT INTO check_raw_log_starts(started_at,attempt_id)
+		SELECT created_at,id FROM check_attempts WHERE id BETWEEN printf('%032x',?) AND printf('%032x',?)`, from, to))
+}
+
+// A statement interrupted by its context leaves its connection unusable,
+// and database/sql opens another. The new connection enforces foreign keys
+// and waits for locks like the first, so a cleanup after the interruption
+// still removes every due log and its start row.
+func TestConnectionSettingsSurviveAnInterruptedStatement(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
+	_, template := recordAttemptWithLog(t, store, attemptFor(task, strings.Repeat("a", 40), now, AttemptFailed), "template")
+	copyAttempts(t, store, template.ID, 1, 40, now.Add(-400*24*time.Hour).Unix())
+	addRawLogs(t, store, 1, 40)
+
+	interrupted, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	var sum int64
+	err := store.db.QueryRowContext(interrupted, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<2000000000) SELECT sum(i) FROM n`).Scan(&sum)
+	cancel()
+	if err == nil {
+		t.Fatal("the long statement was not interrupted")
+	}
+	var foreignKeys, busyTimeout, trustedSchema int
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT (SELECT foreign_keys FROM pragma_foreign_keys),(SELECT timeout FROM pragma_busy_timeout),(SELECT trusted_schema FROM pragma_trusted_schema)`).Scan(&foreignKeys, &busyTimeout, &trustedSchema))
+	if foreignKeys != 1 || busyTimeout != 5000 || trustedSchema != 0 {
+		t.Fatalf("after an interrupted statement foreign_keys=%d busy_timeout=%d trusted_schema=%d", foreignKeys, busyTimeout, trustedSchema)
+	}
+	if removed, err := store.PruneCheckLogs(ctx, now); err != nil || removed != 40 {
+		t.Fatalf("cleanup after an interrupted statement removed %d, err=%v", removed, err)
+	}
+	var logs, starts int
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM check_raw_logs),(SELECT COUNT(*) FROM check_raw_log_starts)`).Scan(&logs, &starts))
+	if logs != 1 || starts != 1 {
+		t.Fatalf("after cleanup logs=%d starts=%d, want only the kept one", logs, starts)
 	}
 }
