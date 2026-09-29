@@ -20,7 +20,8 @@ const (
 )
 
 // Verification is the result of rehearsing a restore (Verify). Verified is
-// set only when every step passed; otherwise Error says why not, and each
+// set only when every step passed and the rehearsal folder was removed;
+// otherwise Error says why not, and each
 // repository says whether its own checks passed, failed or did not run.
 type Verification struct {
 	Backup   string `json:"backup"`
@@ -110,17 +111,19 @@ func verify(ctx context.Context, input, temporary, gitPath string, operations re
 	case diskFull(err):
 		err = &SpaceError{Dir: area.Dir(), Err: err}
 	}
-	if err != nil {
-		result.Error = err.Error()
-	} else {
-		result.Verified = true
-	}
+	// A verification ends only once its folder is gone: a copy of the
+	// backup left behind is not a finished verification.
 	if removeErr := area.RemoveStage(); removeErr != nil {
 		removeErr = fmt.Errorf("remove the rehearsal folder %s: %w", scratch, removeErr)
 		result.CleanupError = removeErr.Error()
 		err = errors.Join(err, removeErr)
 	}
-	return result, err
+	if err != nil {
+		result.Error = err.Error()
+		return result, err
+	}
+	result.Verified = true
+	return result, nil
 }
 
 // rehearse restores input into scratch and checks the restored database.

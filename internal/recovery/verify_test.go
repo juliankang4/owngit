@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -283,4 +284,31 @@ func TestVerifyRemovesItsFolderWhenInterrupted(t *testing.T) {
 		t.Fatalf("result=%+v err=%v", result, err)
 	}
 	assertOnlyLeft(t)
+}
+
+// A verification whose folder could not be removed is not verified, and
+// says why.
+func TestVerifyIsNotVerifiedUntilItsFolderIsGone(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("the fault is a Unix folder mode, which does not stop root")
+	}
+	backup := newTwoRepositoryBackup(t, t.TempDir())
+	temporary := filepath.Join(t.TempDir(), "temporary")
+	noErr(t, os.Mkdir(temporary, 0o700))
+	operations := defaultRestoreOperations()
+	operations.openState = func(ctx context.Context, dir string) (*state.Store, error) {
+		// Once the rehearsal is published, its folder can no longer be
+		// removed from the temporary folder.
+		if filepath.Base(dir) == "state" {
+			if err := os.Chmod(temporary, 0o500); err != nil {
+				return nil, err
+			}
+		}
+		return state.Open(ctx, dir)
+	}
+	result, err := verify(context.Background(), backup, temporary, "", operations)
+	noErr(t, os.Chmod(temporary, 0o700))
+	if err == nil || result.Verified || !strings.Contains(result.Error, "remove the rehearsal folder") || result.CleanupError == "" || result.Database != VerifyPassed {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
 }

@@ -1037,16 +1037,12 @@ func restoreState(arguments []string) error {
 	defer stop()
 	if *verifyFirst {
 		result, err := recovery.Verify(ctx, *input, *temporary, *gitPath)
-		if !result.Verified {
+		if !result.Verified || err != nil {
 			printVerification(os.Stdout, result)
 			printSpaceHint(os.Stdout, err)
-			return errors.New("the backup did not pass verification, so nothing was restored")
+			return errors.New("the backup was not verified, so nothing was restored")
 		}
 		fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(result.Repositories))
-		if err != nil {
-			// Only the rehearsal folder was left behind.
-			fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-		}
 	}
 	if err := recovery.Restore(ctx, *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
 		return err
