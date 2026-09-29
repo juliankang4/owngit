@@ -254,7 +254,7 @@ func TransferOperationSeconds(seconds int64) (time.Duration, error) {
 // Validate checks the limits against their bounds.
 func (l GitTransferLimits) Validate() error {
 	if !ValidTransferBytes(l.MaximumBytes) {
-		return errors.New("the largest transfer is from 1 MiB to 64 GiB")
+		return errors.New("the largest transfer is from 1 MB to 64 GB (1 GB is 1024 MB)")
 	}
 	if !ValidTransferOperation(l.Operation) {
 		return errors.New("the longest transfer is a whole number of seconds from 1 minute to 24 hours")
