@@ -14,8 +14,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,7 +28,10 @@ import (
 	"owngit/internal/state"
 )
 
-var errManifestTooLarge = errors.New("backup manifest is larger than the 64 MiB that backup version 10 and older allow")
+var (
+	errManifestTooLarge = errors.New("backup manifest is larger than the 64 MiB that backup version 10 and older allow")
+	errManifestStart    = errors.New("backup manifest does not start with its format and version")
+)
 
 // errDirectReviewManifest refuses records of the removed built-in review,
 // which only unreleased development builds wrote.
@@ -51,13 +56,20 @@ const (
 	// descriptions, edits and review notes, actors, repository names and
 	// policies, and import refresh behaviour (format11Content).
 	backupVersion = 11
+	// manifestLimit is the most a backup holds: 1 GiB of OwnGit records in
+	// its manifest, repositories not counted. Backup refuses a larger state
+	// rather than cutting it short, and restore refuses a larger file, so
+	// the memory a restore of any supplied file needs is what a real state
+	// of that size needs.
+	manifestLimit = 1 << 30
 	// format10ManifestLimit is the manifest size that readers of version 10
-	// and older accept. Version 11 has no size limit of its own: its size
-	// follows from the records the state holds, so every state OwnGit accepts
-	// can be backed up and restored. Backup and restore both hold the
-	// records in memory, so the memory they need grows with the state.
+	// and older accept.
 	format10ManifestLimit = 64 << 20
-	pendingRestoreName    = state.IncompleteRestoreMarkerName
+	// maxManifestStringBytes is the longest string a manifest holds: the
+	// longest text a record holds (an import receipt) with every byte
+	// escaped, which takes at most six bytes.
+	maxManifestStringBytes = 6 * state.MaxImportIntentJSONBytes
+	pendingRestoreName     = state.IncompleteRestoreMarkerName
 )
 
 type Manifest struct {
@@ -356,10 +368,11 @@ func Create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err := service.ReconcileAll(ctx); err != nil {
 		return fmt.Errorf("reconcile pull request state before backup: %w", err)
 	}
-	return create(ctx, store, manager, manager.Git, output)
+	return create(ctx, store, manager, manager.Git, output, manifestLimit)
 }
 
-func create(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string) error {
+// create writes a backup whose manifest holds at most limit bytes.
+func create(ctx context.Context, store *state.Store, manager *repository.Manager, runner commandRunner, output string, limit int64) error {
 	// The output is held until create returns; see state.Destination for
 	// why its stage is then used by path.
 	destination, err := state.OpenDestination(output)
@@ -382,6 +395,49 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if pathsOverlap(absolute, stateRoot) || pathsOverlap(absolute, repositoryRoot) {
 		return errors.New("backup destination must not overlap state or repository storage")
 	}
+	snapshot, err := store.RecoverySnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	manifest := Manifest{
+		Format: backupFormat, CreatedAt: time.Now().UTC(),
+		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
+	}
+	addPullRequestState(&manifest, snapshot)
+	addCheckState(&manifest, snapshot)
+	addImportState(&manifest, snapshot)
+	repositoryPaths := make([]string, 0, len(snapshot.Repositories))
+	for _, stored := range snapshot.Repositories {
+		if err := repository.ValidateID(stored.ID); err != nil {
+			return fmt.Errorf("repository %q has an unsupported ID: %w", stored.ID, err)
+		}
+		repositoryPath, _, exists, err := manager.ExistingPath(ctx, stored.ID)
+		if err != nil || !exists {
+			if err == nil {
+				err = errors.New("repository not found")
+			}
+			return fmt.Errorf("open repository %q: %w", stored.ID, err)
+		}
+		item, err := inspectRepository(ctx, runner, repositoryPath, stored)
+		if err != nil {
+			return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
+		}
+		if !item.Empty {
+			item.Bundle = path.Join("repositories", stored.ID+".bundle")
+			// Replaced by the bundle's digest, which has the same length,
+			// so the size checked below is the size written.
+			item.SHA256 = strings.Repeat("0", sha256.Size*2)
+		}
+		manifest.Repositories = append(manifest.Repositories, item)
+		repositoryPaths = append(repositoryPaths, repositoryPath)
+	}
+	addRepositoryRecords(&manifest, snapshot)
+	// A state too large for a backup is refused before anything is written.
+	version, err := backupManifestVersion(manifest, format10ManifestLimit, limit)
+	if err != nil {
+		return err
+	}
+
 	parent := filepath.Dir(absolute)
 	suffix, err := randomSuffix()
 	if err != nil {
@@ -402,55 +458,27 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err := os.Mkdir(bundles, 0o700); err != nil {
 		return err
 	}
-
-	snapshot, err := store.RecoverySnapshot(ctx)
-	if err != nil {
-		return err
+	for index := range manifest.Repositories {
+		item := &manifest.Repositories[index]
+		if item.Empty {
+			continue
+		}
+		bundlePath := filepath.Join(stage, filepath.FromSlash(item.Bundle))
+		arguments := []string{"--git-dir", ".", "bundle", "create", bundlePath, "--all"}
+		if item.Head.OID != "" {
+			arguments = append(arguments, "HEAD")
+		}
+		if _, err := runner.Run(ctx, repositoryPaths[index], nil, arguments...); err != nil {
+			return fmt.Errorf("bundle repository %q: %w", item.ID, err)
+		}
+		if err := syncRegularFile(bundlePath); err != nil {
+			return err
+		}
+		if item.SHA256, err = fileSHA256(bundlePath); err != nil {
+			return err
+		}
 	}
-	manifest := Manifest{
-		Format: backupFormat, CreatedAt: time.Now().UTC(),
-		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
-	}
-	addPullRequestState(&manifest, snapshot)
-	addCheckState(&manifest, snapshot)
-	addImportState(&manifest, snapshot)
-	for _, stored := range snapshot.Repositories {
-		if err := repository.ValidateID(stored.ID); err != nil {
-			return fmt.Errorf("repository %q has an unsupported ID: %w", stored.ID, err)
-		}
-		repositoryPath, _, exists, err := manager.ExistingPath(ctx, stored.ID)
-		if err != nil || !exists {
-			if err == nil {
-				err = errors.New("repository not found")
-			}
-			return fmt.Errorf("open repository %q: %w", stored.ID, err)
-		}
-		item, err := inspectRepository(ctx, runner, repositoryPath, stored)
-		if err != nil {
-			return fmt.Errorf("inspect repository %q: %w", stored.ID, err)
-		}
-		if !item.Empty {
-			item.Bundle = path.Join("repositories", stored.ID+".bundle")
-			bundlePath := filepath.Join(stage, filepath.FromSlash(item.Bundle))
-			arguments := []string{"--git-dir", ".", "bundle", "create", bundlePath, "--all"}
-			if item.Head.OID != "" {
-				arguments = append(arguments, "HEAD")
-			}
-			if _, err := runner.Run(ctx, repositoryPath, nil, arguments...); err != nil {
-				return fmt.Errorf("bundle repository %q: %w", stored.ID, err)
-			}
-			if err := syncRegularFile(bundlePath); err != nil {
-				return err
-			}
-			item.SHA256, err = fileSHA256(bundlePath)
-			if err != nil {
-				return err
-			}
-		}
-		manifest.Repositories = append(manifest.Repositories, item)
-	}
-	addRepositoryRecords(&manifest, snapshot)
-	manifest.Version = backupVersion
+	manifest.Version = version
 	if err := validateManifest(manifest); err != nil {
 		return fmt.Errorf("validate completed backup manifest: %w", err)
 	}
@@ -459,7 +487,7 @@ func create(ctx context.Context, store *state.Store, manager *repository.Manager
 	if err != nil {
 		return err
 	}
-	if err := writeBackupManifest(file, &manifest, format10ManifestLimit); err != nil {
+	if err := writeManifest(file, manifest); err != nil {
 		file.Close()
 		return err
 	}
@@ -913,67 +941,98 @@ func syncDirectory(directory string) error {
 	return closeErr
 }
 
-type manifestLimitWriter struct {
-	writer    io.Writer
-	remaining int64
-}
-
-func (writer *manifestLimitWriter) Write(content []byte) (int, error) {
-	if writer.remaining <= 0 {
-		return 0, errManifestTooLarge
-	}
-	allowed := content
-	tooLarge := int64(len(content)) > writer.remaining
-	if tooLarge {
-		allowed = content[:writer.remaining]
-	}
-	written, err := writer.writer.Write(allowed)
-	writer.remaining -= int64(written)
-	if err != nil {
-		return written, err
-	}
-	if written != len(allowed) {
-		return written, io.ErrShortWrite
-	}
-	if tooLarge {
-		return written, errManifestTooLarge
-	}
-	return written, nil
-}
-
-// writeBackupManifest writes manifest in the oldest format whose readers
-// accept it: version 10, which releases 1.0.3 to 1.1.2 restore, when it holds
+// backupManifestVersion chooses the oldest format whose readers accept
+// manifest: version 10, which releases 1.0.3 to 1.1.2 restore, when it holds
 // no record that only version 11 holds and fits format10Limit; version 11
 // otherwise. So every backup made before an upgrade that the earlier release
-// could have made itself stays restorable by that release.
-func writeBackupManifest(file *os.File, manifest *Manifest, format10Limit int64) error {
-	if format11Content(*manifest) == "" {
-		manifest.Version = closedPullRequestBackupVersion
-		err := writeManifest(&manifestLimitWriter{writer: file, remaining: format10Limit}, *manifest)
-		if !errors.Is(err, errManifestTooLarge) {
-			return err
-		}
-		if err := file.Truncate(0); err != nil {
-			return err
-		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-	}
+// could have made itself stays restorable by that release. Both version
+// numbers have two digits, so the size does not depend on the choice. A
+// manifest larger than limit is refused, never cut short.
+func backupManifestVersion(manifest Manifest, format10Limit, limit int64) (int, error) {
 	manifest.Version = backupVersion
-	return writeManifest(file, *manifest)
+	var size byteCounter
+	if err := writeManifest(&size, manifest); err != nil {
+		return 0, err
+	}
+	if int64(size) > limit {
+		return 0, fmt.Errorf("cannot back up this state: its OwnGit records take %d MiB, and a backup holds at most %d MiB of them (repositories are not counted)", (int64(size)+1<<20-1)>>20, limit>>20)
+	}
+	if format11Content(manifest) == "" && int64(size) <= format10Limit {
+		return closedPullRequestBackupVersion, nil
+	}
+	return backupVersion, nil
 }
 
-// writeManifest encodes without HTML escaping: a manifest is never HTML, and
-// escaping would make each <, > and & in a description six bytes long.
+type byteCounter int64
+
+func (counter *byteCounter) Write(content []byte) (int, error) {
+	*counter += byteCounter(len(content))
+	return len(content), nil
+}
+
+// writeManifest writes the manifest one record at a time, so the document
+// is never held whole; without whitespace between tokens, so its size is the
+// size of its records; and without HTML escaping: a manifest is never HTML,
+// and escaping would make each <, > and & in a description six bytes.
 func writeManifest(destination io.Writer, manifest Manifest) error {
-	encoder := json.NewEncoder(destination)
+	output := bufio.NewWriter(destination)
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
 	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(manifest); err != nil {
-		return fmt.Errorf("encode backup manifest: %w", err)
+	write := func(value any) error {
+		encoded.Reset()
+		if err := encoder.Encode(value); err != nil {
+			return fmt.Errorf("encode backup manifest: %w", err)
+		}
+		_, err := output.Write(bytes.TrimSuffix(encoded.Bytes(), []byte("\n")))
+		return err
 	}
-	return nil
+	value := reflect.ValueOf(manifest)
+	separator := "{"
+	for index, field := range manifestFields() {
+		fieldValue := value.Field(index)
+		isList := fieldValue.Kind() == reflect.Slice
+		if field.omitEmpty && (fieldValue.IsZero() || isList && fieldValue.Len() == 0) {
+			continue
+		}
+		output.WriteString(separator + strconv.Quote(field.name) + ":")
+		separator = ","
+		if !isList || fieldValue.IsNil() {
+			if err := write(fieldValue.Interface()); err != nil {
+				return err
+			}
+			continue
+		}
+		output.WriteByte('[')
+		for element := range fieldValue.Len() {
+			if element > 0 {
+				output.WriteByte(',')
+			}
+			if err := write(fieldValue.Index(element).Interface()); err != nil {
+				return err
+			}
+		}
+		output.WriteByte(']')
+	}
+	output.WriteString("}\n")
+	return output.Flush()
+}
+
+// manifestField is a top-level manifest field: its JSON name and whether it
+// is left out when empty. Fields are in the order of Manifest.
+type manifestField struct {
+	name      string
+	omitEmpty bool
+}
+
+func manifestFields() []manifestField {
+	manifestType := reflect.TypeFor[Manifest]()
+	fields := make([]manifestField, manifestType.NumField())
+	for index := range fields {
+		name, options, _ := strings.Cut(manifestType.Field(index).Tag.Get("json"), ",")
+		fields[index] = manifestField{name: name, omitEmpty: options == "omitempty"}
+	}
+	return fields
 }
 
 func readManifest(manifestPath string) (Manifest, error) {
@@ -984,50 +1043,176 @@ func readManifest(manifestPath string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	content, readErr := io.ReadAll(file)
-	closeErr := file.Close()
-	if readErr != nil {
-		return Manifest{}, readErr
-	}
-	if closeErr != nil {
-		return Manifest{}, closeErr
-	}
-	// Probe the version before strict decoding so a backup written by a newer
-	// OwnGit is rejected with a clear message instead of an unknown-field
-	// error, and never silently loses new records.
-	// Direct-review records are named here only to refuse them clearly.
-	var probe struct {
-		Format                   string          `json:"format"`
-		Version                  int             `json:"version"`
-		DirectReviewSettings     json.RawMessage `json:"direct_review_settings"`
-		DirectReviewTaskContexts json.RawMessage `json:"direct_review_task_contexts"`
-		DirectReviewRequests     json.RawMessage `json:"direct_review_requests"`
-	}
-	if err := json.Unmarshal(content, &probe); err != nil {
-		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
-	}
-	if probe.Format != backupFormat {
-		return Manifest{}, errors.New("unsupported backup format")
-	}
-	if err := validateBackupVersion(probe.Version); err != nil {
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
 		return Manifest{}, err
 	}
-	if probe.Version < backupVersion && len(content) > format10ManifestLimit {
-		return Manifest{}, errManifestTooLarge
+	return decodeManifest(file, info.Size(), manifestLimit)
+}
+
+// decodeManifest reads a manifest of size bytes with memory bounded by what
+// its records need: it refuses a file larger than limit (or than the 64 MiB
+// of version 10 and older) before and while reading, drops the whitespace
+// between tokens as it reads, refuses a string longer than any record holds,
+// and decodes the records of each list one at a time, so the document itself
+// is never held. Format and version come first in every manifest OwnGit
+// writes; they decide how the rest is read, so a backup written by a newer
+// OwnGit is refused as such rather than for its new fields.
+func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
+	tooLarge := fmt.Errorf("backup manifest is larger than the %d MiB a backup holds", limit>>20)
+	if size > limit {
+		return Manifest{}, tooLarge
 	}
-	if probe.DirectReviewSettings != nil || probe.DirectReviewTaskContexts != nil || probe.DirectReviewRequests != nil {
-		return Manifest{}, errDirectReviewManifest
-	}
-	decoder := json.NewDecoder(bytes.NewReader(content))
+	reader := &manifestReader{source: input, limit: limit, tooLarge: tooLarge}
+	decoder := json.NewDecoder(reader)
 	decoder.DisallowUnknownFields()
 	var manifest Manifest
-	if err := decoder.Decode(&manifest); err != nil {
+	decodeErr := func(err error) (Manifest, error) {
 		return Manifest{}, fmt.Errorf("decode backup manifest: %w", err)
 	}
-	if decoder.Decode(&struct{}{}) != io.EOF {
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		if err == nil {
+			err = errors.New("not a JSON object")
+		}
+		return decodeErr(err)
+	}
+	fields := map[string]int{}
+	for index, field := range manifestFields() {
+		fields[field.name] = index
+	}
+	value := reflect.ValueOf(&manifest).Elem()
+	leading := []string{"format", "version"}
+	seen := map[string]bool{}
+	position := 0
+	for ; decoder.More(); position++ {
+		token, err := decoder.Token()
+		if err != nil {
+			return decodeErr(err)
+		}
+		key := token.(string)
+		switch key {
+		case "direct_review_settings", "direct_review_task_contexts", "direct_review_requests":
+			return Manifest{}, errDirectReviewManifest
+		}
+		if position < len(leading) && key != leading[position] {
+			return Manifest{}, errManifestStart
+		}
+		index, known := fields[key]
+		if !known {
+			return decodeErr(fmt.Errorf("json: unknown field %q", key))
+		}
+		if seen[key] {
+			return decodeErr(fmt.Errorf("json: field %q appears twice", key))
+		}
+		seen[key] = true
+		if err := decodeManifestField(decoder, value.Field(index)); err != nil {
+			return decodeErr(err)
+		}
+		if key != "version" {
+			continue
+		}
+		if manifest.Format != backupFormat {
+			return Manifest{}, errors.New("unsupported backup format")
+		}
+		if err := validateBackupVersion(manifest.Version); err != nil {
+			return Manifest{}, err
+		}
+		if manifest.Version < backupVersion {
+			reader.limit, reader.tooLarge = format10ManifestLimit, errManifestTooLarge
+			if size > reader.limit {
+				return Manifest{}, errManifestTooLarge
+			}
+		}
+	}
+	if position < len(leading) {
+		return Manifest{}, errManifestStart
+	}
+	if _, err := decoder.Token(); err != nil {
+		return decodeErr(err)
+	}
+	if _, err := decoder.Token(); err != io.EOF {
 		return Manifest{}, errors.New("backup manifest contains trailing data")
 	}
 	return manifest, nil
+}
+
+// decodeManifestField decodes one manifest field, a list one record at a
+// time.
+func decodeManifestField(decoder *json.Decoder, field reflect.Value) error {
+	if field.Kind() != reflect.Slice {
+		return decoder.Decode(field.Addr().Interface())
+	}
+	token, err := decoder.Token()
+	if err != nil || token == nil {
+		return err
+	}
+	if token != json.Delim('[') {
+		return fmt.Errorf("json: cannot unmarshal %v into a list", token)
+	}
+	for decoder.More() {
+		record := reflect.New(field.Type().Elem())
+		if err := decoder.Decode(record.Interface()); err != nil {
+			return err
+		}
+		field.Set(reflect.Append(field, record.Elem()))
+	}
+	_, err = decoder.Token()
+	return err
+}
+
+// manifestReader passes a manifest to the JSON decoder without the
+// whitespace between tokens, which would otherwise stay in the decoder's
+// buffer, and refuses input longer than limit (with tooLarge) or a string
+// longer than maxManifestStringBytes. A refusal is final: the decoder may
+// read again after an error.
+type manifestReader struct {
+	source      io.Reader
+	limit, read int64
+	tooLarge    error
+	refused     error
+	inString    bool
+	escaped     bool
+	stringBytes int
+}
+
+func (reader *manifestReader) Read(buffer []byte) (int, error) {
+	for reader.refused == nil {
+		count, err := reader.source.Read(buffer)
+		reader.read += int64(count)
+		if reader.read > reader.limit {
+			reader.refused = reader.tooLarge
+			return 0, reader.refused
+		}
+		kept := 0
+		for _, character := range buffer[:count] {
+			if reader.inString {
+				reader.stringBytes++
+				if reader.stringBytes > maxManifestStringBytes {
+					reader.refused = errors.New("backup manifest holds a text longer than any OwnGit record")
+					return kept, reader.refused
+				}
+				switch {
+				case reader.escaped:
+					reader.escaped = false
+				case character == '\\':
+					reader.escaped = true
+				case character == '"':
+					reader.inString = false
+				}
+			} else if character == '"' {
+				reader.inString, reader.stringBytes = true, 0
+			} else if character == ' ' || character == '\t' || character == '\n' || character == '\r' {
+				continue
+			}
+			buffer[kept] = character
+			kept++
+		}
+		if kept > 0 || err != nil {
+			return kept, err
+		}
+	}
+	return 0, reader.refused
 }
 
 func addPullRequestState(manifest *Manifest, snapshot state.RecoveryState) {

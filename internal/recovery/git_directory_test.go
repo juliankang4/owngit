@@ -57,7 +57,7 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 
 	backupRunner := &recordingRecoveryRunner{delegate: runner}
 	backup := filepath.Join(t.TempDir(), "backup")
-	noErr(t, create(ctx, store, manager, backupRunner, backup))
+	noErr(t, create(ctx, store, manager, backupRunner, backup, manifestLimit))
 	assertRecoveryBareCalls(t, backupRunner.calls, repositoryPath)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)

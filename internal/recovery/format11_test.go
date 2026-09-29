@@ -191,7 +191,9 @@ func TestBackupWithoutFormat11RecordsStaysFormat10(t *testing.T) {
 // Any state the product accepts backs up and restores: many pull requests
 // and review notes at the largest allowed text, made of the characters HTML
 // escaping would grow sixfold, give a manifest past the 64 MiB that version
-// 10 readers accept, which version 11 holds without escaping them.
+// 10 readers accept, which version 11 holds without escaping them. One
+// description and one note are control characters, which JSON must escape
+// sixfold, so a text at its longest encoded form restores too.
 func TestBackupAtTheProductTextLimits(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -200,16 +202,23 @@ func TestBackupAtTheProductTextLimits(t *testing.T) {
 	noErr(t, err)
 	oid := gitOutput(t, remote, "rev-parse", "refs/heads/main")
 	text := strings.Repeat("<&>", state.MaximumPullRequestTextBytes/3) + strings.Repeat("<", state.MaximumPullRequestTextBytes%3)
+	escaped := strings.Repeat("\x01", state.MaximumPullRequestTextBytes)
+	textOf := func(number, sequence int) string {
+		if number == 1 && sequence <= 1 {
+			return escaped
+		}
+		return text
+	}
 	const pullRequests, reviewsEach = 8, 130
 	var refs strings.Builder
 	noErr(t, store.Exec(ctx, "BEGIN"))
 	for number := 1; number <= pullRequests; number++ {
 		noErr(t, store.Exec(ctx, `INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,body) VALUES('project',?,'Large',?,'main','open',1800000000,1800000000,?)`,
-			number, "feature-"+strconv.Itoa(number), text))
+			number, "feature-"+strconv.Itoa(number), textOf(number, 0)))
 		noErr(t, store.Exec(ctx, `INSERT INTO pull_request_revisions(repository_id,pull_request_number,source_oid,target_oid,recorded_at) VALUES('project',?,?,?,1800000000)`, number, oid, oid))
 		for sequence := 1; sequence <= reviewsEach; sequence++ {
 			noErr(t, store.Exec(ctx, `INSERT INTO pull_request_reviews(repository_id,pull_request_number,sequence,source_oid,target_oid,status,reviewer_label,provenance,created_at,note) VALUES('project',?,?,?,?,'approved','tool','supplied_external_tool',1800000000,?)`,
-				number, sequence, oid, oid, text))
+				number, sequence, oid, oid, textOf(number, sequence)))
 		}
 		sourceRef, targetRef := pullrequest.RevisionRefNames(int64(number), oid, oid)
 		fmt.Fprintf(&refs, "create %s %s\ncreate %s %s\n", sourceRef, oid, targetRef, oid)
@@ -240,12 +249,12 @@ func TestBackupAtTheProductTextLimits(t *testing.T) {
 		t.Fatalf("restored %d pull requests and %d reviews", len(snapshot.PullRequests), len(snapshot.PullRequestReviews))
 	}
 	for _, record := range snapshot.PullRequests {
-		if record.Body != text {
+		if record.Body != textOf(int(record.Number), 0) {
 			t.Fatalf("pull request %d description changed", record.Number)
 		}
 	}
 	for _, review := range snapshot.PullRequestReviews {
-		if review.Note != text {
+		if review.Note != textOf(int(review.PullRequestNumber), int(review.Sequence)) {
 			t.Fatalf("review %d/%d note changed", review.PullRequestNumber, review.Sequence)
 		}
 	}

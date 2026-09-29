@@ -122,9 +122,7 @@ func TestBackupSerializesOnlyAuthoritativeTaskAndCycleFacts(t *testing.T) {
 	if _, exists := cycleRecord["attempt_id"]; exists {
 		t.Errorf("backup cycle contains derived attempt pointer: %s", encoded)
 	}
-	taskRecord["status"] = state.TaskResolved
-	tampered, err := json.Marshal(document)
-	noErr(t, err)
+	tampered := bytes.Replace(encoded, []byte(`"tasks":[{`), []byte(`"tasks":[{"status":"`+state.TaskResolved+`",`), 1)
 	manifestPath := filepath.Join(root, manifestName)
 	noErr(t, os.WriteFile(manifestPath, tampered, 0o600))
 	if _, err := readManifest(manifestPath); err == nil || !strings.Contains(err.Error(), `unknown field "status"`) {
