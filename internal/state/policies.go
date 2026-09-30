@@ -55,7 +55,7 @@ var policyNames = map[string]struct{ field, advice string }{
 	deleteRequiresNameKey:    {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
 	loginLimitsKey:           {"login_limits", "The saved login attempt limits cannot be read, so a wrong password cannot be counted. Set all three again under Settings, Access, or with owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m (the defaults)."},
 	crossSiteLinksKey:        {"cross_site_links", "The saved choice for links from other sites cannot be read, so the shared password cannot start a sign-in. Set it again under Settings, Access, or with owngit settings set --cross-site-links."},
-	repositoryRefPrefixesKey: {"extra_ref_prefixes", "This repository's saved extra ref namespaces cannot be read, so pushes to it are refused. Set them again in the repository's Settings tab, under Advanced, or with owngit repo settings set --extra-ref-prefixes."},
+	repositoryRefPrefixesKey: {"extra_ref_prefixes", "This repository's saved extra ref namespaces cannot be read, so pushes to it are refused. Set them again in the repository's Settings tab, under Other ref namespaces, or with owngit repo settings set --extra-ref-prefixes."},
 	repositoryPolicyKey:      {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
 }
 

@@ -518,7 +518,7 @@ case "$ref" in
     for prefix in ${OWNGIT_EXTRA_REF_PREFIXES:-}; do
       case "$ref" in "$prefix"*) kind=extra; short=$ref ;; esac
     done
-    test -n "$kind" || { echo "OwnGit accepts branches, tags and the ref namespaces listed in the repository's settings. An administrator can add a namespace such as refs/notes/ in the repository's Settings tab, under Advanced, or with owngit repo settings set --extra-ref-prefixes." >&2; exit 1; } ;;
+    test -n "$kind" || { echo "OwnGit accepts branches, tags and the ref namespaces listed in the repository's settings. An administrator can add a namespace such as refs/notes/ in the repository's Settings tab, under Other ref namespaces, or with owngit repo settings set --extra-ref-prefixes." >&2; exit 1; } ;;
 esac
 if test -n "${OWNGIT_NAME_CONFLICTS_FILE:-}"; then
   test -r "$OWNGIT_NAME_CONFLICTS_FILE" || { echo "OwnGit could not check the pushed ref names against the existing ones" >&2; exit 1; }
