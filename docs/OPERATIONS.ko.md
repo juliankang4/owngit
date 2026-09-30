@@ -114,7 +114,7 @@ OwnGit이 이 컴퓨터에서만 연결을 받으면 일반 HTTP 확인을 묻�
 "다른 기기에서 접속" 단계는 이 컴퓨터에서 Tailscale이 실행 중인지 확인합니다. Tailscale의 상태를 읽기만 합니다.
 
 - Tailscale을 쓸 수 없으면 그 이유를 알려 줍니다.
-- 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 명령을 출력합니다. 예를 들면 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`입니다. PATH의 `owngit`이 지금 실행 중인 OwnGit이 아니면(압축 파일에서 푼 사본을 실행할 때처럼) 명령은 실행 중인 OwnGit의 경로로 시작합니다.
+- 실행 중이면 이 컴퓨터의 Tailscale 주소와 MagicDNS 이름을 보여 주고, 이 값을 [네트워크 설정](#네트워크-설정)으로 저장하는 명령을 출력합니다. 예를 들면 `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --accept-insecure-http`입니다. 명령의 `--accept-insecure-http` 옵션은 다른 기기가 접속하는 주소에서 일반 HTTP를 받아들인다는 확인을 기록합니다([네트워크 설정](#네트워크-설정) 참고). PATH의 `owngit`이 지금 실행 중인 OwnGit이 아니면(압축 파일에서 푼 사본을 실행할 때처럼) 명령은 실행 중인 OwnGit의 경로로 시작합니다.
 
 설정 과정에서 이 명령을 실행하지는 않으므로, 설정을 마친 뒤 직접 실행하고 OwnGit을 다시 시작하세요. Tailscale이 연결을 암호화하더라도 OwnGit은 그 사실을 확인할 수 없어 이 주소를 계속 일반 HTTP로 표시합니다. OwnGit이 암호화된 연결로 표시하는 주소를 쓰려면 대신 [tailnet에서 HTTPS로 공유](#tailnet에서-https로-공유하기)하세요.
 

@@ -114,7 +114,7 @@ When OwnGit listens only on this computer, setup does not ask about plain HTTP; 
 "Other devices" checks whether Tailscale runs on this computer. It only reads Tailscale's status.
 
 - If Tailscale cannot be used, it says why.
-- If Tailscale runs, it shows this computer's Tailscale address and MagicDNS name and prints a command that saves them as [network settings](#network-settings), such as `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654`. When `owngit` on PATH is not the OwnGit that runs, as for a copy from an archive, the command starts with that copy's path instead.
+- If Tailscale runs, it shows this computer's Tailscale address and MagicDNS name and prints a command that saves them as [network settings](#network-settings), such as `owngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --accept-insecure-http`. Its `--accept-insecure-http` option records that you accept plain HTTP for an address other devices reach ([Network settings](#network-settings)). When `owngit` on PATH is not the OwnGit that runs, as for a copy from an archive, the command starts with that copy's path instead.
 
 Setup does not run that command; run it after setup and restart OwnGit. Tailscale encrypts the connection, but OwnGit cannot see that and still reports plain HTTP for this address. For an address that OwnGit reports as encrypted, [share on your tailnet over HTTPS](#share-on-your-tailnet-over-https) instead.
 
