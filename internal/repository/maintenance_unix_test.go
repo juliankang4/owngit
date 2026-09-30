@@ -16,8 +16,10 @@ import (
 )
 
 // wrapMaintenanceGit makes the manager run Git through a script that, for
-// repack, does what the mode file says: "hang" records its PID and sleeps,
-// "fail" reports a synthetic storage error. Other commands run real Git.
+// repack, does what the mode file says: "hang" adds its PID as a line to the
+// PID file and sleeps, "fail" reports a synthetic storage error. Other
+// commands run real Git. Attempts run one at a time, so line n is the PID of
+// the nth hanging repack.
 func wrapMaintenanceGit(t *testing.T, manager *Manager) (setMode func(string), pidFile string) {
 	t.Helper()
 	directory := t.TempDir()
@@ -27,7 +29,7 @@ func wrapMaintenanceGit(t *testing.T, manager *Manager) (setMode func(string), p
 case " $* " in
   *" repack "*)
     case "$(cat %[1]q 2>/dev/null)" in
-      hang) echo $$ >%[2]q; exec sleep 60 ;;
+      hang) echo $$ >>%[2]q; exec sleep 60 ;;
       fail) echo "fatal: synthetic: No space left on device" >&2; exit 128 ;;
     esac ;;
 esac
@@ -41,18 +43,34 @@ exec %[3]q "$@"
 	return func(mode string) { noErr(t, os.WriteFile(modeFile, []byte(mode), 0o600)) }, pidFile
 }
 
-func waitForPID(t *testing.T, pidFile string) int {
+// waitForPIDs waits until count hanging repacks have started and returns
+// their PIDs in the order they started.
+func waitForPIDs(t *testing.T, pidFile string, count int) []int {
 	t.Helper()
-	var pid int
-	waitFor(t, "the hanging repack", func() bool {
-		content, err := os.ReadFile(pidFile)
-		if err != nil {
-			return false
-		}
-		pid, err = strconv.Atoi(strings.TrimSpace(string(content)))
-		return err == nil && pid > 0
+	var pids []int
+	waitFor(t, fmt.Sprintf("hanging repack %d", count), func() bool {
+		pids = startedPIDs(t, pidFile)
+		return len(pids) >= count
 	})
-	return pid
+	return pids
+}
+
+// startedPIDs returns the PIDs of the complete lines of the PID file.
+func startedPIDs(t *testing.T, pidFile string) []int {
+	t.Helper()
+	content, err := os.ReadFile(pidFile)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	noErr(t, err)
+	lines := strings.Split(string(content), "\n")
+	var pids []int
+	for _, line := range lines[:len(lines)-1] {
+		pid, err := strconv.Atoi(line)
+		noErr(t, err)
+		pids = append(pids, pid)
+	}
+	return pids
 }
 
 func assertProcessGone(t *testing.T, pid int) {
@@ -88,7 +106,7 @@ func TestStopMaintenanceTerminatesItsGitProcess(t *testing.T) {
 	log := &maintenanceLog{}
 	noErr(t, manager.StartMaintenance(context.Background(), MaintenanceSchedule{Idle: time.Millisecond, Now: shiftedClock(12)}, log.logf))
 	manager.NoteRepositoryWrite("sample")
-	pid := waitForPID(t, pidFile)
+	pid := waitForPIDs(t, pidFile, 1)[0]
 
 	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -116,10 +134,11 @@ func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
 		CommandTimeout: 300 * time.Millisecond, Now: shiftedClock(12),
 	})
 	manager.NoteRepositoryWrite("sample")
-	pid := waitForPID(t, pidFile)
 	// The other steps run real Git under the same short limit, so on a busy
 	// machine an earlier step can time out first and the hang starts in a
-	// later attempt. The repack's own timeout is the failure after one step.
+	// later attempt. The repack's own timeout is the failure after one step,
+	// and the first such failure belongs to the first hanging repack. A
+	// timed-out maintenance is retried, so later repacks may already run.
 	waitFor(t, "timeout", func() bool {
 		for _, line := range log.matching("failed") {
 			if strings.Contains(line, "1 of 3 steps") {
@@ -128,10 +147,9 @@ func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
 		}
 		return false
 	})
-	assertProcessGone(t, pid)
-	if !manager.pendingMaintenance("sample") {
-		t.Fatal("timed-out maintenance is not retried")
-	}
+	assertProcessGone(t, waitForPIDs(t, pidFile, 1)[0])
+	// The retry of the timed-out maintenance hangs again in its repack.
+	waitForPIDs(t, pidFile, 2)
 	assertSameInventory(t, before, inventory(t, fixture.remote))
 
 	setMode("fail")
