@@ -163,7 +163,21 @@ Windows에서는 이 명령이 알림 영역에 OwnGit 아이콘도 놓습니다
 
 Linux 데스크톱에서는 이 명령이 패널에 OwnGit 아이콘도 띄우고 그 뒤로는 로그인할 때마다 아이콘이 시작됩니다. 아이콘을 열면 상태, 클론 주소, 최근 푸시가 보입니다. GNOME에서는 AppIndicator 확장이 있어야 아이콘이 보입니다. [Linux의 아이콘](docs/OPERATIONS.ko.md#linux의-아이콘)을 참고하세요.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tray-panels.ko.dark.png">
+  <img src="docs/images/tray-panels.ko.png" alt="macOS, Windows, GNOME, Omarchy에서 연 OwnGit 아이콘 패널을 나란히 놓은 예제 저장소 화면. Omarchy는 OwnGit 바 위젯의 패널입니다. 패널마다 OwnGit이 실행 중인 상태, 복사 버튼이 있는 클론 주소, notes, site, dotfiles의 최근 푸시, 대시보드 열기 버튼이 보입니다.">
+</picture>
+
+macOS, Windows, GNOME의 아이콘 패널과 Omarchy의 OwnGit 바 위젯 패널입니다.
+
 세 운영체제 모두에서 아이콘은 푸시, 새 풀 리퀘스트, 실패한 체크, 끝나지 않은 가져오기와 백업, 새 OwnGit 버전을 데스크톱 알림으로도 알려 줍니다. 알림을 클릭하면 해당 페이지가 열립니다. [데스크톱 알림](docs/OPERATIONS.ko.md#데스크톱-알림)을 참고하세요.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/push-notifications.ko.dark.png">
+  <img src="docs/images/push-notifications.ko.png" alt="macOS, Windows, GNOME, Omarchy가 각자 보여 주는 OwnGit 푸시 알림 화면. notes에 새 커밋 2개가 들어왔다는 제목과 브랜치, 마지막 커밋 메시지가 나옵니다.">
+</picture>
+
+같은 네 시스템에서 받은 푸시 알림입니다.
 
 ### 터미널에서 실행하기
 

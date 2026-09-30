@@ -163,7 +163,21 @@ On a Mac with a desktop the command also opens the OwnGit icon in the menu bar, 
 
 On a Linux desktop the command also shows the OwnGit icon in the panel, and the icon then starts whenever you sign in. Open it for the status, the clone address and the latest pushes. GNOME shows the icon only with its AppIndicator extension. See [The icon on Linux](docs/OPERATIONS.md#the-icon-on-linux).
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/tray-panels.dark.png">
+  <img src="docs/images/tray-panels.png" alt="Screenshots of the OwnGit icon's panel on macOS, Windows, GNOME and Omarchy, side by side, with sample repositories; on Omarchy it is the panel of the OwnGit bar widget. Each panel shows that OwnGit is running, the clone address with a Copy button, the latest pushes to notes, site and dotfiles, and Open dashboard.">
+</picture>
+
+The icon's panel on macOS, Windows and GNOME, and the OwnGit bar widget's panel on Omarchy.
+
 On all three systems the icon also shows desktop notifications for pushes, new pull requests, failed checks, imports and backups that did not finish, and new OwnGit versions; click one to open its page. See [Desktop notifications](docs/OPERATIONS.md#desktop-notifications).
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/push-notifications.dark.png">
+  <img src="docs/images/push-notifications.png" alt="Screenshots of one OwnGit push notification on macOS, Windows, GNOME and Omarchy, each shown by the system itself: 2 new commits in notes, with the branch and the latest commit message.">
+</picture>
+
+A push notification on the same four systems.
 
 ### Run in the foreground
 
