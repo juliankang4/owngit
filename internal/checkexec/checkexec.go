@@ -6,7 +6,6 @@
 package checkexec
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
@@ -37,9 +37,9 @@ const (
 	terminationGrace   = 2 * time.Second
 )
 
-// KeptOutputBytes is the most output a result keeps: the largest evidence
-// stored from one check, the raw log. Excerpts and logs are cut from this
-// prefix, so a check's output limit never sets how much memory a run holds.
+// KeptOutputBytes is about the most output text a result keeps: the largest
+// evidence stored from one check, the raw log. Excerpts and logs are cut from
+// this head, so a check's output limit never sets how much memory a run holds.
 const KeptOutputBytes = state.MaximumCheckLogBytes
 
 // DefaultTimeout and DefaultOutputLimit are the effective limits when an
@@ -80,8 +80,9 @@ type Options struct {
 	Timeout time.Duration
 	// OutputLimit bounds the combined output of one check. Every byte counts;
 	// output beyond the limit stops the check, sets Truncated and makes the
-	// result incomplete rather than passed. Whatever the limit, Result.Output keeps only the
-	// first KeptOutputBytes.
+	// result incomplete rather than passed. Whatever the limit, Result.Output
+	// keeps only the head of the output text, one character past
+	// KeptOutputBytes, with secrets and invalid UTF-8 already replaced.
 	OutputLimit int64
 	// Redact replaces each literal value in captured output.
 	Redact []string
@@ -146,7 +147,7 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	if options.Env != nil {
 		cmd.Env = options.Env
 	}
-	output := newBoundedBuffer(limit)
+	output := newBoundedBuffer(limit, options.Redact)
 	cmd.Stdout = output
 	cmd.Stderr = output
 	gitexec.ConfigureOwnedProcess(cmd)
@@ -190,7 +191,7 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	}
 	result.Duration = time.Since(started)
 	cleanupErr := cleanupAttachedProcess(cmd.Process, owner, wait, interrupted)
-	result.Output = output.text(options.Redact)
+	result.Output = output.text()
 	result.Truncated = output.exceeded()
 	if result.Truncated {
 		result.Output = fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit) + result.Output
@@ -374,20 +375,34 @@ func redact(value string, secrets []string) string {
 	return value
 }
 
-// boundedBuffer counts every byte written against limit but keeps only the
-// first keep bytes, so a large output limit costs no more memory than the
-// evidence OwnGit stores. overflow closes when the count first passes limit.
+// boundedBuffer counts every byte written against limit and keeps only the
+// head of the stored text: the output with secrets replaced and invalid UTF-8
+// runs replaced as the evidence builders do, up to just past KeptOutputBytes.
+// It converts as bytes arrive, so a large output limit costs no more memory
+// than the evidence OwnGit stores and output that shrinks when converted keeps
+// the same head as the whole output would. Keeping one character past
+// KeptOutputBytes lets every builder see that later text was dropped.
+// overflow closes when the count first passes limit.
 type boundedBuffer struct {
-	mu       sync.Mutex
-	buf      bytes.Buffer
-	keep     int
-	limit    int64
-	written  int64
-	overflow chan struct{}
+	mu          sync.Mutex
+	limit       int64
+	written     int64
+	overflow    chan struct{}
+	secrets     []string
+	pending     []byte // bytes that may start a secret or an unfinished character
+	kept        strings.Builder
+	lastInvalid bool
+	full        bool
 }
 
-func newBoundedBuffer(limit int64) *boundedBuffer {
-	return &boundedBuffer{keep: int(min(limit, KeptOutputBytes)), limit: limit, overflow: make(chan struct{})}
+func newBoundedBuffer(limit int64, secrets []string) *boundedBuffer {
+	var used []string
+	for _, secret := range secrets {
+		if secret != "" {
+			used = append(used, secret)
+		}
+	}
+	return &boundedBuffer{limit: limit, overflow: make(chan struct{}), secrets: used}
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
@@ -398,39 +413,83 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if before <= b.limit && b.written > b.limit {
 		close(b.overflow)
 	}
-	if room := b.keep - b.buf.Len(); room > 0 {
-		_, _ = b.buf.Write(p[:min(room, len(p))])
+	if within := b.limit - before; within > 0 && !b.full {
+		b.pending = append(b.pending, p[:min(int64(len(p)), within)]...)
+		b.convert(false)
 	}
 	return len(p), nil
 }
 
-// text returns the kept output with secrets replaced. When output was dropped
-// after the kept bytes, a secret cut at the end is dropped first so no part of
-// it is shown.
-func (b *boundedBuffer) text(secrets []string) string {
+// convert moves pending bytes into kept text. Unless final, it leaves bytes
+// that could still become a secret or a character when more output arrives.
+func (b *boundedBuffer) convert(final bool) {
+	index := 0
+	for index < len(b.pending) && !b.full {
+		rest := b.pending[index:]
+		if secret := b.secretAt(rest); secret != "" {
+			b.keep("[redacted]", false)
+			index += len(secret)
+			continue
+		}
+		if !final && (b.mayStartSecret(rest) || !utf8.FullRune(rest)) {
+			break
+		}
+		character, width := utf8.DecodeRune(rest)
+		if character == utf8.RuneError && width == 1 {
+			if !b.lastInvalid {
+				b.keep("\uFFFD", true)
+			}
+			b.lastInvalid = true
+		} else {
+			b.keep(string(rest[:width]), false)
+		}
+		index += width
+	}
+	if b.full {
+		b.pending = nil
+		return
+	}
+	b.pending = append(b.pending[:0], b.pending[index:]...)
+}
+
+func (b *boundedBuffer) keep(text string, invalid bool) {
+	b.kept.WriteString(text)
+	b.lastInvalid = invalid
+	b.full = b.kept.Len() > KeptOutputBytes
+}
+
+func (b *boundedBuffer) secretAt(value []byte) string {
+	for _, secret := range b.secrets {
+		if len(value) >= len(secret) && string(value[:len(secret)]) == secret {
+			return secret
+		}
+	}
+	return ""
+}
+
+func (b *boundedBuffer) mayStartSecret(value []byte) bool {
+	for _, secret := range b.secrets {
+		if len(value) < len(secret) && secret[:len(value)] == string(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// text returns the kept text. Bytes still pending at the end are converted,
+// unless output past the limit was dropped: then they may be a cut secret and
+// are dropped too.
+func (b *boundedBuffer) text() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	kept := b.buf.String()
-	if b.written > int64(len(kept)) {
-		kept = withoutCutSecret(kept, secrets)
+	if b.written <= b.limit {
+		b.convert(true)
 	}
-	return redact(kept, secrets)
+	return b.kept.String()
 }
 
 func (b *boundedBuffer) exceeded() bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.written > b.limit
-}
-
-// withoutCutSecret drops a trailing start of any secret from value.
-func withoutCutSecret(value string, secrets []string) string {
-	for _, secret := range secrets {
-		for size := min(len(secret)-1, len(value)); size > 0; size-- {
-			if strings.HasSuffix(value, secret[:size]) {
-				return withoutCutSecret(value[:len(value)-size], secrets)
-			}
-		}
-	}
-	return value
 }

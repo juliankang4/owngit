@@ -54,14 +54,14 @@ func TestRunKeepsOnlyTheEvidenceOfManyLargeOutputs(t *testing.T) {
 	}
 	retained := 0
 	for _, result := range results {
-		if result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes {
+		if result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes+1 {
 			t.Fatalf("result=%s status=%s truncated=%v output=%d", result.Name, result.Status, result.Truncated, len(result.Output))
 		}
 		retained += len(result.Output)
 	}
 	// Keeping whole outputs would hold checks*size = 80 MiB.
 	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-	if limit := int64(checks*KeptOutputBytes + 4<<20); growth > limit {
+	if limit := int64(checks*(KeptOutputBytes+1) + 4<<20); growth > limit {
 		t.Fatalf("heap grew %d bytes with %d kept; want at most %d", growth, retained, limit)
 	}
 	runtime.KeepAlive(results)
@@ -74,7 +74,7 @@ func TestRunCountsOutputBeyondTheKeptPrefix(t *testing.T) {
 	results, _ := Run(context.Background(), outputChecks(1), Options{
 		Timeout: time.Minute, OutputLimit: limit, Env: outputEnvironment(limit),
 	})
-	if result := results[0]; result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes {
+	if result := results[0]; result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes+1 {
 		t.Fatalf("at the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
 	}
 	results, _ = Run(context.Background(), outputChecks(1), Options{
@@ -82,7 +82,7 @@ func TestRunCountsOutputBeyondTheKeptPrefix(t *testing.T) {
 	})
 	note := "[OwnGit stopped this check: its output passed the limit of 1048576 bytes.]\n"
 	if result := results[0]; result.Status != StatusIncomplete || !result.Truncated ||
-		!strings.HasPrefix(result.Output, note) || len(result.Output) != len(note)+KeptOutputBytes {
+		!strings.HasPrefix(result.Output, note) || len(result.Output) != len(note)+KeptOutputBytes+1 {
 		t.Fatalf("past the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
 	}
 }
@@ -138,17 +138,47 @@ func TestKeptOutputDropsASecretCutAtTheEnd(t *testing.T) {
 		{"log secret-tok", "log "},
 		{"log secret-tokXsec", "log secret-tokX"},
 	} {
-		buffer := newBoundedBuffer(1 << 20)
-		buffer.keep = len(testCase.written)
+		// Output past the limit is dropped, so the kept text ends at the limit.
+		buffer := newBoundedBuffer(int64(len(testCase.written)), secrets)
 		_, _ = buffer.Write([]byte(testCase.written + "more"))
-		if got := buffer.text(secrets); got != testCase.want {
+		if got := buffer.text(); got != testCase.want {
 			t.Fatalf("written=%q text=%q want %q", testCase.written, got, testCase.want)
 		}
 	}
 	// Nothing dropped: the output is whole, so nothing is cut.
-	buffer := newBoundedBuffer(64)
+	buffer := newBoundedBuffer(64, secrets)
 	_, _ = buffer.Write([]byte("ends with sec"))
-	if got := buffer.text(secrets); got != "ends with sec" {
+	if got := buffer.text(); got != "ends with sec" {
 		t.Fatalf("whole output=%q", got)
+	}
+}
+
+// The kept text is the head of the whole output with secrets replaced and
+// invalid UTF-8 replaced as the evidence builders do, however the output
+// arrives in pieces.
+func TestKeptOutputIsTheHeadOfTheConvertedOutput(t *testing.T) {
+	secret := "synthetic-token-" + strings.Repeat("s", 49)
+	long := strings.Repeat("가나다", KeptOutputBytes/9+10)
+	for name, full := range map[string]string{
+		"ordinary":           "hello 가나다 world\n",
+		"invalid runs":       "a\xff\xfe\xfdb\xe4\xb8c\xef\xbf\xbdd\xff",
+		"secrets":            secret + " x " + secret[:10] + " " + secret + secret + " tail " + secret[:20],
+		"secret and invalid": "\xff" + secret + "\xff\xff" + secret + "\xe4",
+		"many invalid bytes": strings.Repeat("\xff", 1<<20) + "END",
+		"many secrets":       strings.Repeat(secret+"\n", 16000) + "END",
+		"longer than kept":   long,
+	} {
+		want := strings.ToValidUTF8(strings.ReplaceAll(full, secret, "[redacted]"), "\uFFFD")
+		for _, piece := range []int{1, 2, 3, 7, 64, 1 << 20} {
+			buffer := newBoundedBuffer(1<<30, []string{secret})
+			for start := 0; start < len(full); start += piece {
+				_, _ = buffer.Write([]byte(full[start:min(start+piece, len(full))]))
+			}
+			got := buffer.text()
+			whole := len(want) <= KeptOutputBytes
+			if whole && got != want || !whole && (!strings.HasPrefix(want, got) || len(got) <= KeptOutputBytes || len(got) > KeptOutputBytes+len("[redacted]")) {
+				t.Fatalf("%s in pieces of %d: kept %d bytes of %d converted", name, piece, len(got), len(want))
+			}
+		}
 	}
 }

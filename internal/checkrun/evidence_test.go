@@ -1,9 +1,12 @@
 package checkrun
 
 import (
+	"context"
+	"os"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"owngit/internal/checkexec"
@@ -69,5 +72,63 @@ func TestAutomaticLogDoesNotCopyWholeOutput(t *testing.T) {
 	runtime.ReadMemStats(&after)
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2*maximumAutomaticLogSize || len(log) != maximumAutomaticLogSize || !truncated {
 		t.Fatalf("allocated %d bytes for a %d-byte log, truncated=%v", allocated, len(log), truncated)
+	}
+}
+
+const evidenceChildMode = "OWNGIT_CHECKRUN_EVIDENCE_MODE"
+
+var evidenceSecret = "synthetic-token-" + strings.Repeat("s", 49)
+
+func evidenceChildOutput(mode string) string {
+	switch mode {
+	case "invalid":
+		return strings.Repeat("\xff", 1<<20) + "END_MARKER_MUST_BE_KEPT\n"
+	case "secret":
+		return strings.Repeat(evidenceSecret+"\n", 16000) + "END_MARKER_MUST_BE_KEPT\n"
+	}
+	return strings.Repeat("head α🙂\n", 100000) + "TAIL_NOT_IN_THE_HEAD"
+}
+
+// TestEvidenceChild prints one of the evidence outputs when a test runs the
+// test binary as a check.
+func TestEvidenceChild(t *testing.T) {
+	mode := os.Getenv(evidenceChildMode)
+	if mode == "" {
+		t.Skip("evidence fixture only")
+	}
+	_, _ = os.Stdout.WriteString(evidenceChildOutput(mode))
+	os.Exit(0)
+}
+
+// The reviewer's reproductions: output under the ceiling that shrinks when
+// invalid UTF-8 or secrets are replaced stores the same log and excerpt as
+// the whole output did before only a bounded head was kept.
+func TestUnderCeilingEvidenceMatchesTheWholeOutput(t *testing.T) {
+	for _, mode := range []string{"invalid", "secret", "ordinary"} {
+		t.Run(mode, func(t *testing.T) {
+			results, _ := checkexec.Run(context.Background(), []checkexec.Definition{{Name: "head", Command: "evidence",
+				Executable: os.Args[0], Arguments: []string{"-test.run=^TestEvidenceChild$"}}}, checkexec.Options{
+				Timeout: 30 * time.Second, OutputLimit: 8 << 20, Redact: []string{evidenceSecret},
+				Env: append(os.Environ(), evidenceChildMode+"="+mode),
+			})
+			if results[0].Status != checkexec.StatusPassed || results[0].Truncated {
+				t.Fatalf("status=%s truncated=%v", results[0].Status, results[0].Truncated)
+			}
+			whole := append([]checkexec.Result(nil), results...)
+			whole[0].Output = strings.ReplaceAll(evidenceChildOutput(mode), evidenceSecret, "[redacted]")
+			wantLog, wantCut := buildLog(whole)
+			gotLog, gotCut := buildLog(results)
+			want, got := stateResults(whole)[0], stateResults(results)[0]
+			if gotLog != wantLog || gotCut != wantCut || got.OutputExcerpt != want.OutputExcerpt || got.Truncated != want.Truncated {
+				t.Fatalf("log %d cut=%v excerpt truncated=%v; whole output gives log %d cut=%v excerpt truncated=%v",
+					len(gotLog), gotCut, got.Truncated, len(wantLog), wantCut, want.Truncated)
+			}
+			if mode != "ordinary" && !strings.Contains(gotLog, "END_MARKER_MUST_BE_KEPT") {
+				t.Fatal("the end marker is missing from the log")
+			}
+			if mode == "ordinary" && (!gotCut || !got.Truncated) {
+				t.Fatal("a log cut from longer output must say it was truncated")
+			}
+		})
 	}
 }
