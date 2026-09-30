@@ -737,7 +737,7 @@ OwnGit serves plain HTTP and has no built-in TLS. Choose one of these ways to re
 - **An encrypted address**: let Tailscale share OwnGit on your tailnet ([Share on your tailnet over HTTPS](#share-on-your-tailnet-over-https)), or put a reverse proxy in front of it ([Behind a reverse proxy](#behind-a-reverse-proxy)).
 - **Plain HTTP** over Tailscale, your own VPN ([Other private networks](#other-private-networks)) or the LAN: let OwnGit listen on a network address ([Network settings](#network-settings)). You accept plain HTTP once, during setup or on the Network tab of Settings when you let other devices in, and the page header always shows whether the connection is encrypted.
 
-Do not expose OwnGit to the public Internet.
+Do not expose OwnGit to the public Internet. Only share links may have a public address of their own ([A public address for share links](#a-public-address-for-share-links)).
 
 A device on your tailnet that opens one of this computer's Tailscale addresses, such as `http://100.64.0.7:7654/`, sees "Encrypted by Tailscale" and is not asked to accept plain HTTP. OwnGit checks that the request came from a Tailscale address to an address that Tailscale on this computer reports as its own. Right after a start, or while Tailscale does not answer, a page can go without the label. Tailscale in userspace networking mode gets none, because it connects from `127.0.0.1`.
 
@@ -800,7 +800,7 @@ If a saved value locks you out, for example a listen address that no longer exis
 owngit network reset
 ```
 
-`reset` removes the listen address and base URL. It keeps the allowed Hosts and trusted proxies unless you add `--clear-allowed-hosts` or `--clear-trusted-proxies`. No web page can do this.
+`reset` removes the listen address, the base URL and the public address for share links. It keeps the allowed Hosts and trusted proxies unless you add `--clear-allowed-hosts` or `--clear-trusted-proxies`. No web page can do this.
 
 `network set` and `network reset` also take `--json`. They then print one JSON object: `ok`, the same report that `network show --json` prints, `applies_at_next_start` (true, since changes apply at the next start), `plain_http_accepted` (whether plain HTTP is accepted on this installation) and `warnings` (the notes the text output gives). A refusal is a JSON error with the code `invalid_arguments`, `acknowledgement_required` (an address other computers reach without `--accept-insecure-http`; nothing was saved) or `state_unavailable`.
 
@@ -889,7 +889,7 @@ When sharing is on at another port, the replacement also moves it, and OwnGit fi
 - `owngit serve --tailscale PATH` and `owngit tailscale --tailscale PATH` name a `tailscale` command that OwnGit does not find on its own. OwnGit does not run that command. It reads Tailscale's status and Serve settings where that command reaches Tailscale without options, so a `tailscaled` started with its own `--socket` is not supported.
 - OwnGit reaches Tailscale through a Unix socket only when the system reports that the program listening on the socket runs as root, or on Synology DSM 7 as the Tailscale package's `tailscale` account. Linux, macOS and FreeBSD report this. On other systems, and for a socket that another account serves, OwnGit reports `untrusted_socket`.
 - `--json` prints the report, or a failure with a code, as JSON.
-- OwnGit never resets Tailscale Serve or turns on Funnel, and keeps every other Serve setting as it is. It refuses every request that carries the `Tailscale-Funnel-Request` header, so the address cannot be opened to the Internet through Funnel. It ignores `Tailscale-User-*` headers: passwords still decide who can read, write and administer.
+- OwnGit never resets Tailscale Serve or turns on Funnel, and keeps every other Serve setting as it is. It refuses every request that carries the `Tailscale-Funnel-Request` header, so the address cannot be opened to the Internet through Funnel. The public address for share links is a separate listener that you connect to Funnel yourself ([A public address for share links](#a-public-address-for-share-links)). It ignores `Tailscale-User-*` headers: passwords still decide who can read, write and administer.
 - The sharing record belongs to this installation host, like the network settings, and an offline backup does not carry it.
 
 ### Other private networks
@@ -1279,6 +1279,29 @@ owngit repo share revoke --repository NAME --id ID
 ```
 
 Inside a clone of the repository, `--server` and `--repository` come from its `origin` remote. `create` prints the link once, with its secret, in `url`, and for a clone link `clone_url` and `clone_sign_in`; `list` never prints a secret. The extra password is read from an owner-only file ([Password and token files](#password-and-token-files)). The owner API is `GET` and `POST /api/v1/repositories/NAME/share-links` (`label`, `scope`, `expires_in_days` or `until_revoked`, `password`) and `POST /api/v1/repositories/NAME/share-links/ID/revoke`, with the administrator password. The MCP server does not manage share links.
+
+#### A public address for share links
+
+OwnGit itself stays private, but you can give share links a second, public address, for example with Tailscale Funnel or a reverse proxy on the Internet. That address answers share link pages, share link clones and the few files those pages load (the stylesheet, its font, the script and the logo). Every other path there answers `404 page not found`, the same way for each: the dashboard, sign-in, setup, Settings, the API, `/git/` and every repository without a link. Requests through Funnel are welcome there; OwnGit's own address keeps refusing them.
+
+The public address is off by default. To turn it on, choose a free port on this computer and the address visitors will use, then save both:
+
+- In Settings, on the Network tab, open *Public address for share links*, fill in *Listen address* (such as `127.0.0.1:7655`) and *Public URL* (such as `https://box.tail1234.ts.net:8443`), and save.
+- Or run `owngit network set --public-share-listen 127.0.0.1:7655 --public-share-url https://box.tail1234.ts.net:8443`.
+
+Both values are needed, and the listen address needs a port other than OwnGit's own. The change applies at the next start of OwnGit, like the other network settings; Settings and `owngit network show` say when a restart is needed, and `network set --json` answers `applies_at_next_start` and `restart_needed`. If the port is taken at start, OwnGit still starts on its own address, logs why, and shows the reason on the Network tab and in `owngit network show`. To turn it off, empty both fields or run `owngit network set --public-share-off`; `owngit network reset` turns it off too.
+
+OwnGit warns when you turn it on: anyone on the Internet reaches that address, and anyone who has a link can use it there until the link expires or you revoke it. It also warns when the listen address reaches beyond this computer, because anyone on that network then reaches it directly over plain HTTP, and when no reverse proxy is trusted. Add the address the tunnel or proxy connects from as a trusted proxy (127.0.0.1 for Tailscale Funnel on this computer). Otherwise every visitor counts as that one address for wrong extra passwords, and the share cookie is not limited to HTTPS.
+
+Links are the same on both addresses. A new link shows its public address and, for a clone link, its public Git address next to the usual ones, in the dashboard and in the `public_url` and `public_clone_url` fields of the API and `owngit repo share create`. Revoking a link or its expiry ends it on both addresses at the next request, for pages and for Git.
+
+OwnGit does not change Tailscale for this. With Tailscale Funnel, point Funnel at the listen address yourself, on a port Tailscale Serve does not already use for OwnGit (Funnel offers 443, 8443 and 10000):
+
+```sh
+tailscale funnel --bg --https=8443 http://127.0.0.1:7655
+```
+
+`tailscale funnel --https=8443 off` removes it again. As with any reverse proxy, the tunnel or proxy may log the first request of a link, `/share/SECRET`, which carries the secret.
 
 ### Deleting a repository
 

@@ -737,7 +737,7 @@ OwnGit은 일반 HTTP로 동작하며 TLS를 내장하지 않습니다. 다른 �
 - **암호화된 주소**: Tailscale이 tailnet에 공유하게 하거나([tailnet에서 HTTPS로 공유하기](#tailnet에서-https로-공유하기)) OwnGit 앞에 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기)).
 - **일반 HTTP**: Tailscale, 직접 운영하는 VPN([다른 비공개 네트워크](#다른-비공개-네트워크)), LAN에서는 OwnGit이 네트워크 주소에서 연결을 받게 하면 됩니다([네트워크 설정](#네트워크-설정)). 일반 HTTP는 처음 설정할 때나 설정 화면의 네트워크 탭에서 다른 기기의 접속을 허용할 때 한 번 받아들이면 됩니다. 연결이 암호화되었는지는 페이지 위쪽에 늘 표시됩니다.
 
-OwnGit을 공개 인터넷에 노출하지 마세요.
+OwnGit을 공개 인터넷에 노출하지 마세요. 공유 링크만 따로 공개 주소를 가질 수 있습니다([공유 링크용 공개 주소](#공유-링크용-공개-주소)).
 
 tailnet의 기기가 `http://100.64.0.7:7654/`처럼 이 컴퓨터의 Tailscale 주소로 OwnGit을 열면 "Tailscale이 암호화함"이라고 표시되고 일반 HTTP를 받아들일지 묻지 않습니다. OwnGit은 요청이 Tailscale 주소에서 왔고, 이 컴퓨터의 Tailscale이 자기 주소라고 보고하는 주소로 들어왔는지 확인합니다. 막 시작한 직후나 Tailscale이 응답하지 않는 동안에는 이 표시가 빠질 수 있습니다. 사용자 공간 네트워킹 모드의 Tailscale은 `127.0.0.1`에서 접속하므로 표시가 붙지 않습니다.
 
@@ -800,7 +800,7 @@ brew services restart owngit
 owngit network reset
 ```
 
-`reset`은 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`나 `--clear-trusted-proxies`를 붙이지 않으면 허용한 Host와 신뢰하는 프록시는 그대로 둡니다. 웹 화면에서는 할 수 없습니다.
+`reset`은 연결 주소, 기본 URL, 공유 링크용 공개 주소를 지웁니다. `--clear-allowed-hosts`나 `--clear-trusted-proxies`를 붙이지 않으면 허용한 Host와 신뢰하는 프록시는 그대로 둡니다. 웹 화면에서는 할 수 없습니다.
 
 `network set`과 `network reset`도 `--json`을 받습니다. 그러면 JSON 객체 하나를 출력합니다. 필드는 `ok`, `network show --json`과 같은 보고 내용, `applies_at_next_start`(바꾼 값은 다음 시작부터 적용되므로 true), `plain_http_accepted`(이 설치에서 일반 HTTP에 동의했는지), `warnings`(텍스트 출력에 나오는 안내)입니다. 거부되면 `invalid_arguments`, `acknowledgement_required`(다른 컴퓨터가 접속하는 주소에 `--accept-insecure-http`를 붙이지 않았고 아무것도 저장하지 않음), `state_unavailable` 중 하나의 코드로 JSON 오류를 출력합니다.
 
@@ -889,7 +889,7 @@ OwnGit은 확인한 내용만 바꿉니다. 확인한 뒤에 Tailscale이 제공
 - OwnGit이 `tailscale` 명령을 스스로 찾지 못하면 `owngit serve --tailscale PATH`와 `owngit tailscale --tailscale PATH`로 지정하세요. OwnGit은 이 명령을 실행하지 않습니다. 이 명령이 옵션 없이 쓰는 경로로 Tailscale에 연결해 상태와 Serve 설정을 읽으므로, `--socket`을 따로 지정해 시작한 `tailscaled`는 지원하지 않습니다.
 - OwnGit은 소켓에서 응답하는 프로그램이 root 계정으로 실행 중이라고 시스템이 알려 줄 때만 Unix 소켓으로 Tailscale에 연결합니다. Synology DSM 7에서는 Tailscale 패키지의 `tailscale` 계정도 인정합니다. 이 정보는 Linux, macOS, FreeBSD가 알려 줍니다. 그 밖의 시스템이거나 다른 계정이 응답하는 소켓이면 `untrusted_socket`을 보고합니다.
 - `--json`을 주면 결과와 코드가 붙은 실패를 JSON으로 출력합니다.
-- OwnGit은 Tailscale Serve를 초기화하거나 Funnel을 켜지 않으며 다른 Serve 설정은 그대로 둡니다. `Tailscale-Funnel-Request` 헤더가 붙은 요청을 모두 거부하므로 이 주소가 Funnel을 통해 인터넷에 열리지 않습니다. `Tailscale-User-*` 헤더는 무시하며 누가 읽고 쓰고 관리할 수 있는지는 여전히 비밀번호로 정합니다.
+- OwnGit은 Tailscale Serve를 초기화하거나 Funnel을 켜지 않으며 다른 Serve 설정은 그대로 둡니다. `Tailscale-Funnel-Request` 헤더가 붙은 요청을 모두 거부하므로 이 주소가 Funnel을 통해 인터넷에 열리지 않습니다. 공유 링크용 공개 주소는 사용자가 직접 Funnel에 연결하는 별도의 수신 주소입니다([공유 링크용 공개 주소](#공유-링크용-공개-주소)). `Tailscale-User-*` 헤더는 무시하며 누가 읽고 쓰고 관리할 수 있는지는 여전히 비밀번호로 정합니다.
 - 공유 기록은 네트워크 설정처럼 이 설치 호스트에 속하며 오프라인 백업에 포함되지 않습니다.
 
 ### 다른 비공개 네트워크
@@ -1279,6 +1279,29 @@ owngit repo share revoke --repository NAME --id ID
 ```
 
 저장소를 복제한 폴더 안에서는 `--server`와 `--repository`를 `origin` 원격에서 가져옵니다. `create`는 비밀값이 든 링크를 `url`에 한 번만 출력하고, 복제 링크라면 `clone_url`과 `clone_sign_in`도 출력합니다. `list`는 비밀값을 출력하지 않습니다. 추가 비밀번호는 소유자만 읽을 수 있는 파일에서 읽습니다([비밀번호 파일과 토큰 파일](#비밀번호-파일과-토큰-파일)). 소유자 API는 관리자 비밀번호로 `GET`, `POST /api/v1/repositories/NAME/share-links`(`label`, `scope`, `expires_in_days` 또는 `until_revoked`, `password`)와 `POST /api/v1/repositories/NAME/share-links/ID/revoke`를 씁니다. MCP 서버는 공유 링크를 관리하지 않습니다.
+
+#### 공유 링크용 공개 주소
+
+OwnGit 자체는 비공개로 두고, 공유 링크에만 두 번째 공개 주소를 줄 수 있습니다. 예를 들어 Tailscale Funnel이나 인터넷에 열린 리버스 프록시를 씁니다. 이 주소에서는 공유 링크 페이지, 공유 링크 복제, 그 페이지가 쓰는 몇 개의 파일(스타일시트와 글꼴, 스크립트, 로고)만 답합니다. 대시보드, 로그인, 설정 과정, 설정 화면, API, `/git/`, 링크가 없는 저장소 등 그 밖의 경로는 모두 똑같이 `404 page not found`로 답합니다. Funnel을 거친 요청도 이 주소에서는 받으며, OwnGit 자체 주소는 계속 거부합니다.
+
+공개 주소는 기본으로 꺼져 있습니다. 켜려면 이 컴퓨터의 빈 포트와 방문자가 쓸 주소를 정해 둘 다 저장합니다.
+
+- 설정 화면의 네트워크 탭에서 *공유 링크용 공개 주소*를 열고 *수신 주소*(예: `127.0.0.1:7655`)와 *공개 URL*(예: `https://box.tail1234.ts.net:8443`)을 적은 뒤 저장합니다.
+- 또는 `owngit network set --public-share-listen 127.0.0.1:7655 --public-share-url https://box.tail1234.ts.net:8443`을 실행합니다.
+
+두 값이 모두 필요하며 수신 주소는 OwnGit 자체 주소와 다른 포트를 써야 합니다. 다른 네트워크 설정처럼 OwnGit을 다음에 시작할 때 적용됩니다. 다시 시작해야 하는지는 설정 화면과 `owngit network show`가 알려 주고, `network set --json`은 `applies_at_next_start`와 `restart_needed`로 답합니다. 시작할 때 그 포트를 이미 다른 프로그램이 쓰고 있으면 OwnGit은 자체 주소로만 시작하고 이유를 로그에 남기며, 네트워크 탭과 `owngit network show`에도 이유를 보여 줍니다. 끄려면 두 칸을 모두 비우거나 `owngit network set --public-share-off`를 실행합니다. `owngit network reset`도 공개 주소를 끕니다.
+
+켤 때 OwnGit은 경고를 보여 줍니다. 인터넷의 누구나 그 주소에 접속할 수 있고, 링크를 가진 사람은 링크가 만료되거나 폐기될 때까지 그 주소에서 링크를 쓸 수 있다는 내용입니다. 수신 주소가 이 컴퓨터 밖으로 열려 있으면 그 네트워크의 누구나 암호화되지 않은 HTTP로 바로 접속할 수 있다고 경고하고, 신뢰하는 리버스 프록시가 없을 때도 경고합니다. 터널이나 프록시가 접속해 오는 주소(이 컴퓨터의 Tailscale Funnel이면 127.0.0.1)를 신뢰하는 프록시로 추가하세요. 그러지 않으면 틀린 추가 비밀번호 횟수에서 모든 방문자가 그 주소 하나로 계산되고, 공유 쿠키가 HTTPS 전용으로 제한되지 않습니다.
+
+링크는 두 주소에서 같습니다. 새 링크를 만들면 대시보드와 API, `owngit repo share create`의 `public_url`, `public_clone_url` 필드에 공개 주소와 (복제 링크라면) 공개 Git 주소가 기존 주소와 함께 나옵니다. 링크를 폐기하거나 만료되면 다음 요청부터 두 주소 모두에서 페이지와 Git이 멈춥니다.
+
+OwnGit은 이를 위해 Tailscale을 바꾸지 않습니다. Tailscale Funnel을 쓰려면 Tailscale Serve가 OwnGit에 이미 쓰지 않는 포트(Funnel은 443, 8443, 10000을 제공합니다)에서 수신 주소를 직접 연결하세요.
+
+```sh
+tailscale funnel --bg --https=8443 http://127.0.0.1:7655
+```
+
+다시 없애려면 `tailscale funnel --https=8443 off`를 실행합니다. 다른 리버스 프록시와 마찬가지로 터널이나 프록시는 비밀값이 든 링크의 첫 요청 `/share/SECRET`을 로그에 남길 수 있습니다.
 
 ### 저장소 삭제하기
 
