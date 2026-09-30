@@ -120,6 +120,11 @@ func TestBrowserForgetsALeftoverCheckContainer(t *testing.T) {
 			t.Fatalf("%s forgot the record", name)
 		}
 	}
+	// The refusal marks the checkbox of the form that was sent.
+	unticked := form(func(values url.Values) { values.Del("container_removed") })
+	if !strings.Contains(unticked.body, `aria-describedby="`+forgetContainerScope(job)+`-container_removed-note"`) {
+		t.Fatal("the refused checkbox is not marked")
+	}
 	if result := form(func(values url.Values) { values.Set("csrf", "wrong") }); result.status != http.StatusForbidden || !recorded() {
 		t.Fatalf("a wrong CSRF token: status=%d", result.status)
 	}
