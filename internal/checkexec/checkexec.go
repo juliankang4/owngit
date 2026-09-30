@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/state"
 )
 
 // Result statuses. They mirror the durable state statuses without importing
@@ -35,6 +36,11 @@ const (
 	defaultOutputLimit = 64 << 10
 	terminationGrace   = 2 * time.Second
 )
+
+// KeptOutputBytes is the most output a result keeps: the largest evidence
+// stored from one check, the raw log. Excerpts and logs are cut from this
+// prefix, so a check's output limit never sets how much memory a run holds.
+const KeptOutputBytes = state.MaximumCheckLogBytes
 
 // DefaultTimeout and DefaultOutputLimit are the effective limits when an
 // option is unset. Callers record them with the attempt instead of hiding them.
@@ -72,9 +78,10 @@ type Options struct {
 	Dir string
 	// Timeout bounds one check. Zero uses the default.
 	Timeout time.Duration
-	// OutputLimit bounds the captured combined output per check. The first
-	// bytes are kept and the rest is dropped, which sets Truncated and makes
-	// the result incomplete rather than passed.
+	// OutputLimit bounds the combined output of one check. Every byte counts;
+	// output beyond the limit stops the check, sets Truncated and makes the
+	// result incomplete rather than passed. Whatever the limit, Result.Output keeps only the
+	// first KeptOutputBytes.
 	OutputLimit int64
 	// Redact replaces each literal value in captured output.
 	Redact []string
@@ -139,7 +146,7 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	if options.Env != nil {
 		cmd.Env = options.Env
 	}
-	output := &boundedBuffer{limit: limit}
+	output := newBoundedBuffer(limit)
 	cmd.Stdout = output
 	cmd.Stderr = output
 	gitexec.ConfigureOwnedProcess(cmd)
@@ -177,18 +184,24 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 		wait.finish(waitErr)
 	case <-runCtx.Done():
 		interrupted = true
+	case <-output.overflow:
+		// Output past the limit stops the check as a timeout does.
+		interrupted = true
 	}
 	result.Duration = time.Since(started)
 	cleanupErr := cleanupAttachedProcess(cmd.Process, owner, wait, interrupted)
-	result.Output = redact(output.String(), options.Redact)
-	result.Truncated = output.exceeded
+	result.Output = output.text(options.Redact)
+	result.Truncated = output.exceeded()
+	if result.Truncated {
+		result.Output = fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit) + result.Output
+	}
 	setExitCode(&result, wait)
 
 	cancelled := interrupted && ctx.Err() != nil
 	switch {
 	case cancelled:
 		result.Status = StatusCancelled
-	case interrupted:
+	case interrupted, result.Truncated:
 		result.Status = StatusIncomplete
 	case !wait.done:
 		result.Status = StatusError
@@ -202,8 +215,6 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 		} else {
 			result.Status = StatusError
 		}
-	case result.Truncated:
-		result.Status = StatusIncomplete
 	default:
 		result.Status = StatusPassed
 	}
@@ -363,35 +374,63 @@ func redact(value string, secrets []string) string {
 	return value
 }
 
+// boundedBuffer counts every byte written against limit but keeps only the
+// first keep bytes, so a large output limit costs no more memory than the
+// evidence OwnGit stores. overflow closes when the count first passes limit.
 type boundedBuffer struct {
 	mu       sync.Mutex
 	buf      bytes.Buffer
+	keep     int
 	limit    int64
-	exceeded bool
+	written  int64
+	overflow chan struct{}
+}
+
+func newBoundedBuffer(limit int64) *boundedBuffer {
+	return &boundedBuffer{keep: int(min(limit, KeptOutputBytes)), limit: limit, overflow: make(chan struct{})}
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.exceeded {
-		return len(p), nil
+	before := b.written
+	b.written += int64(len(p))
+	if before <= b.limit && b.written > b.limit {
+		close(b.overflow)
 	}
-	remaining := b.limit - int64(b.buf.Len())
-	if remaining <= 0 {
-		b.exceeded = true
-		return len(p), nil
+	if room := b.keep - b.buf.Len(); room > 0 {
+		_, _ = b.buf.Write(p[:min(room, len(p))])
 	}
-	if int64(len(p)) > remaining {
-		_, _ = b.buf.Write(p[:remaining])
-		b.exceeded = true
-		return len(p), nil
-	}
-	_, _ = b.buf.Write(p)
 	return len(p), nil
 }
 
-func (b *boundedBuffer) String() string {
+// text returns the kept output with secrets replaced. When output was dropped
+// after the kept bytes, a secret cut at the end is dropped first so no part of
+// it is shown.
+func (b *boundedBuffer) text(secrets []string) string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.String()
+	kept := b.buf.String()
+	if b.written > int64(len(kept)) {
+		kept = withoutCutSecret(kept, secrets)
+	}
+	return redact(kept, secrets)
+}
+
+func (b *boundedBuffer) exceeded() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.written > b.limit
+}
+
+// withoutCutSecret drops a trailing start of any secret from value.
+func withoutCutSecret(value string, secrets []string) string {
+	for _, secret := range secrets {
+		for size := min(len(secret)-1, len(value)); size > 0; size-- {
+			if strings.HasSuffix(value, secret[:size]) {
+				return withoutCutSecret(value[:len(value)-size], secrets)
+			}
+		}
+	}
+	return value
 }

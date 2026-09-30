@@ -55,7 +55,8 @@ func TestRunBoundsOutputAndRedactsSecrets(t *testing.T) {
 		{Name: "long", Command: "echo " + long},
 		{Name: "secret", Command: "echo secret-token"},
 	}, Options{Timeout: 30 * time.Second, OutputLimit: 16, Redact: []string{"secret-token"}})
-	if results[0].Status != StatusIncomplete || !results[0].Truncated || len(results[0].Output) > 16 {
+	_, kept, noted := strings.Cut(results[0].Output, "limit of 16 bytes.]\n")
+	if results[0].Status != StatusIncomplete || !results[0].Truncated || !noted || len(kept) > 16 {
 		t.Fatalf("truncated result=%+v", results[0])
 	}
 	if strings.Contains(results[1].Output, "secret-token") || !strings.Contains(results[1].Output, "[redacted]") {

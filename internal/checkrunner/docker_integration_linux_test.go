@@ -152,6 +152,30 @@ func TestRealDockerConfiguredChecks(t *testing.T) {
 		fixture.assertContainerRemoved(ownership.ContainerID)
 	})
 
+	t.Run("output_limit_stops_and_removes_the_container", func(t *testing.T) {
+		// The policy allows 64 KiB; the check prints twice that and would then
+		// run for another 30 seconds.
+		command := `head -c 131072 /dev/zero | tr '\0' x
+	sleep 30
+	echo late`
+		fixture := newRealDockerFixture(t, config, state.ContainerNetworkNone, command)
+		job := fixture.waitForAnyJob()
+		started := time.Now()
+		completed := fixture.waitForTerminalJob(job.ID)
+		if elapsed := time.Since(started); elapsed > 20*time.Second {
+			t.Fatalf("the job ended after %s; the container kept running past its output limit", elapsed)
+		}
+		if completed.Status != state.CheckJobIncomplete || completed.AttemptID == "" {
+			t.Fatalf("over-limit job status=%s attempt=%s summary=%s", completed.Status, completed.AttemptID, completed.Summary)
+		}
+		attempt, exists, err := fixture.store.CheckAttemptByID(fixture.ctx, fixture.repository.ID, completed.AttemptID)
+		if err != nil || !exists || attempt.Status != state.AttemptIncomplete || len(attempt.Results) != 1 || !attempt.Results[0].Truncated ||
+			!strings.Contains(attempt.Results[0].OutputExcerpt, "its output passed the limit of 65536 bytes") || strings.Contains(attempt.Results[0].OutputExcerpt, "late") {
+			t.Fatalf("over-limit attempt=%+v exists=%v err=%v", attempt, exists, err)
+		}
+		fixture.assertContainerRemoved("owngit-check-" + job.ID + "-0")
+	})
+
 	t.Run("missing_image_has_no_pull_or_fallback", func(t *testing.T) {
 		missing := "sha256:" + strings.Repeat("0", 64)
 		if _, err := dockerCommand(context.Background(), config, "image", "inspect", missing); err == nil {

@@ -26,7 +26,7 @@ const (
 
 	maximumObservedRefs     = 64
 	maximumObservedPRs      = 64
-	maximumAutomaticLogSize = 256 << 10
+	maximumAutomaticLogSize = checkexec.KeptOutputBytes
 
 	// repositoryBusyWait bounds how long a job waits for its exact source
 	// while pushes or other repository writes hold the repository.

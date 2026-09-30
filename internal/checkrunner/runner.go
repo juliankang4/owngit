@@ -22,7 +22,7 @@ import (
 
 const (
 	leaseHeader       = "X-OwnGit-Runner-Lease"
-	maximumRunnerLog  = 256 << 10
+	maximumRunnerLog  = checkexec.KeptOutputBytes
 	minimumRenewDelay = 100 * time.Millisecond
 
 	defaultRetryInitial = time.Second
