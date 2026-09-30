@@ -662,6 +662,9 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 			return err
 		}
 	}
+	if err := requireAttributesInPlace(repositoryDestination.Dir()); err != nil {
+		return err
+	}
 
 	manifest, err := readManifest(filepath.Join(inputRoot, manifestName))
 	if err != nil {

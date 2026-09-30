@@ -30,7 +30,9 @@ func publishBackup(stage, output string) error {
 // oldPath holds into that new, empty, private folder through handles of
 // both. Everything but the manifest goes first; each moved entry and both
 // folders are synchronized, then the manifest is moved and both folders
-// are synchronized again, and the empty stage is removed. A folder without
+// are synchronized again, and the empty stage is removed. A companion
+// (isCompanion) moves after its file, which the file system usually moves
+// it with: moving it first would lose it. A folder without
 // a manifest is no backup, so one left by a stop on the way is never taken
 // for one. Nothing that existed before is replaced. Only a process that
 // can write in the parent could replace the new folder before it is
@@ -73,10 +75,17 @@ func moveIntoNewFolder(oldPath, newPath string) error {
 		}
 		return nil
 	}
-	hasManifest := false
+	listed := make(map[string]bool, len(names))
 	for _, name := range names {
+		listed[name] = true
+	}
+	var companions []string
+	for _, name := range names {
+		if isCompanion(name, func(base string) bool { return listed[base] }) {
+			companions = append(companions, name)
+			continue
+		}
 		if name == manifestName {
-			hasManifest = true
 			continue
 		}
 		if err := move(name); err != nil {
@@ -89,13 +98,18 @@ func moveIntoNewFolder(oldPath, newPath string) error {
 	if err := syncBoth(); err != nil {
 		return err
 	}
-	if hasManifest {
+	if listed[manifestName] {
 		if err := move(manifestName); err != nil {
 			return err
 		}
-		if err := syncBoth(); err != nil {
+	}
+	for _, name := range companions {
+		if err := move(name); err != nil && !errors.Is(err, unix.ENOENT) {
 			return err
 		}
+	}
+	if err := syncBoth(); err != nil {
+		return err
 	}
 	return os.Remove(oldPath)
 }

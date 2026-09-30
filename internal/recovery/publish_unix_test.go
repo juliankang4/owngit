@@ -21,6 +21,11 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	noErr(t, os.MkdirAll(filepath.Join(stage, "repositories"), 0o700))
 	noErr(t, os.WriteFile(filepath.Join(stage, "repositories", "project.bundle"), []byte("bundle"), 0o600))
 	noErr(t, os.WriteFile(filepath.Join(stage, manifestName), []byte("{}"), 0o600))
+	// Companions of the file system, which this one does not move with
+	// their files, still arrive.
+	for _, companion := range []string{"._repositories", "._" + manifestName} {
+		noErr(t, os.WriteFile(filepath.Join(stage, companion), []byte("attributes"), 0o600))
+	}
 
 	empty := filepath.Join(root, "empty")
 	noErr(t, os.Mkdir(empty, 0o755))
@@ -49,7 +54,7 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 
 	target := filepath.Join(root, "published")
 	noErr(t, moveIntoNewFolder(stage, target))
-	for _, name := range []string{manifestName, filepath.Join("repositories", "project.bundle")} {
+	for _, name := range []string{manifestName, filepath.Join("repositories", "project.bundle"), "._repositories", "._" + manifestName} {
 		if _, err := os.Stat(filepath.Join(target, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -59,11 +64,12 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	}
 }
 
-// On a file system with the exclusive rename, the check that a restore
-// makes first passes and leaves nothing behind.
+// On a file system with the exclusive rename and attributes of its own,
+// the checks that a restore makes first pass and leave nothing behind.
 func TestRestoreFolderCheckLeavesNothing(t *testing.T) {
 	dir := t.TempDir()
 	noErr(t, requireExclusiveRename(dir))
+	noErr(t, requireAttributesInPlace(dir))
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		t.Fatalf("%d entries left: %v", len(entries), err)
 	}

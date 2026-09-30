@@ -56,6 +56,33 @@ func TestBackupCopyOpenAndRemoval(t *testing.T) {
 	}
 }
 
+// The companions a file system keeps beside a backup's files go with the
+// backup; a "._" file without its file stops the removal like any other.
+func TestBackupRemovalTakesCompanionsAlong(t *testing.T) {
+	root := t.TempDir()
+	backup := newTwoRepositoryBackup(t, root)
+	folder, err := OpenBackupFolder(root)
+	noErr(t, err)
+	defer folder.Close()
+	orphan := filepath.Join(backup, "._notes.txt")
+	for _, name := range []string{"._" + manifestName, "._repositories", filepath.Join("repositories", "._project.bundle"), "._notes.txt"} {
+		noErr(t, os.WriteFile(filepath.Join(backup, name), []byte("attributes"), 0o600))
+	}
+	opened, err := folder.Open(filepath.Base(backup))
+	noErr(t, err)
+	if err := opened.Remove(); err == nil || !strings.Contains(err.Error(), "._notes.txt") {
+		t.Fatalf("removal with a file without its companion's file: %v", err)
+	}
+	opened.Close()
+	noErr(t, os.Remove(orphan))
+	opened, err = folder.Open(filepath.Base(backup))
+	noErr(t, err)
+	noErr(t, opened.Remove())
+	if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("backup still there: %v", err)
+	}
+}
+
 // A backup is removed through the folder that was opened and checked: when
 // another backup takes its name after it was opened, the other backup is
 // not touched and the removal fails.

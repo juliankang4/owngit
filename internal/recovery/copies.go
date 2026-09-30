@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -157,9 +158,10 @@ func (c *BackupCopy) Size(keep func(id string) bool) (uint64, error) {
 
 // Remove removes the backup: first, through the folder opened by Open, the
 // bundles its manifest names and then its manifest, and last the folder by
-// name, which removes only an empty folder. Anything else in it, such as a
-// file added by hand, even one named like a bundle, refuses the removal
-// before anything is removed. If another folder took the backup's name
+// name, which removes only an empty folder. Companions (isCompanion) go
+// with their files. Anything else in it, such as a file added by hand,
+// even one named like a bundle, refuses the removal before anything is
+// removed. If another folder took the backup's name
 // meanwhile, what it holds is not touched and the removal fails.
 func (c *BackupCopy) Remove() error {
 	names := map[string]bool{}
@@ -170,9 +172,11 @@ func (c *BackupCopy) Remove() error {
 	if err != nil {
 		return err
 	}
-	var bundles []string
+	var bundles, companions []string
 	for _, entry := range entries {
 		switch {
+		case isCompanion(entry.Name(), entryExists(entries)):
+			companions = append(companions, entry.Name())
 		case entry.Name() == manifestName && entry.Type().IsRegular():
 		case entry.Name() == "repositories" && entry.IsDir():
 			inner, err := readDirectory(c.dir, "repositories")
@@ -180,10 +184,15 @@ func (c *BackupCopy) Remove() error {
 				return err
 			}
 			for _, bundle := range inner {
-				if !bundle.Type().IsRegular() || !names[bundle.Name()] {
-					return fmt.Errorf("%s holds %s, which its manifest does not name", c.name, path.Join("repositories", bundle.Name()))
+				name := path.Join("repositories", bundle.Name())
+				switch {
+				case isCompanion(bundle.Name(), entryExists(inner)):
+					companions = append(companions, name)
+				case !bundle.Type().IsRegular() || !names[bundle.Name()]:
+					return fmt.Errorf("%s holds %s, which its manifest does not name", c.name, name)
+				default:
+					bundles = append(bundles, name)
 				}
-				bundles = append(bundles, path.Join("repositories", bundle.Name()))
 			}
 		default:
 			return fmt.Errorf("%s holds %s, which a backup does not write", c.name, entry.Name())
@@ -194,14 +203,26 @@ func (c *BackupCopy) Remove() error {
 			return err
 		}
 	}
-	if err := c.dir.Remove("repositories"); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	// A companion usually goes with its file; those left go before the
+	// folders that hold them, the deepest first.
+	slices.SortFunc(companions, func(a, b string) int { return strings.Count(b, "/") - strings.Count(a, "/") })
+	for _, name := range append(companions, "repositories") {
+		if err := c.dir.Remove(name); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	}
 	if err := c.dir.Remove(manifestName); err != nil {
 		return err
 	}
 	c.dir.Close()
 	return c.folder.root.Remove(c.name)
+}
+
+// entryExists reports whether entries hold an entry of that name.
+func entryExists(entries []fs.DirEntry) func(string) bool {
+	return func(name string) bool {
+		return slices.ContainsFunc(entries, func(entry fs.DirEntry) bool { return entry.Name() == name })
+	}
 }
 
 func readDirectory(root *os.Root, name string) ([]fs.DirEntry, error) {
