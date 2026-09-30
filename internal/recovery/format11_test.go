@@ -162,13 +162,18 @@ func clearReviews(records []PullRequestReviewManifest) []PullRequestReviewManife
 
 // A backup whose records format 10 can hold stays format 10, which the
 // release before this one restores, even when a repository has a policy
-// row that keeps every default.
+// row that keeps every default, or an import source has a machine-local
+// sign-in revision. A restore counts as a sign-in change: the sign-in
+// revision is the restored source's new authority revision.
 func TestBackupWithoutFormat11RecordsStaysFormat10(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
 	store, manager := newBackupStore(t, root)
 	noErr(t, store.Exec(ctx, `INSERT INTO repository_policies(repository_id,updated_at) VALUES('project',1800000000)`))
 	noErr(t, store.Exec(ctx, `INSERT INTO share_links(id,repository_id,secret_hash,scope,created_at) VALUES('00000000000000000000000000000001','project',zeroblob(32),'browse',1800000000)`))
+	_, err := store.ConfigureImportSource(ctx, state.ImportSourceInput{RepositoryID: "project", URL: "https://example.invalid/source.git", Mode: state.ImportModeCoexistence, Now: time.Now()})
+	noErr(t, err)
+	noErr(t, store.Exec(ctx, `UPDATE import_sources SET authority_revision=5,sign_in_revision=4`))
 	backup := filepath.Join(root, "backup")
 	noErr(t, Create(ctx, store, manager, backup))
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
@@ -185,6 +190,10 @@ func TestBackupWithoutFormat11RecordsStaysFormat10(t *testing.T) {
 		if count, err := restored.TableRowCount(ctx, table); err != nil || count != 0 {
 			t.Fatalf("%s has %d rows after restore, err=%v", table, count, err)
 		}
+	}
+	source, exists, err := restored.ImportSource(ctx, "project")
+	if err != nil || !exists || source.AuthorityRevision != 6 || source.SignInRevision != 6 {
+		t.Fatalf("restored import source = %+v exists=%v err=%v", source, exists, err)
 	}
 }
 

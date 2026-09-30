@@ -532,3 +532,85 @@ func TestDeletionStopsWhenHEADMovesOntoItsRef(t *testing.T) {
 		t.Fatal("the branch HEAD moved onto was deleted")
 	}
 }
+
+// Another sign-in may see fewer refs. A ref no run since the sign-in
+// change observed is never taken as deleted upstream, while refs the new
+// sign-in sees keep following the source, deletions included. Retrying the
+// same sign-in or changing only the CA is not a sign-in change.
+func TestChangedSignInNeverDeletesRefsItCannotSee(t *testing.T) {
+	for _, change := range []struct {
+		name       string
+		credential *Credentials
+	}{
+		{"replaced", &Credentials{BearerToken: "synthetic-narrow"}},
+		{"cleared", nil},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			ctx := context.Background()
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.git(f.source, "branch", "dev")
+			f.git(f.source, "branch", "topic")
+			f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-first"}))
+			_, err := f.refresh()
+			noErr(t, err)
+			before, _, err := f.store.ImportSource(ctx, "project")
+			noErr(t, err)
+			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-first"}))
+			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{RootCAPEM: []byte("synthetic CA")}))
+			same, _, err := f.store.ImportSource(ctx, "project")
+			noErr(t, err)
+			if same.SignInRevision != before.SignInRevision {
+				t.Fatalf("the same sign-in moved the sign-in revision %d to %d", before.SignInRevision, same.SignInRevision)
+			}
+			noErr(t, f.service.SetCredentials(ctx, "project", change.credential))
+			after, _, err := f.store.ImportSource(ctx, "project")
+			noErr(t, err)
+			if after.SignInRevision != after.AuthorityRevision || after.SourceGeneration != before.SourceGeneration || !after.FollowUpstreamDeletions {
+				t.Fatalf("after the sign-in change source = %+v", after)
+			}
+			f.transport.mutateAdvertised = func(a *importgit.Advertisement) {
+				a.Refs = slices.DeleteFunc(a.Refs, func(ref importgit.Ref) bool { return ref.Name == "refs/heads/dev" })
+			}
+			if effect, listed := f.refreshEffects()["refs/heads/dev"]; listed {
+				t.Fatalf("preview before a run with the new sign-in = %+v", effect)
+			}
+			_, err = f.refresh()
+			noErr(t, err)
+			if f.destinationRefs()["refs/heads/dev"] == "" {
+				t.Fatal("a ref the new sign-in cannot see was deleted")
+			}
+			if effect, listed := f.refreshEffects()["refs/heads/dev"]; listed {
+				t.Fatalf("preview of a ref the new sign-in cannot see = %+v", effect)
+			}
+			f.git(f.source, "branch", "-D", "topic")
+			if effect, listed := f.refreshEffects()["refs/heads/topic"]; listed {
+				t.Fatalf("preview before the deletion was observed = %+v", effect)
+			}
+			_, err = f.refresh()
+			noErr(t, err)
+			if refs := f.destinationRefs(); refs["refs/heads/topic"] != "" || refs["refs/heads/dev"] == "" {
+				t.Fatalf("after a deletion the new sign-in saw refs = %v", refs)
+			}
+		})
+	}
+}
+
+// Replacing the token, as when one expires, keeps the source generation, so
+// branches the source moves afterwards still fast-forward.
+func TestTokenRotationKeepsFollowingTheSource(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{Credentials: &Credentials{BearerToken: "synthetic-first"}})
+	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-second"}))
+	for _, content := range []string{"two\n", "three\n"} {
+		tip := f.commit(content, content)
+		_, err := f.refresh()
+		noErr(t, err)
+		if got := f.destinationRefs()["refs/heads/main"]; got != tip {
+			t.Fatalf("main = %s, want %s (%s)", got, tip, f.refState("refs/heads/main"))
+		}
+	}
+}

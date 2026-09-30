@@ -200,6 +200,12 @@ func (s *Store) SaveImportCredentials(ctx context.Context, credential ImportCred
 		s.completeImportCredentialMutationLocked(source.RepositoryID)
 		return source, nil
 	}
+	// Another sign-in may see other refs; a CA change alone does not.
+	var previous ImportCredentials
+	if stored && current.Bound(source) {
+		previous = current
+	}
+	signInChanged := !sameImportSignIn(previous, credential)
 	s.beginImportCredentialMutationLocked(source.RepositoryID)
 	generation, err := newImportCredentialGeneration(source.CredentialGeneration)
 	if err != nil {
@@ -209,7 +215,7 @@ func (s *Store) SaveImportCredentials(ctx context.Context, credential ImportCred
 	if err := s.writeImportCredentials(ctx, credential); err != nil {
 		return ImportSource{}, err
 	}
-	changed, err := s.activateImportCredential(ctx, source, generation, now)
+	changed, err := s.activateImportCredential(ctx, source, generation, signInChanged, now)
 	if err != nil {
 		return ImportSource{}, err
 	}
@@ -228,6 +234,15 @@ func newImportCredentialGeneration(exclude string) (string, error) {
 			return generation, nil
 		}
 	}
+}
+
+// sameImportSignIn reports whether two credentials sign in the same way:
+// the same Basic pair or bearer token, or neither. The CA is not compared.
+func sameImportSignIn(left, right ImportCredentials) bool {
+	if left.BearerToken != right.BearerToken || (left.Basic == nil) != (right.Basic == nil) {
+		return false
+	}
+	return left.Basic == nil || *left.Basic == *right.Basic
 }
 
 func sameImportCredential(left, right ImportCredentials) bool {
@@ -336,11 +351,15 @@ func (s *Store) DeleteImportCredentials(ctx context.Context, repositoryID string
 	if !exists {
 		return ImportSource{}, errors.New("import source is not configured")
 	}
+	// Removing a sign-in the source uses is a sign-in change. A file that
+	// cannot be read may hold one, and is removed all the same.
+	current, stored, readErr := s.LoadImportCredentials(ctx, repositoryID)
+	signInChanged := readErr != nil || (stored && current.Bound(source) && !sameImportSignIn(current, ImportCredentials{}))
 	s.beginImportCredentialMutationLocked(repositoryID)
 	if err := s.removeImportCredentialFile(repositoryID); err != nil {
 		return ImportSource{}, err
 	}
-	changed, err := s.activateImportCredential(ctx, source, "", now)
+	changed, err := s.activateImportCredential(ctx, source, "", signInChanged, now)
 	if err != nil {
 		return ImportSource{}, err
 	}
@@ -459,20 +478,21 @@ func (s *Store) RestoreImportBinding(ctx context.Context, repositoryID string, s
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO import_sources(
 			repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
 			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
-			allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+			allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json,sign_in_revision)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repository_id) DO UPDATE SET
 			url=excluded.url,source_generation=excluded.source_generation,authority_revision=excluded.authority_revision,
 			credential_generation=excluded.credential_generation,mode=excluded.mode,git_only_consent=excluded.git_only_consent,
 			allow_private_network=excluded.allow_private_network,created_at=excluded.created_at,updated_at=excluded.updated_at,
 			overwrite_diverged=excluded.overwrite_diverged,follow_upstream_deletions=excluded.follow_upstream_deletions,extra_ref_prefixes=excluded.extra_ref_prefixes,
 			allow_plain_http=excluded.allow_plain_http,redirect_policy=excluded.redirect_policy,approved_redirect_origin=excluded.approved_redirect_origin,
-			allow_reserved_addresses=excluded.allow_reserved_addresses,limits_json=excluded.limits_json`,
+			allow_reserved_addresses=excluded.allow_reserved_addresses,limits_json=excluded.limits_json,sign_in_revision=excluded.sign_in_revision`,
 			snapshot.Source.RepositoryID, snapshot.Source.URL, snapshot.Source.SourceGeneration, snapshot.Source.AuthorityRevision,
 			snapshot.Source.CredentialGeneration, snapshot.Source.Mode, boolInt(snapshot.Source.GitOnlyConsent), boolInt(snapshot.Source.AllowPrivateNetwork),
 			snapshot.Source.CreatedAt.Unix(), snapshot.Source.UpdatedAt.Unix(),
 			boolInt(snapshot.Source.OverwriteDiverged), boolInt(snapshot.Source.FollowUpstreamDeletions), prefixes,
-			boolInt(options.AllowPlainHTTP), options.Redirects, options.ApprovedRedirectOrigin, boolInt(options.AllowReservedAddresses), limits); err != nil {
+			boolInt(options.AllowPlainHTTP), options.Redirects, options.ApprovedRedirectOrigin, boolInt(options.AllowReservedAddresses), limits,
+			snapshot.Source.SignInRevision); err != nil {
 			return err
 		}
 	} else if _, err := s.db.ExecContext(ctx, `DELETE FROM import_sources WHERE repository_id=?`, repositoryID); err != nil {

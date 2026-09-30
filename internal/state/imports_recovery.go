@@ -105,16 +105,19 @@ func readImportRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState
 func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryState) error {
 	for _, source := range snapshot.ImportSources {
 		// Restore creates a new machine-local execution authority while retaining
-		// source identity and observation ownership.
+		// source identity and observation ownership. Credentials are not
+		// restored, so a restore counts as a sign-in change: no restored run
+		// reaches the sign-in revision, and upstream deletions are followed
+		// only for refs a run after the restore observed.
 		prefixes, err := encodeRefPrefixes(source.ExtraRefPrefixes)
 		if err != nil {
 			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
-			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes)
-			VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?)`,
+			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,sign_in_revision)
+			VALUES(?,?,?,?,?,?,?,0,?,?,?,?,?,?)`,
 			source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision+1, "", source.Mode, boolInt(source.GitOnlyConsent), source.CreatedAt.Unix(), source.UpdatedAt.Unix(),
-			boolInt(source.OverwriteDiverged), boolInt(source.FollowUpstreamDeletions), prefixes); err != nil {
+			boolInt(source.OverwriteDiverged), boolInt(source.FollowUpstreamDeletions), prefixes, source.AuthorityRevision+1); err != nil {
 			return fmt.Errorf("restore import source %q: %w", source.RepositoryID, err)
 		}
 	}

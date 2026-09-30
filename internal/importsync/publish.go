@@ -108,7 +108,9 @@ func keptLocalRef(name, local string, symbolic bool, headTargets ...string) bool
 // A ref the source no longer advertises is counted as deleted upstream. It
 // is deleted locally only when the source follows upstream deletions and
 // mayReplaceLocal allows it, and never when it is symbolic or a branch HEAD
-// names, or when the source advertises no published ref at all. Refs outside
+// names, when no run since the latest sign-in change or restore observed it
+// (the current sign-in may not see it), or when the source advertises no
+// published ref at all. Refs outside
 // the namespaces this run imports, such as those of an extra namespace the
 // source no longer imports, are neither counted nor changed.
 //
@@ -214,7 +216,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		plan.deletedUpstream++
 		plan.deletedRefs = append(plan.deletedRefs, ref)
 		destination := dest[ref]
-		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 ||
+		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 || !observations.signedIn[ref] ||
 			keptLocalRef(ref, destination, destSymrefs[ref] != "", destHEAD.target, headBranch, sourceHEAD.target) ||
 			!mayReplaceLocal(run.source, observed, destination) {
 			continue
@@ -1481,7 +1483,10 @@ func (s *Service) readDestinationState(ctx context.Context, repositoryPath strin
 }
 
 type priorObservations struct {
-	refs      map[string]string
+	refs map[string]string
+	// signedIn holds the refs a run at or after the source's sign-in
+	// revision observed: the current sign-in has seen them.
+	signedIn  map[string]bool
 	head      headIdentity
 	headKnown bool
 	headOwned bool
@@ -1495,16 +1500,27 @@ func (s *Service) observationMap(ctx context.Context, run *runState) (priorObser
 	if err != nil {
 		return priorObservations{}, runStateReadProblem("recorded observations could not be read", err)
 	}
-	observations := priorObservations{refs: make(map[string]string, len(records))}
+	observations := priorObservations{refs: make(map[string]string, len(records)), signedIn: make(map[string]bool, len(records))}
+	type runRecord struct {
+		run    state.ImportRun
+		exists bool
+	}
+	runs := map[string]runRecord{}
 	for _, record := range records {
 		if record.RunID == "" {
 			// A legacy fact with no related run cannot establish write ownership.
 			continue
 		}
-		observedRun, exists, err := s.Store.ImportRun(ctx, record.RunID)
-		if err != nil {
-			return priorObservations{}, runStateReadProblem("observation run could not be read", err)
+		cached, read := runs[record.RunID]
+		if !read {
+			observedRun, exists, err := s.Store.ImportRun(ctx, record.RunID)
+			if err != nil {
+				return priorObservations{}, runStateReadProblem("observation run could not be read", err)
+			}
+			cached = runRecord{run: observedRun, exists: exists}
+			runs[record.RunID] = cached
 		}
+		observedRun, exists := cached.run, cached.exists
 		if !exists || observedRun.Status != state.ImportRunComplete || observedRun.RepositoryID != record.RepositoryID || observedRun.SourceGeneration != record.SourceGeneration {
 			continue
 		}
@@ -1528,6 +1544,7 @@ func (s *Service) observationMap(ctx context.Context, run *runState) (priorObser
 			continue
 		}
 		observations.refs[record.RefName] = record.OID
+		observations.signedIn[record.RefName] = observedRun.AuthorityRevision >= run.source.SignInRevision
 	}
 	return observations, nil
 }

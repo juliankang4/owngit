@@ -118,6 +118,11 @@ type ImportSource struct {
 	ExtraRefPrefixes        []string
 	// Options are the machine-local connection choices and limits.
 	Options ImportOptions
+	// SignInRevision is the AuthorityRevision of the latest sign-in change
+	// or restore, machine-local. Another sign-in may see fewer refs, so a
+	// refresh follows an upstream deletion only for a ref a run at or after
+	// this revision observed; a ref the current sign-in never saw stays.
+	SignInRevision int64
 }
 
 // ImportSourceInput is one explicit source configuration mutation. Options
@@ -427,7 +432,7 @@ func (s *Store) ImportSources(ctx context.Context) ([]ImportSource, error) {
 
 const importSourceSelect = `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
 	overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
-	allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json FROM import_sources`
+	allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json,sign_in_revision FROM import_sources`
 
 // scanImportSource reads one source row. Unusable saved options and extra
 // ref namespaces are reported as *ImportSourceSettingError beside the rest of
@@ -439,7 +444,7 @@ func scanImportSource(scanner rowScanner) (ImportSource, error) {
 	var plainHTTP, reserved bool
 	if err := scanner.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.CredentialGeneration, &record.Mode,
 		&record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated, &record.OverwriteDiverged, &record.FollowUpstreamDeletions, &prefixes,
-		&plainHTTP, &redirects, &approved, &reserved, &limits); err != nil {
+		&plainHTTP, &redirects, &approved, &reserved, &limits, &record.SignInRevision); err != nil {
 		return ImportSource{}, err
 	}
 	record.CreatedAt = unixTime(created)
@@ -485,14 +490,18 @@ func (s *Store) setImportConsent(ctx context.Context, repositoryID, column strin
 	return record, err
 }
 
-func (s *Store) activateImportCredential(ctx context.Context, source ImportSource, credentialGeneration string, now time.Time) (ImportSource, error) {
+// activateImportCredential binds credentialGeneration to source. When
+// signInChanged, the same update records the new authority revision as the
+// sign-in revision (ImportSource.SignInRevision).
+func (s *Store) activateImportCredential(ctx context.Context, source ImportSource, credentialGeneration string, signInChanged bool, now time.Time) (ImportSource, error) {
 	if source.AuthorityRevision <= 0 || now.IsZero() || (credentialGeneration != "" && !isLowerHex(credentialGeneration, 32)) {
 		return ImportSource{}, errors.New("invalid import credential authority transition")
 	}
 	result, err := s.db.ExecContext(ctx, `UPDATE import_sources
-		SET authority_revision=authority_revision+1,credential_generation=?,updated_at=?
+		SET authority_revision=authority_revision+1,credential_generation=?,updated_at=?,
+			sign_in_revision=CASE WHEN ? THEN authority_revision+1 ELSE sign_in_revision END
 		WHERE repository_id=? AND url=? AND source_generation=? AND authority_revision=? AND credential_generation=?`,
-		credentialGeneration, now.Unix(), source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision, source.CredentialGeneration)
+		credentialGeneration, now.Unix(), signInChanged, source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision, source.CredentialGeneration)
 	if err != nil {
 		return ImportSource{}, err
 	}
@@ -506,6 +515,9 @@ func (s *Store) activateImportCredential(ctx context.Context, source ImportSourc
 	source.AuthorityRevision++
 	source.CredentialGeneration = credentialGeneration
 	source.UpdatedAt = now
+	if signInChanged {
+		source.SignInRevision = source.AuthorityRevision
+	}
 	return source, nil
 }
 

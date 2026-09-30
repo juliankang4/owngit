@@ -1076,3 +1076,52 @@ func TestForgetUnpublishedImportKeepsHistoryAndRespectsBlockers(t *testing.T) {
 		t.Fatalf("an existing repository lost its credential exists=%v err=%v", exists, err)
 	}
 }
+
+// A sign-in change records its authority revision as the sign-in revision in
+// the same update; a CA change, an identical retry, or clearing when no
+// sign-in was stored does not.
+func TestImportSignInRevisionFollowsSignInChanges(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	source := configureTestImportSource(t, store, "project")
+	now := testImportNow()
+	save := func(credential ImportCredentials) ImportSource {
+		t.Helper()
+		credential.RepositoryID, credential.URL, credential.SourceGeneration = "project", source.URL, source.SourceGeneration
+		credential.ExpectedAuthorityRevision = source.AuthorityRevision
+		now = now.Add(time.Second)
+		changed, err := store.SaveImportCredentials(ctx, credential, now)
+		noErr(t, err)
+		return changed
+	}
+	stored := func() ImportSource {
+		t.Helper()
+		record, _, err := store.ImportSource(ctx, "project")
+		noErr(t, err)
+		return record
+	}
+	source, err := store.DeleteImportCredentials(ctx, "project", now)
+	noErr(t, err)
+	if source.SignInRevision != 0 || stored().SignInRevision != 0 {
+		t.Fatalf("clearing no sign-in = %+v", source)
+	}
+	source = save(ImportCredentials{BearerToken: "synthetic-first"})
+	if source.SignInRevision != source.AuthorityRevision || stored().SignInRevision != source.AuthorityRevision {
+		t.Fatalf("first sign-in = %+v", source)
+	}
+	signedIn := source.SignInRevision
+	source = save(ImportCredentials{BearerToken: "synthetic-first"})
+	source = save(ImportCredentials{BearerToken: "synthetic-first", RootCAPEM: []byte("synthetic CA")})
+	if source.SignInRevision != signedIn || stored().SignInRevision != signedIn || source.AuthorityRevision == signedIn {
+		t.Fatalf("CA change = %+v", source)
+	}
+	source = save(ImportCredentials{Basic: &ImportBasicAuth{Username: "user", Password: "synthetic"}})
+	if source.SignInRevision != source.AuthorityRevision {
+		t.Fatalf("new sign-in = %+v", source)
+	}
+	source, err = store.DeleteImportCredentials(ctx, "project", now.Add(time.Minute))
+	noErr(t, err)
+	if source.SignInRevision != source.AuthorityRevision || stored().SignInRevision != source.AuthorityRevision {
+		t.Fatalf("cleared sign-in = %+v", source)
+	}
+}
