@@ -2044,7 +2044,7 @@ owngit backup check --run ID
 
 OwnGit records the result with the backup, so `verification` in `owngit backup runs` changes too. A backup that fails no longer counts as verified, and OwnGit no longer keeps it as the newest verified backup.
 
-When the backup is no longer in its folder, or its folder holds something else, the check answers that the backup is gone and does nothing.
+When the backup is already gone from its folder, or its folder holds something else, the check does not start and says that the backup is gone. When the backup is moved, removed, changed or replaced while it is being checked, the check fails with a message that says so, records nothing, and the backup keeps its earlier `verification`.
 
 ### Which backups OwnGit keeps
 
@@ -2094,6 +2094,7 @@ The file holds the backup's folder with its `manifest.json` and the repository b
 
 - To check the file on another computer, unpack it with `tar -xf FILE` and run [`owngit backup verify`](#verifying-a-backup) on the folder it makes. To restore it, see [Restoring from a backup file](#restoring-from-a-backup-file).
 - There is no size limit. A download stops when the receiving side takes nothing for 1 minute.
+- When the backup's manifest changes while it is being downloaded, the download fails.
 - When a download fails after it started, OwnGit breaks off the connection, so the browser or the command reports the download as failed and a shortened file never passes for a whole one.
 - The command refuses an output file that already exists, removes its partial file when the download fails, and prints JSON with the `path` and size in `bytes` of the file.
 - OwnGit does not remove a backup while it is being downloaded. When that backup is due for removal, it stays until the next backup, and the new backup's message says so.
@@ -2165,7 +2166,7 @@ OwnGit never restores from the browser. Restore this backup, on each backup that
 
 1. Stop OwnGit: `owngit service stop` when it runs as a service, or otherwise end the `owngit serve` process, for example with Ctrl+C in its terminal.
 2. Rename the current state folder and repository folder by adding `.before-restore` to their names. A restore never writes into a folder that exists.
-3. Run the command shown, which has a Copy button. It has the form `owngit restore --input BACKUP --state-dir STATE --repository-root REPOSITORIES --verify`, so it verifies the backup first and restores only one that passes. When OwnGit runs as a Linux system service, the command starts with `sudo -u owngit`.
+3. Run the command shown, which has a Copy button. It has the form `owngit restore --input BACKUP --state-dir STATE --repository-root REPOSITORIES --verify`, so it verifies the backup first and restores only one that passes. When OwnGit runs as a Linux system service, the command starts with `sudo -u owngit`. On Windows the command is written for PowerShell and labelled so; run it in PowerShell, not in Command Prompt (`cmd.exe`).
 4. Start OwnGit again: `owngit service start`, or the way you started it before.
 
 When the restore finishes, it lists what the backup did not bring back, as described [after a restore](#after-a-restore). The renamed folders stay until you remove them.
@@ -2182,7 +2183,7 @@ OwnGit verifies the uploaded backup as it verifies a new one. Once it passes, th
 
 OwnGit keeps one uploaded backup, in the folder `backup-uploads` inside its state folder:
 
-- A new upload replaces it.
+- A new upload replaces it once OwnGit has checked the free space for it. A refusal before that point, such as too little free space or another backup, verification or upload running, keeps the earlier upload. From that point on, OwnGit removes the earlier upload first, so an upload that is then refused or fails verification leaves no uploaded backup.
 - OwnGit removes it 24 hours after it arrived, whenever OwnGit starts, and at once when its verification fails. So run the restore before you start OwnGit again. The page shows when it will be removed.
 - `owngit backup upload` prints the upload with `status` `verifying`. `upload` in `owngit backup status` then shows `status` (`verifying`, `passed` or `failed`), a `message` when it failed, and `removes_at`.
 
@@ -2192,6 +2193,7 @@ OwnGit refuses an upload in these cases, and then keeps nothing of it:
 - The upload does not declare its size. Browsers and `owngit backup upload` always declare it.
 - No data arrives for 1 minute.
 - The file holds anything besides one top folder with `manifest.json` and `repositories/*.bundle`, such as an absolute path, `..`, a link or another file.
+- The top folder's name holds anything besides ASCII letters, digits, `.`, `_` and `-`. The files OwnGit downloads always meet this rule.
 
 When OwnGit refuses an upload before the browser has sent the whole file, for example for lack of free space, some browsers show a connection error instead of the reason. `owngit backup upload` prints the reason.
 
