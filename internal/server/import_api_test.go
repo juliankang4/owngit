@@ -306,12 +306,17 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	}
 }
 
+// The import request is authorized under the ordinary page deadline, so that
+// deadline must hold one administrator password verification (an Argon2id
+// hash, which takes some hundred milliseconds under the race detector on a
+// busy machine) and the state reads around it. The import then outlives that
+// deadline: its fetch takes twice as long.
 func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	fixture.app.HTTPTimeout = 500 * time.Millisecond
+	fixture.app.HTTPTimeout = 2 * time.Second
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {
 		select {
-		case <-time.After(2 * time.Second):
+		case <-time.After(2 * fixture.app.HTTPTimeout):
 			return &importfetch.Result{Advertisement: &importgit.Advertisement{Service: "git-upload-pack", ObjectFormat: importgit.FormatSHA1, Empty: true}}, nil
 		case <-ctx.Done():
 			return nil, ctx.Err()
