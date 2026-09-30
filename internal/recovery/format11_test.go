@@ -288,7 +288,8 @@ func TestBackupAtTheProductTextLimits(t *testing.T) {
 // in format 10.
 func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 	blank := func() Manifest {
-		return Manifest{Repositories: []RepositoryManifest{{}}, PullRequests: []PullRequestManifest{{}}, PullRequestReviews: []PullRequestReviewManifest{{}}, ImportSources: []ImportSourceManifest{{}}}
+		return Manifest{Repositories: []RepositoryManifest{{}}, PullRequests: []PullRequestManifest{{}}, PullRequestReviews: []PullRequestReviewManifest{{}}, ImportSources: []ImportSourceManifest{{}},
+			CheckPolicies: []CheckPolicyManifest{{Execution: state.CheckExecutionSettings{ContainerNetwork: state.ContainerNetworkBridge}}}}
 	}
 	if content := format11Content(blank()); content != "" {
 		t.Fatalf("empty records need format 11: %s", content)
@@ -330,6 +331,12 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		"extra namespace intent": func(m *Manifest) {
 			m.ImportIntents = []ImportIntentManifest{{Observed: map[string]string{"refs/notes/commits": strings.Repeat("a", 40)}}}
 		},
+		"container option of a policy": func(m *Manifest) {
+			m.CheckPolicies = []CheckPolicyManifest{{Execution: state.CheckExecutionSettings{ContainerWritableRoot: true}}}
+		},
+		"named network of a job": func(m *Manifest) {
+			m.CheckJobs = []CheckJobManifest{{Execution: state.CheckExecutionSettings{ContainerNetwork: "checks"}}}
+		},
 		"deletion intent": func(m *Manifest) {
 			m.ImportIntents = []ImportIntentManifest{{Expected: map[string]string{"refs/heads/gone": strings.Repeat("a", 40)}, Desired: map[string]string{"refs/heads/gone": ""}}}
 		},
@@ -345,7 +352,7 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		reflect.TypeFor[Head](): 2, reflect.TypeFor[Ref](): 2, reflect.TypeFor[PullRequestManifest](): 19, reflect.TypeFor[PullRequestRevisionManifest](): 5,
 		reflect.TypeFor[PullRequestReviewManifest](): 12, reflect.TypeFor[PullRequestMergeManifest](): 11, reflect.TypeFor[TaskManifest](): 5, reflect.TypeFor[CheckConfigurationManifest](): 5,
 		reflect.TypeFor[CheckDefinitionManifest](): 2, reflect.TypeFor[CheckCycleManifest](): 6, reflect.TypeFor[CheckAttemptManifest](): 32, reflect.TypeFor[CheckResultManifest](): 10,
-		reflect.TypeFor[CheckPolicyManifest](): 16, reflect.TypeFor[CheckJobManifest](): 37, reflect.TypeFor[CheckJobLimitsManifest](): 2, reflect.TypeFor[state.CheckExecutionSettings](): 9,
+		reflect.TypeFor[CheckPolicyManifest](): 16, reflect.TypeFor[CheckJobManifest](): 37, reflect.TypeFor[CheckJobLimitsManifest](): 2, reflect.TypeFor[state.CheckExecutionSettings](): 14,
 		reflect.TypeFor[ImportSourceManifest](): 11, reflect.TypeFor[ImportRunManifest](): 30, reflect.TypeFor[ImportObservationManifest](): 7, reflect.TypeFor[ImportIntentManifest](): 18,
 		reflect.TypeFor[state.Actor](): 3,
 	} {

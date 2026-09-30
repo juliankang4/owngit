@@ -40,6 +40,12 @@ const (
 	FieldContainerPIDs         = "container_pids"
 	FieldContainerScratchBytes = "container_scratch_bytes"
 
+	FieldContainerAllowTags          = "container_allow_tags"
+	FieldContainerPullMissing        = "container_pull_missing"
+	FieldContainerMissingEnforcement = "container_missing_enforcement"
+	FieldContainerImageVolumes       = "container_image_volumes"
+	FieldContainerWritableRoot       = "container_writable_root"
+
 	FieldSourceMaxEntries    = "source_max_entries"
 	FieldSourceMaxFileBytes  = "source_max_file_bytes"
 	FieldSourceMaxTotalBytes = "source_max_total_bytes"
@@ -65,6 +71,12 @@ const (
 	RuleNotApplicable = "not_applicable"
 	// RuleDuplicate means the value repeats an earlier entry.
 	RuleDuplicate = "duplicate"
+	// RuleForbidden means the value is never accepted, whatever else is
+	// chosen. Host networking is the one such value.
+	RuleForbidden = "forbidden"
+	// RuleNeedsRepository means the option needs an image named by its
+	// repository, and a bare image ID names none.
+	RuleNeedsRepository = "needs_repository"
 )
 
 // CheckPolicyFieldError is one refused policy field.
@@ -100,6 +112,10 @@ func (e *CheckPolicyFieldError) Error() string {
 		return "invalid check policy: " + e.Field + " does not apply to this executor"
 	case RuleDuplicate:
 		return fmt.Sprintf("invalid check policy: %s repeats %q", e.Field, e.Value)
+	case RuleForbidden:
+		return fmt.Sprintf("invalid check policy: %s value %q is never accepted", e.Field, e.Value)
+	case RuleNeedsRepository:
+		return "invalid check policy: " + e.Field + " needs an image named by its repository, not a bare image ID"
 	default:
 		return "invalid check policy: " + e.Field + " was refused"
 	}

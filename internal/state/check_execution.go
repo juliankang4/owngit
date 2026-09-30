@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -13,6 +15,16 @@ const (
 
 	ContainerNetworkNone   = "none"
 	ContainerNetworkBridge = "bridge"
+	// ContainerNetworkHost is Docker's host network. It is never accepted:
+	// it would give repository code the host's loopback services, including
+	// OwnGit itself.
+	ContainerNetworkHost = "host"
+
+	// Resource limits a policy may accept as not enforced.
+	ContainerLimitMemory = "memory"
+	ContainerLimitSwap   = "swap"
+	ContainerLimitCPU    = "cpu"
+	ContainerLimitPIDs   = "pids"
 
 	defaultSourceMaxEntries    = 20000
 	defaultSourceMaxFileBytes  = int64(64 << 20)
@@ -50,10 +62,42 @@ type CheckExecutionSettings struct {
 	ContainerPIDs         int64  `json:"container_pids,omitempty"`
 	ContainerScratchBytes int64  `json:"container_scratch_bytes,omitempty"`
 
+	// The container options below are each off when absent, which is the
+	// behavior of a policy that predates them. Each one is the owner's
+	// explicit choice, shown with its own warning, and part of the policy
+	// digest, so changing one withdraws consent.
+
+	// ContainerAllowTags accepts an image named by a tag. Each job resolves
+	// the tag once to an image ID and runs every command from that ID.
+	ContainerAllowTags bool `json:"container_allow_tags,omitempty"`
+	// ContainerPullMissing downloads a missing image before the job, with no
+	// stored registry credentials.
+	ContainerPullMissing bool `json:"container_pull_missing,omitempty"`
+	// ContainerMissingEnforcement lists the resource limits the owner accepts
+	// this computer's Docker may not enforce. It is sorted and each entry is
+	// one of ContainerLimitMemory, ContainerLimitSwap, ContainerLimitCPU and
+	// ContainerLimitPIDs. A missing limit that is not listed still refuses.
+	ContainerMissingEnforcement []string `json:"container_missing_enforcement,omitempty"`
+	// ContainerImageVolumes gives each volume the image declares a disposable
+	// in-memory mount instead of refusing the image.
+	ContainerImageVolumes bool `json:"container_image_volumes,omitempty"`
+	// ContainerWritableRoot lets commands change the container's own files.
+	// They are discarded with the container.
+	ContainerWritableRoot bool `json:"container_writable_root,omitempty"`
+
 	// Legacy marks a schema 9 policy or job whose execution conditions were not
 	// recorded. It remains portable history but cannot receive fresh consent or
 	// execution until the operator stores a complete current policy.
 	Legacy bool `json:"legacy,omitempty"`
+}
+
+// HasContainerOptions reports whether any container option beyond an
+// immutable image on the none or bridge network is chosen. Backups holding
+// one need format 11.
+func (settings CheckExecutionSettings) HasContainerOptions() bool {
+	return settings.ContainerAllowTags || settings.ContainerPullMissing || len(settings.ContainerMissingEnforcement) != 0 ||
+		settings.ContainerImageVolumes || settings.ContainerWritableRoot ||
+		(settings.ContainerNetwork != "" && settings.ContainerNetwork != ContainerNetworkNone && settings.ContainerNetwork != ContainerNetworkBridge)
 }
 
 // DefaultCheckSourceLimits returns the bounded source snapshot defaults used
@@ -89,6 +133,9 @@ func defaultCheckSourceLimits() CheckSourceLimits {
 func normalizeCheckExecutionSettings(executor string, settings CheckExecutionSettings) (CheckExecutionSettings, error) {
 	if settings.Legacy {
 		return CheckExecutionSettings{}, errors.New("legacy execution settings cannot be selected")
+	}
+	if len(settings.ContainerMissingEnforcement) == 0 {
+		settings.ContainerMissingEnforcement = nil
 	}
 	defaults := defaultCheckSourceLimits()
 	if settings.Source.MaxEntries == 0 {
@@ -132,17 +179,28 @@ func normalizeCheckExecutionSettings(executor string, settings CheckExecutionSet
 			{FieldContainerMemoryBytes, settings.ContainerMemoryBytes != 0},
 			{FieldContainerPIDs, settings.ContainerPIDs != 0},
 			{FieldContainerScratchBytes, settings.ContainerScratchBytes != 0},
+			{FieldContainerAllowTags, settings.ContainerAllowTags},
+			{FieldContainerPullMissing, settings.ContainerPullMissing},
+			{FieldContainerMissingEnforcement, len(settings.ContainerMissingEnforcement) != 0},
+			{FieldContainerImageVolumes, settings.ContainerImageVolumes},
+			{FieldContainerWritableRoot, settings.ContainerWritableRoot},
 		} {
 			if supplied.set {
 				return CheckExecutionSettings{}, notApplicableError(supplied.field)
 			}
 		}
 	case CheckExecutorContainer:
-		if !validImmutableContainerImage(settings.ContainerImage) {
-			if settings.ContainerImage == "" {
-				return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerImage, Rule: RuleRequired}
-			}
+		switch {
+		case settings.ContainerImage == "":
+			return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerImage, Rule: RuleRequired}
+		case validImmutableContainerImage(settings.ContainerImage):
+		case settings.ContainerAllowTags && validContainerImageReference(settings.ContainerImage):
+		default:
 			return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerImage, Rule: RuleFormat}
+		}
+		// A bare image ID names no repository to download from.
+		if settings.ContainerPullMissing && strings.HasPrefix(settings.ContainerImage, "sha256:") {
+			return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerPullMissing, Rule: RuleNeedsRepository}
 		}
 		if settings.ContainerRuntime == "" {
 			settings.ContainerRuntime = "docker-local"
@@ -153,9 +211,14 @@ func normalizeCheckExecutionSettings(executor string, settings CheckExecutionSet
 		if settings.ContainerNetwork == "" {
 			settings.ContainerNetwork = ContainerNetworkNone
 		}
-		if settings.ContainerNetwork != ContainerNetworkNone && settings.ContainerNetwork != ContainerNetworkBridge {
-			return CheckExecutionSettings{}, unknownValueError(FieldContainerNetwork, settings.ContainerNetwork)
+		if err := validateContainerNetwork(settings.ContainerNetwork); err != nil {
+			return CheckExecutionSettings{}, err
 		}
+		missing, err := normalizeContainerLimitNames(settings.ContainerMissingEnforcement)
+		if err != nil {
+			return CheckExecutionSettings{}, err
+		}
+		settings.ContainerMissingEnforcement = missing
 		containerDefaults := DefaultCheckContainerLimits()
 		if settings.ContainerCPUMillis == 0 {
 			settings.ContainerCPUMillis = containerDefaults.CPUMillis
@@ -251,6 +314,70 @@ func validImmutableContainerImage(value string) bool {
 		}
 	}
 	return true
+}
+
+// validContainerImageReference accepts a Docker image reference: an optional
+// registry host, a lowercase repository path, and an optional tag or digest.
+// It never begins with a dash, so it cannot be read as a Docker option.
+func validContainerImageReference(value string) bool {
+	return len(value) <= 512 && containerImageReference.MatchString(value)
+}
+
+var containerImageReference = regexp.MustCompile(`^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*(?::[0-9]+)?/)?` +
+	`[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)*` +
+	`(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9a-f]{64})?$`)
+
+// ContainerImageRegistry names the registry an image reference downloads
+// from, so a warning can say where OwnGit will connect.
+func ContainerImageRegistry(image string) string {
+	name := image
+	if marker := strings.Index(name, "@"); marker >= 0 {
+		name = name[:marker]
+	}
+	first, _, nested := strings.Cut(name, "/")
+	if nested && (strings.ContainsAny(first, ".:") || first == "localhost") {
+		return first
+	}
+	return "docker.io"
+}
+
+// validateContainerNetwork accepts none, bridge, or the name of a Docker
+// network the owner created. Host networking is refused outright, and
+// Docker's other reserved spellings are not names.
+func validateContainerNetwork(network string) error {
+	switch {
+	case network == ContainerNetworkNone || network == ContainerNetworkBridge:
+		return nil
+	case network == ContainerNetworkHost:
+		return &CheckPolicyFieldError{Field: FieldContainerNetwork, Rule: RuleForbidden, Value: network}
+	case network == "default" || !containerNetworkName.MatchString(network):
+		return unknownValueError(FieldContainerNetwork, network)
+	}
+	return nil
+}
+
+// Docker's own network name rule, bounded. A colon never appears, so
+// "container:NAME" cannot be spelled.
+var containerNetworkName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$`)
+
+func normalizeContainerLimitNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	sorted := make([]string, 0, len(names))
+	for _, name := range names {
+		switch name {
+		case ContainerLimitMemory, ContainerLimitSwap, ContainerLimitCPU, ContainerLimitPIDs:
+		default:
+			return nil, unknownValueError(FieldContainerMissingEnforcement, name)
+		}
+		if slices.Contains(sorted, name) {
+			return nil, &CheckPolicyFieldError{Field: FieldContainerMissingEnforcement, Rule: RuleDuplicate, Value: name}
+		}
+		sorted = append(sorted, name)
+	}
+	slices.Sort(sorted)
+	return sorted, nil
 }
 
 func checkExecutionSettingsJSON(settings CheckExecutionSettings) (string, error) {

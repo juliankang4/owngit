@@ -1873,6 +1873,16 @@ func format11Content(manifest Manifest) string {
 			return "an import refresh option"
 		}
 	}
+	for _, policy := range manifest.CheckPolicies {
+		if policy.Execution.HasContainerOptions() {
+			return "a container option of a check policy"
+		}
+	}
+	for _, job := range manifest.CheckJobs {
+		if job.Execution.HasContainerOptions() {
+			return "a container option of a check job"
+		}
+	}
 	// Import history outlives the choices that made it: refs of an extra
 	// namespace and deletions stay recorded after the namespace is removed
 	// or following deletions is turned off, and format 10 readers accept
