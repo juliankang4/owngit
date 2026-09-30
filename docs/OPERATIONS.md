@@ -785,10 +785,12 @@ If the new port is taken, nothing changes. If sharing was turned off at the old 
 
 Choosing a free port keeps everything else on Tailscale working, so try that first. If you no longer need what Tailscale serves on a port, OwnGit can take its place there:
 
-1. Review what is on the port. On the Network tab, a confirmed administrator sees each taken port under Replace what is on a port, with what Tailscale serves there. `owngit tailscale status` lists the same, and so does a refused `owngit tailscale on --https-port PORT`, each with the command that replaces it.
+1. Review what is on the port. When no automatic port is free, a confirmed administrator sees each taken port on the Network tab under Replace what is on a port, with what Tailscale serves there, and `owngit tailscale status` lists the same with the command that replaces each. When an automatic port is still free, for example 443 is taken and 8443 is free, nothing is listed. Then choose the taken port as a Custom port in Settings, or run `owngit tailscale on --https-port PORT`. OwnGit refuses and shows what is on that port, with the way to replace it.
 2. Choose Replace this endpoint and enter the administrator password, or run the command shown: `owngit tailscale on --https-port PORT --replace-endpoint DIGEST`. `DIGEST` identifies what you reviewed.
 
-OwnGit replaces only what you reviewed. If anything Tailscale serves changed after your review, on that port or any other, it replaces nothing and shows the port again for a new review. Only that port changes; other ports, names and Funnel stay as they are. OwnGit never replaces a port open to Funnel, which would make OwnGit public, or a port held by a `tailscale serve` running in a terminal. When sharing is on at another port, the replacement also moves it, as described above.
+OwnGit replaces only what you reviewed. If anything Tailscale serves changed after your review, on that port or any other, the port is not replaced. When OwnGit finds the change before its first write, nothing changes, sharing stays on, and the port is shown again for a new review. Only that port changes; other ports, names and Funnel stay as they are. OwnGit never replaces a port open to Funnel, which would make OwnGit public, or a port held by a `tailscale serve` running in a terminal.
+
+When sharing is on at another port, the replacement also moves it. OwnGit first clears its old port, as in any move. A change or failure after that step leaves the chosen port unreplaced and sharing off, and the message says so ([Changing the HTTPS port](#changing-the-https-port)).
 
 #### Details and troubleshooting
 
