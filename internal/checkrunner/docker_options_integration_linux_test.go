@@ -207,6 +207,32 @@ func TestRealDockerContainerOptions(t *testing.T) {
 			t.Fatalf("output does not record the unenforced limit: %q", attempt.Results[0].OutputExcerpt)
 		}
 	})
+
+	t.Run("an_accepted_missing_CPU_limit_is_not_sent", func(t *testing.T) {
+		// The daemon is real. The wrapper reports no CPU enforcement and, as
+		// such a daemon does, refuses to create a container with a CPU limit.
+		wrapper := filepath.Join(t.TempDir(), "docker")
+		script := "#!/bin/sh\ncase \"$*\" in *memory_limit*) out=$(" + shellQuoteDockerTest(config.docker) + " \"$@\") || exit $?\n" +
+			"printf '%s\\n' \"$out\" | sed 's/\"cpu_cfs_quota\":true/\"cpu_cfs_quota\":false/' ;;\n" +
+			"*' create '*--cpus*) echo 'NanoCPUs can not be set, as your kernel does not support CPU CFS scheduler' >&2; exit 1 ;;\n" +
+			"*) exec " + shellQuoteDockerTest(config.docker) + " \"$@\" ;;\nesac\n"
+		noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
+		noCPU := realDockerConfig{docker: wrapper, dockerHost: config.dockerHost, image: config.image}
+
+		refused := newRealDockerFixtureWith(t, noCPU, `true`, func(settings *state.CheckExecutionSettings) {})
+		job := refused.waitForTerminalJob(refused.waitForAnyJob().ID)
+		if job.Status != state.CheckJobUnavailable || !strings.Contains(job.Summary, "does not enforce the cpu limit") {
+			t.Fatalf("unaccepted missing CPU limit: status=%s summary=%s", job.Status, job.Summary)
+		}
+		accepted := newRealDockerFixtureWith(t, noCPU, `true`, func(settings *state.CheckExecutionSettings) {
+			settings.ContainerMissingEnforcement = []string{state.ContainerLimitCPU}
+		})
+		job = accepted.waitForTerminalJob(accepted.waitForAnyJob().ID)
+		attempt := accepted.attempt(job, state.AttemptPassed)
+		if !strings.Contains(attempt.Results[0].OutputExcerpt, "Limits this Docker does not enforce: cpu") {
+			t.Fatalf("output does not record the unenforced limit: %q", attempt.Results[0].OutputExcerpt)
+		}
+	})
 }
 
 // heldCommand runs command, then waits until the test removes .owngit-held,
