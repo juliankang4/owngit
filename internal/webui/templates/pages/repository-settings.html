@@ -15,7 +15,7 @@
      new name and the administrator confirmation every change asks for. */}}
 {{$rn := $p.RenameNotices}}
 <section class="setblock" aria-labelledby="rset-rename-h">
-  <h3 id="rset-rename-h" class="setblock__h">{{bi $lang "repoadmin.rename.title"}}</h3>
+  <h3 id="rset-rename-h" class="setblock__h">{{icon "repo"}}{{bi $lang "repoadmin.rename.title"}}</h3>
   <p class="setblock__d">{{bi $lang "repoadmin.rename.help"}}</p>
   <p class="rset__now">{{bi $lang "repoadmin.rename.address"}} <span class="mono" dir="auto">{{$p.Address}}</span></p>
   {{if $p.Aliases}}
@@ -31,8 +31,8 @@
     <div class="f">
       <label for="rset-name">{{bi $lang "repoadmin.rename.label"}}</label>
       <input id="rset-name" name="name" type="text" required maxlength="100" autocomplete="off" spellcheck="false" autocapitalize="off"
-             value="{{$p.RenameName}}" aria-describedby="rset-name-help"
-             {{template "fieldInvalid" dict "Notices" $rn "Scope" "rset-rename" "Field" "name"}}>
+             value="{{$p.RenameName}}"
+             {{if ge (firstAlert $rn "name") 0}}aria-invalid="true" aria-describedby="{{noteID "rset-rename" "name"}} rset-name-help" autofocus{{else}}aria-describedby="rset-name-help"{{end}}>
       {{template "fieldNotice" dict "Lang" $lang "Notices" $rn "Scope" "rset-rename" "Field" "name"}}
       <p class="f__help" id="rset-name-help">{{bi $lang "repoadmin.rename.alias_note"}}</p>
     </div>
