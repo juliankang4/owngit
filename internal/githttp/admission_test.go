@@ -7,9 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/state"
 )
 
 // One repository keeps all its slots, a repository with no transfer running
@@ -179,4 +182,41 @@ func TestAdmissionFollowsChangedLimitsWithoutStoppingTransfers(t *testing.T) {
 		t.Fatal("a waiting request was not admitted once the repository went below the new limit")
 	}
 	running[3]()
+}
+
+// The saved transfer limits reach every clone: with one slot per
+// repository and no extra slot, a clone of another repository waits for
+// the busy one and is refused after the queue wait; with one extra slot it
+// runs at once.
+func TestSavedTransferLimitsDecideWhenACloneRuns(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	ctx := context.Background()
+	_, err := manager.Create(ctx, "other", "")
+	noErr(t, err)
+	handler, err := New(runner, manager, "")
+	noErr(t, err)
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	save := func(extra int) Limits {
+		t.Helper()
+		limits := state.DefaultGitTransferLimits
+		limits.PerRepository, limits.ExtraSlots, limits.QueueWait = 1, extra, state.MinimumTransferQueue
+		noErr(t, manager.Store.SavePolicies(ctx, state.PolicyChange{GitTransfer: &limits}))
+		saved, err := handler.Limits(ctx)
+		noErr(t, err)
+		return saved
+	}
+	release, err := handler.slots.acquire(ctx, "sample", save(0))
+	noErr(t, err)
+	defer release()
+	started := time.Now()
+	if output, err := httpGitCombined("", "clone", "-q", server.URL+"/git/other.git", filepath.Join(t.TempDir(), "refused")); err == nil {
+		t.Fatalf("a clone ran with every slot taken: %s", output)
+	}
+	if waited := time.Since(started); waited < state.MinimumTransferQueue {
+		t.Fatalf("the clone was refused after %s, before the queue wait", waited)
+	}
+	save(1)
+	runHTTPGit(t, "", "clone", "-q", server.URL+"/git/other.git", filepath.Join(t.TempDir(), "extra"))
 }
