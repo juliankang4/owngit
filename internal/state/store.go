@@ -1479,6 +1479,10 @@ var schemaSteps = []schemaStep{
 		`ALTER TABLE import_sources ADD COLUMN approved_redirect_origin TEXT NOT NULL DEFAULT '' CHECK (length(CAST(approved_redirect_origin AS BLOB)) <= 2048)`,
 		`ALTER TABLE import_sources ADD COLUMN allow_reserved_addresses INTEGER NOT NULL DEFAULT 0 CHECK (allow_reserved_addresses IN (0,1))`,
 		`ALTER TABLE import_sources ADD COLUMN limits_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(limits_json) AND length(CAST(limits_json AS BLOB)) <= 4096)`,
+		// The authority revision of the latest sign-in change or restore. A
+		// refresh follows an upstream deletion only for a ref a run at or
+		// after it observed. Machine-local: a restore sets it.
+		`ALTER TABLE import_sources ADD COLUMN sign_in_revision INTEGER NOT NULL DEFAULT 0 CHECK (sign_in_revision >= 0)`,
 		// Read-only share links are machine-local authority. Only a hash of
 		// the secret is stored, and a restore brings no link back.
 		`CREATE TABLE share_links (

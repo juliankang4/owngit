@@ -38,6 +38,26 @@ func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 	}
 }
 
+// A 1.1.2 import source upgrades with no sign-in change recorded, so the
+// deletions it follows are those of any run, as before.
+func TestReleasedImportSourceUpgradesWithoutASignInRevision(t *testing.T) {
+	ctx := context.Background()
+	directory := filepath.Join(t.TempDir(), "state")
+	loadReleasedDump(t, directory, "schema15-1.1.2.sql")
+	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
+	_, err := db.Exec(`INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,mode,created_at,updated_at)
+		VALUES('project','https://example.invalid/team/project.git',1,3,'standalone',1800000000,1800000000)`)
+	noErr(t, err)
+	noErr(t, db.Close())
+	store := openUpgradedSchema(t, directory, currentSchemaVersion())
+	defer store.Close()
+	var revision int64
+	noErr(t, store.db.QueryRowContext(ctx, `SELECT sign_in_revision FROM import_sources WHERE repository_id='project'`).Scan(&revision))
+	if revision != 0 {
+		t.Fatalf("upgraded sign_in_revision=%d", revision)
+	}
+}
+
 // The chain is table-driven: a test-only step 17 after the unreleased step
 // 16 upgrades schema 14 through three steps and schema 15 through two in one
 // Open, and the refusal messages follow the table.

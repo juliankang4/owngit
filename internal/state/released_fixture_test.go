@@ -128,6 +128,7 @@ func TestAlteredDatabaseIsRefusedUnchanged(t *testing.T) {
 		{"current: added view", current, []string{`CREATE VIEW titles AS SELECT title FROM pull_requests`}, altered(16)},
 		{"current: added table", current, []string{`CREATE TABLE notes_by_hand(text TEXT)`}, altered(16)},
 		{"current: changed column", current, changedColumn, altered(16)},
+		{"current: step 16 without sign_in_revision", current, []string{`ALTER TABLE import_sources DROP COLUMN sign_in_revision`}, altered(16)},
 		{"baseline: trigger under a name SQLite reserves", baseline, hidden("sqlite_u07_trigger"), "state database has no schema version and does not match the committed baseline"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
