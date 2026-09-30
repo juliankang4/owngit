@@ -2,7 +2,9 @@ package importsync
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -633,6 +635,52 @@ func TestExtraNamespaceFolderInAnotherCaseIsNotWritten(t *testing.T) {
 			names := strings.Fields(f.git(f.destinationPath(), "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"))
 			if !slices.Equal(names, []string{existing}) || run.RefsDivergent != 1 || f.destinationRefs()["refs/heads/main"] != next {
 				t.Fatalf("run = %+v, namespace refs = %v", run, names)
+			}
+		})
+	}
+}
+
+// While a refresh deletes refs, no Git process can move HEAD, or a symbolic
+// ref HEAD resolves through, onto a ref being deleted: OwnGit locks them, or
+// Git does when the refresh also writes the branch HEAD names.
+func TestHEADCannotMoveWhileRefsAreDeleted(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		setup func(f *fixture)
+		move  []string
+	}{
+		{"HEAD", func(f *fixture) {}, []string{"symbolic-ref", "HEAD", "refs/heads/dev"}},
+		{"alias", func(f *fixture) {
+			f.git(f.destinationPath(), "symbolic-ref", "refs/heads/local-alias", "refs/heads/main")
+			f.git(f.destinationPath(), "symbolic-ref", "HEAD", "refs/heads/local-alias")
+		}, []string{"symbolic-ref", "refs/heads/local-alias", "refs/heads/dev"}},
+		{"HEAD branch written", func(f *fixture) { f.commit("two", "two\n") }, []string{"symbolic-ref", "HEAD", "refs/heads/dev"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.git(f.source, "branch", "dev")
+			f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+			path := f.destinationPath()
+			test.setup(f)
+			f.git(f.source, "branch", "-D", "dev")
+			var moveErr error
+			var moveOutput []byte
+			f.service.whileRefsPrepared = func() {
+				f.service.whileRefsPrepared = nil
+				command := exec.Command(f.gitPath, append([]string{"--git-dir", path}, test.move...)...)
+				moveOutput, moveErr = command.CombinedOutput()
+			}
+			_, err := f.refresh()
+			noErr(t, err)
+			if moveErr == nil || !strings.Contains(string(moveOutput), ".lock") {
+				t.Fatalf("a Git process moved %s during the deletion: %v %s", test.name, moveErr, moveOutput)
+			}
+			if f.destinationRefs()["refs/heads/dev"] != "" || f.gitMaybe(path, "rev-parse", "--verify", "HEAD") == "" {
+				t.Fatalf("refs = %v, HEAD = %s", f.destinationRefs(), f.gitMaybe(path, "symbolic-ref", "HEAD"))
+			}
+			if _, err := os.Stat(filepath.Join(path, "HEAD.lock")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("HEAD.lock left behind: %v", err)
 			}
 		})
 	}

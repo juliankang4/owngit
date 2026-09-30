@@ -722,6 +722,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		} else if err := s.authorityCurrent(ctx, run); err != nil {
 			commandErr = err
 			finalizationBlocked = true
+		} else if chain, err := s.lockHEADChainForDeletions(ctx, run, repositoryPath, plan, transactionRefs); err != nil {
+			commandErr = err
+			finalizationBlocked = true
 		} else {
 			if s.beforeRefTransaction != nil {
 				s.beforeRefTransaction()
@@ -742,13 +745,16 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 					if err := s.validatePreparedRefKinds(preparedCtx, repositoryPath, plan, transactionRefs); err != nil {
 						return err
 					}
-					if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan); err != nil {
+					if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan, transactionRefs, chain); err != nil {
 						return err
 					}
 					return s.authorityCurrent(preparedCtx, run)
 				})
 			if errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
 				<-callbackDone
+			}
+			if releaseErr := chain.release(); releaseErr != nil && err == nil {
+				err = newProblem(CodePublishFailed, "the HEAD chain lock could not be released after the ref transaction", releaseErr)
 			}
 			if err == nil && s.afterPreparedRefResult != nil {
 				err = s.afterPreparedRefResult()
@@ -1096,23 +1102,100 @@ func (s *Service) validatePreparedRefKinds(ctx context.Context, repositoryPath s
 	return nil
 }
 
-// validatePreparedHEADKeepsDeletions reads HEAD again while the deletions
-// are prepared, so a HEAD moved since planning onto a ref being deleted,
-// directly or through its chain, stops the transaction.
-func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan) error {
-	deletes := false
+// planDeletes reports whether the plan deletes a destination ref.
+func planDeletes(plan *publicationPlan) bool {
 	for ref, desired := range plan.desired {
 		if ref != state.ImportHeadRef && desired == "" && plan.expected[ref] != "" {
-			deletes = true
-			break
+			return true
 		}
 	}
-	if !deletes {
+	return false
+}
+
+// headChainLock holds HEAD and the loose symbolic refs of its chain while a
+// transaction that deletes refs is prepared and committed. headByGit means
+// HEAD itself was left to Git: the transaction writes the branch HEAD names,
+// and Git then locks HEAD for its reflog, so a second lock would collide.
+type headChainLock struct {
+	locks     []*headLock
+	headByGit bool
+}
+
+// lockHEADChainForDeletions keeps any Git process from moving HEAD, or a
+// symbolic ref it resolves through, onto a ref this transaction deletes:
+// OwnGit's own HEAD writers already wait for the repository lock this
+// publication holds, and these lock files make other Git writers fail
+// until the transaction ends. A transaction without deletions takes none.
+func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, transactionRefs map[string]string) (*headChainLock, error) {
+	chain := &headChainLock{}
+	if !planDeletes(plan) {
+		return chain, nil
+	}
+	name := "HEAD"
+	for depth := 0; depth < 32; depth++ {
+		identity, err := readRawHEAD(filepath.Join(repositoryPath, filepath.FromSlash(name)))
+		if errors.Is(err, os.ErrNotExist) && name != "HEAD" {
+			return chain, nil
+		}
+		if err != nil {
+			_ = chain.release()
+			return nil, newProblem(CodeRepositoryMissing, fmt.Sprintf("destination %s could not be read before deleting refs", name), err)
+		}
+		if identity.kind != headSymbolic && name != "HEAD" {
+			return chain, nil
+		}
+		if name == "HEAD" && identity.kind == headSymbolic && plan.desired[identity.target] != plan.expected[identity.target] {
+			if _, written := transactionRefs[identity.target]; written {
+				chain.headByGit = true
+				return chain, nil
+			}
+		}
+		lock, err := s.acquireRefFileLock(ctx, run, repositoryPath, name, identity)
+		if err != nil {
+			_ = chain.release()
+			return nil, err
+		}
+		chain.locks = append(chain.locks, lock)
+		if identity.kind != headSymbolic {
+			return chain, nil
+		}
+		name = identity.target
+	}
+	_ = chain.release()
+	return nil, newProblem(CodeUnsupported, "destination HEAD chain exceeds its supported depth", nil)
+}
+
+// release removes the lock files in reverse order. It is safe on nil.
+func (chain *headChainLock) release() error {
+	if chain == nil {
+		return nil
+	}
+	var errs []error
+	for index := len(chain.locks) - 1; index >= 0; index-- {
+		errs = append(errs, chain.locks[index].rollback())
+	}
+	chain.locks = nil
+	return errors.Join(errs...)
+}
+
+// validatePreparedHEADKeepsDeletions reads HEAD and its chain again while
+// the deletions are prepared and HEAD cannot move (lockHEADChainForDeletions):
+// a HEAD moved since planning onto a ref being deleted, directly or through
+// its chain, stops the transaction. Where HEAD was left to Git's own lock,
+// HEAD must still name a ref this transaction writes, or that lock is not
+// held and the transaction stops too.
+func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan, transactionRefs map[string]string, chain *headChainLock) error {
+	if !planDeletes(plan) {
 		return nil
 	}
 	target, _, err := s.Repositories.ReadHead(ctx, repositoryPath)
 	if err != nil {
 		return newProblem(CodeRepositoryMissing, "destination HEAD could not be read", err)
+	}
+	if chain.headByGit {
+		if _, written := transactionRefs[target]; target == "" || !written {
+			return newProblem(CodeDestinationChanged, "destination HEAD moved while refs were deleted", nil)
+		}
 	}
 	if target == "" {
 		return nil

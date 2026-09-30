@@ -197,6 +197,14 @@ type headLock struct {
 }
 
 func (s *Service) acquireHEADLock(ctx context.Context, run *runState, repositoryPath string, expected headIdentity) (*headLock, error) {
+	return s.acquireRefFileLock(ctx, run, repositoryPath, "HEAD", expected)
+}
+
+// acquireRefFileLock creates name's Git lock file, as Git does before it
+// writes a loose ref, and checks that name still holds expected. While the
+// lock is held no Git writer changes name. name is HEAD or a loose symbolic
+// ref of HEAD's chain.
+func (s *Service) acquireRefFileLock(ctx context.Context, run *runState, repositoryPath, name string, expected headIdentity) (*headLock, error) {
 	storage, err := s.repositoryRefStorage(ctx, run, repositoryPath)
 	if err != nil {
 		return nil, err
@@ -213,16 +221,16 @@ func (s *Service) acquireHEADLock(ctx context.Context, run *runState, repository
 	if err != nil || !directDirectory(repositoryPath, repositoryIdentity) {
 		return nil, newProblem(CodeRepositoryMissing, "destination repository path is not a stable real directory", err)
 	}
-	headPath := filepath.Join(repositoryPath, "HEAD")
+	headPath := filepath.Join(repositoryPath, filepath.FromSlash(name))
 	if _, err := readRawHEAD(headPath); err != nil {
-		return nil, newProblem(CodePublishFailed, "destination HEAD is not a direct regular file", err)
+		return nil, newProblem(CodePublishFailed, fmt.Sprintf("destination %s is not a direct regular file", name), err)
 	}
-	lockPath := filepath.Join(repositoryPath, "HEAD.lock")
+	lockPath := headPath + ".lock"
 	// O_EXCL refuses any existing pathname, including a link or reparse point,
 	// without following it. Such a pathname belongs to someone else.
 	file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, newProblem(CodeDestinationChanged, "destination HEAD is locked by another Git writer", err)
+		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s is locked by another Git writer", name), err)
 	}
 	locked, err := file.Stat()
 	if err == nil {
@@ -254,7 +262,7 @@ func (s *Service) acquireHEADLock(ctx context.Context, run *runState, repository
 	}
 	if !sameHEADIdentity(actual, expected) {
 		_ = lock.rollback()
-		return nil, newProblem(CodeDestinationChanged, "destination HEAD changed before its write lock was acquired", nil)
+		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s changed before its write lock was acquired", name), nil)
 	}
 	return lock, nil
 }
