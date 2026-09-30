@@ -282,7 +282,7 @@ func redirectMessage(fetchError *importfetch.Error) string {
 	case errors.Is(fetchError, importfetch.ErrRedirectRequest):
 		return "source redirected a Git request after discovery; an import follows only the first request's redirect"
 	case fetchError.RedirectOrigin != "":
-		return fmt.Sprintf("source redirected to %s; approve that origin for this source's redirects to follow it", fetchError.RedirectOrigin)
+		return fmt.Sprintf("source redirected to %s; allow redirects to that origin for this source to follow it", fetchError.RedirectOrigin)
 	}
 	return "source redirected; allow redirects for this source to follow it"
 }

@@ -107,7 +107,6 @@ func TestExceptionalDestinationsAreSeparateConsents(t *testing.T) {
 		{"192.0.2.10", true, false, false, ConsentExceptionalDestination},
 		{"192.0.2.10", false, true, true, ""},
 		{"198.18.0.1", false, true, true, ""},
-		{"169.254.10.1", false, true, true, ""},
 		{"2001:db8::1", false, true, true, ""},
 		{"10.0.0.1", false, true, false, ConsentPrivateNetwork},
 		{"10.0.0.1", true, false, true, ""},
@@ -127,6 +126,13 @@ func TestExceptionalDestinationsAreSeparateConsents(t *testing.T) {
 		{"fec0::1", true, true, false, ""},
 		{"::c0a8:1", true, true, false, ""},
 		{"2001:10::1", true, true, false, ""},
+		// Link-local addresses include metadata services, and a local-use
+		// NAT64 address has no known place for the IPv4 address it reaches.
+		{"169.254.169.254", true, true, false, ""},
+		{"169.254.10.1", true, true, false, ""},
+		{"64:ff9b::a9fe:a9fe", true, true, false, ""},
+		{"64:ff9b:1::a9fe:a9fe", true, true, false, ""},
+		{"64:ff9b:1::a00:1", true, true, false, ""},
 	} {
 		address := netip.MustParseAddr(test.address)
 		err := addressPolicy{allowPrivate: test.private, allowReserved: test.reserved}.check(address)
@@ -169,6 +175,67 @@ func TestExceptionalDestinationChecksEveryAnswer(t *testing.T) {
 	}
 }
 
+// Link-local and local-use NAT64 destinations stay refused with every
+// consent on, whether the source names them directly, a name answers with
+// them among other addresses, or a redirect leads to them. Documentation and
+// benchmarking addresses stay reachable with the exceptional consent.
+func TestLinkLocalAndLocalNAT64StayRefused(t *testing.T) {
+	everything := func(raw string) Request {
+		return Request{
+			URL: raw, AllowPlainHTTP: true, AllowPrivateNetwork: true, AllowReservedAddresses: true,
+			Redirects: RedirectApproved, ApprovedRedirectOrigin: "http://mirror.test",
+		}
+	}
+	refused := []string{"169.254.169.254", "64:ff9b:1::a9fe:a9fe"}
+	isRefused := func(err error, address string) bool {
+		var fetchErr *Error
+		return errors.As(err, &fetchErr) && errors.Is(err, ErrAddressPolicy) && fetchErr.Address == address && fetchErr.Consent == ""
+	}
+	for _, address := range refused {
+		host := address
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
+		// No resolver answer is ever needed for a literal address.
+		_, err := fetch(context.Background(), everything("http://"+host+"/repo.git"), consumeAll, &hostResolver{calls: map[string]int{}})
+		if !isRefused(err, address) {
+			t.Errorf("direct %s = %v", address, err)
+		}
+		mixed := &hostResolver{answers: map[string][]netip.Addr{"source.test": {netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr(address)}}, calls: map[string]int{}}
+		_, err = fetch(context.Background(), everything("http://source.test/repo.git"), consumeAll, mixed)
+		if !isRefused(err, address) {
+			t.Errorf("mixed answers with %s = %v", address, err)
+		}
+
+		source := packSource(t, "")
+		sourceServer, _ := startPlainSource(t, source)
+		port := strconv.Itoa(sourceServer.Listener.Addr().(*net.TCPAddr).Port)
+		mirrorOrigin := "http://mirror.test:" + port
+		redirectDiscovery(source, http.StatusFound, mirrorOrigin+"/repo.git/info/refs?service=git-upload-pack")
+		request := everything("http://source.test:" + port + "/group/repo.git")
+		request.ApprovedRedirectOrigin = mirrorOrigin
+		redirected := &hostResolver{answers: map[string][]netip.Addr{
+			"source.test": {netip.MustParseAddr("127.0.0.1")},
+			"mirror.test": {netip.MustParseAddr(address)},
+		}, calls: map[string]int{}}
+		_, err = fetch(context.Background(), request, consumeAll, redirected)
+		if !isRefused(err, address) {
+			t.Errorf("redirect to %s = %v", address, err)
+		}
+		if redirected.calls["source.test"] != 1 || redirected.calls["mirror.test"] != 1 {
+			t.Errorf("resolutions = %v, want the source and the refused target once", redirected.calls)
+		}
+		if _, posts, _ := source.counts(); posts != 0 {
+			t.Errorf("source received %d pack requests after a refused redirect", posts)
+		}
+	}
+	for _, address := range []string{"192.0.2.10", "198.51.100.7", "203.0.113.9", "198.18.0.1", "2001:db8::1"} {
+		if err := (addressPolicy{allowReserved: true}).check(netip.MustParseAddr(address)); err != nil {
+			t.Errorf("exceptional %s = %v", address, err)
+		}
+	}
+}
+
 func TestSameOriginRedirectMovesTheRepositoryURL(t *testing.T) {
 	source := packSource(t, "Bearer same.token")
 	server, request := startPlainSource(t, source)
@@ -202,10 +269,16 @@ func TestRedirectToAnotherOriginNeedsApproval(t *testing.T) {
 	_, request := startPlainSource(t, source)
 	redirectDiscovery(source, http.StatusFound, target.URL+"/group/repo.git/info/refs?service=git-upload-pack")
 	request.Authentication.BearerToken = "origin.token"
-	request.Redirects = RedirectSameOrigin
 
+	// Under the default policy the refusal still names where the request
+	// would have gone.
 	_, err := Fetch(context.Background(), request, consumeAll)
 	var fetchErr *Error
+	if !errors.As(err, &fetchErr) || !errors.Is(err, ErrRedirect) || fetchErr.RedirectOrigin != target.URL {
+		t.Fatalf("cross-origin redirect under refuse = %#v", err)
+	}
+	request.Redirects = RedirectSameOrigin
+	_, err = Fetch(context.Background(), request, consumeAll)
 	if !errors.As(err, &fetchErr) || !errors.Is(err, ErrRedirect) || fetchErr.RedirectOrigin != target.URL {
 		t.Fatalf("cross-origin redirect under same-origin = %#v", err)
 	}

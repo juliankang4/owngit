@@ -238,7 +238,9 @@ var specialRanges = []specialRange{
 	special("10.0.0.0/8", "private range", destinationPrivate),
 	special("100.64.0.0/10", "shared address range", destinationPrivate),
 	special("127.0.0.0/8", "loopback range", destinationPrivate),
-	special("169.254.0.0/16", "link-local range", destinationReserved),
+	// Link-local addresses include cloud metadata services such as
+	// 169.254.169.254, which no consent reaches.
+	special("169.254.0.0/16", "link-local range", destinationRefused),
 	special("172.16.0.0/12", "private range", destinationPrivate),
 	special("192.0.0.0/24", "IETF protocol assignment range", destinationReserved),
 	special("192.0.2.0/24", "documentation range", destinationReserved),
@@ -254,7 +256,9 @@ var specialRanges = []specialRange{
 	// bits must not bypass classification. The loopback above comes first.
 	special("::/96", "deprecated IPv4-compatible range", destinationRefused),
 	special("64:ff9b::/96", "NAT64 range", destinationReserved),
-	special("64:ff9b:1::/48", "local NAT64 range", destinationReserved),
+	// A local-use NAT64 prefix has no fixed place for the IPv4 address it
+	// reaches, so OwnGit cannot check that address and refuses the range.
+	special("64:ff9b:1::/48", "local NAT64 range", destinationRefused),
 	special("100::/64", "discard-only range", destinationReserved),
 	special("2001::/32", "Teredo range", destinationReserved),
 	special("2001:2::/48", "benchmarking range", destinationReserved),
@@ -590,15 +594,16 @@ func (c *connector) authenticationFor(base *url.URL, authentication Authenticati
 // info/refs?service=git-upload-pack, whose prefix becomes the repository URL
 // for every later request.
 func (c *connector) redirectBase(target *url.URL, location string) (*url.URL, error) {
-	if c.redirects != RedirectSameOrigin && c.redirects != RedirectApproved {
-		return nil, fetchError("follow redirect", ErrRedirect, nil)
-	}
 	if location == "" || len(location) > c.limits.MaxURLBytes || strings.ContainsAny(location, "\x00\r\n") {
 		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
 	}
 	next, err := target.Parse(location)
 	if err != nil {
 		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
+	}
+	if c.redirects != RedirectSameOrigin && c.redirects != RedirectApproved {
+		// Name where the request would have gone, scheme and host only.
+		return nil, &Error{Op: "follow redirect", Kind: ErrRedirect, RedirectOrigin: displayOrigin(next)}
 	}
 	if next.Scheme == "http" && !c.allowPlainHTTP {
 		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectDowngrade)

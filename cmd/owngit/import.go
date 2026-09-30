@@ -75,7 +75,7 @@ func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  --allow-plain-http[=false]              use an http:// source; its code and credentials can be read or changed in transit")
 	fmt.Fprintln(writer, "  --redirects refuse|same_origin|approved follow no redirect, redirects within the origin, or also to --approved-origin")
 	fmt.Fprintln(writer, "  --approved-origin https://HOST[:PORT]    the one other origin approved redirects follow; it never receives the source's credentials")
-	fmt.Fprintln(writer, "  --allow-exceptional-destination[=false] reach usable special-purpose addresses, such as documentation or link-local ranges")
+	fmt.Fprintln(writer, "  --allow-exceptional-destination[=false] reach usable special-purpose addresses, such as documentation or benchmarking ranges; link-local stays refused")
 	fmt.Fprintln(writer, "  --limit NAME=VALUE                      set one limit, repeatable; setting a limit to its default value returns it to the default")
 	fmt.Fprintln(writer, "    sizes (pack_bytes, advertisement_bytes) take bytes or KiB, MiB, GiB, TiB; times (run_seconds, fetch_seconds,")
 	fmt.Fprintln(writer, "    index_seconds, verify_seconds, tls_handshake_seconds, response_header_seconds) take seconds or a duration such")
