@@ -30,6 +30,8 @@ type servedInstance struct {
 	stops  sync.Once
 	mu     sync.Mutex
 	logs   []string
+	// logged is signalled after each new log line (see waitForLog).
+	logged chan struct{}
 }
 
 var listeningLine = regexp.MustCompile(`OwnGit listening on (\S+)`)
@@ -44,13 +46,17 @@ func startServed(t *testing.T, stateDir string, extra ...string) *servedInstance
 // never outlives the test and its folders.
 func startServedWith(t *testing.T, arguments []string) *servedInstance {
 	t.Helper()
-	instance := &servedInstance{t: t, done: make(chan struct{})}
+	instance := &servedInstance{t: t, done: make(chan struct{}), logged: make(chan struct{}, 1)}
 	listening := make(chan string, 1)
 	logf := func(format string, arguments ...any) {
 		line := fmt.Sprintf(format, arguments...)
 		instance.mu.Lock()
 		instance.logs = append(instance.logs, line)
 		instance.mu.Unlock()
+		select {
+		case instance.logged <- struct{}{}:
+		default:
+		}
 		if match := listeningLine.FindStringSubmatch(line); match != nil {
 			select {
 			case listening <- "http://" + match[1]:
@@ -76,6 +82,28 @@ func startServedWith(t *testing.T, arguments []string) *servedInstance {
 		t.Fatalf("serve did not listen within 2 minutes: %s", instance.log())
 	}
 	return instance
+}
+
+// waitForLog waits until serve logs a line that contains text, and
+// returns it.
+func (instance *servedInstance) waitForLog(text string, limit time.Duration) string {
+	instance.t.Helper()
+	deadline := time.After(limit)
+	for {
+		instance.mu.Lock()
+		for _, line := range instance.logs {
+			if strings.Contains(line, text) {
+				instance.mu.Unlock()
+				return line
+			}
+		}
+		instance.mu.Unlock()
+		select {
+		case <-instance.logged:
+		case <-deadline:
+			instance.t.Fatalf("serve did not log %q within %s:\n%s", text, limit, instance.log())
+		}
+	}
 }
 
 func (instance *servedInstance) log() string {
