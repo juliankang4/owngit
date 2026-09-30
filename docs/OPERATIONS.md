@@ -580,7 +580,7 @@ Every owner task in Settings and on a repository's pages also has a command. Mos
 
 A few tasks are on one side only, on purpose:
 
-- Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)). `owngit restore` and `owngit backup --output` work only while OwnGit is stopped, so the dashboard shows the [restore steps](#restore-steps-in-the-dashboard) instead of running them.
+- Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)). `owngit restore` creates a new state directory and repository folder, so replacing the installation that serves the dashboard means stopping it first; the dashboard shows the [restore steps](#restore-steps-in-the-dashboard) instead of running them. `owngit backup --output` refuses while an OwnGit runs with that state directory; for a running OwnGit, Back up now in the dashboard does the same job.
 - Dashboard only: accepting the plain HTTP warning that a browser shows, because it concerns that browser's own connection. A client command such as `settings` or `repo` accepts plain HTTP for itself each time with `--accept-insecure-http`. `owngit network set --accept-insecure-http` records the same acceptance as the dashboard, once, when it saves an address other computers reach ([Network settings](#network-settings)).
 - Running programs: `owngit serve` runs OwnGit, `owngit service` installs and controls it as a service, `owngit runner` runs automatic checks, and `owngit mcp` serves a coding tool. They have no dashboard form because they start or control a process.
 - Records from coding tools: check tasks, correction rounds and attempts (`owngit check task new`, `check cycle reserve`, `check run`) are evidence that a coding tool records ([Coding tools](CODING_TOOLS.md)). The dashboard shows them but does not create them. `owngit tasks` prints what the dashboard shows of them.
@@ -2163,7 +2163,7 @@ A refusal answers JSON with a code such as `backup_running`, `backup_busy`, `bac
 
 ### Backing up a stopped OwnGit
 
-`owngit backup --output` backs up an OwnGit that is not running. It refuses while OwnGit runs; use `owngit backup now` then. The output directory must not exist:
+`owngit backup --output` backs up an OwnGit that is not running. It refuses while an OwnGit runs with that state directory; use `owngit backup now` then. The output directory must not exist:
 
 ```sh
 owngit backup \
@@ -2171,7 +2171,7 @@ owngit backup \
   --output /path/to/new-backup
 ```
 
-With `--json` it prints `ok`, the `backup` folder and a `note` about what the SHA-256 hashes show, and a refusal is a JSON error with a `code`, such as `offline_required` while OwnGit runs, `state_missing`, `setup_incomplete` or `backup_failed`.
+With `--json` it prints `ok`, the `backup` folder and a `note` about what the SHA-256 hashes show, and a refusal is a JSON error with a `code`, such as `offline_required` while an OwnGit runs with that state directory, `state_missing`, `setup_incomplete` or `backup_failed`.
 
 ### What a backup holds
 
@@ -2194,7 +2194,7 @@ OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older bui
 
 ### Restoring a backup
 
-Restore into new paths that do not exist, on a disk whose file system can rename without replacing (see [Where backups can be written](#where-backups-can-be-written)):
+Restore into new paths that do not exist, on a disk whose file system can rename without replacing (see [Where backups can be written](#where-backups-can-be-written)). Restore refuses a state directory or repository folder that already exists, so it never writes into a running OwnGit's folders; it works whether or not an OwnGit is running. To replace the installation you use, stop OwnGit and rename its folders first, as the [restore steps](#restore-steps-in-the-dashboard) show:
 
 ```sh
 owngit restore \

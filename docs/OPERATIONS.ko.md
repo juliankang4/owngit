@@ -580,7 +580,7 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
 
 다음 일만 일부러 한쪽에만 둡니다.
 
-- 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고). `owngit restore`와 `owngit backup --output`은 OwnGit이 멈춰 있을 때만 동작하므로 대시보드는 복원을 실행하지 않고 [복원 순서](#대시보드의-복원-안내)를 보여 줍니다.
+- 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고). `owngit restore`는 새 상태 디렉터리와 저장소 폴더를 만듭니다. 그래서 대시보드를 제공하는 설치를 바꾸려면 먼저 그 설치를 멈춰야 합니다. 대시보드는 복원을 실행하지 않고 [복원 순서](#대시보드의-복원-안내)를 보여 줍니다. `owngit backup --output`은 그 상태 디렉터리로 OwnGit이 실행 중이면 거부합니다. 실행 중인 OwnGit은 대시보드의 지금 백업으로 백업합니다.
 - 대시보드에만 있음: 브라우저에 나오는 일반 HTTP 경고에 동의하는 일입니다. 그 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. `settings`나 `repo` 같은 클라이언트 명령은 실행할 때마다 `--accept-insecure-http`로 그 명령이 쓰는 일반 HTTP에 따로 동의합니다. `owngit network set --accept-insecure-http`는 다른 컴퓨터가 접속하는 주소를 저장할 때 대시보드와 같은 동의를 한 번 기록합니다([네트워크 설정](#네트워크-설정) 참고).
 - 실행되는 프로그램: `owngit serve`는 OwnGit을 실행하고, `owngit service`는 서비스로 설치하고 제어하며, `owngit runner`는 자동 체크를 실행하고, `owngit mcp`는 코딩 도구에 MCP 서버를 제공합니다. 프로세스를 시작하거나 제어하는 명령이라 대시보드 양식이 없습니다.
 - 코딩 도구의 기록: 작업(task), 수정 라운드, 시도(`owngit check task new`, `check cycle reserve`, `check run`)는 코딩 도구가 남기는 증거입니다([코딩 도구](CODING_TOOLS.ko.md) 참고). 대시보드는 이 기록을 보여 주기만 하고 만들지는 않습니다. `owngit tasks`는 대시보드에 보이는 이 기록을 출력합니다.
@@ -2164,7 +2164,7 @@ owngit backup download --run ID --output /path/to/new-file.tar
 
 ### 멈춘 OwnGit 백업하기
 
-`owngit backup --output`은 실행 중이 아닌 OwnGit을 백업합니다. OwnGit이 실행 중이면 거부하니 그때는 `owngit backup now`를 쓰세요. 출력 디렉터리는 아직 없어야 합니다.
+`owngit backup --output`은 실행 중이 아닌 OwnGit을 백업합니다. 그 상태 디렉터리로 OwnGit이 실행 중이면 거부하니 그때는 `owngit backup now`를 쓰세요. 출력 디렉터리는 아직 없어야 합니다.
 
 ```sh
 owngit backup \
@@ -2172,7 +2172,7 @@ owngit backup \
   --output /path/to/new-backup
 ```
 
-`--json`을 붙이면 `ok`, 백업 폴더 `backup`, SHA-256 해시가 무엇을 알려 주는지 적은 `note`를 출력합니다. 거부하면 `code`가 있는 JSON 오류를 출력합니다. 예를 들어 OwnGit이 실행 중이면 `offline_required`, 그 밖에 `state_missing`, `setup_incomplete`, `backup_failed`가 있습니다.
+`--json`을 붙이면 `ok`, 백업 폴더 `backup`, SHA-256 해시가 무엇을 알려 주는지 적은 `note`를 출력합니다. 거부하면 `code`가 있는 JSON 오류를 출력합니다. 예를 들어 그 상태 디렉터리로 OwnGit이 실행 중이면 `offline_required`, 그 밖에 `state_missing`, `setup_incomplete`, `backup_failed`가 있습니다.
 
 ### 백업에 들어가는 것
 
@@ -2195,7 +2195,7 @@ OwnGit은 백업 버전 1, 2, 9, 10, 11을 복원하고 나머지는 거부합�
 
 ### 백업 복원하기
 
-아직 없는 새 경로에 복원하세요. 새 경로는 덮어쓰지 않고 이름을 바꿀 수 있는 파일 시스템에 있어야 합니다([백업을 둘 수 있는 곳](#백업을-둘-수-있는-곳) 참고).
+아직 없는 새 경로에 복원하세요. 새 경로는 덮어쓰지 않고 이름을 바꿀 수 있는 파일 시스템에 있어야 합니다([백업을 둘 수 있는 곳](#백업을-둘-수-있는-곳) 참고). 복원은 이미 있는 상태 디렉터리나 저장소 폴더를 거부하므로 실행 중인 OwnGit의 폴더에는 쓰지 않습니다. OwnGit이 실행 중이어도 복원할 수 있습니다. 지금 쓰는 설치를 바꾸려면 [복원 순서](#대시보드의-복원-안내)처럼 먼저 OwnGit을 멈추고 폴더 이름을 바꾸세요.
 
 ```sh
 owngit restore \
