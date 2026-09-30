@@ -182,3 +182,69 @@ func TestKeptOutputIsTheHeadOfTheConvertedOutput(t *testing.T) {
 		}
 	}
 }
+
+// withoutSecretLetters reports whether text, with every replacement removed,
+// has none of the letters the overlap secrets are made of. Filler output uses
+// other letters, so any such letter is part of a secret.
+func withoutSecretLetters(text string) bool {
+	return !strings.ContainsAny(strings.ReplaceAll(text, "[redacted]", ""), "abcde")
+}
+
+var overlapCases = []struct {
+	name    string
+	output  string
+	secrets []string
+	want    string
+}{
+	{"self overlap", "ababababababababab", []string{"abababababab"}, "[redacted]"},
+	{"two secrets", "abcde", []string{"abc", "cde"}, "[redacted]"},
+	{"two secrets reversed", "abcde", []string{"cde", "abc"}, "[redacted]"},
+	{"touching", "abcabc", []string{"abc"}, "[redacted][redacted]"},
+	{"in text", "x abababababab!ab y", []string{"abababababab"}, "x [redacted]!ab y"},
+	{"inside a character", "가b가", []string{"\xb0\x80b"}, "\uFFFD[redacted]가"},
+}
+
+// Overlapping secret occurrences are one replaced range, however the output
+// is split into writes.
+func TestOverlappingSecretsAreReplacedWhole(t *testing.T) {
+	for _, testCase := range overlapCases {
+		for split := 0; split <= len(testCase.output); split++ {
+			for _, piece := range []int{1, len(testCase.output)} {
+				buffer := newBoundedBuffer(1<<20, testCase.secrets)
+				for _, part := range []string{testCase.output[:split], testCase.output[split:]} {
+					for start := 0; start < len(part); start += piece {
+						_, _ = buffer.Write([]byte(part[start:min(start+piece, len(part))]))
+					}
+				}
+				if got := buffer.text(); got != testCase.want {
+					t.Fatalf("%s split at %d in pieces of %d: %q, want %q", testCase.name, split, piece, got, testCase.want)
+				}
+			}
+		}
+		if got := redact(testCase.output, testCase.secrets); got != testCase.want {
+			t.Fatalf("%s message: %q, want %q", testCase.name, got, testCase.want)
+		}
+	}
+}
+
+// No part of an overlapping secret is kept where the kept text or the output
+// limit cuts through it.
+func TestOverlappingSecretsAtTheKeptCutAndTheLimit(t *testing.T) {
+	for _, testCase := range overlapCases[:2] {
+		for shift := -len(testCase.output); shift <= len(testCase.output); shift++ {
+			output := strings.Repeat("x", KeptOutputBytes+shift) + testCase.output + strings.Repeat("y", 64)
+			buffer := newBoundedBuffer(1<<30, testCase.secrets)
+			_, _ = buffer.Write([]byte(output))
+			if got := buffer.text(); !withoutSecretLetters(got) || len(got) <= KeptOutputBytes {
+				t.Fatalf("%s at the kept cut, shift %d: kept %d bytes ending %q", testCase.name, shift, len(got), got[max(0, len(got)-40):])
+			}
+			for limit := 1; limit <= len(testCase.output)+1; limit++ {
+				cut := newBoundedBuffer(int64(len("xx")+limit), testCase.secrets)
+				_, _ = cut.Write([]byte("xx" + testCase.output + "yy"))
+				if got := cut.text(); !withoutSecretLetters(got) {
+					t.Fatalf("%s cut by a limit of %d: %q", testCase.name, len("xx")+limit, got)
+				}
+			}
+		}
+	}
+}

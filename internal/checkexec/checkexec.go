@@ -366,13 +366,14 @@ func setCleanupError(result *Result, err error, secrets []string) {
 	}
 }
 
+// redact replaces secrets in a short message by the same rule as output.
 func redact(value string, secrets []string) string {
-	for _, secret := range secrets {
-		if secret != "" {
-			value = strings.ReplaceAll(value, secret, "[redacted]")
-		}
+	buffer := newBoundedBuffer(int64(len(value)), secrets)
+	if len(buffer.secrets) == 0 {
+		return value
 	}
-	return value
+	_, _ = buffer.Write([]byte(value))
+	return buffer.text()
 }
 
 // boundedBuffer counts every byte written against limit and keeps only the
@@ -390,6 +391,7 @@ type boundedBuffer struct {
 	overflow    chan struct{}
 	secrets     []string
 	pending     []byte // bytes that may start a secret or an unfinished character
+	covered     int    // bytes ahead that belong to a secret already replaced
 	kept        strings.Builder
 	lastInvalid bool
 	full        bool
@@ -420,21 +422,44 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// convert moves pending bytes into kept text. Unless final, it leaves bytes
-// that could still become a secret or a character when more output arrives.
+// convert moves pending bytes into kept text. Every byte of every secret
+// occurrence is replaced, and overlapping occurrences are one replaced range,
+// so no part of a secret is kept. Unless final, it leaves bytes that could
+// still start a secret or finish a character when more output arrives: fewer
+// than the longest secret plus three bytes.
 func (b *boundedBuffer) convert(final bool) {
 	index := 0
 	for index < len(b.pending) && !b.full {
 		rest := b.pending[index:]
-		if secret := b.secretAt(rest); secret != "" {
-			b.keep("[redacted]", false)
-			index += len(secret)
+		if !final && b.mayStartSecret(rest) {
+			break
+		}
+		if size := b.secretAt(rest); size > 0 {
+			if b.covered == 0 {
+				b.keep("[redacted]", false)
+			}
+			b.covered = max(b.covered, size)
+		}
+		if b.covered > 0 {
+			b.covered--
+			index++
 			continue
 		}
-		if !final && (b.mayStartSecret(rest) || !utf8.FullRune(rest)) {
+		if !final && !utf8.FullRune(rest) {
 			break
 		}
 		character, width := utf8.DecodeRune(rest)
+		// A secret that starts inside a character leaves its first bytes
+		// invalid, as replacing it in the whole output would.
+		for inside := 1; inside < width; inside++ {
+			if !final && b.mayStartSecret(rest[inside:]) {
+				b.pending = append(b.pending[:0], rest...)
+				return
+			}
+			if b.secretAt(rest[inside:]) > 0 {
+				character, width = utf8.RuneError, 1
+			}
+		}
 		if character == utf8.RuneError && width == 1 {
 			if !b.lastInvalid {
 				b.keep("\uFFFD", true)
@@ -458,13 +483,15 @@ func (b *boundedBuffer) keep(text string, invalid bool) {
 	b.full = b.kept.Len() > KeptOutputBytes
 }
 
-func (b *boundedBuffer) secretAt(value []byte) string {
+// secretAt returns the length of the longest secret that value starts with.
+func (b *boundedBuffer) secretAt(value []byte) int {
+	longest := 0
 	for _, secret := range b.secrets {
-		if len(value) >= len(secret) && string(value[:len(secret)]) == secret {
-			return secret
+		if len(secret) > longest && len(value) >= len(secret) && string(value[:len(secret)]) == secret {
+			longest = len(secret)
 		}
 	}
-	return ""
+	return longest
 }
 
 func (b *boundedBuffer) mayStartSecret(value []byte) bool {

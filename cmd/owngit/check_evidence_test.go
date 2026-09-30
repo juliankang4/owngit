@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"owngit/internal/checkexec"
@@ -60,6 +62,25 @@ func TestCheckRunLogReportsTruncationAtEveryCharacterAlignment(t *testing.T) {
 		log, truncated := buildCheckLog([]checkexec.Result{{Name: "c", Status: checkexec.StatusPassed, Command: "c", Output: output}})
 		if !truncated || len(log) > state.MaximumCheckLogBytes || !utf8.ValidString(log) {
 			t.Errorf("shift=%d stored=%d truncated=%v valid=%v", shift, len(log), truncated, utf8.ValidString(log))
+		}
+	}
+}
+
+// A credential whose occurrences overlap in check output leaves no part of it
+// in the JSON output excerpt or the raw log. (The command is the check's own
+// text and is recorded as written.)
+func TestCheckRunEvidenceHidesOverlappingCredentials(t *testing.T) {
+	const secret = "abababababab"
+	results, _ := checkexec.Run(context.Background(), []checkexec.Definition{{Name: "overlap", Command: "echo ababababababababab"}},
+		checkexec.Options{Timeout: 30 * time.Second, OutputLimit: 1 << 20, Redact: []string{secret}})
+	encoded, err := json.Marshal(checkResultsJSON(results)[0].OutputExcerpt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	log, _ := buildCheckLog(results)
+	for name, text := range map[string]string{"output_excerpt": string(encoded), "log": log} {
+		if strings.Contains(strings.ReplaceAll(text, "[redacted]", ""), "ab") || !strings.Contains(text, "[redacted]") {
+			t.Fatalf("%s shows part of the credential: %s", name, text)
 		}
 	}
 }
