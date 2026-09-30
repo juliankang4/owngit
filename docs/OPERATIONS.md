@@ -1209,9 +1209,9 @@ A repository whose folder can be read but whose Git data cannot is listed with a
 
 ## Importing from another Git host
 
-An import copies a repository from another Git host over HTTPS into a new OwnGit repository, and can refresh it later, on demand or on a schedule. Imports are inbound only: OwnGit never writes to the source, and Git LFS objects are not fetched or hosted.
+An import copies a repository from another Git host over HTTPS (or plain HTTP, when you allow it for that source) into a new OwnGit repository, and can refresh it later, on demand or on a schedule. Imports are inbound only: OwnGit never writes to the source, and Git LFS objects are not fetched or hosted.
 
-In the browser, an administrator uses Import a repository on the dashboard to start one. The repository's Import tab then changes its source and credentials, refreshes, cancels, and sets a schedule.
+In the browser, an administrator uses Import a repository on the dashboard to start one. The repository's Import tab then changes its source, credentials, and [connection choices and limits](#connection-choices-and-limits), refreshes, cancels, and sets a schedule.
 
 - Anyone who can read the repository sees the tab's status, run history and ref states. The source address, credential state and run messages are for administrators only.
 - Changes ask for the administrator password as set under [Administrator password check](#administrator-password-check).
@@ -1222,7 +1222,7 @@ Each import records a mode: **Standalone** (the copy is the primary one) or **Co
 
 ### Imports on the command line
 
-The command line offers the same operations, except changing the source URL or options of an existing import. It reads the administrator password from a file with the same checks as `reset-admin`, and a source token or Basic credential from a private file or a prompt, never from an argument or environment variable:
+The command line offers the same operations, except changing the source URL, mode or consents of an existing import. It reads the administrator password from a file with the same checks as `reset-admin`, and a source token or Basic credential from a private file or a prompt, never from an argument or environment variable:
 
 ```sh
 owngit import add PROJECT https://example.invalid/team/project.git \
@@ -1233,7 +1233,7 @@ owngit import add PROJECT https://example.invalid/team/project.git \
   --password-file /path/to/owner-only-admin-password
 ```
 
-Every import command takes the same `--server`, `--accept-insecure-http` and `--password-file` flags, omitted below. `--accept-insecure-http` is consent to reach OwnGit over plain HTTP for that command; the source itself must use HTTPS.
+Every import command takes the same `--server`, `--accept-insecure-http` and `--password-file` flags, omitted below. `--accept-insecure-http` is consent to reach OwnGit over plain HTTP for that command. It does not apply to the source, which has its own `--allow-plain-http` choice.
 
 ```sh
 owngit import refresh PROJECT
@@ -1245,21 +1245,104 @@ owngit import schedule PROJECT --disable
 owngit import credentials PROJECT --token-file /path/to/owner-only-token
 owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
 owngit import credentials PROJECT --clear
+owngit import configure PROJECT --redirects same_origin
+owngit import configure PROJECT --limit run_seconds=2h --limit pack_bytes=32GiB
 owngit import resolve PROJECT
 ```
 
 - `--basic-file` replaces `--token-file` for a Basic credential (username and password on separate lines). `--ca-file` stores a source certificate authority, up to 1 MiB. `import credentials` changes only what you pass; `--clear` removes credential and CA. Output shows the credential type and whether one is stored, never the secret.
 - `--allow-private-network` permits a source on a private LAN, CGNAT, tailnet or loopback address. `--git-only-consent` accepts a repository with Git LFS pointers ([Git LFS](#git-lfs)).
-- `import add` creates the repository and refuses an existing name with `repository_taken`; `import refresh` updates from the stored source. Both wait for the whole run (up to about 62 minutes by default). They exit 0 on success, 3 when the run kept local refs that differ from the source (listed in the output), 130 when it was cancelled, and 1 otherwise.
-- `import status` lists the last and active runs and every branch or tag that does not match the source.
+- `import add` and `import configure` take the source's [connection choices and limits](#connection-choices-and-limits). `import configure` changes only the options you pass and keeps the address, mode and consents.
+- `import add` creates the repository and refuses an existing name with `repository_taken`; `import refresh` updates from the stored source. Both wait for the whole run, which takes at most the source's run time plus about 2 minutes (about 62 minutes by default). They exit 0 on success, 3 when the run kept local refs that differ from the source (listed in the output), 130 when it was cancelled, and 1 otherwise.
+- `import status` lists the last and active runs, the source's connection choices and changed limits, and every branch or tag that does not match the source. With `--json` it prints the status as JSON, including every limit in force.
 - `import cancel` can stop a run only until its result is published; for a first import, that is the moment the repository appears. If the first import fails or is cancelled, OwnGit removes the source and credentials stored for that name (at its next start if it crashed), and a retry uses only what you supply.
 - A schedule interval is between 60 seconds and 7 days (`invalid_schedule` otherwise), and scheduled refreshes run only while `owngit serve` runs.
 
 ### Source connections
 
-The source URL must use HTTPS with TLS 1.2 or newer, an ASCII host name, and no username, password, query or fragment. IPv6 zone identifiers are not supported. OwnGit does not follow redirects, and it ignores proxy environment variables, cookies and Git credential helpers.
+The source URL must use HTTPS with TLS 1.2 or newer, an ASCII host name, and no username, password, query or fragment. An `http://` URL works only when the source [allows plain HTTP](#plain-http). IPv6 zone identifiers are not supported. By default OwnGit does not follow redirects, and it always ignores proxy environment variables, cookies and Git credential helpers.
 
-OwnGit resolves the host name once and checks every address. Public addresses are allowed; private LAN, CGNAT, tailnet and loopback addresses need `--allow-private-network`; other special-purpose addresses are refused. A custom CA adds to the system roots and never disables certificate or host name checks; a run that fails on the certificate says so.
+OwnGit resolves the host name once and checks every address it gets back. If any address is not allowed, the run stops.
+
+- Public addresses are allowed.
+- Private LAN, CGNAT, tailnet and loopback addresses need private network consent (`--allow-private-network`, or Allow a private-network source in the browser).
+- Other special-purpose addresses, such as the documentation and benchmarking ranges, need the source's [exceptional destination](#exceptional-destinations) choice.
+- Link-local addresses (including the cloud metadata address 169.254.169.254), multicast and unspecified addresses, the local-use NAT64 range 64:ff9b:1::/48 and a few other reserved ranges are never reached, whatever the settings.
+- An address in the well-known NAT64 range 64:ff9b::/96 needs the exceptional destination choice, and the IPv4 address it contains must be allowed as well.
+
+The host of every redirect target is checked the same way. A custom CA adds to the system roots and never disables certificate or host name checks; a run that fails on the certificate says so.
+
+### Connection choices and limits
+
+Each import source has its own connection choices and limits. The defaults suit most sources, and every choice that loosens a protection is off until you turn it on for that one source. Change them in the collapsed **Connection and limits** group of the new-import form or the Import tab, with `owngit import configure`, or through the API. A change applies from the next run.
+
+| Choice in the browser | Default | Command line | API field |
+|---|---|---|---|
+| Allow plain HTTP for this source | Off | `--allow-plain-http` | `allow_plain_http` |
+| Redirects | Refuse redirects | `--redirects` with `refuse`, `same_origin` or `approved` | `redirects` |
+| Approved origin | None | `--approved-origin` | `approved_redirect_origin` |
+| Allow this exceptional destination | Off | `--allow-exceptional-destination` | `allow_reserved_addresses` |
+
+The API takes these fields, and a `limits` object, in `PUT /api/v1/repositories/{id}/import` and in the request that starts a new import (`POST /api/v1/repositories/{id}/import/run`). `PATCH /api/v1/repositories/{id}/import` changes only the fields it names. A source's JSON includes an `options` object with the choices, every limit in force (`limits`), the names of the limits you changed (`changed_limits`), and a `problem` when a saved setting cannot be used.
+
+#### Plain HTTP
+
+An `http://` source address is refused until you allow plain HTTP for that source, and the refusal names the choice. With plain HTTP on, the source's code and credentials travel unencrypted and can be read or changed on the way, so use it only on a network you trust. The same choice lets a redirect go from HTTPS to plain HTTP and lets the approved origin use `http://`.
+
+#### Redirects
+
+With the default, Refuse redirects, a run that meets a redirect stops and names the origin the source pointed to. Follow redirects within the same origin accepts a redirect to the source's own scheme, host and port. Also follow redirects to one approved origin accepts those and redirects to one other origin, which you enter under Approved origin as a scheme and host without a path, such as `https://mirror.example`. OwnGit saves that origin with a lowercase host and without a default port, and refuses a malformed one even while the redirect choice does not use it.
+
+OwnGit follows redirects only on its first request, the one that lists the source's refs, and at most 5 in a row. The new address must still end in `/info/refs?service=git-upload-pack`, and every later request of the run goes there. A loop, a sixth redirect, or a redirect on any later request stops the run.
+
+The source's credentials and custom CA go only to the source's own origin. Another origin gets no sign-in and is checked against the system certificate authorities alone. If that origin needs a sign-in, change the source address to it instead.
+
+#### Exceptional destinations
+
+Allow this exceptional destination lets the source connect to a special-purpose address that is normally blocked, such as one in a documentation range (192.0.2.0/24, 2001:db8::/32) or the benchmarking range 198.18.0.0/15. It does not cover private addresses, which still need private network consent. The addresses that [Source connections](#source-connections) lists as never reached stay blocked.
+
+#### Limits
+
+Limits bound how much a run may download and how long each stage may take. Raise one when an import fails on it; higher limits let an import use more disk and keep the server busy longer. The browser shows each limit's default and range beside its field, and an empty field uses the default. OwnGit stores only the limits you change, and setting a limit to its default value returns it to the default.
+
+| Limit | In the browser | Default | Range |
+|---|---|---|---|
+| `pack_bytes` | Largest pack | 16 GiB | 1 MiB to 1 TiB |
+| `run_seconds` | Run time | 1 hour | 1 minute to 24 hours |
+| `fetch_seconds` | Download time, including indexing | 30 minutes | 1 minute to 24 hours |
+| `index_seconds` | Indexing time | 20 minutes | 1 minute to 24 hours |
+| `verify_seconds` | Verification time | 10 minutes | 1 minute to 24 hours |
+| `refs` | Most refs listed | 50,000 | 1 to 200,000 |
+| `advertisement_bytes` | Largest ref list | 16 MiB | 64 KiB to 64 MiB |
+| `tls_handshake_seconds` | TLS handshake time | 15 seconds | 1 second to 10 minutes |
+| `response_header_seconds` | Wait for response headers | 30 seconds | 1 second to 1 hour |
+| `lfs_objects` | Objects checked for Git LFS | 200,000 | 1 to 1,000,000 |
+
+The last four sit in the nested **Transfer and scan limits** group. The stage times must fit together: the download time and the verification time may not exceed the run time, and the indexing time may not exceed the download time, which includes indexing. A change that breaks this, or a value outside its range, is refused and names the limit; in the browser the message appears on that field.
+
+The API takes sizes in bytes, times in seconds and counts as numbers. `owngit import configure --limit NAME=VALUE` takes the same numbers, and also sizes such as `32GiB` (KiB, MiB, GiB or TiB) and times such as `90m` or `2h`. Repeat `--limit` for more than one limit.
+
+#### When the source address changes
+
+Connection choices belong to one address. When a source's address changes, OwnGit turns plain HTTP and the exceptional destination off, sets Redirects back to Refuse redirects, and drops the approved origin. On the Import tab the page clears them as soon as you edit the address and says so; enter the new address first, then choose again whatever it needs. Through the API, a new URL resets these choices unless the same request sets them. Limits and private network consent stay.
+
+#### When a setting stops a run
+
+When a source setting stops a run, the last-run message on the Import tab says the refusal was deliberate and names the setting to turn on. Administrators also find the refused address and its range, or the origin the redirect leads to, in the technical details; other readers see only the explanation. In the API and on the command line, these refusals have their own classes:
+
+- `address_needs_private_network`: turn on private network consent.
+- `address_needs_exceptional_destination`: turn on the exceptional destination.
+- `address_refused`: no setting allows this address, for example a link-local or multicast one, so use another source address.
+- `redirect_not_allowed`: choose a redirect option, and approve the other origin when the redirect leaves the source's origin.
+- `redirect_needs_plain_http`: the redirect goes from HTTPS to plain HTTP, which needs plain HTTP for this source.
+
+A redirect loop, too many redirects, or a redirect to an address that is not a Git repository is reported as `protocol`.
+
+If a saved choice or limit can no longer be used, for example an approved origin with a path or a run time shorter than the download time, the Import tab and `import status` name the setting, and runs from that source stop before they connect. Save that setting again on the Import tab, or with `owngit import configure --redirects` or `--limit`, and runs resume.
+
+#### Choices and limits stay on this machine
+
+Backups do not include a source's connection choices and limits. After a [restore](#restoring-a-backup), every source starts from the defaults, so turn on again whatever a source needs, such as plain HTTP for an `http://` source.
 
 ### What an import publishes
 
@@ -1268,7 +1351,7 @@ Each run fetches a full copy into a private staging area. Before anything reache
 - Only branches and tags are published. Notes, replace refs, pull request refs and a HEAD outside `refs/heads/` are skipped or refused.
 - Hooks and configuration are not copied.
 - A source with another object format (SHA-1 or SHA-256) fails, and a ref name longer than 417 bytes fails with `unsupported_refs`.
-- OwnGit asks the source for Git protocol v2, which lets it list only HEAD, branches and tags, so pull request refs are never fetched or counted. A source that lists more than 50,000 refs fails with `too_many_refs`. A source without protocol v2 lists every ref, and the refs OwnGit skips, such as pull request refs, then count too. For such a source, [move it by hand](#moving-an-existing-repository-into-owngit) with a clone that pushes its branches and tags.
+- OwnGit asks the source for Git protocol v2, which lets it list only HEAD, branches and tags, so pull request refs are never fetched or counted. A source that lists more refs than the source's ref limit (50,000 by default) fails with `too_many_refs`. A source without protocol v2 lists every ref, and the refs OwnGit skips, such as pull request refs, then count too. For such a source, raise the [ref limit](#limits) or [move it by hand](#moving-an-existing-repository-into-owngit) with a clone that pushes its branches and tags.
 
 A refresh never overwrites local work:
 
@@ -1285,11 +1368,11 @@ After you change the source URL, OwnGit has not yet seen the new source's refs, 
 
 ### Git LFS
 
-OwnGit scans the fetched objects for LFS pointer files, up to 200,000 objects, 100,000 candidate files and 32 MiB of candidate content. If it finds one, or cannot finish within those limits, the run stops with `git_lfs_required`. With Git-only consent the import proceeds, keeps the pointer files as they are, and marks the content incomplete. OwnGit does not read `.gitattributes`, so a clean scan does not prove that a repository uses no LFS.
+OwnGit scans the fetched objects for LFS pointer files, up to the source's LFS object limit (200,000 objects by default), 100,000 candidate files and 32 MiB of candidate content. If it finds one, or cannot finish within those limits, the run stops with `git_lfs_required`. With Git-only consent the import proceeds, keeps the pointer files as they are, and marks the content incomplete. OwnGit does not read `.gitattributes`, so a clean scan does not prove that a repository uses no LFS.
 
 ### Failures and cancellation
 
-One run per repository is active at a time (`busy` otherwise), and a run is limited to 60 minutes by default (`limit`). Other outcomes are `cancelled`, `protected_default_branch` (see [Changing the default branch](#changing-the-default-branch)), `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature that import does not support.
+One run per repository is active at a time (`busy` otherwise), and a run is limited by the source's run time, 60 minutes by default (`limit`). Other outcomes are `cancelled`, `protected_default_branch` (see [Changing the default branch](#changing-the-default-branch)), `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature that import does not support.
 
 When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome. At the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
 
@@ -1609,7 +1692,7 @@ A backup holds a manifest and one Git bundle per nonempty repository. Together t
 - import sources and history;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
 
-A backup does not include raw logs, credentials and tokens of every kind, import schedules, the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits and the raw log retention).
+A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits and the raw log retention).
 
 A backup holds up to 1 GiB of OwnGit records, counted by the memory they take and not counting the repositories; backup refuses a larger state. Creating and restoring a backup hold its records in memory, so more records need more memory.
 
