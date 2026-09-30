@@ -165,7 +165,7 @@ On a Linux desktop the command also shows the OwnGit icon in the panel, and the 
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/tray-panels.dark.png">
-  <img src="docs/images/tray-panels.png" alt="Screenshots of the OwnGit icon's panel on macOS, Windows, GNOME and Omarchy, side by side, with sample repositories; on Omarchy it is the panel of the OwnGit bar widget. Each panel shows that OwnGit is running, the clone address with a Copy button, the latest pushes to notes, site and dotfiles, and Open dashboard.">
+  <img src="docs/images/tray-panels.png" alt="Screenshots of the OwnGit panel on macOS, Windows, GNOME and Omarchy, side by side, with sample repositories. Each shows OwnGit 1.1.3 running, the clone address http://127.0.0.1:7654/git/ with a Copy button, the latest pushes to notes, site and dotfiles, and Open dashboard. The macOS panel adds a settings button and Hide from the menu bar. The Windows panel adds Notifications, Hide and Quit buttons. The GNOME panel lists the notification switches above Hide and Quit. On Omarchy it is the panel of the OwnGit bar widget.">
 </picture>
 
 The icon's panel on macOS, Windows and GNOME, and the OwnGit bar widget's panel on Omarchy.
@@ -174,10 +174,10 @@ On all three systems the icon also shows desktop notifications for pushes, new p
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/push-notifications.dark.png">
-  <img src="docs/images/push-notifications.png" alt="Screenshots of one OwnGit push notification on macOS, Windows, GNOME and Omarchy, each shown by the system itself: 2 new commits in notes, with the branch and the latest commit message.">
+  <img src="docs/images/push-notifications.png" alt="Screenshots of one OwnGit push notification on macOS, Windows, GNOME and Omarchy, each shown by the system itself: 2 new commits in notes, Pushed from another computer, and main: Add weekly review template and 1 more. Windows names the app owngit.exe.">
 </picture>
 
-A push notification on the same four systems.
+A push notification on the same four systems, with Only what I did not do turned on.
 
 ### Run in the foreground
 
