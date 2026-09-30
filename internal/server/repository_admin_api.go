@@ -63,7 +63,7 @@ func (app *App) handleRepositoryAdminAPI(writer http.ResponseWriter, request *ht
 		return
 	}
 	if !deleteNameConfirmed(rule, stored.Name, input.ConfirmName) {
-		writeAPIError(writer, http.StatusUnprocessableEntity, "name_mismatch", "Settings ask for the repository name before a deletion: confirm_name must be "+stored.Name+".", nil)
+		writeAPIError(writer, http.StatusUnprocessableEntity, "name_mismatch", "Settings ask for the repository name before a deletion. Repeat it to confirm: "+stored.Name+".", nil)
 		return
 	}
 	result, incomplete, err := app.deleteRepository(request.Context(), id, repository.DeleteMode(input.Mode))
