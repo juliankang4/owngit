@@ -67,6 +67,14 @@ func TestKoreanEvidenceUsesFamiliarDeveloperTerms(t *testing.T) {
 			}
 		}
 	}
+	// The configured-check screens and their ceilings say 체크 too.
+	for _, catalog := range []map[MessageCode]message{configuredCheckCatalog, checkCeilingsCatalog} {
+		for code, entry := range catalog {
+			if strings.Contains(entry.ko, "검사") {
+				t.Errorf("%s Korean text says 검사 instead of 체크: %q", code, entry.ko)
+			}
+		}
+	}
 }
 
 func TestNoProtectionValueEverClaimsASandbox(t *testing.T) {
