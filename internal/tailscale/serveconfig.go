@@ -127,12 +127,34 @@ func (config ServeConfig) withEndpoint(name string, port int, target string) ([]
 	return json.Marshal(top)
 }
 
+// ReviewDigest identifies the whole configuration as read, with port: the
+// owner reviews what is on a port before OwnGit replaces it, and the
+// replacement goes ahead only while the configuration is still exactly the
+// one reviewed. Key order and spacing do not count.
+func (config ServeConfig) ReviewDigest(port int) (string, error) {
+	canonical := []byte("null")
+	if !nothingConfigured(config.content) {
+		decoder := json.NewDecoder(bytes.NewReader(config.content))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return "", &Error{Kind: KindUnreadable}
+		}
+		var err error
+		// Marshal sorts the keys of every object and compacts the rest.
+		if canonical, err = json.Marshal(value); err != nil {
+			return "", err
+		}
+	}
+	sum := sha256.Sum256(append([]byte(strconv.Itoa(port)+"\n"), canonical...))
+	return hex.EncodeToString(sum[:16]), nil
+}
+
 // PortDigest identifies everything the configuration as read has on port:
 // its TCP entry, the web handlers of every name on it, its Funnel entries
-// and the same inside foreground sessions, each as Tailscale wrote it. The
-// owner reviews what is on a port before OwnGit replaces it, and the
-// replacement goes ahead only while the port's digest is still the one
-// reviewed, whatever else changed meanwhile.
+// and the same inside foreground sessions, each as Tailscale wrote it.
+// Moving sharing to a port being replaced checks with it that the port
+// still has what was reviewed after OwnGit took its own endpoint away.
 func (config ServeConfig) PortDigest(port int) (string, error) {
 	portText := strconv.Itoa(port)
 	var entries func(content []byte) (map[string]json.RawMessage, error)

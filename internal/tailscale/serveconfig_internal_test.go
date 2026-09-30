@@ -111,3 +111,34 @@ func TestPortDigestCoversExactlyThePort(t *testing.T) {
 		}
 	}
 }
+
+// The review digest changes with anything in the configuration, on any
+// port, and with the port reviewed, but not with key order or spacing.
+func TestReviewDigestCoversTheWholeConfiguration(t *testing.T) {
+	digest := func(content string, port int) string {
+		t.Helper()
+		value, err := ServeConfig{content: []byte(content)}.ReviewDigest(port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	base := `{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}`
+	want := digest(base, 443)
+	if got := digest(`{"Web":{"box.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}},"TCP":{"443":{"HTTPS":true}}}`, 443); got != want {
+		t.Error("key order or spacing changed the digest")
+	}
+	if digest(base, 8443) == want {
+		t.Error("another port kept the digest")
+	}
+	for _, content := range []string{
+		`{"TCP": {"443": {"HTTPS": true}, "5000": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}}`,
+		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}, "AllowFunnel": {"box.tail0000.ts.net:5000": true}}`,
+		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}, "ETag": 1}`,
+		`null`,
+	} {
+		if digest(content, 443) == want {
+			t.Errorf("a change kept the digest: %s", content)
+		}
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -177,13 +178,22 @@ func (s *Store) CrossSiteLinks(ctx context.Context) (CrossSiteLinks, error) {
 }
 
 // decodeStoredJSON decodes one JSON object of known fields from a stored
-// policy value.
+// policy value. A field may be left out for its default, but the value
+// must be a single object and no field may be null.
 func decodeStoredJSON(raw string, value any) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return err
+	}
+	if fields == nil {
+		return errors.New("not a JSON object")
+	}
+	for name, field := range fields {
+		if string(field) == "null" {
+			return fmt.Errorf("%s is null", name)
+		}
+	}
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
-	err := decoder.Decode(value)
-	if err == nil && decoder.More() {
-		err = errors.New("more than one JSON value")
-	}
-	return err
+	return decoder.Decode(value)
 }

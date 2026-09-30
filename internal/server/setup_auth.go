@@ -409,10 +409,16 @@ func (app *App) renderLoginFailure(writer http.ResponseWriter, request *http.Req
 
 // adminPasswordNotice is the notice and status of a browser form refused by
 // confirmAdmin. A missing, wrong or rate-limited password belongs to field.
-// A check that could not be completed is a page-level unavailable notice,
-// because the password may well be right.
+// Unreadable login attempt limits name that setting, because a wrong
+// password cannot be counted until they are set again. Any other check
+// that could not be completed is a page-level unavailable notice, because
+// the password may well be right.
 func adminPasswordNotice(request *http.Request, err error, field string) (webui.Notice, int) {
+	var policyErr *state.PolicyError
 	switch {
+	case errors.As(err, &policyErr) && policyErr.Setting() == "login_limits":
+		logFailure(request, "administrator password check", err)
+		return webui.Error(field, webui.MsgLoginLimitsUnreadable), http.StatusConflict
 	case errors.Is(err, errAdminPasswordMissing):
 		return webui.Error(field, webui.MsgAdminEmpty), http.StatusUnauthorized
 	case errors.Is(err, auth.ErrRateLimited):

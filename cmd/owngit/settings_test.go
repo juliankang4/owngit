@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // settings set changes only the settings it names, through the owner API,
@@ -86,6 +89,42 @@ func TestSettingsCommandSetsTheAccessPolicies(t *testing.T) {
 	for _, refused := range [][]string{{"--login-window", "90s500ms"}, {"--login-pause", "later"}, {"--login-attempts", "0"}, {"--cross-site-links", "none"}} {
 		if _, err := captureStdout(func() error { return settingsCommand(append(append([]string{"set"}, refused...), remote...)) }); err == nil {
 			t.Fatalf("settings set %v was accepted", refused)
+		}
+	}
+}
+
+// The command that unreadable login limits name, in the API advice and in
+// the sign-in message of both languages, sets them again as it says.
+func TestTheNamedCommandRepairsUnreadableLoginLimits(t *testing.T) {
+	fixture := startImportCLIServer(t)
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+	ctx := context.Background()
+	corrupt := func() {
+		t.Helper()
+		if err := fixture.store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('login_limits','null') ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	corrupt()
+	_, err := fixture.store.LoginLimits(ctx)
+	var policyErr *state.PolicyError
+	if !errors.As(err, &policyErr) {
+		t.Fatalf("stored null read with err=%v, want a PolicyError", err)
+	}
+	for _, advice := range []string{policyErr.Advice(), webui.Text(webui.LangEN, webui.MsgLoginLimitsUnreadable), webui.Text(webui.LangKO, webui.MsgLoginLimitsUnreadable)} {
+		corrupt()
+		start := strings.Index(advice, "owngit settings set ")
+		end := strings.Index(advice[max(start, 0):], "(")
+		if start < 0 || end < 0 {
+			t.Fatalf("no command in %q", advice)
+		}
+		command := strings.Fields(advice[start+len("owngit settings set ") : start+end])
+		if _, err := captureStdout(func() error { return settingsCommand(append(append([]string{"set"}, command...), remote...)) }); err != nil {
+			t.Fatalf("settings set %v: %v", command, err)
+		}
+		if saved, err := fixture.store.LoginLimits(ctx); err != nil || saved != state.DefaultLoginLimits {
+			t.Fatalf("after %v: saved=%+v err=%v", command, saved, err)
 		}
 	}
 }

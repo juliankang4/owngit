@@ -34,6 +34,9 @@ func TestPoliciesReadTheirDefaultsAndRefuseWhatTheyCannotUse(t *testing.T) {
 		{"git_transfer_limits", `{"operation_seconds":9223372036854775807}`},
 		{"git_transfer_limits", `{"concurrent":8}`},
 		{"git_transfer_limits", `{} {}`},
+		{"git_transfer_limits", `{}]`},
+		{"git_transfer_limits", `null`},
+		{"git_transfer_limits", `{"maximum_bytes":null}`},
 	} {
 		noErr(t, store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stored.key, stored.value))
 		var err error

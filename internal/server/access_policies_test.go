@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"html"
 	"math"
 	"net/http"
 	"net/url"
@@ -185,6 +186,11 @@ func TestUnreadableLoginLimitsStillLetTheRightPasswordIn(t *testing.T) {
 	if status != http.StatusOK || settings["login_limits"] == nil {
 		t.Fatalf("PATCH status=%d settings=%v", status, settings)
 	}
+	// Stored JSON of the wrong shape is as unreadable as a wrong value.
+	for _, stored := range []string{`null`, `{}]`, `{"attempts":null}`} {
+		noErr(t, fixture.store.Exec(context.Background(), `UPDATE metadata SET value=? WHERE key='login_limits'`, stored))
+		requireUnreadable(t, adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/settings", nil, "admin-password"), "login_limits", "login_limits")
+	}
 }
 
 // The Access tab saves the login limits in the units it shows them in,
@@ -285,5 +291,41 @@ func TestUnreadableCrossSiteChoiceStopsSharedSignIn(t *testing.T) {
 	page := browser.get("/settings/access")
 	if !strings.Contains(page.body, `name="cross_site_links" data-saved=""`) {
 		t.Fatalf("Access tab does not offer to set it again:\n%s", page.body)
+	}
+}
+
+// The administrator confirmation of every browser form names unreadable
+// login limits, as the sign-in page does, and the right password still
+// confirms, so the Access tab can set them again.
+func TestAdministratorConfirmationNamesUnreadableLoginLimits(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	askEveryTime(t, fixture.app)
+	server, client, jar := openBrowser(t, fixture)
+	signInAdmin(t, fixture, server.URL, jar)
+	noErr(t, fixture.store.Exec(t.Context(), `INSERT INTO metadata(key,value) VALUES('login_limits','{"attempts":null}')`))
+	message := html.EscapeString(enText(webui.MsgLoginLimitsUnreadable))
+	settings := url.Values{
+		"csrf": {adminTestCSRF}, "action": {webui.ActionSaveLoginLimits}, "login_attempts": {"4"}, "login_window": {"10"}, "login_window_unit": {"min"},
+		"login_pause": {"15"}, "login_pause_unit": {"min"}, "admin_password": {"not-it"},
+	}
+	for _, refused := range []struct {
+		path   string
+		values url.Values
+	}{
+		{"/settings/access", settings},
+		{"/repositories/project/delete", url.Values{"csrf": {adminTestCSRF}, "mode": {"keep_files"}, "confirm_name": {"project"}, "admin_password": {"not-it"}}},
+	} {
+		result := browserForm(t, client, server.URL+refused.path, refused.values, server.URL)
+		if result.status != http.StatusConflict || !strings.Contains(result.body, message) {
+			t.Fatalf("%s with a wrong password status=%d:\n%s", refused.path, result.status, result.body)
+		}
+	}
+	assertRepositoryIntact(t, fixture, "a refused confirmation")
+	settings.Set("admin_password", "admin-password")
+	if result := browserForm(t, client, server.URL+"/settings/access", settings, server.URL); result.status != http.StatusSeeOther {
+		t.Fatalf("setting the limits again status=%d", result.status)
+	}
+	if saved, err := fixture.store.LoginLimits(t.Context()); err != nil || saved != state.DefaultLoginLimits {
+		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 }

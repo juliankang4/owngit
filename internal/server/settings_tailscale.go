@@ -219,7 +219,9 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		var change TailscaleChange
 		var err error
 		if replace != "" {
-			change, err = app.Tailscale.Replace(request.Context(), homeNetwork, port, replace)
+			// The replacement form offers no home network choice, so the
+			// listen address stays as saved.
+			change, err = app.Tailscale.Replace(request.Context(), nil, port, replace)
 		} else {
 			change, err = app.Tailscale.On(request.Context(), homeNetwork, port)
 		}

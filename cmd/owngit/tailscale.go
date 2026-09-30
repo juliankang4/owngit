@@ -218,7 +218,7 @@ func tailscaleOn(arguments []string) error {
 	options := newTailscaleFlags("tailscale on")
 	homeNetwork := options.flags.Bool("home-network", false, "also let devices on the home network connect over plain HTTP; --home-network=false keeps OwnGit on this computer only. Without it the listen address stays as it is when Tailscale can reach it")
 	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443, and keeps the port sharing uses now. Another port moves sharing that is on")
-	replace := options.flags.String("replace-endpoint", "", "replace what another service has on --https-port with OwnGit's address: the `digest` \"owngit tailscale status\" or a refusal showed for that port. Nothing is replaced when the port has anything else by then")
+	replace := options.flags.String("replace-endpoint", "", "replace what another service has on --https-port with OwnGit's address: the `digest` \"owngit tailscale status\" or a refusal showed for that port. Nothing is replaced when anything Tailscale serves changed since")
 	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}

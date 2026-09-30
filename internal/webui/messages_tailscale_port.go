@@ -67,8 +67,8 @@ var tailscalePortCatalog = map[MessageCode]message{
 		ko: "OwnGit은 Funnel로 공개된 포트는 바꾸지 않습니다. 바꾸면 OwnGit이 인터넷에 공개되기 때문입니다. 터미널에서 실행 중인 \"tailscale serve\"가 쓰는 포트도 바꾸지 않습니다.",
 	},
 	"tailscale.problem.replace_changed": {
-		en: "What Tailscale serves on this port changed after you reviewed it, so OwnGit replaced nothing. What is there now is below; review it and choose again.",
-		ko: "검토한 뒤에 이 포트에서 Tailscale이 제공하는 설정이 바뀌어 OwnGit은 아무것도 바꾸지 않았습니다. 지금 설정이 아래에 있으니 다시 확인하고 골라 주세요.",
+		en: "What Tailscale serves on this computer changed after you reviewed it, on this port or another, so OwnGit replaced nothing. What is on this port now is below; review it and choose again.",
+		ko: "검토한 뒤에 이 컴퓨터에서 Tailscale이 제공하는 설정이 이 포트나 다른 포트에서 바뀌어 OwnGit은 아무것도 바꾸지 않았습니다. 지금 이 포트의 설정이 아래에 있으니 다시 확인하고 골라 주세요.",
 	},
 	"tailscale.problem.not_replaceable": {
 		en: "This port is open to Funnel or held by a \"tailscale serve\" in a terminal, which OwnGit never replaces, so it changed nothing. Choose another port.",

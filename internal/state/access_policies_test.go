@@ -35,6 +35,11 @@ func TestAccessPoliciesReadTheirDefaultsAndRefuseWhatTheyCannotUse(t *testing.T)
 		{"login_limits", `{"pause_seconds":-9223372036854775808}`},
 		{"login_limits", `{"disabled":true}`},
 		{"login_limits", `{} {}`},
+		{"login_limits", `{}]`},
+		{"login_limits", `null`},
+		{"login_limits", `[]`},
+		{"login_limits", `{"attempts":null}`},
+		{"login_limits", `{"attempts":"4"}`},
 		{"cross_site_links", "none"},
 	} {
 		noErr(t, store.Exec(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, stored.key, stored.value))

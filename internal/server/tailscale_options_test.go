@@ -6,9 +6,11 @@ import (
 	"net/http"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
+	"owngit/internal/state"
 	"owngit/internal/tailscale"
 	"owngit/internal/tailscale/tailscaletest"
 	"owngit/internal/webui"
@@ -26,7 +28,8 @@ func busyServe() tailscale.ServeConfig {
 }
 
 // OwnGit replaces what another service has on a port only as the owner
-// reviewed it: a change after the review, however small, replaces nothing
+// reviewed it: a change after the review, however small and on any port,
+// replaces nothing
 // and shows what is there now. It never replaces a Funnel port, and the
 // replacement leaves every other port and name exactly as they were.
 func TestReplacingAnEndpointOnlyAsReviewed(t *testing.T) {
@@ -48,6 +51,13 @@ func TestReplacingAnEndpointOnlyAsReviewed(t *testing.T) {
 	}
 	if !refused(err) {
 		t.Error("a changed port is not answered as refused")
+	}
+	// A change on another port after the review refuses as well.
+	reviewed = refusal.Occupied.Digest
+	fake.Update(func(s *tailscaletest.State) { s.Serve.AllowFunnel[tailscaletest.Name+":5000"] = true })
+	_, err = app.Tailscale.Replace(ctx, nil, 443, reviewed)
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemReplaceChanged || refusal.Occupied == nil || refusal.Occupied.Digest == reviewed || len(fake.Writes()) != 0 {
+		t.Fatalf("another port changed after the review: err=%v writes=%q", err, fake.Writes())
 	}
 
 	_, err = app.Tailscale.On(ctx, nil, 8443)
@@ -197,5 +207,39 @@ func TestEveryAutomaticPortTakenStillOffersACustomPort(t *testing.T) {
 	requireSaved(t, "turning on at a custom port", browserForm(t, client, base+"/settings", values, base))
 	if !fake.Endpoint(4443, tailscale.Target(7654)).Exact || fake.Endpoint(443, "").Free {
 		t.Fatalf("serve after turning on: %+v", fake.State().Serve)
+	}
+}
+
+// A replacement changes only the reviewed endpoint: the saved home network
+// choice stays as it is, whether sharing was off or on before.
+func TestReplacingKeepsTheHomeNetworkChoice(t *testing.T) {
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: busyServe()})
+	noErr(t, app.Store.UpdateNetwork(context.Background(), state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654"}}))
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	// Asks for the taken port, then sends exactly what the replacement form
+	// the refusal shows for it sends.
+	replace := func(port int) browserHTTPResult {
+		t.Helper()
+		values := url.Values{"csrf": {csrf}, "action": {webui.ActionSaveTailscale}, "tailscale": {"on"}, "tailscale_port": {"custom"},
+			"tailscale_https_port": {strconv.Itoa(port)}, "admin_password": {"admin-password"}}
+		refusal := browserForm(t, client, base+"/settings", values, base)
+		at := strings.Index(refusal.body, `name="tailscale_https_port" value="`+strconv.Itoa(port)+`"`)
+		if refusal.status != http.StatusConflict || at < 0 {
+			t.Fatalf("no replacement form for port %d: status=%d", port, refusal.status)
+		}
+		values.Set("replace_digest", formValue(t, refusal.body[at:], "replace_digest"))
+		values.Del("home_network")
+		return browserForm(t, client, base+"/settings", values, base)
+	}
+	requireSaved(t, "replacing while off", replace(443))
+	if settings, _, _ := savedNetwork(t, app.Store); settings.Listen != "0.0.0.0:7654" || !fake.Endpoint(443, tailscale.Target(7654)).Exact {
+		t.Fatalf("after replacing while off: listen=%q serve=%+v", settings.Listen, fake.State().Serve)
+	}
+	result := replace(5000)
+	if result.status != http.StatusSeeOther || !strings.Contains(result.header.Get("Location"), "notice=tailscale_moved") {
+		t.Fatalf("replacing while on: status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+	if settings, _, _ := savedNetwork(t, app.Store); settings.Listen != "0.0.0.0:7654" || !fake.Endpoint(5000, tailscale.Target(7654)).Exact || !fake.Endpoint(443, "").Free {
+		t.Fatalf("after replacing while on: listen=%q serve=%+v", settings.Listen, fake.State().Serve)
 	}
 }
