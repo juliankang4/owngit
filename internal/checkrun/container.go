@@ -1,6 +1,7 @@
 package checkrun
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
@@ -105,6 +106,10 @@ func (coordinator *Coordinator) containerPreflight(ctx context.Context, job stat
 		return preparedContainer{}, errors.Join(errors.New("Docker returned an invalid probe container identity"), cleanupErr)
 	}
 	if err := coordinator.confirmCreatedContainer(ctx, job, prepared, containerID); err != nil {
+		cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, containerID, "", daemonID)
+		return preparedContainer{}, errors.Join(err, cleanupErr)
+	}
+	if err := verifyImageVolumePaths(ctx, docker, dockerHost, containerID, prepared.volumes); err != nil {
 		cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, containerID, "", daemonID)
 		return preparedContainer{}, errors.Join(err, cleanupErr)
 	}
@@ -419,6 +424,84 @@ func validateImageVolumes(volumes []string) error {
 		}
 	}
 	return nil
+}
+
+// verifyImageVolumePaths refuses the image when a declared volume path, or
+// a folder on the way to it, is a symbolic link in the image. Docker would
+// follow the link when it mounts the disposable volume, which could then
+// land on another path, such as the workspace. Each path is read from the
+// created, not yet started, container with docker cp, which archives a
+// link as a link; only the first archive entry is read. A path the image
+// does not have is fine: the mount creates it, and nothing under it exists.
+func verifyImageVolumePaths(ctx context.Context, docker, dockerHost, containerID string, volumes []string) error {
+	for _, volume := range volumes {
+		prefix := ""
+		for _, part := range strings.Split(strings.TrimPrefix(volume, "/"), "/") {
+			prefix += "/" + part
+			kind, err := containerPathKind(ctx, docker, dockerHost, containerID, prefix)
+			if err != nil {
+				return fmt.Errorf("check image volume %s: %w", volume, err)
+			}
+			if kind == tar.TypeSymlink || kind == tar.TypeLink {
+				return fmt.Errorf("configured check image declares volume %s, but %s is a link in the image, so the disposable mount could land elsewhere", volume, prefix)
+			}
+			if kind == 0 {
+				break
+			}
+		}
+	}
+	return nil
+}
+
+// containerPathKind returns the tar type of target in the container's file
+// system, or 0 when it does not exist.
+func containerPathKind(ctx context.Context, docker, dockerHost, containerID, target string) (byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	arguments := []string{"cp", containerID + ":" + target, "-"}
+	if dockerHost != "" {
+		arguments = append([]string{"--host", dockerHost}, arguments...)
+	}
+	command := exec.CommandContext(ctx, docker, arguments...)
+	var stderr strings.Builder
+	command.Stderr = &limitedWriter{builder: &stderr, remaining: dockerProbeOutputLimit}
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return 0, err
+	}
+	if err := command.Start(); err != nil {
+		return 0, err
+	}
+	header, readErr := tar.NewReader(stdout).Next()
+	// Only the first entry matters; a folder's contents are not read.
+	cancel()
+	waitErr := command.Wait()
+	if readErr == nil {
+		return header.Typeflag, nil
+	}
+	if strings.Contains(stderr.String(), "Could not find the file") || strings.Contains(stderr.String(), "No such container:path") {
+		return 0, nil
+	}
+	message := strings.TrimSpace(stderr.String())
+	if message == "" {
+		message = errors.Join(readErr, waitErr).Error()
+	}
+	return 0, errors.New(message)
+}
+
+// limitedWriter keeps at most remaining bytes of what is written to it.
+type limitedWriter struct {
+	builder   *strings.Builder
+	remaining int
+}
+
+func (w *limitedWriter) Write(content []byte) (int, error) {
+	if w.remaining > 0 {
+		kept := content[:min(len(content), w.remaining)]
+		w.builder.Write(kept)
+		w.remaining -= len(kept)
+	}
+	return len(content), nil
 }
 
 func pathsOverlap(first, second string) bool {

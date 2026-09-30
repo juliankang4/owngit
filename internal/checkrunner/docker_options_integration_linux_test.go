@@ -115,6 +115,27 @@ func TestRealDockerContainerOptions(t *testing.T) {
 		}
 	})
 
+	// A declared volume that is a link in the image would put the disposable
+	// mount wherever the link points, here the workspace. It is refused.
+	t.Run("image_volume_through_a_link_is_refused", func(t *testing.T) {
+		source := "owngit-check-link-source-" + unique
+		linkImage := "owngit-check-test/volume-link:" + unique
+		mustDocker(t, config, "create", "--name", source, imageID, "/bin/sh", "-c", "ln -s /workspace /data")
+		mustDocker(t, config, "start", "--attach", source)
+		mustDocker(t, config, "commit", "--change", "VOLUME /data", source, linkImage)
+		mustDocker(t, config, "rm", source)
+		t.Cleanup(func() { removeDockerImageTag(t, config, linkImage) })
+		fixture := newRealDockerFixtureWith(t, config, `printf data > /data/escaped`, func(settings *state.CheckExecutionSettings) {
+			settings.ContainerImage = linkImage
+			settings.ContainerAllowTags = true
+			settings.ContainerImageVolumes = true
+		})
+		job := fixture.waitForTerminalJob(fixture.waitForAnyJob().ID)
+		if job.Status != state.CheckJobUnavailable || job.AttemptID != "" || !strings.Contains(job.Summary, "/data is a link in the image") {
+			t.Fatalf("volume through a link: status=%s attempt=%s summary=%s", job.Status, job.AttemptID, job.Summary)
+		}
+	})
+
 	// Commands still run as OwnGit's own user, so they can change the files
 	// of the image that user may change, such as /var/tmp.
 	t.Run("writable_root_keeps_the_other_restrictions", func(t *testing.T) {
