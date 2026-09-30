@@ -2184,7 +2184,9 @@ func authorizeCheckJobCompletionTx(ctx context.Context, tx *sql.Tx, attempt Chec
 }
 
 // finalizeCheckJobTx mirrors one authority-checked completion onto its linked
-// job in the same transaction. Interrupted history is immutable.
+// job in the same transaction. Interrupted history is immutable. The job is
+// OwnGit's record, so finished is when OwnGit received the completion, never
+// a time the runner reported.
 func finalizeCheckJobTx(ctx context.Context, tx *sql.Tx, attempt CheckAttempt, status string, finished time.Time, summary string, cancelled bool) error {
 	job, exists, err := readCheckJobTx(ctx, tx, attempt.RepositoryID, attempt.JobID)
 	if err != nil {

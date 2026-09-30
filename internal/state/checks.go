@@ -777,7 +777,15 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	status := AggregateAttemptStatus(completion.Results, completion.Cancelled)
 	worktree := worseWorktree(registered.WorktreeState, completion.WorktreeState)
 	finished := completion.FinishedAt.UTC()
-	duration := finished.Sub(registered.StartedAt).Milliseconds()
+	// An automatic attempt starts when OwnGit records its start, so its
+	// duration ends when OwnGit receives its completion: both times come
+	// from this server's clock, whatever the runner's clock says. The
+	// attempt keeps the finish time the runner reported.
+	ended := finished
+	if registered.JobID != "" {
+		ended = now.UTC()
+	}
+	duration := ended.Sub(registered.StartedAt).Milliseconds()
 	if duration < 0 {
 		duration = 0
 	}
@@ -809,7 +817,7 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	// A completion of a server-linked automatic attempt finalizes its job in
 	// the same transaction, so the job can never advance without the evidence.
 	if registered.JobID != "" {
-		if err := finalizeCheckJobTx(ctx, tx, registered, status, finished, summary, completion.Cancelled); err != nil {
+		if err := finalizeCheckJobTx(ctx, tx, registered, status, now.UTC(), summary, completion.Cancelled); err != nil {
 			if rawStored {
 				return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 			}
@@ -1750,7 +1758,11 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 				return errors.New("pending check attempt already has a result")
 			}
 		} else {
-			if !validAttemptStatus(attempt.Status) || attempt.FinishedAt.IsZero() || attempt.FinishedAt.Before(attempt.StartedAt) {
+			// An automatic attempt starts on the server's clock and keeps the
+			// finish time its runner reported, so only an attempt whose times
+			// both come from its helper must end after it started; its job
+			// holds the server's order.
+			if !validAttemptStatus(attempt.Status) || attempt.FinishedAt.IsZero() || attempt.JobID == "" && attempt.FinishedAt.Before(attempt.StartedAt) {
 				return errors.New("invalid check attempt contents")
 			}
 			switch attempt.SubmittedWorktreeState {
