@@ -85,6 +85,22 @@ func (m *Manager) ReadRefs(ctx context.Context, repositoryPath string, limit int
 	return records, false, nil
 }
 
+// ReadRefNames returns the name of every ref in the repository, in any
+// namespace, for checks that compare spellings (RefNameConflicts). Like a
+// push's check, the read is bounded by output size, not by namespace, so a
+// folder spelled differently from an expected namespace is included.
+func (m *Manager) ReadRefNames(ctx context.Context, repositoryPath string) ([]string, error) {
+	result, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, gitexec.CommandLimits{OutputLimit: 64 << 20}, "--git-dir", ".", "for-each-ref", "--format=%(refname)")
+	if err != nil {
+		return nil, fmt.Errorf("read repository ref names: %w", err)
+	}
+	output := strings.TrimSuffix(string(result.Stdout), "\n")
+	if output == "" {
+		return nil, nil
+	}
+	return strings.Split(output, "\n"), nil
+}
+
 // ReadHead returns HEAD's immediate symbolic target and its resolved object ID.
 // An empty symbolic value with an empty OID means HEAD does not resolve (an unborn
 // or detached-but-missing HEAD). A detached HEAD reports its object ID.

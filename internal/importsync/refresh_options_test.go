@@ -614,3 +614,26 @@ func TestTokenRotationKeepsFollowingTheSource(t *testing.T) {
 		}
 	}
 }
+
+// A destination folder spelled in another case than an imported namespace,
+// such as refs/Notes for refs/notes/, is one folder on storage that ignores
+// case. The refs the source lists under it are left uncreated as diverged,
+// whether their own names differ or match, and the rest publishes.
+func TestExtraNamespaceFolderInAnotherCaseIsNotWritten(t *testing.T) {
+	for _, existing := range []string{"refs/Notes/local", "refs/Notes/incoming"} {
+		t.Run(existing, func(t *testing.T) {
+			f := newFixture(t)
+			oid := f.commit("one", "one\n")
+			f.mustImport(ImportInput{Options: OptionsChange{ExtraRefPrefixes: prefixesPointer("refs/notes/")}})
+			f.git(f.destinationPath(), "update-ref", existing, oid)
+			f.git(f.source, "update-ref", "refs/notes/incoming", oid)
+			next := f.commit("two", "two\n")
+			run, err := f.refresh()
+			noErr(t, err)
+			names := strings.Fields(f.git(f.destinationPath(), "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"))
+			if !slices.Equal(names, []string{existing}) || run.RefsDivergent != 1 || f.destinationRefs()["refs/heads/main"] != next {
+				t.Fatalf("run = %+v, namespace refs = %v", run, names)
+			}
+		})
+	}
+}

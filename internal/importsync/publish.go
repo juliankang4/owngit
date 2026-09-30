@@ -136,15 +136,20 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	// A ref whose name or folder a file system can treat as the same as
 	// another destination ref's, the branch HEAD names, or another ref this
 	// refresh writes, is left as it is: the rule pushes follow too
-	// (repository.RefNameConflicts).
-	existing := make([]string, 0, len(dest)+len(destSymrefs)+1)
+	// (repository.RefNameConflicts). Every destination ref is compared, not
+	// only those in the imported namespaces, so a namespace folder spelled
+	// in another case, such as refs/Notes for refs/notes, is found.
+	existing, err := s.Repositories.ReadRefNames(ctx, repositoryPath)
+	if err != nil {
+		return nil, newProblem(CodeRepositoryMissing, "destination ref names could not be read", err)
+	}
 	for _, names := range []map[string]string{dest, destSymrefs} {
 		for name := range names {
 			existing = append(existing, name)
 		}
 	}
 	if destHEAD.kind == headSymbolic {
-		existing = append(existing, destHEAD.target)
+		existing = append(existing, destHEAD.target, headBranch)
 	}
 	writes := make([]string, 0, len(run.selected.refs)+1)
 	for _, ref := range run.selected.refs {
@@ -180,16 +185,19 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.divergent++
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 			caseBlocked[ref.Name] = true
+		case conflicts[ref.Name]:
+			// Even with the source's value, a ref in a conflicting spelling
+			// is divergent, as it is where storage keeps the spellings
+			// apart and the name reads as absent.
+			plan.desired[ref.Name] = destination
+			plan.divergent++
+			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 		case destination == "":
 			plan.desired[ref.Name] = upstream
 			plan.created++
 		case destination == upstream:
 			plan.desired[ref.Name] = upstream
 			plan.unchanged++
-		case conflicts[ref.Name]:
-			plan.desired[ref.Name] = destination
-			plan.divergent++
-			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 		case mayReplaceLocal(run.source, observations.refs[ref.Name], destination):
 			if ref.Name == protected && !s.isAncestor(ctx, run, repositoryPath, destination, upstream) {
 				return nil, newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", ref.Name), nil)
