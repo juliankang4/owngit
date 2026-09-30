@@ -172,10 +172,15 @@ func (c *BackupCopy) Remove() error {
 	if err != nil {
 		return err
 	}
+	// Every entry is checked before anything is removed.
 	var bundles, companions []string
 	for _, entry := range entries {
+		companion, err := isCompanion(c.dir, entry.Name(), entryExists(entries))
+		if err != nil {
+			return err
+		}
 		switch {
-		case isCompanion(entry.Name(), entryExists(entries)):
+		case companion:
 			companions = append(companions, entry.Name())
 		case entry.Name() == manifestName && entry.Type().IsRegular():
 		case entry.Name() == "repositories" && entry.IsDir():
@@ -185,8 +190,12 @@ func (c *BackupCopy) Remove() error {
 			}
 			for _, bundle := range inner {
 				name := path.Join("repositories", bundle.Name())
+				companion, err := isCompanion(c.dir, name, entryExists(inner))
+				if err != nil {
+					return err
+				}
 				switch {
-				case isCompanion(bundle.Name(), entryExists(inner)):
+				case companion:
 					companions = append(companions, name)
 				case !bundle.Type().IsRegular() || !names[bundle.Name()]:
 					return fmt.Errorf("%s holds %s, which its manifest does not name", c.name, name)

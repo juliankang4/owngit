@@ -15,7 +15,7 @@ import (
 // attributes in companion files (isCompanion): Git would read those as
 // refs and pack files of the restored repositories. It gives a new file
 // there an attribute once to find out.
-func requireAttributesInPlace(dir string) error {
+func requireAttributesInPlace(dir string) (err error) {
 	suffix, err := randomSuffix()
 	if err != nil {
 		return err
@@ -26,9 +26,14 @@ func requireAttributesInPlace(dir string) error {
 	if err != nil {
 		return err
 	}
+	// The probe goes, and its companion with it; a failure to remove
+	// either is reported.
 	defer func() {
-		_ = os.Remove(probe)
-		_ = os.Remove(companion)
+		for _, name := range []string{probe, companion} {
+			if removeErr := os.Remove(name); removeErr != nil && !errors.Is(removeErr, fs.ErrNotExist) && err == nil {
+				err = fmt.Errorf("remove the attribute check: %w", removeErr)
+			}
+		}
 	}()
 	if err := file.Close(); err != nil {
 		return err

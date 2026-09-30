@@ -56,26 +56,76 @@ func TestBackupCopyOpenAndRemoval(t *testing.T) {
 	}
 }
 
+// appleDouble is the start of an AppleDouble file as macOS writes one: the
+// magic number and version 2.
+var appleDouble = append([]byte{0x00, 0x05, 0x16, 0x07, 0x00, 0x02, 0x00, 0x00}, make([]byte, 74)...)
+
 // The companions a file system keeps beside a backup's files go with the
-// backup; a "._" file without its file stops the removal like any other.
+// backup. Anything else named like one, and a "._" file without its file,
+// stops the removal before anything is removed, like any other entry.
 func TestBackupRemovalTakesCompanionsAlong(t *testing.T) {
-	root := t.TempDir()
-	backup := newTwoRepositoryBackup(t, root)
-	folder, err := OpenBackupFolder(root)
-	noErr(t, err)
-	defer folder.Close()
-	orphan := filepath.Join(backup, "._notes.txt")
-	for _, name := range []string{"._" + manifestName, "._repositories", filepath.Join("repositories", "._project.bundle"), "._notes.txt"} {
-		noErr(t, os.WriteFile(filepath.Join(backup, name), []byte("attributes"), 0o600))
+	companions := []string{"._" + manifestName, filepath.Join("repositories", "._project.bundle")}
+	backupWithCompanions := func(t *testing.T) (*BackupFolder, string) {
+		root := t.TempDir()
+		backup := newTwoRepositoryBackup(t, root)
+		folder, err := OpenBackupFolder(root)
+		noErr(t, err)
+		t.Cleanup(folder.Close)
+		for _, name := range companions {
+			noErr(t, os.WriteFile(filepath.Join(backup, name), appleDouble, 0o600))
+		}
+		return folder, backup
 	}
+	for _, entry := range []struct {
+		name string
+		make func(backup, fake string) error
+	}{
+		{"file without its file", func(backup, _ string) error {
+			return os.WriteFile(filepath.Join(backup, "._notes.txt"), appleDouble, 0o600)
+		}},
+		{"file that is no AppleDouble file", func(_, fake string) error {
+			return os.WriteFile(fake, []byte("user data, not attributes"), 0o600)
+		}},
+		{"folder", func(_, fake string) error {
+			if err := os.Mkdir(fake, 0o700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(fake, "data"), appleDouble, 0o600)
+		}},
+		{"link", func(backup, fake string) error {
+			if runtime.GOOS == "windows" {
+				return errors.ErrUnsupported
+			}
+			return os.Symlink(filepath.Join(backup, "._"+manifestName), fake)
+		}},
+		{"file larger than a companion", func(_, fake string) error {
+			return os.WriteFile(fake, append(appleDouble, make([]byte, companionLimit)...), 0o600)
+		}},
+	} {
+		t.Run(entry.name, func(t *testing.T) {
+			folder, backup := backupWithCompanions(t)
+			if err := entry.make(backup, filepath.Join(backup, "._repositories")); errors.Is(err, errors.ErrUnsupported) {
+				t.Skip("making a symbolic link needs a privilege on Windows")
+			} else {
+				noErr(t, err)
+			}
+			opened, err := folder.Open(filepath.Base(backup))
+			noErr(t, err)
+			defer opened.Close()
+			if err := opened.Remove(); err == nil || !strings.Contains(err.Error(), "which a backup does not write") {
+				t.Fatalf("removal: %v", err)
+			}
+			for _, kept := range append([]string{manifestName, filepath.Join("repositories", "project.bundle")}, companions...) {
+				if _, err := os.Lstat(filepath.Join(backup, kept)); err != nil {
+					t.Fatalf("the refused removal removed %s: %v", kept, err)
+				}
+			}
+		})
+	}
+
+	folder, backup := backupWithCompanions(t)
+	noErr(t, os.WriteFile(filepath.Join(backup, "._repositories"), appleDouble, 0o600))
 	opened, err := folder.Open(filepath.Base(backup))
-	noErr(t, err)
-	if err := opened.Remove(); err == nil || !strings.Contains(err.Error(), "._notes.txt") {
-		t.Fatalf("removal with a file without its companion's file: %v", err)
-	}
-	opened.Close()
-	noErr(t, os.Remove(orphan))
-	opened, err = folder.Open(filepath.Base(backup))
 	noErr(t, err)
 	noErr(t, opened.Remove())
 	if _, err := os.Lstat(backup); !errors.Is(err, os.ErrNotExist) {

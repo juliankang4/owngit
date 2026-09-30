@@ -24,7 +24,7 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	// Companions of the file system, which this one does not move with
 	// their files, still arrive.
 	for _, companion := range []string{"._repositories", "._" + manifestName} {
-		noErr(t, os.WriteFile(filepath.Join(stage, companion), []byte("attributes"), 0o600))
+		noErr(t, os.WriteFile(filepath.Join(stage, companion), appleDouble, 0o600))
 	}
 
 	empty := filepath.Join(root, "empty")

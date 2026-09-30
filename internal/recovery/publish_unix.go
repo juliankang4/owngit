@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"golang.org/x/sys/unix"
 )
@@ -75,13 +76,15 @@ func moveIntoNewFolder(oldPath, newPath string) error {
 		}
 		return nil
 	}
-	listed := make(map[string]bool, len(names))
-	for _, name := range names {
-		listed[name] = true
+	// Companions are told apart before anything moves: a file takes its
+	// companion along.
+	companion, err := companionsIn(source, names)
+	if err != nil {
+		return err
 	}
 	var companions []string
 	for _, name := range names {
-		if isCompanion(name, func(base string) bool { return listed[base] }) {
+		if companion[name] {
 			companions = append(companions, name)
 			continue
 		}
@@ -98,7 +101,7 @@ func moveIntoNewFolder(oldPath, newPath string) error {
 	if err := syncBoth(); err != nil {
 		return err
 	}
-	if listed[manifestName] {
+	if slices.Contains(names, manifestName) {
 		if err := move(manifestName); err != nil {
 			return err
 		}
@@ -112,6 +115,34 @@ func moveIntoNewFolder(oldPath, newPath string) error {
 		return err
 	}
 	return os.Remove(oldPath)
+}
+
+// companionsIn tells which of names, the entries of the open folder dir,
+// are companions (isCompanion).
+func companionsIn(dir *os.File, names []string) (map[string]bool, error) {
+	root, err := os.OpenRoot(dir.Name())
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	held, err := dir.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if opened, err := root.Stat("."); err != nil || !os.SameFile(held, opened) {
+		if err == nil {
+			err = fmt.Errorf("%s changed while it was opened", dir.Name())
+		}
+		return nil, err
+	}
+	exists := func(base string) bool { return slices.Contains(names, base) }
+	companion := map[string]bool{}
+	for _, name := range names {
+		if companion[name], err = isCompanion(root, name, exists); err != nil {
+			return nil, err
+		}
+	}
+	return companion, nil
 }
 
 // syncEntry synchronizes the file or folder name in the open folder dir,
