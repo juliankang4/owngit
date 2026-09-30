@@ -76,7 +76,7 @@
     </div>
     <div class="facts__i">
       <dt>{{bi $lang "import.fact.connection"}}</dt>
-      <dd>{{range $i, $fact := $p.OptionsSummary}}{{if $i}}<br>{{end}}{{bi $lang $fact.Code}}{{with $fact.Value}} <span class="mono">{{.}}</span>{{end}}{{else}}{{bi $lang "import.fact.defaults"}}{{end}}</dd>
+      <dd>{{range $p.OptionsSummary}}<span class="pill pill--off">{{bi $lang .Code}}{{with .Value}}&nbsp;<span class="mono">{{.}}</span>{{end}}</span>{{else}}{{bi $lang "import.fact.defaults"}}{{end}}</dd>
     </div>
     {{end}}
   </dl>
