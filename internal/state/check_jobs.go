@@ -42,13 +42,14 @@ const (
 
 const (
 	// MinimumCheckLeaseMS and MaximumCheckLeaseMS bound one claim lease. The
-	// policy value is the lease duration and its own cap.
+	// policy value is the lease duration and its own cap. A running job
+	// renews its lease, so the lease does not bound how long checks run.
 	MinimumCheckLeaseMS int64 = 1000
 	MaximumCheckLeaseMS int64 = 24 * 60 * 60 * 1000
 	// MaximumCheckQueueLimit bounds unfinished jobs per repository.
-	MaximumCheckQueueLimit = 1000
+	MaximumCheckQueueLimit = 10000
 	// MaximumCheckActiveJobs bounds simultaneously claimed or started jobs.
-	MaximumCheckActiveJobs = 100
+	MaximumCheckActiveJobs = 1000
 	// MaximumCheckEventKeyBytes and MaximumCheckTriggerRefBytes bound the
 	// observed trigger context.
 	MaximumCheckEventKeyBytes   = 200
@@ -343,6 +344,17 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 	}
 	if base != nil && (base.Version != existing.Version || base.Digest != existing.Digest) {
 		return CheckPolicy{}, ErrCheckPolicyStale
+	}
+	ceilings, err := checkCeilings(ctx, tx)
+	if err != nil {
+		return CheckPolicy{}, err
+	}
+	if exceeded := ceilings.Exceeded(candidate.CeilingValues()); len(exceeded) != 0 {
+		refusals := make([]error, len(exceeded))
+		for index, field := range exceeded {
+			refusals[index] = field
+		}
+		return CheckPolicy{}, errors.Join(refusals...)
 	}
 	stored := existing
 	switch {
@@ -1238,6 +1250,13 @@ func admitCheckJobTx(ctx context.Context, tx *sql.Tx, request CheckJobRequest, n
 	}
 	if !policyAllowsCheckEvent(policy, request.Trigger) {
 		return CheckJob{}, false, fmt.Errorf("%w: %s", ErrCheckEventNotAllowed, request.Trigger)
+	}
+	ceilings, err := checkCeilings(ctx, tx)
+	if err != nil {
+		return CheckJob{}, false, err
+	}
+	if err := admissionError(ceilings.Exceeded(policy.CeilingValues())); err != nil {
+		return CheckJob{}, false, err
 	}
 	taskID := automaticCheckTaskID(request)
 	if err := ensureAutomaticCheckTaskTx(ctx, tx, request.RepositoryID, taskID, now); err != nil {

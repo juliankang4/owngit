@@ -337,6 +337,17 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		"named network of a job": func(m *Manifest) {
 			m.CheckJobs = []CheckJobManifest{{Execution: state.CheckExecutionSettings{ContainerNetwork: "checks"}}}
 		},
+		"policy time above the earlier bound":  func(m *Manifest) { m.CheckPolicies[0].MaxTimeoutMS = 24*60*60*1000 + 1 },
+		"policy queue above the earlier bound": func(m *Manifest) { m.CheckPolicies[0].QueueLimit = 1001 },
+		"policy memory above the earlier bound": func(m *Manifest) {
+			m.CheckPolicies[0].Execution.ContainerMemoryBytes = 64<<30 + 1
+		},
+		"job output above the earlier bound": func(m *Manifest) {
+			m.CheckJobs = []CheckJobManifest{{Limits: CheckJobLimitsManifest{OutputLimitBytes: 64<<20 + 1}}}
+		},
+		"job source total above the earlier bound": func(m *Manifest) {
+			m.CheckJobs = []CheckJobManifest{{Execution: state.CheckExecutionSettings{Source: state.CheckSourceLimits{MaxTotalBytes: 4<<30 + 1}}}}
+		},
 		"deletion intent": func(m *Manifest) {
 			m.ImportIntents = []ImportIntentManifest{{Expected: map[string]string{"refs/heads/gone": strings.Repeat("a", 40)}, Desired: map[string]string{"refs/heads/gone": ""}}}
 		},

@@ -50,6 +50,7 @@ var policyNames = map[string]struct{ field, advice string }{
 	maintenanceKey:           {"maintenance", "The saved repository maintenance choices cannot be read, so no repository is maintained. Set them again under Settings, Storage & recovery, or with owngit settings set --maintenance and the other --maintenance- options."},
 	browseLimitsKey:          {"browse_limits", "The saved browsing limits cannot be read, so files, diffs and comparisons are not shown. Set them again under Settings, Repositories, or with owngit settings set and the --browse- options."},
 	unusedObjectCleanupKey:   {"unused_object_cleanup", "The saved unused object cleanup choice cannot be read, so no object is removed. Set it again under Settings, Storage & recovery, or with owngit settings set --unused-object-cleanup."},
+	checkCeilingsKey:         {"check_ceilings", "The saved check ceilings cannot be read, so no new check starts and no check policy can be saved. Set them again under Settings, Repositories, or with owngit settings set and the --check- options."},
 	checkLogRetentionKey:     {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
 	keptHistoryKey:           {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
 	deleteRequiresNameKey:    {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
@@ -79,6 +80,7 @@ type PolicyChange struct {
 	Browse        *BrowseLimits
 	Cleanup       *UnusedObjectCleanup
 	CheckLogs     *CheckLogRetention
+	CheckCeilings *CheckCeilings
 	KeptHistory   *bool
 	// DeleteRequiresName, LoginLimits and CrossSiteLinks are the access
 	// policies (access_policies.go).
@@ -110,6 +112,7 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 		addGroup(values, maintenanceKey, change.Maintenance),
 		addGroup(values, browseLimitsKey, change.Browse),
 		addGroup(values, unusedObjectCleanupKey, change.Cleanup),
+		addGroup(values, checkCeilingsKey, change.CheckCeilings),
 	} {
 		if err != nil {
 			return err

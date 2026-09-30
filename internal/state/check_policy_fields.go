@@ -77,6 +77,9 @@ const (
 	// RuleNeedsRepository means the option needs an image named by its
 	// repository, and a bare image ID names none.
 	RuleNeedsRepository = "needs_repository"
+	// RuleCeiling means the value is within the field's range but above
+	// this computer's check ceiling, which Max carries (check_ceilings.go).
+	RuleCeiling = "ceiling"
 )
 
 // CheckPolicyFieldError is one refused policy field.
@@ -116,6 +119,8 @@ func (e *CheckPolicyFieldError) Error() string {
 		return fmt.Sprintf("invalid check policy: %s value %q is never accepted", e.Field, e.Value)
 	case RuleNeedsRepository:
 		return "invalid check policy: " + e.Field + " needs an image named by its repository, not a bare image ID"
+	case RuleCeiling:
+		return fmt.Sprintf("invalid check policy: %s is above this computer's check ceiling of %d", e.Field, e.Max)
 	default:
 		return "invalid check policy: " + e.Field + " was refused"
 	}
@@ -169,7 +174,10 @@ type CheckPolicyBounds struct {
 // HasFixedMinimum reports whether Min is a constant the caller can print.
 func (b CheckPolicyBounds) HasFixedMinimum() bool { return b.MinField == "" }
 
-// checkPolicyBounds holds every numeric bound in the policy.
+// checkPolicyBounds holds every numeric bound in the policy: the record
+// bounds, which every stored, restored or backed up policy and job keeps.
+// The fields the owner's check ceilings bound (check_ceilings.go) are
+// further limited by them when a policy is saved or a job admitted.
 //
 // Every numeric field appears here, including the source total. That one
 // carries a dynamic floor through MinField and a fixed ceiling in Max, because
@@ -182,10 +190,10 @@ var checkPolicyBounds = map[string]CheckPolicyBounds{
 	FieldMaxActiveJobs:       {Min: 1, Max: MaximumCheckActiveJobs},
 	FieldMaxLeaseMS:          {Min: MinimumCheckLeaseMS, Max: MaximumCheckLeaseMS},
 
-	FieldContainerCPUMillis:    {Min: 100, Max: 64000},
-	FieldContainerMemoryBytes:  {Min: 64 << 20, Max: 64 << 30},
-	FieldContainerPIDs:         {Min: 16, Max: 4096},
-	FieldContainerScratchBytes: {Min: 1 << 20, Max: 16 << 30},
+	FieldContainerCPUMillis:    {Min: 100, Max: 1024000},
+	FieldContainerMemoryBytes:  {Min: 64 << 20, Max: 1 << 40},
+	FieldContainerPIDs:         {Min: 16, Max: 65536},
+	FieldContainerScratchBytes: {Min: 1 << 20, Max: 1 << 40},
 
 	FieldSourceMaxEntries:    {Min: 1, Max: 100000},
 	FieldSourceMaxFileBytes:  {Min: 1, Max: 1 << 30},
@@ -194,9 +202,9 @@ var checkPolicyBounds = map[string]CheckPolicyBounds{
 	FieldSourceMaxNameBytes:  {Min: 1, Max: 1024},
 	FieldSourceMetadataLimit: {Min: 1024, Max: 64 << 20},
 
-	// The total cannot be smaller than one file, and cannot exceed 4 GiB. The
-	// floor moves with the operator's own file limit; the ceiling does not.
-	FieldSourceMaxTotalBytes: {MinField: FieldSourceMaxFileBytes, Max: 4 << 30},
+	// The total cannot be smaller than one file. The floor moves with the
+	// operator's own file limit; the maximum does not.
+	FieldSourceMaxTotalBytes: {MinField: FieldSourceMaxFileBytes, Max: 1 << 40},
 }
 
 // PublishedPolicyFields lists every field that publishes bounds.

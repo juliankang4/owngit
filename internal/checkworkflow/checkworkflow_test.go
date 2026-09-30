@@ -165,12 +165,13 @@ func TestParseRejectsOutOfRangeLimits(t *testing.T) {
 	}{
 		{`{"timeout_ms":0}`, "timeout_ms must be between"},
 		{`{"timeout_ms":999}`, "timeout_ms must be between"},
-		{`{"timeout_ms":86400001}`, "timeout_ms must be between"},
+		{`{"timeout_ms":604800001}`, "timeout_ms must be between"},
 		{`{"output_limit_bytes":0}`, "output_limit_bytes must be between"},
 		{`{"output_limit_bytes":1023}`, "output_limit_bytes must be between"},
-		{`{"output_limit_bytes":67108865}`, "output_limit_bytes must be between"},
+		{`{"output_limit_bytes":1073741825}`, "output_limit_bytes must be between"},
 		{`{"timeout_ms":-1}`, "timeout_ms must be between"},
 		{`{"timeout_ms":1000,"output_limit_bytes":1024}`, ""},
+		{`{"timeout_ms":604800000,"output_limit_bytes":1073741824}`, ""},
 	} {
 		t.Run(test.limits, func(t *testing.T) {
 			content := fmt.Sprintf(`{"version":1,"events":{"push":{}},"checks":[{"name":"n","command":"c"}],"limits":%s}`, test.limits)

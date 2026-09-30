@@ -1883,14 +1883,27 @@ func format11Content(manifest Manifest) string {
 			return "an import refresh option"
 		}
 	}
+	// Format 10 readers accept check limits up to the default check
+	// ceilings, which were the record bounds of that format.
 	for _, policy := range manifest.CheckPolicies {
 		if policy.Execution.HasContainerOptions() {
 			return "a container option of a check policy"
+		}
+		if len(state.DefaultCheckCeilings.Exceeded(state.CheckCeilingValues{
+			TimeoutMS: policy.MaxTimeoutMS, OutputLimitBytes: policy.MaxOutputLimitBytes,
+			QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs, Execution: policy.Execution,
+		})) != 0 {
+			return "a check policy limit above the earlier bounds"
 		}
 	}
 	for _, job := range manifest.CheckJobs {
 		if job.Execution.HasContainerOptions() {
 			return "a container option of a check job"
+		}
+		if len(state.DefaultCheckCeilings.Exceeded(state.CheckCeilingValues{
+			TimeoutMS: job.Limits.TimeoutMS, OutputLimitBytes: job.Limits.OutputLimitBytes, Execution: job.Execution,
+		})) != 0 {
+			return "a check job limit above the earlier bounds"
 		}
 	}
 	// Import history outlives the choices that made it: refs of an extra

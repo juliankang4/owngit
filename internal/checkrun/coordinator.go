@@ -211,6 +211,10 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	ceilings, err := coordinator.Store.CheckCeilings(ctx)
+	if err != nil {
+		return err
+	}
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -225,6 +229,13 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 			return err
 		}
 		if !exists || !policy.ConsentActive || policy.ConsentDigest != policy.Digest || policy.Execution.Legacy {
+			continue
+		}
+		// A policy above this computer's check ceilings waits, like one
+		// without consent: its branches stay unobserved, so raising the
+		// ceiling or lowering the policy admits what arrived meanwhile.
+		// Admission refuses it too; this only keeps the log quiet.
+		if len(ceilings.Exceeded(policy.CeilingValues())) != 0 {
 			continue
 		}
 		if err := coordinator.reconcilePushes(ctx, id, policy); err != nil {

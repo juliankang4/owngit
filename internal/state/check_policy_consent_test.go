@@ -325,7 +325,7 @@ func TestPolicyRefusalNamesTheFieldAndItsBounds(t *testing.T) {
 		"unknown event":  {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"tag"} }, FieldAllowedEvents, RuleUnknown},
 		"repeated event": {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"push", "push"} }, FieldAllowedEvents, RuleDuplicate},
 		"timeout low":    {func(i *CheckPolicyInput) { i.MaxTimeoutMS = 10 }, FieldMaxTimeoutMS, RuleRange},
-		"output high":    {func(i *CheckPolicyInput) { i.MaxOutputLimitBytes = 1 << 30 }, FieldMaxOutputLimitBytes, RuleRange},
+		"output high":    {func(i *CheckPolicyInput) { i.MaxOutputLimitBytes = 1<<30 + 1 }, FieldMaxOutputLimitBytes, RuleRange},
 		"queue zero":     {func(i *CheckPolicyInput) { i.QueueLimit = 0 }, FieldQueueLimit, RuleRange},
 		"active zero":    {func(i *CheckPolicyInput) { i.MaxActiveJobs = 0 }, FieldMaxActiveJobs, RuleRange},
 		"lease low":      {func(i *CheckPolicyInput) { i.MaxLeaseMS = 1 }, FieldMaxLeaseMS, RuleRange},
@@ -385,8 +385,11 @@ func TestThePublishedBoundsAreTheEnforcedBounds(t *testing.T) {
 	// disagreed with the rule that refuses a value, the screen would state a
 	// range that is not true. Each bound is exercised at the edge: the bound
 	// itself is accepted and one step outside it is refused, naming the field
-	// and quoting the same numbers the table publishes.
+	// and quoting the same numbers the table publishes. The check ceilings
+	// are raised to their largest values, so the record bounds are the ones
+	// that refuse; TestCheckCeilingsBoundPoliciesAtSave covers the ceilings.
 	fixture := newCheckJobFixture(t)
+	raiseCheckCeilings(t, fixture.store)
 
 	// Each case builds a policy that is valid apart from the field under
 	// test, so the refusal under test is the only one that can occur.
@@ -523,7 +526,7 @@ func TestEveryPublishedNumericFieldIsCoveredByTheBoundaryTest(t *testing.T) {
 
 func TestTheSourceTotalPublishesAMovingFloorAndAFixedCeiling(t *testing.T) {
 	// This limit has both: it cannot be smaller than a single file, and it
-	// cannot exceed 4 GiB. A moving floor is not a reason to leave the ceiling
+	// cannot exceed 1 TiB. A moving floor is not a reason to leave the ceiling
 	// enforced in private, so both are published and both are tested.
 	bounds, known := CheckPolicyBoundsFor(FieldSourceMaxTotalBytes)
 	if !known {
@@ -535,11 +538,12 @@ func TestTheSourceTotalPublishesAMovingFloorAndAFixedCeiling(t *testing.T) {
 	if bounds.MinField != FieldSourceMaxFileBytes {
 		t.Fatalf("the floor names %q, want the per-file limit", bounds.MinField)
 	}
-	if bounds.Max != 4<<30 {
-		t.Fatalf("the published ceiling is %d, want 4 GiB", bounds.Max)
+	if bounds.Max != 1<<40 {
+		t.Fatalf("the published ceiling is %d, want 1 TiB", bounds.Max)
 	}
 
 	fixture := newCheckJobFixture(t)
+	raiseCheckCeilings(t, fixture.store)
 	source := func(file, total int64) CheckPolicyInput {
 		input := defaultPolicyInput()
 		input.RepositoryID = "other"

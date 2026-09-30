@@ -45,11 +45,11 @@ const (
 const (
 	MinimumTimeoutMS       = 1000
 	DefaultTimeoutMS int64 = 10 * 60 * 1000
-	MaximumTimeoutMS int64 = 24 * 60 * 60 * 1000
+	MaximumTimeoutMS int64 = 7 * 24 * 60 * 60 * 1000
 
 	MinimumOutputLimitBytes = 1024
 	DefaultOutputLimitBytes = 64 << 10
-	MaximumOutputLimitBytes = 64 << 20
+	MaximumOutputLimitBytes = 1 << 30
 )
 
 // Event names. A document enables at least one explicitly.
