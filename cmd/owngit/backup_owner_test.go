@@ -18,7 +18,8 @@ import (
 )
 
 // The backup commands of a running server print its JSON, and the MCP
-// backup_status tool returns what owngit backup status prints.
+// backup_status tool, with general access, returns the summary without the
+// folder.
 func TestBackupCommandsTalkToTheServer(t *testing.T) {
 	serverURL, _ := startRepositoryCLIServer(t, "")
 	adminFile := filepath.Join(t.TempDir(), "admin-password")
@@ -32,8 +33,8 @@ func TestBackupCommandsTalkToTheServer(t *testing.T) {
 		t.Fatalf("status: %s", status)
 	}
 	session := startMCPSession(t, mcpOptions{server: serverURL, acceptInsecureHTTP: true})
-	if text, isError := session.call("backup_status", nil); isError || text != status {
-		t.Fatalf("backup_status isError=%v\n got %s\nwant %s", isError, text, status)
+	if text, isError := session.call("backup_status", nil); isError || text != `{"ok":true,"schedule":"not_configured","last_run":null,"last_verified_at":null,"next_run":null}` {
+		t.Fatalf("backup_status isError=%v: %s", isError, text)
 	}
 	for _, refused := range []struct {
 		arguments []string
@@ -69,6 +70,9 @@ func TestBackupCommandsTalkToTheServer(t *testing.T) {
 	if saved.Schedule.State != "on" || saved.Schedule.Destination != destination || saved.Schedule.Interval != "12h" || saved.Schedule.Keep != 2 ||
 		saved.Schedule.Verify || len(saved.Warnings) != 1 {
 		t.Fatalf("schedule set: %s", output)
+	}
+	if text, isError := session.call("backup_status", nil); isError || strings.Contains(text, "backups") || !strings.Contains(text, `"schedule":"on"`) {
+		t.Fatalf("backup_status after set isError=%v: %s", isError, text)
 	}
 	output = cliOutput(t, backupState, command("schedule", "off")...)
 	noErr(t, json.Unmarshal([]byte(output), &saved))

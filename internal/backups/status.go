@@ -143,6 +143,39 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	return status, nil
 }
 
+// Summary says whether backups work without naming a folder, a repository
+// or an error: what general access may read, for coding agents. Every field
+// is a fixed word or a time.
+type Summary struct {
+	// Schedule is not_configured, off or on.
+	Schedule string      `json:"schedule"`
+	LastRun  *SummaryRun `json:"last_run"`
+	// LastVerifiedAt is when the newest verified backup that is still in
+	// its folder finished.
+	LastVerifiedAt *time.Time `json:"last_verified_at"`
+	NextRun        *time.Time `json:"next_run"`
+}
+
+// SummaryRun is the last backup that ended, without its folder or message.
+type SummaryRun struct {
+	Kind         string    `json:"kind"`
+	Status       string    `json:"status"`
+	Verification string    `json:"verification"`
+	FinishedAt   time.Time `json:"finished_at"`
+}
+
+// Summarize reduces status to its Summary.
+func Summarize(status Status) Summary {
+	summary := Summary{Schedule: status.Schedule.State, NextRun: status.NextRun}
+	if run := status.LastRun; run != nil {
+		summary.LastRun = &SummaryRun{Kind: run.Kind, Status: run.Status, Verification: run.Verification, FinishedAt: *run.FinishedAt}
+	}
+	if status.LastVerified != nil {
+		summary.LastVerifiedAt = status.LastVerified.FinishedAt
+	}
+	return summary
+}
+
 // Runs lists every recorded run, the newest first.
 func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	runs, err := s.Store.BackupRuns(ctx)

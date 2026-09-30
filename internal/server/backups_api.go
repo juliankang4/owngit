@@ -23,32 +23,40 @@ type backupScheduleJSON struct {
 	Verify *string `json:"verify,omitempty"`
 }
 
-// handleBackupsAPI serves /api/v1/backups (status, which general access
-// and the administrator read, so that coding agents can check that backups
-// work), and, with the
-// administrator password, /api/v1/backups/runs (list, and POST to back up
-// now) and /api/v1/backups/schedule (GET, PATCH).
+// handleBackupsAPI serves, with the administrator password,
+// /api/v1/backups (status), /api/v1/backups/runs (list, and POST to back up
+// now) and /api/v1/backups/schedule (GET, PATCH). Folders and messages are
+// administrator information. /api/v1/backups/summary, which names neither,
+// is read with general access too, so that coding agents can check that
+// backups work.
 func (app *App) handleBackupsAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
 	switch request.URL.Path {
-	case "/api/v1/backups":
+	case "/api/v1/backups", "/api/v1/backups/summary":
 		if request.Method != http.MethodGet {
 			writeAPIMethodError(writer, http.MethodGet)
 			return
 		}
-		// The administrator reads it as well, so every owngit backup
-		// command takes the same password file.
-		authorize := app.authorizeAPI
-		if username, _, ok := request.BasicAuth(); ok && username == "admin" {
-			authorize = func(writer http.ResponseWriter, request *http.Request, _ state.Settings) bool {
-				return app.authorizeAdminAPI(writer, request)
+		summary := request.URL.Path == "/api/v1/backups/summary"
+		// The administrator reads the summary too, with the password file
+		// every owngit backup command takes.
+		username, _, hasBasic := request.BasicAuth()
+		if summary && !(hasBasic && username == "admin") {
+			if !app.authorizeAPI(writer, request, settings) {
+				return
 			}
-		}
-		if !authorize(writer, request, settings) {
+		} else if !app.authorizeAdminAPI(writer, request) {
 			return
 		}
 		status, err := app.Backups.Status(request.Context())
 		if err != nil {
 			writeAPIError(writer, unavailable(request, "backup status", err), "state_unavailable", "The backup status could not be read. Try again later.", nil)
+			return
+		}
+		if summary {
+			writeAPIJSON(writer, http.StatusOK, struct {
+				OK bool `json:"ok"`
+				backups.Summary
+			}{true, backups.Summarize(status)})
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, struct {
