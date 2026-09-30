@@ -64,6 +64,17 @@ func (s *Store) RepositoryNameInUse(ctx context.Context, name string, now time.T
 	return owner != "", err
 }
 
+// RepositoryNameUnused reports whether name is no repository's ID and no
+// recorded name, current or alias, expired or not. Only such a name may
+// stand for a repository that does not exist yet: an expired alias still
+// names the repository it belonged to until a creation that takes the name
+// removes it.
+func (s *Store) RepositoryNameUnused(ctx context.Context, name string) (bool, error) {
+	var used int
+	err := s.db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM repositories WHERE id=?1) + (SELECT COUNT(*) FROM repository_names WHERE name=?1)`, name).Scan(&used)
+	return used == 0, err
+}
+
 // repositoryNameOwner returns the repository that name belongs to, or "".
 // A repository's ID always belongs to it, even once no alias keeps it as
 // an address; its current name and unexpired aliases belong to it too.

@@ -78,16 +78,25 @@ func withRepositoryAddress(request *http.Request, address repositoryAddress) *ht
 
 // firstImportDestination lets an import route name a repository that does
 // not exist yet: a first import names the repository it is to create, and
-// its cancel and credential routes name it until then. Any other route
-// answers such a name as not found. The import service refuses a name that
-// is already taken, including the ID of a renamed repository.
-func firstImportDestination(request *http.Request) *http.Request {
+// its cancel and credential routes name it until then. Only an unused name
+// qualifies (state.RepositoryNameUnused), so an expired alias, including a
+// renamed repository's first name, reaches nothing here as everywhere else.
+// The import service refuses a name that is taken when it creates.
+func (app *App) firstImportDestination(request *http.Request) *http.Request {
 	address, named := repositoryAddressOf(request)
-	if !named || address.err != nil || address.id != "" {
+	if !named || address.err != nil || address.id != "" || address.movedTo != "" {
 		return request
 	}
 	_, name, _ := repositoryNameInPath(request.URL.Path)
-	address.id, address.current = name, name
+	unused, err := app.Store.RepositoryNameUnused(request.Context(), name)
+	switch {
+	case err != nil:
+		address.err = err
+	case unused:
+		address.id, address.current = name, name
+	default:
+		return request
+	}
 	return withRepositoryAddress(request, address)
 }
 

@@ -219,3 +219,44 @@ func TestScopedCredentialsFollowAliasesUntilTheyExpire(t *testing.T) {
 		}
 	}
 }
+
+// An import route may name a repository that does not exist yet only by an
+// unused name. At an expired alias, whether a renamed repository's first
+// name or a later one, every import route is not found and changes nothing,
+// and a first import at an unused name still starts.
+func TestImportRoutesAtAnExpiredAliasAreNotFound(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	server := serve(t, fixture.app.Handler())
+	for _, name := range []string{"middle", "current"} {
+		_, err := fixture.app.Repositories.Rename(context.Background(), "project", name, time.Now())
+		noErr(t, err)
+	}
+	noErr(t, fixture.store.Exec(context.Background(), `UPDATE repository_names SET alias_until=? WHERE kind='alias'`, time.Now().Add(-time.Second).Unix()))
+	source := map[string]any{"url": "https://example.invalid/expired.git", "mode": "coexistence", "git_only_consent": true}
+	for _, name := range []string{"project", "middle"} {
+		for _, request := range []struct {
+			method, path string
+			body         any
+		}{
+			{http.MethodGet, "", nil},
+			{http.MethodPut, "", source},
+			{http.MethodPost, "/run", map[string]any{"name": name, "url": "https://example.invalid/expired.git", "mode": "standalone"}},
+			{http.MethodPost, "/cancel", map[string]any{}},
+			{http.MethodDelete, "/credentials", nil},
+		} {
+			response := importAPIRequest(t, request.method, server.URL+"/api/v1/repositories/"+name+"/import"+request.path, request.body, "admin-password")
+			if body := importAPIBody(t, response); response.StatusCode != http.StatusNotFound || !strings.Contains(body, "repository_not_found") {
+				t.Fatalf("%s %s/import%s status=%d body=%s", request.method, name, request.path, response.StatusCode, body)
+			}
+		}
+	}
+	for _, id := range []string{"project", "middle"} {
+		if _, exists, err := fixture.store.ImportSource(context.Background(), id); err != nil || exists {
+			t.Fatalf("an import source was saved for %q: exists=%v err=%v", id, exists, err)
+		}
+	}
+	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{"name": "fresh", "url": "https://example.invalid/fresh.git", "mode": "standalone"}, "admin-password")
+	if body := importAPIBody(t, response); response.StatusCode != http.StatusOK || !strings.Contains(body, `"status":"complete"`) {
+		t.Fatalf("first import at an unused name status=%d body=%s", response.StatusCode, body)
+	}
+}
