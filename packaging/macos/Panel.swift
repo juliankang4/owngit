@@ -20,6 +20,10 @@ struct PanelModel: Equatable {
     var failure: String?
     var showingSettings = false
     var signIn = SignIn.off
+    /// The owner's choice of notifications, nil until it was read.
+    var notifications: NotificationChoice?
+    /// macOS settings turned OwnGit's notifications off.
+    var notificationsDenied = false
 }
 
 /// What the owner asked for in the panel.
@@ -32,6 +36,10 @@ enum PanelAction {
     case settings(Bool)
     case openAtSignIn(Bool)
     case openLoginItems
+    /// Turn a notification setting on or off: "all", "only_others" or a
+    /// kind.
+    case notify(String, Bool)
+    case openNotificationSettings
     case quit
     case close
 }
@@ -383,6 +391,10 @@ final class PanelViewController: NSViewController {
         if let failure = model.failure {
             add(notice([label(String(format: words.failed, failure), selectable: true)]))
         }
+        if let choice = model.notifications {
+            add(separator())
+            buildNotifications(choice, denied: model.notificationsDenied)
+        }
         add(separator())
         add(PanelButton(title: words.hide) { [perform] _ in perform(.hide) })
         add(label(words.hideHelp, secondary: true, size: 11))
@@ -390,6 +402,34 @@ final class PanelViewController: NSViewController {
         add(PanelButton(title: words.quit) { [perform] _ in perform(.quit) })
         add(label(words.quitHelp, secondary: true, size: 11))
         firstControl = back
+    }
+
+    /// buildNotifications shows the notification switches: one for all,
+    /// "only what I did not do", and one per kind. The others keep their
+    /// own choice while all are off.
+    private func buildNotifications(_ choice: NotificationChoice, denied: Bool) {
+        add(caption(words.notifications))
+        if denied {
+            add(notice([label(words.notificationsOff),
+                        PanelButton(title: words.openNotificationSettings) { [perform] _ in perform(.openNotificationSettings) }]))
+        }
+        add(notificationSwitch("all", words.notifyAll, on: choice.all, enabled: true))
+        add(notificationSwitch("only_others", words.notifyOthers, on: choice.only_others, enabled: choice.all))
+        add(label(words.notifyOthersHelp, secondary: true, size: 11))
+        for kind in notifyKinds {
+            add(notificationSwitch(kind, words.kindNames[kind] ?? kind, on: choice.kinds[kind] == true, enabled: choice.all))
+        }
+        add(label(words.notificationsHint, secondary: true, size: 11))
+    }
+
+    private func notificationSwitch(_ setting: String, _ title: String, on: Bool, enabled: Bool) -> PanelButton {
+        let button = PanelButton(title: title) { [perform] button in
+            perform(.notify(setting, button.state == .on))
+        }
+        button.setButtonType(.switch)
+        button.state = on ? .on : .off
+        button.isEnabled = enabled
+        return button
     }
 
     // MARK: - Pieces

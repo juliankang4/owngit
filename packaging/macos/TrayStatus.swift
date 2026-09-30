@@ -205,11 +205,21 @@ enum DoctorAsked: Equatable {
     case noAccessFile
 }
 
-/// statusAnswer reads the HTTP answer of GET /tray/status. httpStatus is nil
-/// when no connection was made (refused or timed out). A 200 answer counts
-/// only when proof is the server's proof of the body for the nonce sent;
-/// nothing in the body is read before that.
-func statusAnswer(httpStatus: Int?, body: Data?, proof: String?, secret: String, nonce: String) -> StatusAnswer {
+/// How one request to the server's tray routes ended.
+enum TrayAnswer: Equatable {
+    /// The server proved that it sent this JSON body.
+    case proven(Data)
+    case unauthorized
+    case noConnection
+    case notFound
+    case unavailable
+}
+
+/// trayAnswer reads the HTTP answer of a tray route. httpStatus is nil when
+/// no connection was made (refused or timed out). A 200 answer counts only
+/// when proof is the server's proof of the body for the nonce sent, and the
+/// body is JSON; nothing in the body is read before that.
+func trayAnswer(httpStatus: Int?, body: Data?, proof: String?, contentType: String?, secret: String, nonce: String) -> TrayAnswer {
     guard let httpStatus else {
         return .noConnection
     }
@@ -219,17 +229,33 @@ func statusAnswer(httpStatus: Int?, body: Data?, proof: String?, secret: String,
     if httpStatus == 404 {
         return .notFound
     }
-    guard httpStatus == 200, let body,
-          proves(proof, secret: secret, nonce: nonce, body: body),
-          let status = try? JSONDecoder().decode(TrayStatus.self, from: body), status.ok,
-          status.state == "running" || status.state == "attention"
+    let mediaType = contentType?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased()
+    guard httpStatus == 200, let body, proves(proof, secret: secret, nonce: nonce, body: body),
+          mediaType == "application/json"
     else {
         return .unavailable
     }
-    return .status(status)
+    return .proven(body)
 }
 
-/// StatusClient asks the server for its status: straight at the address of
+/// statusAnswer reads the answer of GET /tray/status.
+func statusAnswer(_ answer: TrayAnswer) -> StatusAnswer {
+    switch answer {
+    case .proven(let body):
+        guard let status = try? JSONDecoder().decode(TrayStatus.self, from: body), status.ok,
+              status.state == "running" || status.state == "attention"
+        else {
+            return .unavailable
+        }
+        return .status(status)
+    case .unauthorized: return .unauthorized
+    case .noConnection: return .noConnection
+    case .notFound: return .notFound
+    case .unavailable: return .unavailable
+    }
+}
+
+/// StatusClient asks the server's tray routes: straight at the address of
 /// the access file, with no proxy and no redirect, and with a new nonce
 /// whose proof the answer must carry.
 final class StatusClient: NSObject, URLSessionTaskDelegate {
@@ -245,9 +271,9 @@ final class StatusClient: NSObject, URLSessionTaskDelegate {
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }
 
-    /// ask sends one status request to url and calls done, on a background
-    /// queue, with how it ended.
-    func ask(url: URL, access: TrayAccess, done: @escaping (StatusAnswer) -> Void) {
+    /// ask sends one request to url and calls done, on a background queue,
+    /// with how it ended.
+    func ask(url: URL, access: TrayAccess, done: @escaping (TrayAnswer) -> Void) {
         let nonce = newTrayNonce()
         var request = URLRequest(url: url)
         request.setValue("Bearer " + access.token, forHTTPHeaderField: "Authorization")
@@ -261,13 +287,14 @@ final class StatusClient: NSObject, URLSessionTaskDelegate {
             } else if error != nil {
                 httpStatus = -1
             }
-            done(statusAnswer(httpStatus: httpStatus, body: data,
-                              proof: http?.value(forHTTPHeaderField: trayProofHeader),
-                              secret: access.proof, nonce: nonce))
+            done(trayAnswer(httpStatus: httpStatus, body: data,
+                            proof: http?.value(forHTTPHeaderField: trayProofHeader),
+                            contentType: http?.value(forHTTPHeaderField: "Content-Type"),
+                            secret: access.proof, nonce: nonce))
         }.resume()
     }
 
-    /// A redirect is not followed: its own answer is not the status.
+    /// A redirect is not followed: its own answer is not the server's.
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
@@ -493,6 +520,10 @@ struct Words {
     let readFailed: String
     let noDashboard, openFailed, notConfirmed: String
     let noProgram, unprotected: String
+    let notifications, notifyAll, notifyOthers, notifyOthersHelp, notificationsHint: String
+    let notificationsOff, openNotificationSettings: String
+    /// The name of each notification kind in the settings.
+    let kindNames: [String: String]
 
     static let en = Words(
         lang: "en",
@@ -527,7 +558,16 @@ struct Words {
         openFailed: "macOS could not open %@.",
         notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened.",
         noProgram: "OwnGit.app needs the owngit program inside it or beside it, but %@ is missing. Install OwnGit again.",
-        unprotected: "OwnGit is at %@, where another account on this Mac could change it. Move OwnGit to a folder only you can change, then open it again."
+        unprotected: "OwnGit is at %@, where another account on this Mac could change it. Move OwnGit to a folder only you can change, then open it again.",
+        notifications: "Notifications", notifyAll: "Show notifications", notifyOthers: "Only what I did not do",
+        notifyOthersHelp: "Leaves out pushes and pull requests sent from this Mac, and imports started on it.",
+        notificationsHint: "The notification settings of macOS apply too.",
+        notificationsOff: "Notifications from OwnGit are off in macOS settings.", openNotificationSettings: "Open Notifications settings",
+        kindNames: [
+            "push": "Pushes", "pull_request": "Pull requests opened", "check_failed": "Failed checks",
+            "import_failed": "Imports that did not finish", "backup_failed": "Backups that did not finish",
+            "update": "New OwnGit versions",
+        ]
     )
 
     static let ko = Words(
@@ -563,7 +603,16 @@ struct Words {
         openFailed: "macOS가 %@ 주소를 열지 못했습니다.",
         notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다.",
         noProgram: "owngit 프로그램을 찾지 못했습니다: %@. 이 프로그램은 OwnGit.app 안이나 옆에 있어야 합니다. OwnGit을 다시 설치하세요.",
-        unprotected: "OwnGit이 %@에 있어 이 Mac의 다른 계정이 바꿀 수 있습니다. 나만 바꿀 수 있는 폴더로 OwnGit을 옮긴 뒤 다시 여세요."
+        unprotected: "OwnGit이 %@에 있어 이 Mac의 다른 계정이 바꿀 수 있습니다. 나만 바꿀 수 있는 폴더로 OwnGit을 옮긴 뒤 다시 여세요.",
+        notifications: "알림", notifyAll: "알림 보기", notifyOthers: "내가 하지 않은 일만 알림",
+        notifyOthersHelp: "이 Mac에서 보낸 푸시와 풀 리퀘스트, 이 Mac에서 시작한 가져오기는 알리지 않습니다.",
+        notificationsHint: "macOS의 알림 설정도 함께 적용됩니다.",
+        notificationsOff: "macOS 설정에서 OwnGit 알림이 꺼져 있습니다.", openNotificationSettings: "알림 설정 열기",
+        kindNames: [
+            "push": "푸시", "pull_request": "새 풀 리퀘스트", "check_failed": "실패한 체크",
+            "import_failed": "끝나지 않은 가져오기", "backup_failed": "끝나지 않은 백업",
+            "update": "새 OwnGit 버전",
+        ]
     )
 
     /// forLanguages picks Korean when the first preferred language is

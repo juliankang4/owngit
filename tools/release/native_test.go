@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/server"
 	"owngit/internal/service"
 	"owngit/internal/state"
 )
@@ -506,6 +507,22 @@ func TestNativeLauncherCommandsOpenOwnerDashboard(t *testing.T) {
 	if !strings.Contains(status, `let atSignInArgument = "`+service.AppAtSignIn+`"`) {
 		t.Fatalf("the launcher does not take %s", service.AppAtSignIn)
 	}
+	// The icon asks the feed for the kinds the program knows, and uses the
+	// files the program keeps.
+	notifications := readText(t, filepath.Join(root, "packaging", "macos", "Notifications.swift"))
+	kinds, err := json.Marshal(state.NotifyKinds)
+	noErr(t, err)
+	for _, want := range []string{
+		`let notifyKinds = ` + strings.ReplaceAll(string(kinds), ",", ", "),
+		`let trayHiddenFile = "` + state.TrayHiddenFile + `"`,
+		`let trayCursorFile = "` + state.TrayCursorFile + `"`,
+		`let trayCursorLimit = ` + strconv.Itoa(state.TrayCursorLimit),
+		`"` + server.TrayEventsPath + `"`,
+	} {
+		if !strings.Contains(notifications, want) {
+			t.Fatalf("Notifications.swift does not hold %s", want)
+		}
+	}
 	assertDesktopLaunchCommand(t, readText(t, filepath.Join(root, "packaging", "linux", "owngit.desktop")))
 }
 
@@ -557,8 +574,11 @@ let fixtures = try! JSONDecoder().decode([String: [String: String]].self,
 let proof = fixtures["proof"]!
 let secret = proof["secret"]!, nonce = proof["nonce"]!
 func body(_ name: String) -> Data { data(fixtures["body"]![name]!) }
-func answer(_ code: Int?, _ name: String, proof: String? = nil) -> StatusAnswer {
-    statusAnswer(httpStatus: code, body: body(name), proof: proof ?? fixtures["good"]![name], secret: secret, nonce: nonce)
+func proven(_ code: Int?, _ name: String, proof: String? = nil, type: String = "application/json") -> TrayAnswer {
+    trayAnswer(httpStatus: code, body: body(name), proof: proof ?? fixtures["good"]![name], contentType: type, secret: secret, nonce: nonce)
+}
+func answer(_ code: Int?, _ name: String, proof: String? = nil, type: String = "application/json") -> StatusAnswer {
+    statusAnswer(proven(code, name, proof: proof, type: type))
 }
 
 guard case .status(let status) = answer(200, "running") else { fatalError("a proven running answer must decode") }
@@ -568,12 +588,14 @@ guard case .status(let needs) = answer(200, "attention") else { fatalError("a pr
 require(PanelState.status(needs).name == .attention && needs.update?.version == "1.1.4", "attention keeps the update")
 
 // Only a proof of this body, for this nonce, under this secret counts.
-require(statusAnswer(httpStatus: 200, body: body("running"), proof: nil, secret: secret, nonce: nonce) == .unavailable, "no proof")
+require(statusAnswer(trayAnswer(httpStatus: 200, body: body("running"), proof: nil, contentType: "application/json", secret: secret, nonce: nonce)) == .unavailable, "no proof")
 require(answer(200, "running", proof: fixtures["bad"]!["other secret"]) == .unavailable, "a proof under another secret")
 require(answer(200, "running", proof: fixtures["bad"]!["other nonce"]) == .unavailable, "a proof for an earlier nonce")
 require(answer(200, "running", proof: fixtures["good"]!["attention"]) == .unavailable, "a proof of another body")
 require(answer(200, "running", proof: "not base64url!") == .unavailable, "a malformed proof")
-require(statusAnswer(httpStatus: 200, body: body("running"), proof: fixtures["good"]!["running"], secret: "", nonce: nonce) == .unavailable, "an access file without the proof secret")
+require(statusAnswer(trayAnswer(httpStatus: 200, body: body("running"), proof: fixtures["good"]!["running"], contentType: "application/json", secret: "", nonce: nonce)) == .unavailable, "an access file without the proof secret")
+require(answer(200, "running", type: "text/plain; charset=utf-8") == .unavailable && answer(200, "running", type: "") == .unavailable, "a proven answer that is not JSON")
+guard case .status = answer(200, "running", type: "application/json; charset=utf-8") else { fatalError("JSON with a charset") }
 require(answer(200, "not status") == .unavailable, "a proven body that is not the status")
 require(answer(200, "stopped") == .unavailable, "a proven unknown state")
 
@@ -589,10 +611,10 @@ let client = StatusClient(timeout: 20)
 func ask(_ server: String) -> StatusAnswer {
     let access = TrayAccess(url: fixtures["server"]![server]!, token: proof["token"]!, proof: secret)
     let done = DispatchSemaphore(value: 0)
-    var result = StatusAnswer.noConnection
+    var result = TrayAnswer.noConnection
     client.ask(url: statusURL(access: access, lang: "en")!, access: access) { result = $0; done.signal() }
     done.wait()
-    return result
+    return statusAnswer(result)
 }
 guard case .status = ask("genuine") else { fatalError("the genuine server is proven in one request") }
 guard case .status = ask("taken") else { fatalError("the first answer comes from the genuine server") }
@@ -722,12 +744,108 @@ let agentMode = (try! FileManager.default.attributesOfItem(atPath: agentFile.pat
 require(agentMode == 0o644, "the sign-in agent mode is \(String(agentMode, radix: 8))")
 require((NSDictionary(contentsOf: agentFile)?["Label"] as? String) == iconAgentLabel, "the sign-in agent is written whole")
 require(Words.forLanguages(["ko-KR", "en"]).lang == "ko" && Words.forLanguages(["en-US", "ko"]).lang == "en" && Words.forLanguages([]).lang == "en", "language")
+// Notifications. The feed answers come from the Go test, encoded from the
+// server's own types; one is OwnGit's feed, the others break one rule each.
+let feed = fixtures["events"]!
+guard let events = eventsAnswer(data(feed["genuine"]!)) else { fatalError("the genuine feed must decode") }
+require(events.cursor == feed["cursor"]! && events.notifications.map(\.kind) == ["push", "check_failed"] && events.notifications[1].subtitle == "Pull request #4", "the feed's notifications in order")
+for (name, text) in feed where name.hasPrefix("bad ") {
+    require(eventsAnswer(data(text)) == nil, "\(name) is not OwnGit's feed")
+}
+for good in ["eyJwIjo1fQ", "abc", "ab", "a-_Z"] {
+    require(validTrayCursor(good), "cursor \(good)")
+}
+for bad in ["", "a", "abcde", "ab=", "a/b", "a+b", "é", String(repeating: "a", count: trayCursorLimit + 1)] {
+    require(!validTrayCursor(bad), "not a cursor: \(bad)")
+}
+require(dashboardPage(access: "http://127.0.0.1:7654", path: "/notes/commits/main")?.absoluteString == "http://127.0.0.1:7654/notes/commits/main"
+    && dashboardPage(access: "http://[::1]:8123/", path: "/activity")?.absoluteString == "http://[::1]:8123/activity"
+    && dashboardPage(access: "http://127.0.0.1:7654", path: "/")?.absoluteString == "http://127.0.0.1:7654/", "a page of this computer's dashboard")
+for other in ["//example.invalid/x", "activity", "/a\\b", "/a\nb", "/a\rb", "/a\u{0}b", "@example.invalid", ""] {
+    require(dashboardPage(access: "http://127.0.0.1:7654", path: other) == nil, "not a dashboard page: \(other.debugDescription)")
+}
+require(dashboardPage(access: "http://example.invalid:7654", path: "/activity") == nil, "only this computer's dashboard")
+
+// The owner's choice, as "owngit tray notifications --json" prints it.
+let everything = try! JSONDecoder().decode(NotificationChoice.self, from: data("{\"all\":true,\"only_others\":false,\"kinds\":{\"push\":true,\"pull_request\":true,\"check_failed\":true,\"import_failed\":true,\"backup_failed\":true,\"update\":true},\"state_dir\":\"/x\"}"))
+require(everything.requestKinds == notifyKinds, "every kind by default")
+let someOff = NotificationChoice(all: true, only_others: true, kinds: ["push": true, "pull_request": false, "check_failed": false, "import_failed": false, "backup_failed": false, "update": true])
+require(someOff.requestKinds == ["push", "update"], "the kinds that are on, in order")
+require(NotificationChoice(all: false, only_others: false, kinds: everything.kinds).requestKinds == [], "all off asks for none")
+let access = TrayAccess(url: "http://127.0.0.1:7654/", token: "t", proof: "p")
+let feedURL = URLComponents(url: eventsURL(access: access, lang: "ko", choice: someOff, cursor: "eyJwIjo1fQ")!, resolvingAgainstBaseURL: false)!
+require(feedURL.path == "/tray/events" && feedURL.host == "127.0.0.1" && feedURL.port == 7654, "the feed of this computer's server")
+require(feedURL.queryItems! == [URLQueryItem(name: "lang", value: "ko"), URLQueryItem(name: "kinds", value: "push,update"), URLQueryItem(name: "only_others", value: "1"), URLQueryItem(name: "cursor", value: "eyJwIjo1fQ")], "the feed query")
+require(URLComponents(url: eventsURL(access: access, lang: "en", choice: everything, cursor: nil)!, resolvingAgainstBaseURL: false)!.queryItems!.map(\.name) == ["lang", "kinds", "only_others"], "no cursor on the first read")
+
+// The client reads the feed from a server that checks the query and proves
+// its answer.
+let feedAccess = TrayAccess(url: fixtures["server"]!["events"]!, token: proof["token"]!, proof: secret)
+let feedDone = DispatchSemaphore(value: 0)
+var feedAnswer = TrayAnswer.noConnection
+client.ask(url: eventsURL(access: feedAccess, lang: "ko", choice: someOff, cursor: feed["cursor"]!)!, access: feedAccess) { feedAnswer = $0; feedDone.signal() }
+feedDone.wait()
+guard case .proven(let feedBody) = feedAnswer, eventsAnswer(feedBody) == events else { fatalError("the proven feed: \(feedAnswer)") }
+
+// Delivery: in order, once each, stopping at a failure or once hidden;
+// the cursor is kept only when everything was shown and the icon shows.
+let three = ["a", "b", "c"].map { TrayNotification(id: $0, kind: "push", title: $0, subtitle: "", body: "", path: "/activity") }
+var shown = Set<String>()
+var showed: [String] = []
+require(!deliver(three, shown: &shown, hidden: { false }, show: { showed.append($0.id); return $0.id != "b" }), "a failed show keeps no cursor")
+require(showed == ["a", "b"] && shown == ["a"], "stops at the first failure and remembers what showed")
+showed = []
+require(deliver(three, shown: &shown, hidden: { false }, show: { showed.append($0.id); return true }), "everything shown keeps the cursor")
+require(showed == ["b", "c"], "what showed before is not shown again")
+shown = []
+showed = []
+var checks = 0
+require(!deliver(three, shown: &shown, hidden: { checks += 1; return checks > 1 }, show: { showed.append($0.id); return true }), "hidden during a read keeps no cursor")
+require(showed == ["a"], "nothing shows once the icon is hidden")
+shown = []
+require(!deliver([], shown: &shown, hidden: { true }, show: { _ in true }), "a hidden icon keeps no cursor, even with nothing to show")
+require(deliver([], shown: &shown, hidden: { false }, show: { _ in true }), "nothing to show keeps the cursor")
+
+// The cursor file follows the program's rules for its own files.
+let stateDir = URL(fileURLWithPath: scratch + "/state")
+try! FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+let cursorPath = stateDir.appendingPathComponent(trayCursorFile).path
+func kept() -> String {
+    do { return try readCursor(stateDir: stateDir) ?? "none" } catch { return "error" }
+}
+require(kept() == "none", "no cursor file: no cursor")
+let wideMask = umask(0)
+try! writeCursor("eyJwIjo1fQ", stateDir: stateDir)
+umask(wideMask)
+require((try? String(contentsOfFile: cursorPath, encoding: .utf8)) == "eyJwIjo1fQ\n", "the cursor with a newline")
+require((try! FileManager.default.attributesOfItem(atPath: cursorPath)[.posixPermissions] as! NSNumber).intValue == 0o600, "the cursor is private")
+require(kept() == "eyJwIjo1fQ", "the kept cursor")
+require((try? writeCursor("not a cursor!", stateDir: stateDir)) == nil && kept() == "eyJwIjo1fQ", "only a cursor is written")
+require((try! FileManager.default.contentsOfDirectory(atPath: stateDir.path)) == [trayCursorFile], "no temporary file is left")
+try! Data("not a cursor!\n".utf8).write(to: URL(fileURLWithPath: cursorPath))
+require(kept() == "error", "a file without a cursor is an error")
+let elsewhere = scratch + "/elsewhere"
+try! Data("eyJwIjo1fQ\n".utf8).write(to: URL(fileURLWithPath: elsewhere))
+try! FileManager.default.removeItem(atPath: cursorPath)
+try! FileManager.default.createSymbolicLink(atPath: cursorPath, withDestinationPath: elsewhere)
+require(kept() == "error", "a link at the cursor is not followed")
+require((try? StateFile(dir: stateDir, name: trayCursorFile).remove()) == nil && FileManager.default.fileExists(atPath: elsewhere), "a link is not removed as the cursor")
+try! writeCursor("eyJwIjo1fQ", stateDir: stateDir)
+require((try? String(contentsOfFile: elsewhere, encoding: .utf8)) == "eyJwIjo1fQ\n" && kept() == "eyJwIjo1fQ", "writing replaces a link, never writes through it")
+try! FileManager.default.linkItem(atPath: cursorPath, toPath: scratch + "/second-name")
+require(kept() == "error", "a cursor with another name is not used")
+try! FileManager.default.removeItem(atPath: scratch + "/second-name")
+try! StateFile(dir: stateDir, name: trayCursorFile).remove()
+require(!FileManager.default.fileExists(atPath: cursorPath) && (try? StateFile(dir: stateDir, name: trayCursorFile).remove()) != nil, "the cursor removed, and removing it again is done")
+require(!StateFile(dir: stateDir, name: trayHiddenFile).exists(), "not hidden")
+try! FileManager.default.createSymbolicLink(atPath: stateDir.appendingPathComponent(trayHiddenFile).path, withDestinationPath: "/nonexistent")
+require(StateFile(dir: stateDir, name: trayHiddenFile).exists(), "anything at the hidden name hides")
 print("tray status fixture passed")
 `
 	noErr(t, os.WriteFile(fixture, []byte(program), 0o600))
 	binary := filepath.Join(dir, "tray-status-fixture")
 	sources := filepath.Join(repoRoot(t), "packaging", "macos")
-	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "ProtectedPath.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
+	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "ProtectedPath.swift"), filepath.Join(sources, "Notifications.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
 		t.Fatalf("compile tray status fixture: %v\n%s", err, output)
 	}
 	// A private folder and one its group may write, for the path rule.
@@ -786,6 +904,8 @@ func writeTrayStatusFixtures(t *testing.T, dir string) string {
 		"other nonce":  state.TrayProof(secret, otherNonce, []byte(running)),
 	}
 
+	events := trayFeedFixtures(t)
+
 	var mu sync.Mutex
 	var takenAnswers, redirectedTo int
 	var lastProof string
@@ -799,6 +919,7 @@ func writeTrayStatusFixtures(t *testing.T, dir string) string {
 		lastProof = state.TrayProof(secret, requestNonce, []byte(running))
 		writer.Header().Set(state.TrayProofHeader, lastProof)
 		mu.Unlock()
+		writer.Header().Set("Content-Type", "application/json")
 		_, _ = writer.Write([]byte(running))
 	}
 	start := func(handler http.HandlerFunc) string {
@@ -824,10 +945,24 @@ func writeTrayStatusFixtures(t *testing.T, dir string) string {
 				return
 			}
 			writer.Header().Set(state.TrayProofHeader, proof)
+			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(running))
 		}),
 		"unproven": start(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
 			_, _ = writer.Write([]byte(running))
+		}),
+		"events": start(func(writer http.ResponseWriter, request *http.Request) {
+			requestNonce := request.Header.Get(state.TrayNonceHeader)
+			query := request.URL.Query()
+			if request.URL.Path != server.TrayEventsPath || request.Header.Get("Authorization") != "Bearer "+token || !state.ValidTrayNonce(requestNonce) ||
+				query.Get("lang") != "ko" || query.Get("kinds") != "push,update" || query.Get("only_others") != "1" || query.Get("cursor") != events["cursor"] {
+				http.Error(writer, "bad request", http.StatusBadRequest)
+				return
+			}
+			writer.Header().Set(state.TrayProofHeader, state.TrayProof(secret, requestNonce, []byte(events["genuine"])))
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(events["genuine"]))
 		}),
 		"redirect": start(func(writer http.ResponseWriter, request *http.Request) {
 			http.Redirect(writer, request, target+request.URL.RequestURI(), http.StatusFound)
@@ -845,12 +980,49 @@ func writeTrayStatusFixtures(t *testing.T, dir string) string {
 	})
 	encoded, err := json.Marshal(map[string]map[string]string{
 		"proof": {"secret": secret, "nonce": nonce, "token": token},
-		"body":  bodies, "good": good, "bad": bad, "server": servers,
+		"body":  bodies, "good": good, "bad": bad, "server": servers, "events": events,
 	})
 	noErr(t, err)
 	path := filepath.Join(dir, "fixtures.json")
 	noErr(t, os.WriteFile(path, encoded, 0o600))
 	return path
+}
+
+// trayFeedFixtures encodes event feed answers from the server's types: the
+// genuine answer, its cursor, and answers that each break one rule of the
+// feed.
+func trayFeedFixtures(t *testing.T) map[string]string {
+	t.Helper()
+	encode := func(events server.TrayEvents) string {
+		encoded, err := json.Marshal(events)
+		noErr(t, err)
+		return string(encoded)
+	}
+	const cursor = "eyJwIjo1LCJ0IjoxOTAwMDAwMDAwLCJ1IjoiIn0"
+	genuine := func() server.TrayEvents {
+		return server.TrayEvents{OK: true, Cursor: cursor, Notifications: []server.TrayNotification{
+			{ID: "push:3-5", Kind: state.NotifyPush, Title: "3 pushes", Body: "notes 2, site 1. Latest: site main, third", Path: "/activity"},
+			{ID: "check_failed:9", Kind: state.NotifyCheckFailed, Title: "Checks failed in notes", Subtitle: "Pull request #4", Body: "build", Path: "/notes/pulls/4"},
+		}}
+	}
+	fixtures := map[string]string{"genuine": encode(genuine()), "cursor": cursor}
+	for name, change := range map[string]func(*server.TrayEvents){
+		"bad not ok":       func(events *server.TrayEvents) { events.OK = false },
+		"bad cursor":       func(events *server.TrayEvents) { events.Cursor = "not a cursor!" },
+		"bad no cursor":    func(events *server.TrayEvents) { events.Cursor = "" },
+		"bad kind":         func(events *server.TrayEvents) { events.Notifications[1].Kind = "mirror" },
+		"bad no id":        func(events *server.TrayEvents) { events.Notifications[0].ID = "" },
+		"bad other server": func(events *server.TrayEvents) { events.Notifications[0].Path = "//example.invalid/activity" },
+		"bad relative":     func(events *server.TrayEvents) { events.Notifications[0].Path = "activity" },
+		"bad backslash":    func(events *server.TrayEvents) { events.Notifications[0].Path = "/\\example.invalid" },
+		"bad line break":   func(events *server.TrayEvents) { events.Notifications[0].Path = "/activity\nx" },
+	} {
+		events := genuine()
+		change(&events)
+		fixtures[name] = encode(events)
+	}
+	fixtures["bad not the feed"] = `{"ok":true}`
+	return fixtures
 }
 
 // The macOS archive may hold OwnGit.app beside the program: with its bundle
@@ -995,6 +1167,7 @@ func TestNativeMacPrototypeBuildsUnsignedArtifact(t *testing.T) {
 		"OwnGit.app/Contents/Info.plist",
 		"OwnGit.app/Contents/MacOS/OwnGitLauncher",
 		"OwnGit.app/" + appHelperPath,
+		"OwnGit.app/Contents/Resources/AppIcon.icns",
 		"OwnGit.app/Contents/Resources/LICENSE",
 		"OwnGit.app/Contents/Resources/THIRD_PARTY_NOTICES/manifest.json",
 		"OwnGit.app/Contents/Resources/package-provenance.json",

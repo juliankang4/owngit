@@ -10,13 +10,14 @@ import (
 	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // macLauncherSources are the Swift files of OwnGit.app's launcher, the menu
 // bar icon, in packaging/macos.
-var macLauncherSources = []string{"Launcher.swift", "Panel.swift", "ProtectedPath.swift", "TrayStatus.swift"}
+var macLauncherSources = []string{"Launcher.swift", "Notifications.swift", "Panel.swift", "ProtectedPath.swift", "TrayStatus.swift"}
 
 var appleBundleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
 
@@ -206,6 +207,9 @@ func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 	if _, err := writeFile(filepath.Join(contents, "PkgInfo"), []byte("APPL????"), 0o644); err != nil {
 		return err
 	}
+	if err := buildAppIcon(run, root, filepath.Join(contents, "Resources", "AppIcon.icns")); err != nil {
+		return fmt.Errorf("build the app icon: %w", err)
+	}
 	arguments := []string{"swiftc", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
 	for _, source := range macLauncherSources {
 		arguments = append(arguments, filepath.Join(root, "packaging", "macos", source))
@@ -220,6 +224,53 @@ func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 		return err
 	}
 	_, err = run("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil)
+	return err
+}
+
+// buildAppIcon writes the app icon, which Finder, System Settings and
+// notifications show: OwnGit's logo as opaque art that fills the square,
+// which macOS 26 and later round to their own icon shape (art with a
+// transparent edge would sit on a gray tile there), made into an icon set
+// with sips, which reads SVG, and iconutil.
+func buildAppIcon(run commandRunner, root, icns string) error {
+	logo, err := readRegularInput(filepath.Join(root, "internal", "webui", "assets", "logo.svg"))
+	if err != nil {
+		return err
+	}
+	canvas := string(logo)
+	for _, change := range [][2]string{{`width="40" height="40"`, `width="1024" height="1024"`}, {` rx="10"`, ""}} {
+		if !strings.Contains(canvas, change[0]) {
+			return fmt.Errorf("logo.svg does not hold %s", change[0])
+		}
+		canvas = strings.Replace(canvas, change[0], change[1], 1)
+	}
+	dir, err := os.MkdirTemp("", "owngit-app-icon-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	svg := filepath.Join(dir, "icon.svg")
+	if err := os.WriteFile(svg, []byte(canvas), 0o600); err != nil {
+		return err
+	}
+	set := filepath.Join(dir, "AppIcon.iconset")
+	if err := os.Mkdir(set, 0o700); err != nil {
+		return err
+	}
+	for _, points := range []int{16, 32, 128, 256, 512} {
+		// Each size also comes at twice the pixels, named with "@2x".
+		for scale, suffix := range []string{"", "@2x"} {
+			name := fmt.Sprintf("icon_%dx%d%s.png", points, points, suffix)
+			pixels := strconv.Itoa(points * (scale + 1))
+			if _, err := run("sips", []string{"-s", "format", "png", "-z", pixels, pixels, svg, "--out", filepath.Join(set, name)}, nil); err != nil {
+				return err
+			}
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(icns), 0o755); err != nil {
+		return err
+	}
+	_, err = run("iconutil", []string{"-c", "icns", "-o", icns, set}, nil)
 	return err
 }
 

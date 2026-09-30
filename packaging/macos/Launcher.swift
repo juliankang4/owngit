@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import ServiceManagement
+import UserNotifications
 
 // OwnGit.app is the OwnGit icon in the menu bar. The server belongs to the
 // OwnGit service, a LaunchAgent that runs the owngit binary inside this app
@@ -39,7 +40,7 @@ struct HelperResult {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     private let words = Words.forLanguages(Locale.preferredLanguages)
     private let helper = ownGitProgram(app: Bundle.main.bundleURL) {
         FileManager.default.isExecutableFile(atPath: $0.path)
@@ -63,8 +64,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// runs.
     private var waiting: [(PanelState) -> Void]?
     private let client = StatusClient(timeout: statusTimeout)
+    private lazy var notifier = Notifier(client: client)
+    /// When the owner last clicked a notification.
+    private var notificationClickedAt: Date?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // A click on a notification that opened the app arrives once the
+        // app has finished launching.
+        UNUserNotificationCenter.current().delegate = self
         // The open event that started the app is current only now, not yet
         // in applicationWillFinishLaunching.
         let event = NSAppleEventManager.shared().currentAppleEvent
@@ -120,6 +127,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// Opening the app again while it runs shows the panel, or shows the
     /// icon again when it was hidden.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // A click on a notification reaches the app first as the click and
+        // then as a reopen event, which opens nothing more.
+        if let clicked = notificationClickedAt, Date().timeIntervalSince(clicked) < 2 {
+            notificationClickedAt = nil
+            return false
+        }
         if statusItem != nil {
             showPanel()
         } else {
@@ -198,6 +211,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSStatusBar.system.removeStatusItem(statusItem)
         }
         statusItem = nil
+        forgetCursorWhileHidden()
         // While hidden, the icon waits for the owner to show it again from
         // the dashboard or with "owngit tray on", which remove this file.
         schedule(interval: openPanelInterval)
@@ -262,8 +276,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             return
         }
         if statusItem == nil {
-            let hidden = stateDir.appendingPathComponent("tray-hidden")
-            if !FileManager.default.fileExists(atPath: hidden.path) {
+            if StateFile(dir: stateDir, name: trayHiddenFile).exists() {
+                forgetCursorWhileHidden()
+            } else {
                 startVisible()
             }
             return
@@ -295,6 +310,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 return
             }
             update { $0.state = state }
+            if case .status = state {
+                readNotifications()
+            }
             callers.forEach { $0(state) }
             if state == .unavailable(why: .starting) && fastRetry == nil {
                 let retry = DispatchWorkItem { [weak self] in
@@ -320,7 +338,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         client.ask(url: url, access: access) { answer in
             DispatchQueue.main.async { [self] in
-                switch answer {
+                switch statusAnswer(answer) {
                 case .status(let status):
                     done(.status(status))
                 case .unauthorized where retry:
@@ -337,6 +355,92 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
     }
 
+    // MARK: - Notifications
+
+    /// readNotifications reads the event feed after a status answer while
+    /// the icon shows.
+    private func readNotifications() {
+        guard statusItem != nil else {
+            return
+        }
+        let arguments = ["tray", "notifications", "--json", "--state-dir", stateDir.path]
+        let executable = helper
+        notifier.read(stateDir: stateDir, lang: words.lang) {
+            let result = runCommand(executable, arguments)
+            guard result.status == 0, let choice = try? JSONDecoder().decode(NotificationChoice.self, from: result.output) else {
+                notificationLog.error("the settings cannot be read: \(result.failureText, privacy: .public)")
+                return nil
+            }
+            return choice
+        }
+    }
+
+    /// forgetCursorWhileHidden removes the feed cursor while the owner hides
+    /// the icon, as hiding does, so a read that ended just after the owner
+    /// hid the icon keeps no cursor: shown again, the icon shows only what
+    /// happens from then on.
+    private func forgetCursorWhileHidden() {
+        guard StateFile(dir: stateDir, name: trayHiddenFile).exists() else {
+            return
+        }
+        do {
+            try StateFile(dir: stateDir, name: trayCursorFile).remove()
+        } catch {
+            notificationLog.error("\(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// Notifications show while the panel is open too.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                withCompletionHandler done: @escaping (UNNotificationPresentationOptions) -> Void) {
+        done([.banner, .list, .sound])
+    }
+
+    /// Clicking a notification opens its dashboard page once the server
+    /// proves again that it answers at this computer's address.
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                withCompletionHandler done: @escaping () -> Void) {
+        let path = response.notification.request.content.userInfo["path"] as? String
+        let clicked = response.actionIdentifier == UNNotificationDefaultActionIdentifier
+        DispatchQueue.main.async { [self] in
+            notificationClickedAt = Date()
+            if clicked, let path {
+                confirmServer(then: { [self] in openDashboard(page: path) }, otherwise: { [self] in showPanel() })
+            }
+            done()
+        }
+    }
+
+    /// loadNotificationSettings reads the owner's choice and whether macOS
+    /// lets the icon show notifications, for the settings view.
+    private func loadNotificationSettings() {
+        runHelper(["tray", "notifications", "--json", "--state-dir", stateDir.path]) { [self] result in
+            showNotificationChoice(result)
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let denied = settings.authorizationStatus == .denied
+            DispatchQueue.main.async { [self] in
+                update { $0.notificationsDenied = denied }
+            }
+        }
+    }
+
+    private func setNotification(_ setting: String, on: Bool) {
+        runHelper(["tray", "notifications", setting, on ? "on" : "off", "--json", "--state-dir", stateDir.path]) { [self] result in
+            showNotificationChoice(result)
+        }
+    }
+
+    private func showNotificationChoice(_ result: HelperResult) {
+        let choice = result.status == 0 ? try? JSONDecoder().decode(NotificationChoice.self, from: result.output) : nil
+        update {
+            $0.notifications = choice
+            if choice == nil {
+                $0.failure = result.failureText
+            }
+        }
+    }
+
     private func askDoctor(_ asked: DoctorAsked, done: @escaping (PanelState) -> Void) {
         runHelper(["doctor", "--json", "--state-dir", stateDir.path]) { result in
             done(doctorState(output: result.status == 0 ? result.output : nil, asked: asked))
@@ -348,12 +452,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func perform(_ action: PanelAction) {
         switch action {
         case .openDashboard:
-            confirmServer { [self] in openDashboard() }
+            confirmServer(then: { [self] in openDashboard(page: "/") })
         case .finishSetup:
-            confirmServer { [self] in
+            confirmServer(then: { [self] in
                 popover.performClose(nil)
                 openSetup()
-            }
+            })
         case .copy(let text):
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
@@ -373,10 +477,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 $0.signIn = signInState()
             }
             panel.focusFirstControl()
+            if shown {
+                loadNotificationSettings()
+            }
         case .openAtSignIn(let on):
             setOpenAtSignIn(on)
         case .openLoginItems:
             SMAppService.openSystemSettingsLoginItems()
+        case .notify(let setting, let on):
+            setNotification(setting, on: on)
+        case .openNotificationSettings:
+            let id = Bundle.main.bundleIdentifier ?? ""
+            if let settings = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=" + id) {
+                NSWorkspace.shared.open(settings)
+            }
         case .quit:
             NSApp.terminate(nil)
         case .close:
@@ -388,7 +502,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     /// owner asks to open it, and does then only when the answer is proven.
     /// An earlier answer does not count: OwnGit may have stopped since, and
     /// another program may answer at its address.
-    private func confirmServer(then: @escaping () -> Void) {
+    private func confirmServer(then: @escaping () -> Void, otherwise: @escaping () -> Void = {}) {
         update {
             $0.busy = true
             $0.failure = nil
@@ -403,15 +517,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             }
             if proven {
                 then()
+            } else {
+                otherwise()
             }
         }
     }
 
-    private func openDashboard() {
+    /// openDashboard opens page, a path such as "/", on this computer's
+    /// dashboard.
+    private func openDashboard(page: String) {
         let accessFile = stateDir.appendingPathComponent("tray-access.json")
         guard let data = try? Data(contentsOf: accessFile),
               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
-              let url = dashboardURL(access: access.url)
+              let url = dashboardPage(access: access.url, path: page)
         else {
             update { $0.failure = String(format: words.noDashboard, accessFile.path) }
             return
