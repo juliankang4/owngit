@@ -205,11 +205,21 @@ func (s *Store) SaveImportCredentials(ctx context.Context, credential ImportCred
 	if err != nil {
 		return ImportSource{}, err
 	}
+	// Another sign-in may see other refs, so it starts a new source
+	// generation; a CA change alone does not.
+	var previous ImportCredentials
+	if stored && current.Bound(source) {
+		previous = current
+	}
+	newIdentity := !sameImportSignIn(previous, credential)
 	credential.CredentialGeneration = generation
+	if newIdentity {
+		credential.SourceGeneration++
+	}
 	if err := s.writeImportCredentials(ctx, credential); err != nil {
 		return ImportSource{}, err
 	}
-	changed, err := s.activateImportCredential(ctx, source, generation, now)
+	changed, err := s.activateImportCredential(ctx, source, generation, newIdentity, now)
 	if err != nil {
 		return ImportSource{}, err
 	}
@@ -228,6 +238,15 @@ func newImportCredentialGeneration(exclude string) (string, error) {
 			return generation, nil
 		}
 	}
+}
+
+// sameImportSignIn reports whether two credentials sign in the same way:
+// the same Basic pair or bearer token, or neither. The CA is not compared.
+func sameImportSignIn(left, right ImportCredentials) bool {
+	if left.BearerToken != right.BearerToken || (left.Basic == nil) != (right.Basic == nil) {
+		return false
+	}
+	return left.Basic == nil || *left.Basic == *right.Basic
 }
 
 func sameImportCredential(left, right ImportCredentials) bool {
@@ -336,11 +355,16 @@ func (s *Store) DeleteImportCredentials(ctx context.Context, repositoryID string
 	if !exists {
 		return ImportSource{}, errors.New("import source is not configured")
 	}
+	// Removing a bound sign-in starts a new source generation, as replacing
+	// it does. A file that cannot be read may hold one, and is removed all
+	// the same.
+	current, stored, readErr := s.LoadImportCredentials(ctx, repositoryID)
+	newIdentity := readErr != nil || (stored && current.Bound(source) && !sameImportSignIn(current, ImportCredentials{}))
 	s.beginImportCredentialMutationLocked(repositoryID)
 	if err := s.removeImportCredentialFile(repositoryID); err != nil {
 		return ImportSource{}, err
 	}
-	changed, err := s.activateImportCredential(ctx, source, "", now)
+	changed, err := s.activateImportCredential(ctx, source, "", newIdentity, now)
 	if err != nil {
 		return ImportSource{}, err
 	}

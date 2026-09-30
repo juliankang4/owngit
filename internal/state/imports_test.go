@@ -35,11 +35,17 @@ func configureTestImportSource(t *testing.T, store *Store, repositoryID string) 
 	return source
 }
 
-// beginTestImportRun admits a run for the first source generation of
+// beginTestImportRun admits a run for the current source generation of
 // repositoryID.
 func beginTestImportRun(t *testing.T, store *Store, id, repositoryID, kind, status string) ImportRun {
 	t.Helper()
-	run := testImportRun(t, id, repositoryID, 1, kind, status)
+	source, exists, err := store.ImportSource(context.Background(), repositoryID)
+	noErr(t, err)
+	generation := int64(1)
+	if exists {
+		generation = source.SourceGeneration
+	}
+	run := testImportRun(t, id, repositoryID, generation, kind, status)
 	noErr(t, store.BeginImportRun(context.Background(), run))
 	return run
 }
@@ -502,7 +508,11 @@ func TestImportCredentialFileIsBoundAndPrivate(t *testing.T) {
 	if err != nil || !exists || loaded.Basic == nil || loaded.Basic.Password != "secret" || !loaded.Bound(source) {
 		t.Fatalf("credential did not load as bound: exists=%v err=%v", exists, err)
 	}
+	if source.SourceGeneration != credential.SourceGeneration+1 {
+		t.Fatalf("a first sign-in kept source generation %d", source.SourceGeneration)
+	}
 	current := credential
+	current.SourceGeneration = source.SourceGeneration
 	current.ExpectedAuthorityRevision = source.AuthorityRevision
 	unchanged, err := store.SaveImportCredentials(ctx, current, testImportNow().Add(2*time.Second))
 	if err != nil || unchanged.AuthorityRevision != source.AuthorityRevision {
@@ -604,6 +614,7 @@ func TestCredentialDatabaseFailureLeavesAuthorityFailClosed(t *testing.T) {
 		noErr(t, err)
 		noErr(t, store.Exec(ctx, `CREATE TRIGGER fail_import_authority BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority failure'); END`))
 		replacement := credential
+		replacement.SourceGeneration = source.SourceGeneration
 		replacement.ExpectedAuthorityRevision = source.AuthorityRevision
 		replacement.Basic = &ImportBasicAuth{Username: "user", Password: "replacement-secret"}
 		if _, err := store.SaveImportCredentials(ctx, replacement, testImportNow().Add(2*time.Second)); err == nil {

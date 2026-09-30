@@ -606,7 +606,8 @@ func TestImportRequestCarriesOnlyBoundCredentials(t *testing.T) {
 	if second := f.transport.requests[1]; second.Authentication.Basic != nil || second.URL != "https://example.invalid/other/project.git" {
 		t.Fatalf("second request=%+v", second)
 	}
-	if result.Run.SourceGeneration != 1 {
+	// Configuring gives generation 1 and the first sign-in starts generation 2.
+	if result.Run.SourceGeneration != 2 {
 		t.Fatalf("first run generation=%d", result.Run.SourceGeneration)
 	}
 }
