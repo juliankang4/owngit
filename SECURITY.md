@@ -18,7 +18,7 @@ Only the latest release receives fixes.
 
 ## Scope
 
-OwnGit is meant for one owner, or a small group that shares one password, on a computer, NAS, or home server reached through a private network or VPN. Public Internet hosting is out of scope (see [Access and security](README.md#access-and-security)), so a report about exposing OwnGit directly to the Internet without a VPN or TLS reverse proxy describes expected behavior. The one exception is the optional public address for share links: it is off by default, and when the owner turns it on it must answer share links and the files their pages load and nothing else. A path there that reaches anything more is a security problem.
+OwnGit is meant for one owner, or a small group that shares one password, on a computer, NAS, or home server reached through a private network or VPN. Public Internet hosting is out of scope (see [Access and security](README.md#access-and-security)), so a report about exposing OwnGit directly to the Internet without a VPN or TLS reverse proxy describes expected behavior. The one exception is the optional public address for share links: it is off by default, and when the owner turns it on it must answer share links and the files their pages load and nothing else. Please report any path there that reaches anything more as a security problem.
 
 What OwnGit does at the network boundary:
 

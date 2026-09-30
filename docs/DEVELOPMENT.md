@@ -42,7 +42,7 @@ A change must keep the following behavior.
 
 ### Access and administration
 
-- Support local and private networks, and recommend Tailscale for other devices. Public Internet hosting is out of scope; the one exception is an optional public address that answers share links only and nothing else. OwnGit serves plain HTTP; any TLS is provided by the operator.
+- Support local and private networks, and recommend Tailscale for other devices. Public Internet hosting is out of scope; the one exception is an optional public address that answers share links and nothing else. OwnGit serves plain HTTP; any TLS is provided by the operator.
 - General access is password-free or protected by one shared password. There are no individual accounts.
 - A share link, which only an administrator creates, opens one repository read-only without the shared password until it expires or is revoked. It never allows a push or shows owner pages.
 - A separate administrator password protects security settings. The dashboard asks for it as the owner chooses under Settings, Access: for every change, or again after 30 minutes (the default) up to 30 days, counted from when it was last typed in that browser. A remembered confirmation belongs to one browser. Browsing never extends it. It ends with End, sign-out, or a change or reset of the administrator password, and a shorter choice shortens it to the new time counted from when the password was typed. "Do not ask" turns the check off for everyone who can open the dashboard; turning it on asks for the password and an acknowledgement of the warning, and every page says it is off. The API and the command line always ask for the password, for reads as well as changes. Host owners can reset it without deleting repository data.

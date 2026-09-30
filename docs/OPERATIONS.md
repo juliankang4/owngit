@@ -1283,7 +1283,7 @@ Inside a clone of the repository, `--server` and `--repository` come from its `o
 
 #### A public address for share links
 
-OwnGit itself stays private, but you can give share links a second, public address, for example with Tailscale Funnel or a reverse proxy on the Internet. That address answers share link pages, share link clones and the few files those pages load (the stylesheet, its font, the script and the logo). Every other path there answers `404 page not found`, the same way for each: the dashboard, sign-in, setup, Settings, the API, `/git/` and every repository without a link. Requests through Funnel are welcome there; OwnGit's own address keeps refusing them.
+OwnGit itself stays private, but you can give share links a second, public address, for example with Tailscale Funnel or a reverse proxy on the Internet. That address answers share link pages, share link clones and the few files those pages load (the stylesheet, its font, the script and the logo). Every other path there answers `404 page not found`, the same way for each: the dashboard, sign-in, setup, Settings, the API, `/git/` and every repository without a link. That address accepts requests through Funnel; OwnGit's own address keeps refusing them.
 
 The public address is off by default. To turn it on, choose a free port on this computer and the address visitors will use, then save both:
 
