@@ -786,6 +786,14 @@ type RepositoryPage struct {
 	Repo   RepositoryHeader
 	Tab    RepoTab
 
+	// Shared is true on a share link's pages. They show the repository's
+	// code and history of its branches and tags, and link only to one
+	// another: no pull requests, checks, kept history, restore or
+	// downloads, and nothing outside the share.
+	Shared bool
+	// CloneHelp, when set, says under the clone address how Git signs in.
+	CloneHelp MessageCode
+
 	// NotFound is true when the address named a path, branch, tag, or
 	// commit that this repository does not have. The page answers 404 and
 	// offers the way back to the repository.

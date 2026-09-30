@@ -157,6 +157,9 @@
 <section class="setblock" aria-labelledby="rset-pages-h">
   <h3 id="rset-pages-h" class="setblock__h">{{bi $lang "repoadmin.pages.title"}}</h3>
   <ul class="rset__links">
+    {{with $p.ShareLinksURL}}
+    <li><a href="{{.}}">{{bi $lang "share.title"}}</a><span>{{bi $lang "repoadmin.pages.share"}}</span></li>
+    {{end}}
     {{with $p.ConfiguredChecksURL}}
     <li><a href="{{.}}">{{bi $lang "cc.title"}}</a><span>{{bi $lang "repoadmin.pages.checks"}}</span></li>
     {{end}}

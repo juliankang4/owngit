@@ -197,6 +197,7 @@ func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request
 		ConfiguredChecksURL:  configuredChecksURL(stored.Address),
 		RunnerTokensURL:      runnerTokensURL(stored.Address),
 		HelperCredentialsURL: baseHelperCredentialsURL(stored.Address),
+		ShareLinksURL:        shareLinksURL(stored.Address),
 		ImportURL:            base.ImportsURL,
 		DeleteURL:            base.DeleteURL,
 	}

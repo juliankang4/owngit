@@ -93,7 +93,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	}
 	result, err := app.Repositories.ApplyRestore(request.Context(), stored.ID, selection)
 	if err == nil {
-		location := commitURL(stored.Address, "refs/heads/"+selection.Target, result.CommitOID, "")
+		location := commitURL(repositoryPath(stored.Address), "refs/heads/"+selection.Target, result.CommitOID, "")
 		separator := "?"
 		if strings.Contains(location, "?") {
 			separator = "&"
@@ -170,7 +170,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 			ID: stored.ID, Address: stored.Address, Name: stored.Name, Description: stored.Description, URL: base,
 			CloneURL: app.cloneURL(request, stored.Address), Empty: summary.Empty,
 		},
-		Source: app.commitSummary(stored.Address, "", sourceCommit), TargetBranch: selection.Target,
+		Source: app.commitSummary(repositoryPath(stored.Address), "", sourceCommit), TargetBranch: selection.Target,
 		CreatesBranch: branch.CreatesBranch, Mode: selection.Mode, Previewed: previewed && previewErr == nil,
 		PreviewURL: base + "/restore/preview", ApplyURL: base + "/restore", CancelURL: base,
 		// No section is current: restoring is reached from several of them.
@@ -215,7 +215,7 @@ func (app *App) renderRestorePageError(writer http.ResponseWriter, request *http
 		app.renderError(writer, request, status, restoreMessage(restorePreviewStep, err), "")
 		return
 	}
-	app.renderRepositoryReadFailure(writer, request, chrome, stored, err)
+	app.renderRepositoryReadFailure(writer, request, app.baseRepositoryPage(request, chrome, stored, repository.Summary{}), err)
 }
 
 // restoreStep is a step of restoring: its name in the server log, and the

@@ -5,8 +5,8 @@
 
 <div class="rpane">
 {{if or $p.Repo.Unreadable $p.Repo.Empty}}
-  {{template "repoState" dict "Lang" $lang "Repo" $p.Repo}}
-  {{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL "PushCommands" $p.Overview.PushCommands}}
+  {{template "repoState" dict "Lang" $lang "Repo" $p.Repo "Shared" $p.Shared}}
+  {{if $p.Repo.CloneURL}}{{template "cloneblock" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL "PushCommands" $p.Overview.PushCommands}}{{end}}
 
 {{else if eq $p.Tab "overview"}}
   {{$o := $p.Overview}}
@@ -33,6 +33,8 @@
       <dd><a href="{{.}}">{{biRelative $lang $now $o.Head.AuthorDate}}</a></dd>
     </div>
     {{end}}
+    {{/* A share link's page shows no pull requests or checks. */}}
+    {{if not $p.Shared}}
     <div class="facts__i">
       <dt>{{bi $lang "repo.overview.open_pull_requests"}}</dt>
       <dd>{{if $o.OpenPullRequestsKnown}}
@@ -40,7 +42,8 @@
             {{else}}{{number $o.OpenPullRequests}}{{if $o.OpenPullRequestsMore}}+{{end}}{{end}}
           {{else}}{{icon "slash"}}<span class="facts__sub">{{bi $lang "repo.overview.unreadable"}}</span>{{end}}</dd>
     </div>
-    {{if $o.DefaultBranch}}
+    {{end}}
+    {{if and $o.DefaultBranch (not $p.Shared)}}
     <div class="facts__i">
       <dt>{{bi $lang "repo.overview.default_check"}}</dt>
       <dd>{{if not $o.DefaultCheckKnown}}{{icon "slash"}}<span class="facts__sub">{{bi $lang "repo.overview.unreadable"}}</span>
@@ -158,7 +161,8 @@
       {{/* History kept after a force push or a deleted ref. It is listed as
            kept history, never as a live branch, and each entry offers restore
            only when the backend supplied an address for it. */}}
-      {{if not $o.RetainedKnown}}
+      {{if $p.Shared}}
+      {{else if not $o.RetainedKnown}}
       <section class="ov-panel" aria-labelledby="ov-kept-h">
         <div class="sec__bar sec__bar--flat">
           <h2 id="ov-kept-h">{{bi $lang "repo.retained.title"}}</h2>

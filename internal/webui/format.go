@@ -125,6 +125,7 @@ func templateFuncs() template.FuncMap {
 		"budget":          budgetText,
 		"exitCode":        exitCodeText,
 		"notZero":         notZero,
+		"shareExpiry":     func() []string { return ShareExpiryChoices },
 		"tokenLines":      tokenLines,
 		"code":            code,
 		"prChangeStatus":  prChangeStatus,

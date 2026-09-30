@@ -492,6 +492,8 @@ func noticeFor(notice string) []webui.Notice {
 	// shows them only when its current state confirms them (see
 	// pullRequestNotices), so a crafted link cannot report a merge that did
 	// not happen.
+	case "share_link_revoked":
+		return []webui.Notice{webui.Success(webui.MsgShareRevokedNotice)}
 	case "helper_credential_revoked":
 		return []webui.Notice{webui.Success(webui.MsgHelperRevokedDone)}
 	case "import_saved":

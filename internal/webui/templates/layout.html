@@ -15,11 +15,11 @@
 <body>
 <a class="skip" href="#main">{{bi .Lang "app.skip_to_content"}}</a>
 
-<div class="app{{if not .Chrome.Nav.OverviewURL}} app--bare{{end}}{{if .Wide}} app--wide{{end}}">
+<div class="app{{if not (or .Chrome.Nav.OverviewURL .Sidebar.InRepo)}} app--bare{{end}}{{if .Wide}} app--wide{{end}}">
   {{template "toolbar" .}}
 
   <div class="app__body">
-    {{if .Chrome.Nav.OverviewURL}}{{template "sidebar" .}}{{end}}
+    {{if or .Chrome.Nav.OverviewURL .Sidebar.InRepo}}{{template "sidebar" .}}{{end}}
     <main id="main" class="content" tabindex="-1">
       {{template "notices" .}}
       {{template "body" .}}
@@ -32,9 +32,10 @@
 {{define "toolbar"}}
 <header class="toolbar">
   <div class="toolbar__id">
-    {{/* The identity leads to the dashboard from every screen. Before setup or
-         sign-in the server answers "/" with the step that is still due. */}}
-    <a class="toolbar__home" href="{{or .Chrome.Nav.OverviewURL "/"}}" {{biAttr .Lang "aria-label" "app.home"}}>
+    {{/* The identity leads to the dashboard from every screen but a share
+         link's, where it leads to the share. Before setup or sign-in the
+         server answers "/" with the step that is still due. */}}
+    <a class="toolbar__home" href="{{or .Chrome.HomeURL .Chrome.Nav.OverviewURL "/"}}" {{biAttr .Lang "aria-label" "app.home"}}>
       <img class="toolbar__logo" src="{{.Asset "logo.svg"}}" alt="" width="27" height="27">
       <span class="toolbar__name">OwnGit</span>
     </a>
@@ -126,7 +127,7 @@
   <div class="sidebar__inner" id="sb-menu">
   {{if $sb.InRepo}}
     {{$t := $sb.Tabs}}
-    <a class="sb__back" href="{{$nav.OverviewURL}}">{{icon "back"}}<span>{{bi $lang "app.nav.all_repositories"}}</span></a>
+    {{with $nav.OverviewURL}}<a class="sb__back" href="{{.}}">{{icon "back"}}<span>{{bi $lang "app.nav.all_repositories"}}</span></a>{{end}}
     <div class="sb__sec">
       <p class="sb__repo">{{icon "repo"}}<span class="sb__repo-n">{{$sb.RepoName}}</span></p>
       <div class="sb__list">

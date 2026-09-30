@@ -79,6 +79,7 @@ type RepositorySettingsPage struct {
 	ConfiguredChecksURL  string
 	RunnerTokensURL      string
 	HelperCredentialsURL string
+	ShareLinksURL        string
 	ImportURL            string
 	DeleteURL            string
 }

@@ -112,6 +112,9 @@ type Chrome struct {
 	Connection Connection
 	// Nav holds sidebar contents. Leave zero on setup and sign-in pages.
 	Nav Nav
+	// HomeURL is where the OwnGit mark leads when it is not the dashboard:
+	// a share link's pages lead to the share's first page.
+	HomeURL string
 	// Notices are page-level results such as "Settings saved".
 	Notices []Notice
 	// Version is the version of the application that served this request.

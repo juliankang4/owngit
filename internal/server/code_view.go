@@ -24,9 +24,9 @@ import (
 
 // rawURL is the address that downloads one file at ref. Relative images in a
 // rendered document load through it too.
-func rawURL(address, ref, filePath string) string {
+func rawURL(base, ref, filePath string) string {
 	values := url.Values{"ref": []string{ref}, "path": []string{filePath}}
-	return "/repositories/" + url.PathEscape(address) + "/raw?" + values.Encode()
+	return base + "/raw?" + values.Encode()
 }
 
 // renderMarkdown renders a repository document found in dir at ref. Links to
@@ -34,10 +34,9 @@ func rawURL(address, ref, filePath string) string {
 // load through the raw endpoint. When the document is not rendered, the
 // returned code says why: it is too large or too complex, every render slot
 // stayed busy, or this server cannot run its render helper.
-func (app *App) renderMarkdown(ctx context.Context, address, ref, dir string, source []byte) (template.HTML, webui.MessageCode) {
+func (app *App) renderMarkdown(ctx context.Context, base, ref, dir string, source []byte) (template.HTML, webui.MessageCode) {
 	// The document is rendered in a child process, so its links are given as
 	// address prefixes; each is completed with a query-escaped path.
-	base := "/repositories/" + url.PathEscape(address)
 	ref = url.QueryEscape(ref)
 	rendered, err := markdown.Render(ctx, source, markdown.Links{
 		Dir:  dir,
@@ -84,7 +83,7 @@ func (app *App) folderReadme(request *http.Request, repo webui.RepositoryHeader,
 	if found == nil {
 		return nil
 	}
-	view := &webui.ReadmeView{Path: found.Path, URL: codeURL(repo.Address, ref, found.Path), Note: webui.MsgReadmeNotShown}
+	view := &webui.ReadmeView{Path: found.Path, URL: codeURL(repo.URL, ref, found.Path), Note: webui.MsgReadmeNotShown}
 	if found.Size > markdown.MaxSource {
 		return view
 	}
@@ -101,7 +100,7 @@ func (app *App) folderReadme(request *http.Request, repo webui.RepositoryHeader,
 	if blob.Truncated {
 		return view
 	}
-	rendered, reason := app.renderMarkdown(request.Context(), repo.Address, ref, dir, blob.Content)
+	rendered, reason := app.renderMarkdown(request.Context(), repo.URL, ref, dir, blob.Content)
 	switch reason {
 	case "":
 		view.Rendered, view.Note = rendered, ""

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/auth"
 	"owngit/internal/backups"
@@ -168,4 +169,63 @@ func TestRepoRenameMovesTheRepositoryAndTheOldNameSaysWhere(t *testing.T) {
 	}
 	var shown struct{}
 	runRepoCommandJSON(t, append([]string{"show", "--repository", "kit"}, remote...), &shown)
+}
+
+// repo share creates a link and prints it once with its secret, lists it
+// without the secret, and revokes it, all with the administrator password.
+func TestRepoShareCreatesListsAndRevokesLinks(t *testing.T) {
+	serverURL, passwordFile := startRepositoryCLIServer(t, "shared-password")
+	remote := []string{"--server", serverURL, "--accept-insecure-http", "--password-file", passwordFile}
+	root := t.TempDir()
+	adminFile := filepath.Join(root, "admin-password")
+	linkFile := filepath.Join(root, "link-password")
+	for file, content := range map[string]string{adminFile: "admin-password\n", linkFile: "link-password\n"} {
+		noErr(t, os.WriteFile(file, []byte(content), 0o600))
+		noErr(t, state.ProtectPrivatePath(file, false))
+	}
+	admin := []string{"--server", serverURL, "--accept-insecure-http", "--repository", "tools", "--password-file", adminFile}
+	var repository struct{}
+	runRepoCommandJSON(t, append([]string{"create", "--name", "tools"}, remote...), &repository)
+
+	if got := commandErrorCode(repoCommand(append([]string{"share", "create", "--label", "Reviewer"}, append(remote, "--repository", "tools")...))); got != "invalid_admin_credentials" {
+		t.Fatalf("create with the shared password code=%q", got)
+	}
+	if got := commandErrorCode(repoCommand(append([]string{"share", "create", "--label", "Reviewer", "--days", "7", "--until-revoked"}, admin...))); got != "invalid_arguments" {
+		t.Fatalf("create with two expiries code=%q", got)
+	}
+	var created struct {
+		OK        bool `json:"ok"`
+		ShareLink struct {
+			ID          string     `json:"id"`
+			Scope       string     `json:"scope"`
+			HasPassword bool       `json:"has_password"`
+			ExpiresAt   *time.Time `json:"expires_at"`
+		} `json:"share_link"`
+		URL      string   `json:"url"`
+		CloneURL string   `json:"clone_url"`
+		Warnings []string `json:"warnings"`
+	}
+	runRepoCommandJSON(t, append([]string{"share", "create", "--label", "Reviewer", "--scope", "clone", "--until-revoked", "--link-password-file", linkFile}, admin...), &created)
+	if !created.OK || created.ShareLink.Scope != "clone" || !created.ShareLink.HasPassword || created.ShareLink.ExpiresAt != nil ||
+		!strings.HasPrefix(created.URL, serverURL+"/share/") || created.CloneURL != serverURL+"/share/"+created.ShareLink.ID+".git" || len(created.Warnings) != 2 {
+		t.Fatalf("created=%+v", created)
+	}
+	output, err := captureStdout(func() error { return repoCommand(append([]string{"share", "list"}, admin...)) })
+	noErr(t, err)
+	secret := strings.TrimPrefix(created.URL, serverURL+"/share/")
+	if !strings.Contains(output, created.ShareLink.ID) || strings.Contains(output, secret) || strings.Contains(output, "link-password") {
+		t.Fatalf("list output:\n%s", output)
+	}
+	var revoked struct {
+		ShareLink struct {
+			State string `json:"state"`
+		} `json:"share_link"`
+	}
+	runRepoCommandJSON(t, append([]string{"share", "revoke", "--id", created.ShareLink.ID}, admin...), &revoked)
+	if revoked.ShareLink.State != "revoked" {
+		t.Fatalf("revoked=%+v", revoked)
+	}
+	if got := commandErrorCode(repoCommand(append([]string{"share", "revoke", "--id", created.ShareLink.ID}, admin...))); got != "share_link_not_active" {
+		t.Fatalf("second revoke code=%q", got)
+	}
 }

@@ -1,0 +1,127 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$csrf := .Chrome.CSRF}}{{$fn := $p.FormNotices}}
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+</div>
+
+<div class="rpane">
+<div class="phead">
+  <h2>{{bi $lang "share.title"}}</h2>
+  <p>{{bi $lang "share.intro"}}</p>
+</div>
+
+{{/* The link exists in this one response. OwnGit keeps only the SHA-256 of
+     its secret, so the address is shown as text to copy and never as a
+     link this page would follow or send elsewhere. */}}
+{{with $p.Created}}
+<div class="card card--accent" role="alert">
+  <h3 class="setblock__h">{{icon "key"}}{{bi $lang "share.created.title"}}</h3>
+  <p>{{bi $lang "share.created.once"}}</p>
+  <div class="f">
+    <label for="share-url">{{bi $lang "share.created.link"}} <span class="f__sub" dir="auto">{{.Label}}</span></label>
+    <textarea id="share-url" class="tokenbox mono" rows="2" readonly spellcheck="false" autocomplete="off" data-select-on-focus>{{.URL}}</textarea>
+  </div>
+  {{if .CloneURL}}
+  <div class="f">
+    <label for="share-clone">{{bi $lang "share.created.clone"}}</label>
+    <input id="share-clone" class="mono" type="text" readonly spellcheck="false" autocomplete="off" value="{{.CloneURL}}" data-select-on-focus>
+    <p class="f__help">{{bi $lang .CloneHelp}}</p>
+  </div>
+  {{end}}
+  {{range .Warnings}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang .}}</span></p>{{end}}
+</div>
+{{end}}
+
+<div class="card">
+  <h3 class="setblock__h">{{bi $lang "share.create"}}</h3>
+  {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $fn "Scope" "share-create" "Field" "" "Focus" 0}}
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="action" value="create_share_link">
+    <div class="f">
+      <label for="share-label">{{bi $lang "share.label"}}</label>
+      <input id="share-label" name="label" type="text" required maxlength="100" autocomplete="off" value="{{$p.Form.Label}}"
+             {{template "fieldInvalid" dict "Notices" $fn "Scope" "share-create" "Field" "label"}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" "share-create" "Field" "label"}}
+      <p class="f__help">{{bi $lang "share.label_help"}}</p>
+    </div>
+    <fieldset class="fset">
+      <legend>{{bi $lang "share.scope"}}</legend>
+      <label class="choice">
+        <input type="radio" name="scope" value="browse"{{if ne $p.Form.Scope "clone"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "share.scope.browse"}}</span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="scope" value="clone"{{if eq $p.Form.Scope "clone"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "share.scope.clone"}}</span>
+        <span class="choice__d">{{bi $lang "share.warn.clone"}}</span>
+      </label>
+    </fieldset>
+    <div class="f">
+      <label for="share-expiry">{{bi $lang "share.expiry"}}</label>
+      <select id="share-expiry" name="expiry">
+        {{range shareExpiry}}<option value="{{.}}"{{if eq . $p.Form.Expiry}} selected{{end}}>{{bi $lang (code (printf "share.expiry.%s" .))}}</option>{{end}}
+      </select>
+    </div>
+    <div class="f">
+      <label for="share-password">{{bi $lang "share.password"}}</label>
+      <input id="share-password" name="share_password" type="password" autocomplete="new-password"
+             {{template "fieldInvalid" dict "Notices" $fn "Scope" "share-create" "Field" "share_password"}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" "share-create" "Field" "share_password"}}
+      <p class="f__help">{{bi $lang "share.password_help"}}</p>
+    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" "share-create" "ID" "share-create-password"}}
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "share.submit"}}</button>
+    </div>
+  </form>
+</div>
+
+<section class="sec">
+  <div class="sec__bar">
+    <h3>{{bi $lang "share.list.title"}}</h3>
+    <span class="sec__n">{{biCount $lang "item" (len $p.Links)}}</span>
+  </div>
+  {{if $p.Links}}
+  <div class="creds">
+    {{/* Revoked and expired links stay listed as a record of who could read
+         this repository. */}}
+    {{range $p.Links}}
+    <div class="cred{{if ne .State "active"}} cred--off{{end}}">
+      <div class="cred__top">
+        <span class="cred__l" dir="auto">{{.Label}}</span>
+        {{if eq .State "active"}}<span class="pill pill--on">{{icon "check"}}{{bi $lang "share.state.active"}}</span>
+        {{else if eq .State "expired"}}<span class="pill pill--off">{{icon "slash"}}{{bi $lang "share.state.expired"}}</span>
+        {{else}}<span class="pill pill--off">{{icon "slash"}}{{bi $lang "share.state.revoked"}}</span>{{end}}
+      </div>
+      <dl class="kv kv--tight">
+        <div><dt>{{bi $lang "share.scope"}}</dt><dd>{{if eq .Scope "clone"}}{{bi $lang "share.scope.clone"}}{{else}}{{bi $lang "share.scope.browse"}}{{end}}</dd></div>
+        {{if .HasPassword}}<div><dt>{{bi $lang "share.has_password"}}</dt><dd>{{icon "lock"}}</dd></div>{{end}}
+        <div><dt>{{bi $lang "share.id"}}</dt><dd class="mono">/share/{{.ShortID}}</dd></div>
+        <div><dt>{{bi $lang "share.created_at"}}</dt><dd>{{biDateTime $lang .CreatedAt}}</dd></div>
+        <div><dt>{{bi $lang "share.expires_at"}}</dt><dd>{{if notZero .ExpiresAt}}{{biDateTime $lang .ExpiresAt}}{{else}}{{bi $lang "share.until_revoked"}}{{end}}</dd></div>
+        <div><dt>{{bi $lang "share.last_used"}}</dt><dd>{{if notZero .LastUsedAt}}{{biDateTime $lang .LastUsedAt}}{{else}}{{bi $lang "share.never_used"}}{{end}}</dd></div>
+        {{if notZero .RevokedAt}}<div><dt>{{bi $lang "share.revoked_at"}}</dt><dd>{{biDateTime $lang .RevokedAt}}</dd></div>{{end}}
+      </dl>
+      {{if not (notZero .RevokedAt)}}
+      {{$rn := $p.NoticesFor .ID}}
+      {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $rn "Scope" .ID "Field" "" "Focus" 0}}
+      <form class="form form--inline" method="post" action="{{$p.SubmitURL}}">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <input type="hidden" name="action" value="revoke_share_link">
+        <input type="hidden" name="link_id" value="{{.ID}}">
+        {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $rn "Scope" .ID "ID" (printf "share-revoke-%s" .ID)}}
+        <button type="submit" class="btn btn--danger">{{bi $lang "share.revoke"}}</button>
+        <span class="f__help">{{bi $lang "share.revoke_help"}}</span>
+      </form>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="empty">{{bi $lang "share.none"}}</p>
+  {{end}}
+</section>
+</div>
+{{end}}

@@ -17,7 +17,7 @@ import (
 func repoCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printRepoUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "repo requires list, show, create, rename, settings, default-branch, delete, kept-history, or restore.")
+		return cliProblem("invalid_arguments", "repo requires list, show, create, rename, settings, default-branch, delete, kept-history, restore, or share.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printRepoUsage(os.Stdout)
@@ -42,6 +42,8 @@ func repoCommand(arguments []string) error {
 		return repoKeptHistory(arguments[1:])
 	case "restore":
 		return repoRestore(arguments[1:])
+	case "share":
+		return repoShare(arguments[1:])
 	default:
 		return cliProblem("invalid_arguments", "Unknown repo command: "+arguments[0])
 	}
@@ -277,7 +279,7 @@ func (admin *repoAdminFlags) client(command string, inferRepository bool) (*apic
 }
 
 func printRepoUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|rename|settings|default-branch|delete|kept-history|restore> [options]")
+	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|rename|settings|default-branch|delete|kept-history|restore|share> [options]")
 	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON.")
 	fmt.Fprintln(writer, "repo rename NAME NEW-NAME --server URL --password-file PATH renames a repository with the administrator password. The old name leads to the new one for 90 days.")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show, settings and default-branch) default to its origin remote.")
@@ -286,6 +288,7 @@ func printRepoUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "repo delete --repository NAME --files keep|delete [--confirm-name NAME] deletes a repository, with the administrator password.")
 	fmt.Fprintln(writer, "repo kept-history lists the history kept from overwritten and deleted branches and tags.")
 	fmt.Fprintln(writer, "repo restore previews and restores files from an earlier commit; see owngit repo restore --help.")
+	fmt.Fprintln(writer, "repo share lists, creates and revokes links that let someone without an account read one repository; see owngit repo share --help.")
 }
 
 func printRepoSettingsUsage(writer io.Writer) {

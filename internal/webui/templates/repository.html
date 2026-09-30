@@ -19,7 +19,7 @@
       <p class="rhead__desc" dir="auto">{{$p.Repo.Description}}</p>
     {{end}}
   </div>
-  {{if $clone}}{{template "clonefield" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL}}{{end}}
+  {{if $clone}}{{template "clonefield" dict "Lang" $lang "CloneURL" $p.Repo.CloneURL "Help" $p.CloneHelp}}{{end}}
 </div>
 {{end}}
 
@@ -117,6 +117,7 @@
            spellcheck="false" autocomplete="off" data-select-on-focus>
     <button type="button" class="btn clonefield__copy" data-copy="clone-url" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
   </div>
+  {{with .Help}}<p class="f__help">{{bi $lang .}}</p>{{end}}
   <p class="clonefield__note" role="status">
     <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
     <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
@@ -141,7 +142,7 @@
 {{else if $repo.Empty}}
   <div class="empty">
     <p class="empty__lead">{{bi $lang "repo.empty"}}</p>
-    <p>{{bi $lang "repo.empty.push_hint"}}</p>
+    {{if not .Shared}}<p>{{bi $lang "repo.empty.push_hint"}}</p>{{end}}
   </div>
 {{end}}
 {{end}}

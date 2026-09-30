@@ -131,6 +131,8 @@ func sidebarOf(page Page) Sidebar {
 		return inRepo(p.Repo, p.Tabs)
 	case *RepositoryDeletePage:
 		return inRepo(p.Repo, p.Tabs)
+	case ShareLinksPage:
+		return inRepo(p.Repo, p.Tabs)
 	}
 	return Sidebar{}
 }

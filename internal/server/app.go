@@ -166,8 +166,16 @@ func (app *App) Handler() http.Handler {
 	next := app.Hosts.MiddlewareAdmitting(app.admitUnknownHost, app.answerUnavailable, http.HandlerFunc(app.serveHTTP))
 	return refuseFunnel(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		// The proxies trusted now, which Tailscale sharing can change.
-		app.Network.Resolver().Middleware(next).ServeHTTP(writer, request)
+		app.Network.Resolver().Middleware(next).ServeHTTP(writer, withoutShareSecret(request))
 	}))
+}
+
+// admissionWithdrawn reports whether request came in under the container
+// image's loopback admission (HostPolicy.InContainer) that settings no
+// longer grant: access no longer needs the password it needed then.
+func admissionWithdrawn(request *http.Request, settings state.Settings) bool {
+	version, admitted := containerAdmissionVersion(request.Context())
+	return admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version)
 }
 
 // AuthorizeGit reports whether a Git request may proceed. auth.ErrRateLimited
@@ -179,7 +187,7 @@ func (app *App) AuthorizeGit(request *http.Request) (bool, error) {
 		logFailure(request, "Git access check", err)
 		return false, err
 	}
-	if version, admitted := containerAdmissionVersion(request.Context()); admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version) {
+	if admissionWithdrawn(request, settings) {
 		return false, nil
 	}
 	if !settings.Initialized {
@@ -346,6 +354,10 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.GitHTTP.ServeHTTP(writer, request)
 		return
 	}
+	if id, suffix, ok := shareGitRoute(request.URL.Path); ok {
+		app.serveShareGit(writer, request, id, suffix)
+		return
+	}
 	// A request for a repository postpones its maintenance, from the start
 	// until the end of the request.
 	request = app.resolveRepositoryAddress(request)
@@ -380,8 +392,12 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.answerUnavailable(writer, request, "settings read", err)
 		return
 	}
-	if version, admitted := containerAdmissionVersion(request.Context()); admitted && (settings.AccessMode != "password" || settings.AccessSessionVersion != version) {
+	if admissionWithdrawn(request, settings) {
 		refuseHost(writer, request)
+		return
+	}
+	if strings.HasPrefix(request.URL.Path, sharePrefix) {
+		app.serveSharePage(writer, request)
 		return
 	}
 	if strings.HasPrefix(request.URL.Path, "/api/") {
@@ -472,6 +488,10 @@ func (app *App) render(writer http.ResponseWriter, request *http.Request, status
 // renderError answers with an error page. A page frame that cannot be read
 // is left out and logged, and the page is shown without it.
 func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string) {
+	if strings.HasPrefix(request.URL.Path, sharePrefix) {
+		app.renderShareError(writer, request, status, code, detail)
+		return
+	}
 	chrome, err := app.chrome(writer, request, webui.SectionNone, "", "")
 	if err != nil {
 		logFailure(request, "page frame read", err)

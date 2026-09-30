@@ -97,6 +97,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		case "settings":
 			app.handleRepositorySettingsAPI(writer, request, repositoryID, remainder)
 			return
+		case "share-links":
+			app.handleShareLinksAPI(writer, request, repositoryID, remainder)
+			return
 		case "rename":
 			app.handleRenameRepositoryAPI(writer, request, repositoryID, remainder)
 			return

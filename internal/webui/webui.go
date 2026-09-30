@@ -43,6 +43,8 @@ var pageNames = []string{
 	"runner-credentials",
 	"repository-settings",
 	"repository-delete",
+	"share-links",
+	"share-password",
 	"error",
 }
 
@@ -322,6 +324,10 @@ func documentTitle(page Page, lang Lang) string {
 		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
 	case *RepositoryDeletePage:
 		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
+	case ShareLinksPage:
+		section = scopedTitle(lang, MsgShareTitle, p.Repo.Name)
+	case SharePasswordPage:
+		section = Text(lang, MsgSharePasswordTitle)
 	case ErrorPage:
 		section = Text(lang, p.Code)
 	case *ErrorPage:
@@ -409,6 +415,8 @@ func canonicalURL(page Page, chrome Chrome) string {
 		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case *RepositoryDeletePage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case ShareLinksPage:
+		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	}
 	return chrome.CurrentURL
 }
