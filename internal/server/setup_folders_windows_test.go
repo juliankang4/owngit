@@ -3,9 +3,11 @@ package server
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -46,6 +48,50 @@ func TestFolderChooserWindowsDrivesAndHiddenAttributes(t *testing.T) {
 	noErr(t, err)
 	if len(all.Folders) != 2 {
 		t.Fatalf("show hidden=%+v", all)
+	}
+}
+
+func makeFolderJunction(t *testing.T, link, target string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, "cmd", "/c", "mklink", "/J", link, target).CombinedOutput()
+	if err != nil {
+		t.Fatalf("create junction: %v (%s)", err, output)
+	}
+}
+
+func TestFolderChooserWindowsJunctions(t *testing.T) {
+	app, store, _ := newTestApp(t)
+	base := t.TempDir()
+	root, target, gone := filepath.Join(base, "browse"), filepath.Join(base, "target"), filepath.Join(base, "gone")
+	for _, path := range []string{root, target, gone, filepath.Join(root, "real"), filepath.Join(target, "inside")} {
+		noErr(t, os.Mkdir(path, 0o700))
+	}
+	makeFolderJunction(t, filepath.Join(root, "junction"), target)
+	makeFolderJunction(t, filepath.Join(root, "broken"), gone)
+	noErr(t, os.Rename(gone, filepath.Join(base, "gone-moved")))
+	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
+	response := folderRequest(t, app, setupFoldersPath, root, "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != 200 {
+		t.Fatalf("junction listing: %d %s", response.Code, response.Body.String())
+	}
+	result := readFolderResult(t, response)
+	if len(result.Folders) != 2 || result.Folders[0].Name != "junction" || result.Folders[0].Path != filepath.Join(root, "junction") || result.Folders[1].Name != "real" {
+		t.Fatalf("junction listing=%+v", result)
+	}
+	response = folderRequest(t, app, setupFoldersPath, filepath.Join(root, "junction"), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != 200 || len(readFolderResult(t, response).Folders) != 1 {
+		t.Fatalf("open junction: %d %s", response.Code, response.Body.String())
+	}
+	response = folderRequest(t, app, setupFolderCreatePath, filepath.Join(root, "junction"), "made", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != 200 {
+		t.Fatalf("create through selected junction: %d %s", response.Code, response.Body.String())
+	}
+	info, err := os.Stat(filepath.Join(target, "made"))
+	noErr(t, err)
+	if !info.IsDir() {
+		t.Fatal("selected junction target did not receive folder")
 	}
 }
 

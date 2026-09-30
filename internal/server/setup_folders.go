@@ -111,32 +111,12 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 		}
 		path := filepath.Clean(path)
 		if create {
-			// Check again before the write, including a request whose setup
-			// completed while it was checking the parent folder.
-			info, err := os.Stat(path)
+			parent, err := os.OpenRoot(path)
 			if err != nil {
 				return folderResult{}, err
 			}
-			if !info.IsDir() {
-				return folderResult{}, errNotDirectory
-			}
-			current, err := app.Store.Settings(ctx)
-			if err != nil {
-				return folderResult{}, err
-			}
-			if current.Initialized {
-				return folderResult{}, errFolderSetupDone
-			}
-			if err := ctx.Err(); err != nil {
-				return folderResult{}, err
-			}
-			child := filepath.Join(path, name)
-			// Mkdir never replaces or follows an existing final entry,
-			// including a symbolic link. Match storage creation permissions.
-			if err := os.Mkdir(child, 0o700); err != nil {
-				return folderResult{}, err
-			}
-			return folderResult{Path: child}, nil
+			defer parent.Close()
+			return app.createFolder(ctx, parent, name)
 		}
 		return listFolders(ctx, path, formChecked(postValue(request, "hidden")))
 	})
@@ -151,6 +131,24 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	writeFolderResult(writer, request, http.StatusOK, result)
+}
+
+func (app *App) createFolder(ctx context.Context, parent *os.Root, name string) (folderResult, error) {
+	current, err := app.Store.Settings(ctx)
+	if err != nil {
+		return folderResult{}, err
+	}
+	if current.Initialized {
+		return folderResult{}, errFolderSetupDone
+	}
+	if err := ctx.Err(); err != nil {
+		return folderResult{}, err
+	}
+	child := filepath.Join(parent.Name(), name)
+	if err := os.Mkdir(child, 0o700); err != nil {
+		return folderResult{}, err
+	}
+	return folderResult{Path: child}, nil
 }
 
 // A deadline bounds the response, not an OS call on a stalled mount. One
