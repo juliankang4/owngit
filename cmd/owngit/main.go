@@ -3,6 +3,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"syscall"
 	"time"
 
+	"owngit/internal/apiclient"
 	"owngit/internal/auth"
 	"owngit/internal/backups"
 	"owngit/internal/bootstrap"
@@ -70,10 +72,12 @@ func reportError(stdout io.Writer, err error) int {
 		return exit.code
 	}
 	// A restore or verification that an interrupt stopped exits as a
-	// process stopped by it does.
+	// process stopped by it does, after its error is written as any other.
 	var interrupted *recovery.Interrupted
 	if errors.As(err, &interrupted) {
-		log.Printf("error: %v", err)
+		if !writeStructuredCommandError(stdout, err) {
+			log.Printf("error: %v", err)
+		}
 		return 130
 	}
 	var logged loggedError
@@ -1074,49 +1078,76 @@ func backupState(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	output := flags.String("output", "", "new backup directory; OwnGit must be stopped (while it runs, use owngit backup now)")
 	gitPath := flags.String("git", "", "Git executable path")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print JSON")
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
+	fail := func(code string, err error) error { return jsonFailure(*asJSON, code, err) }
 	if flags.NArg() != 0 || *output == "" {
-		return errors.New("backup requires --output and accepts no positional arguments")
+		return fail("invalid_arguments", errors.New("backup requires --output and accepts no positional arguments"))
 	}
 	if err := state.RequireExisting(*stateDir); err != nil {
-		return err
+		if errors.Is(err, state.ErrNotExist) {
+			return fail("state_missing", err)
+		}
+		return fail("state_unavailable", err)
 	}
 	// The lock file is created only in a state directory that OwnGit may
 	// use, as serve's is; see state.CreateDirectory.
 	stateDirectory, err := state.OpenStateDirectory(*stateDir)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	defer stateDirectory.Close()
 	unlock, err := state.AcquireOfflineLockIn(stateDirectory)
 	if err != nil {
-		return fmt.Errorf("backup requires OwnGit to be offline: %w", err)
+		return fail("offline_required", fmt.Errorf("backup requires OwnGit to be offline: %w", err))
 	}
 	defer unlock()
 	store, err := openStateIn(context.Background(), stateDirectory, *gitPath, stderrf)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	defer store.Close()
 	settings, err := store.Settings(context.Background())
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	if !settings.Initialized {
-		return errors.New("setup is not complete")
+		return fail("setup_incomplete", errors.New("setup is not complete"))
 	}
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
 	if err != nil {
-		return err
+		return fail("git_unavailable", err)
 	}
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
 	if err := recovery.Create(context.Background(), store, manager, *output); err != nil {
-		return err
+		return fail("backup_failed", err)
 	}
-	fmt.Printf("Offline backup written to %s. SHA-256 hashes detect corruption but do not authenticate a replaced backup.\n", *output)
+	result := offlineBackupResult{OK: true, Backup: *output, Note: "SHA-256 hashes detect corruption but do not authenticate a replaced backup."}
+	if *asJSON {
+		return writeJSONValue(result)
+	}
+	fmt.Printf("Offline backup written to %s. %s\n", result.Backup, result.Note)
 	return nil
+}
+
+// offlineBackupResult is the result of owngit backup --output, printed as
+// text or as JSON.
+type offlineBackupResult struct {
+	OK     bool   `json:"ok"`
+	Backup string `json:"backup"`
+	Note   string `json:"note"`
+}
+
+// restoreResult is the result of owngit restore, printed as text or as
+// JSON. Notes say what the restore did not bring back.
+type restoreResult struct {
+	OK             bool                   `json:"ok"`
+	StateDir       string                 `json:"state_dir"`
+	RepositoryRoot string                 `json:"repository_root"`
+	Verification   *recovery.Verification `json:"verification,omitempty"`
+	Notes          []string               `json:"notes"`
 }
 
 func restoreState(arguments []string) error {
@@ -1128,34 +1159,66 @@ func restoreState(arguments []string) error {
 	gitPath := flags.String("git", "", "Git executable path")
 	verifyFirst := flags.Bool("verify", false, "rehearse the restore first, as backup verify does, and restore only a verified backup")
 	temporary := flags.String("temp-dir", "", "folder for the rehearsal of --verify (default: the system's temporary folder)")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print JSON")
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
+	result := restoreResult{OK: true, StateDir: *stateDir, RepositoryRoot: *repositoryRoot}
+	// fail makes err a JSON error with code when --json was given. An
+	// interrupted step keeps the interruption, so it still exits 130, and a
+	// verification that ran is the error's details.
+	fail := func(code string, err error) error {
+		if !*asJSON {
+			return err
+		}
+		problem := &apiclient.Error{Code: code, Message: err.Error(), Cause: err}
+		var interrupted *recovery.Interrupted
+		if errors.As(err, &interrupted) {
+			problem.Code = "interrupted"
+		}
+		if result.Verification != nil {
+			details, marshalErr := json.Marshal(result.Verification)
+			if marshalErr != nil {
+				return &apiclient.Error{Code: "output_failed", Message: "The verification result could not be encoded.", Cause: marshalErr}
+			}
+			problem.Details = details
+		}
+		return problem
+	}
 	if flags.NArg() != 0 || *input == "" || *repositoryRoot == "" {
-		return errors.New("restore requires --input and --repository-root and accepts no positional arguments")
+		return fail("invalid_arguments", errors.New("restore requires --input and --repository-root and accepts no positional arguments"))
 	}
 	// An interrupt stops the work, and the rehearsal and the restore remove
 	// what they created.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if *verifyFirst {
-		result, err := recovery.Verify(ctx, *input, *temporary, *gitPath)
-		if !result.Verified || err != nil {
-			printVerification(os.Stdout, result)
-			printSpaceHint(os.Stdout, err)
+		verification, err := recovery.Verify(ctx, *input, *temporary, *gitPath)
+		result.Verification = &verification
+		if !verification.Verified || err != nil {
+			if !*asJSON {
+				printVerification(os.Stdout, verification)
+				printSpaceHint(os.Stdout, err)
+			}
 			var interrupted *recovery.Interrupted
 			if errors.As(err, &interrupted) {
-				return &recovery.Interrupted{What: "verification", Detail: "nothing was restored", Cause: err}
+				return fail("interrupted", &recovery.Interrupted{What: "verification", Detail: "nothing was restored", Cause: err})
 			}
-			return errors.New("the backup was not verified, so nothing was restored")
+			return fail("backup_not_verified", errors.New("the backup was not verified, so nothing was restored"))
 		}
-		fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(result.Repositories))
+		if !*asJSON {
+			fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(verification.Repositories))
+		}
 	}
 	if err := recovery.Restore(ctx, *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
-		return err
+		return fail("restore_failed", err)
 	}
-	fmt.Printf("Offline backup restored to %s with repositories at %s. Previous sessions, trusted hosts, and network settings were not restored.\n", *stateDir, *repositoryRoot)
-	fmt.Println(restoredSettingsNotice())
+	result.Notes = []string{"Previous sessions, trusted hosts, and network settings were not restored.", restoredSettingsNotice()}
+	if *asJSON {
+		return writeJSONValue(result)
+	}
+	fmt.Printf("Offline backup restored to %s with repositories at %s. %s\n", result.StateDir, result.RepositoryRoot, result.Notes[0])
+	fmt.Println(result.Notes[1])
 	return nil
 }
 
