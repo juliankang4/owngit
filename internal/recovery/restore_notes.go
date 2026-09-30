@@ -13,7 +13,7 @@ import (
 // restore leaves out; RestoreNotes reports it after every restore.
 var notRestored = []string{
 	"Sign-ins and setup links are not restored: everyone signs in again.",
-	"Network settings are not restored: the listen address, base URL, allowed Hosts, trusted proxies, the public share address and Tailscale Serve start at their defaults. " +
+	"Network settings are not restored: the listen address, base URL, allowed Hosts, trusted proxies, the public share address, Tailscale Serve and the acknowledgement of plain HTTP start at their defaults. " +
 		"Set them again under Settings or with owngit network set and owngit tailscale on.",
 	"Helper credentials are not restored, so their old tokens are refused: create new ones on each repository's Helper credentials page or with owngit helper-credential create.",
 	"Runner tokens are not restored, so their old tokens are refused: issue new ones on each repository's Runner tokens page or with owngit runner-credential issue.",
@@ -24,7 +24,10 @@ var notRestored = []string{
 		"A source follows an upstream deletion only after a refresh has seen the ref again.",
 	"Import schedules are not restored: turn scheduled refreshes on again on each repository's Import tab or with owngit import schedule.",
 	"Share links are not restored: create new ones on each repository's Share links page or with owngit repo share create.",
-	"Scheduled backups are not restored: set them up again under Settings or with owngit backup schedule set.",
+	"Scheduled backups and the backup history, the recorded manual and scheduled backups with their results, are not restored: " +
+		"set the schedule up again under Settings or with owngit backup schedule set. " +
+		"Earlier backups are no longer listed, but their folders stay where they were written, and owngit backup verify and owngit restore still take them.",
+	"The backup before an upgrade is on, as on a new installation: if it was turned off, turn it off again with owngit upgrade-backup off.",
 	"Raw check logs and the recent pushes list are not restored; check results come back without their raw logs.",
 }
 
