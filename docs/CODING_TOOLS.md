@@ -601,11 +601,11 @@ Read tools change nothing:
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 | `backup_status` | No command; a summary of `backup status`, described below |
 
-`backup_status` tells the tool whether the server has recent backups, for example before a risky change. It uses general access like the repository tools and returns a summary:
+`backup_status` tells the tool what OwnGit's backup records say, for example before a risky change. It uses general access like the repository tools. It reads only the records and never looks in the backup folder, so a backup removed outside OwnGit still counts until the next backup notices it. It returns a summary:
 
 - `schedule`: `not_configured`, `off` or `on`.
 - `last_run`: the last backup that ended, with `kind` (`scheduled` or `manual`), `status` (`succeeded`, `failed` or `interrupted`), `verification` (`passed`, `failed` or `not_run`) and `finished_at`, or null.
-- `last_verified_at`: when the newest backup that passed verification and is still kept finished, or null.
+- `last_verified_at`: when the newest backup that passed verification and that OwnGit's records still keep finished, or null.
 - `next_run`: when the next scheduled backup is due, or null.
 
 The summary names no folder, repository or error message. The administrator reads those with `owngit backup status`; see [Backups](OPERATIONS.md#checking-backups).

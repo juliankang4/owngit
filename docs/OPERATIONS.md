@@ -1498,7 +1498,7 @@ owngit backup schedule set \
   --password-file /path/to/owner-only-admin-password
 ```
 
-The first backup starts as soon as the schedule is saved. Every backup command below takes the same `--server`, `--accept-insecure-http` and `--password-file` flags as the [import commands](#imports-on-the-command-line), with the administrator password, and prints JSON. The flags are omitted below.
+The first backup starts as soon as the schedule is saved. The commands `owngit backup schedule`, `now`, `status` and `runs` talk to the running server. They take the same `--server`, `--accept-insecure-http` and `--password-file` flags as the [import commands](#imports-on-the-command-line), need the administrator password, and print JSON. The flags are omitted below. [`owngit backup --output`](#backing-up-a-stopped-owngit) and [`owngit backup verify`](#verifying-a-backup) work on this computer instead, without the server or its password.
 
 - `--destination` is a folder on the computer that runs OwnGit, given as an absolute path. It must not be inside OwnGit's state directory or repository folder, and it follows the rules in [Where backups can be written](#where-backups-can-be-written). When it is missing, OwnGit creates it so that only the account that runs OwnGit can use it.
 - `--interval` is `12h`, `1d` (the default) or `7d`.
@@ -1536,7 +1536,7 @@ The command starts a backup into the folder of the schedule, also while schedule
 `owngit backup runs` lists every recorded backup, the newest first. Each one shows:
 
 - `kind`: `scheduled`, or `manual` for back up now.
-- `status`: `running`, `succeeded`, `failed` or `interrupted`. `interrupted` means that OwnGit stopped, or its process was killed, before the backup finished. Such a backup is never a finished backup.
+- `status`: `running`, `succeeded`, `failed` or `interrupted`. `interrupted` means that OwnGit stopped, or its process was killed, before the backup finished. Such a run is never a finished backup, even when a complete folder was left behind; see [When a backup or restore is interrupted](#when-a-backup-or-restore-is-interrupted).
 - `verification`: `passed`, `failed` or `not_run`. Only `passed` makes a backup verified.
 - `backup_name` and `path`: the backup's folder. Both are empty when the run wrote no backup, or when OwnGit removed the backup or found it gone or replaced.
 - `started_at`, `finished_at`, and a `message` that says why the backup failed or what OwnGit left in place.
@@ -1571,12 +1571,12 @@ Before the first backup in a folder there is nothing to compare with. A disk tha
 
 ### Backups while OwnGit runs
 
-A backup describes one moment. When it starts, OwnGit waits for pushes and other Git writes already running. It then holds new ones only while it reads every repository's branches and tags, and lets them continue while it writes the backup. On Linux this pause is usually well under a second; on Windows it took about 8 seconds with 1,000 repositories. `longest_hold_ms` in `owngit backup runs` says how long Git writes to one repository waited at most, and `longest_hold_repository` names it.
+A backup describes one moment. When it starts, OwnGit waits for pushes and other Git writes already running. It then holds new ones only while it reads every repository's refs, and lets them continue while it writes the backup. On Linux this pause is usually well under a second; on Windows it took about 8 seconds with 1,000 repositories. `longest_hold_ms` in `owngit backup runs` says how long Git writes to one repository waited at most, and `longest_hold_repository` names it.
 
 - Pushes, merges and imports after that moment are not in the backup.
 - While a repository is being written into the backup, it cannot be deleted and its maintenance waits.
 
-**Commits that no branch or tag reaches are not in a backup.** With kept history on, an overwritten branch tip is kept and backed up. With kept history off, overwritten commits are not kept, and a backup made later does not contain them. Check, pull request and import records keep the commit IDs they name; after a restore, a record whose commit is not in the repository shows the ID without its content.
+**A backup holds only the commits that a ref or HEAD reaches.** A ref is a name that points to a commit: a branch, a tag, or one of OwnGit's own refs, such as those for pull requests, imports and kept history. A backup carries every ref and the HEAD of each repository with the commits they reach; a commit that none of them reaches is not in it. With kept history on, an overwritten branch tip stays reachable from kept history and is backed up. With kept history off, an overwritten commit is not in a later backup unless another ref still reaches it. Check, pull request and import records keep the commit IDs they name; after a restore, a record whose commit is not in the repository shows the ID without its content.
 
 A backup is refused, and the refusal names the repository, when:
 
@@ -1586,7 +1586,7 @@ A backup is refused, and the refusal names the repository, when:
 
 ### Who can see backup status
 
-The backup commands need the administrator password, because their answers name folders and repositories and carry error messages. Coding tools get a summary instead, through the [`backup_status` MCP tool](CODING_TOOLS.md#tools), with general access (the shared password, or none when access is open). The summary says whether scheduled backups are `not_configured`, `off` or `on`, how and when the last backup ended, when the newest verified backup finished and when the next one is due. It names no folder, repository or error.
+`owngit backup schedule`, `now`, `status` and `runs` need the administrator password, because their answers name folders and repositories and carry error messages. `owngit backup --output` and `owngit backup verify` need no server password; they run on this computer and need only access to the state directory or to the backup. Coding tools get a summary instead, through the [`backup_status` MCP tool](CODING_TOOLS.md#tools), with general access (the shared password, or none when access is open). The summary says whether scheduled backups are `not_configured`, `off` or `on`, how and when the last backup ended, when the newest verified backup finished and when the next one is due. It names no folder, repository or error.
 
 ### Backing up a stopped OwnGit
 
@@ -1612,8 +1612,6 @@ A backup holds a manifest and one Git bundle per nonempty repository. Together t
 A backup does not include raw logs, credentials and tokens of every kind, import schedules, the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits and the raw log retention).
 
 A backup holds up to 1 GiB of OwnGit records, counted by the memory they take and not counting the repositories; backup refuses a larger state. Creating and restoring a backup hold its records in memory, so more records need more memory.
-
-Backup refuses to run while an import publication is unsettled for a repository that does not exist yet. Start and stop OwnGit once; if the error remains, first move that import's `.owngit-create-*` directory out of the repository folder.
 
 ### Backup versions
 
@@ -1650,13 +1648,17 @@ If a restore stops without its own cleanup, for example after a power loss or wh
 2. Move both targets and any `TARGET.owngit-restore-...` siblings to a quarantine location.
 3. Restore again into new paths.
 
-If a backup stops before finishing, its output directory does not exist. Once no backup process is running, keep or quarantine its hidden `.OUTPUT.owngit-backup-...` sibling. For a scheduled backup or back up now, `OUTPUT` is the backup's folder name in the destination.
+A backup that stops before it finishes is not a finished backup, whatever it left on disk. Once no backup process is running, look beside its output, where `OUTPUT` is the output's name (for a scheduled backup or back up now, the backup's folder name in the destination):
+
+- A hidden `.OUTPUT.owngit-backup-...` sibling holds the unfinished backup. Keep or quarantine it.
+- On a file system that [cannot rename without replacing](#where-backups-can-be-written), a folder at the final name without a manifest may remain. It is not a backup; remove or quarantine it.
+- A backup that stopped after its folder was complete, for example during verification, leaves a complete folder. Its run stays `interrupted` and the backup is not verified, so check it with `owngit backup verify` before you rely on it.
 
 When OwnGit stops during a scheduled backup or back up now, the backup is recorded as `interrupted`. When its process was killed instead, OwnGit records the backup as `interrupted` the next time it starts, and says so in the server log.
 
 ### Where backups can be written
 
-Backup and restore make each new folder under a temporary name beside its final place and then rename it. The folder that holds it must therefore be one where no other account can rename or remove what OwnGit puts there.
+Backup and restore make each new folder under a temporary name beside its final place and then rename it, except that a backup on the file systems described at the end of this section is moved into a new folder instead. The folder that holds it must therefore be one where no other account can rename or remove what OwnGit puts there.
 
 - On macOS and Linux, that folder and every folder on the way to it must be ones that no other account can change, as on the way to the state directory; a sticky folder such as `/tmp` is accepted. Otherwise OwnGit stops before it creates anything, names the folder, and gives the `chmod` command that fixes it when there is one. You can also choose a folder that only this account can change.
 - Missing folders on the way are created, private to this account, but only inside a folder where no other account can create names, so not directly in `/tmp`.
