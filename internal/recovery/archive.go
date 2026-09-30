@@ -3,6 +3,8 @@ package recovery
 import (
 	"archive/tar"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -21,10 +23,14 @@ import (
 
 // WriteArchive writes the backup as a tar stream into writer, with its
 // folder name as the top folder: the manifest first, then every bundle the
-// manifest names, each read through the folder Open held, never through a
-// link. It stops when ctx ends. Anything else in the folder is left out;
-// a bundle that is missing, not a regular file, or that changes size while
-// it is written fails the archive.
+// manifest names. Every entry is read through the folders Open held, and
+// no link is followed at any level: the repositories folder is opened as
+// a folder that is not a link, and each file in it as a regular file. It
+// stops when ctx ends. Anything else in the folder is left out; a bundle
+// that is missing, not a regular file, or that changes size while it is
+// written fails the archive, and so does a manifest that is not the one
+// Open read (ManifestSHA256). A failed archive has no end, and the caller
+// must not pass what it wrote as a whole one.
 func (c *BackupCopy) WriteArchive(ctx context.Context, writer io.Writer) error {
 	archive := tar.NewWriter(writer)
 	modified := c.CreatedAt.UTC().Truncate(time.Second)
@@ -34,8 +40,12 @@ func (c *BackupCopy) WriteArchive(ctx context.Context, writer io.Writer) error {
 	if err := directory(c.name); err != nil {
 		return err
 	}
-	if err := c.archiveFile(ctx, archive, manifestName, modified); err != nil {
+	digest := sha256.New()
+	if err := c.archiveFile(ctx, archive, c.dir, manifestName, manifestName, modified, digest); err != nil {
 		return err
+	}
+	if hex.EncodeToString(digest.Sum(nil)) != c.ManifestSHA256 {
+		return fmt.Errorf("the manifest of %s changed after it was opened", c.name)
 	}
 	if err := directory(path.Join(c.name, "repositories")); err != nil {
 		return err
@@ -45,24 +55,56 @@ func (c *BackupCopy) WriteArchive(ctx context.Context, writer io.Writer) error {
 		bundles = append(bundles, bundle)
 	}
 	slices.Sort(bundles)
-	for _, bundle := range bundles {
-		if err := c.archiveFile(ctx, archive, path.Join("repositories", bundle), modified); err != nil {
+	if len(bundles) > 0 {
+		repositories, err := openFolder(c.dir, c.name, "repositories")
+		if err != nil {
 			return err
+		}
+		defer repositories.Close()
+		for _, bundle := range bundles {
+			if err := c.archiveFile(ctx, archive, repositories, bundle, path.Join("repositories", bundle), modified, io.Discard); err != nil {
+				return err
+			}
 		}
 	}
 	return archive.Close()
 }
 
-// archiveFile writes the regular file name of the backup into archive.
-func (c *BackupCopy) archiveFile(ctx context.Context, archive *tar.Writer, name string, modified time.Time) error {
-	named, err := c.dir.Lstat(name)
+// openFolder opens the folder name in dir, which must be a folder there
+// and not a link, and holds it; backup names the backup for errors.
+func openFolder(dir *os.Root, backup, name string) (*os.Root, error) {
+	named, err := dir.Lstat(name)
+	if err != nil {
+		return nil, err
+	}
+	if !named.IsDir() {
+		return nil, fmt.Errorf("%s in %s is a link or a file", name, backup)
+	}
+	folder, err := dir.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	if opened, err := folder.Stat("."); err != nil || !os.SameFile(named, opened) {
+		folder.Close()
+		if err == nil {
+			err = fmt.Errorf("%s in %s changed while it was opened", name, backup)
+		}
+		return nil, err
+	}
+	return folder, nil
+}
+
+// archiveFile writes the regular file name of dir into archive as the
+// entry entry of the backup, and what it wrote into also.
+func (c *BackupCopy) archiveFile(ctx context.Context, archive *tar.Writer, dir *os.Root, name, entry string, modified time.Time, also io.Writer) error {
+	named, err := dir.Lstat(name)
 	if err != nil {
 		return err
 	}
 	if !named.Mode().IsRegular() {
-		return fmt.Errorf("%s in %s is not a regular file", name, c.name)
+		return fmt.Errorf("%s in %s is not a regular file", entry, c.name)
 	}
-	file, err := c.dir.Open(name)
+	file, err := dir.Open(name)
 	if err != nil {
 		return err
 	}
@@ -70,16 +112,16 @@ func (c *BackupCopy) archiveFile(ctx context.Context, archive *tar.Writer, name 
 	if opened, err := file.Stat(); err != nil {
 		return err
 	} else if !os.SameFile(named, opened) {
-		return fmt.Errorf("%s in %s changed while it was opened", name, c.name)
+		return fmt.Errorf("%s in %s changed while it was opened", entry, c.name)
 	}
 	size := named.Size()
-	if err := archive.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: path.Join(c.name, name), Size: size, Mode: 0o600, ModTime: modified, Format: tar.FormatPAX}); err != nil {
+	if err := archive.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: path.Join(c.name, entry), Size: size, Mode: 0o600, ModTime: modified, Format: tar.FormatPAX}); err != nil {
 		return err
 	}
-	copied, err := io.CopyN(archive, contextReader{ctx, file}, size)
+	copied, err := io.CopyN(io.MultiWriter(archive, also), contextReader{ctx, file}, size)
 	if err != nil {
 		if copied < size && errors.Is(err, io.EOF) {
-			return fmt.Errorf("%s in %s became shorter while it was written", name, c.name)
+			return fmt.Errorf("%s in %s became shorter while it was written", entry, c.name)
 		}
 		return err
 	}

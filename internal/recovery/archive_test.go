@@ -174,3 +174,43 @@ func TestHeldBackupVerifiesOnlyAsItself(t *testing.T) {
 		t.Fatalf("verification of another backup at the name: %v", err)
 	}
 }
+
+// openedBackup is a backup opened in its folder, closed with the test.
+func openedBackup(t *testing.T) (string, *BackupCopy) {
+	t.Helper()
+	root := t.TempDir()
+	backup := newTwoRepositoryBackup(t, root)
+	folder, err := OpenBackupFolder(root)
+	noErr(t, err)
+	t.Cleanup(folder.Close)
+	opened, err := folder.Open(filepath.Base(backup))
+	noErr(t, err)
+	t.Cleanup(opened.Close)
+	return backup, opened
+}
+
+// An archive holds the manifest that was opened: a manifest changed after
+// that fails the archive.
+func TestArchiveRefusesAManifestChangedAfterOpening(t *testing.T) {
+	backup, opened := openedBackup(t)
+	manifest, err := os.OpenFile(filepath.Join(backup, manifestName), os.O_WRONLY|os.O_APPEND, 0)
+	noErr(t, err)
+	_, err = manifest.WriteString("\n")
+	noErr(t, errors.Join(err, manifest.Close()))
+	if err := opened.WriteArchive(context.Background(), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "manifest") {
+		t.Fatalf("archive with a changed manifest: %v", err)
+	}
+}
+
+// An archive follows no link, also not in a folder on the way to a bundle.
+func TestArchiveFollowsNoLinkToTheRepositoriesFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("making a symbolic link needs a privilege on Windows")
+	}
+	backup, opened := openedBackup(t)
+	noErr(t, os.Rename(filepath.Join(backup, "repositories"), filepath.Join(backup, "other")))
+	noErr(t, os.Symlink("other", filepath.Join(backup, "repositories")))
+	if err := opened.WriteArchive(context.Background(), &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "link") {
+		t.Fatalf("archive through a linked repositories folder: %v", err)
+	}
+}
