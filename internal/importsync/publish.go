@@ -736,9 +736,6 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 			commandErr = err
 			finalizationBlocked = true
 		} else {
-			if s.beforeRefTransaction != nil {
-				s.beforeRefTransaction()
-			}
 			// The callback reads run, plan and the held credential authority
 			// guard. The runner joins it for one grace interval; if it is still
 			// running after that, wait here so nothing below runs, and no guard
@@ -1136,7 +1133,12 @@ type headChainLock struct {
 // OwnGit's own HEAD writers already wait for the repository lock this
 // publication holds, and these lock files make other Git writers fail
 // until the transaction ends. A transaction without deletions takes none.
+// It runs right before the ref transaction, after the test hook
+// beforeRefTransaction, which may change the destination first.
 func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, transactionRefs map[string]string) (*headChainLock, error) {
+	if s.beforeRefTransaction != nil {
+		s.beforeRefTransaction()
+	}
 	chain := &headChainLock{}
 	if !planDeletes(plan) {
 		return chain, nil
