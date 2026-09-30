@@ -575,7 +575,9 @@ The Network tab and the OwnGit icon have their own commands, which run on the in
 
 ### Dashboard-only and command-line-only tasks
 
-Every owner task in Settings and on a repository's pages also has a command that prints JSON. A few tasks are on one side only, on purpose:
+Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, and `uninstall` (all listed below); most `import` commands, except `import status` and `import configure`, which take `--json`; and `owngit backup --output` and `owngit restore`, which work on a stopped OwnGit.
+
+A few tasks are on one side only, on purpose:
 
 - Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)).
 - Dashboard only: accepting the plain HTTP warning that a browser shows, because it concerns that browser's own connection. A client command such as `settings` or `repo` accepts plain HTTP for itself each time with `--accept-insecure-http`. `owngit network set --accept-insecure-http` records the same acceptance as the dashboard, once, when it saves an address other computers reach ([Network settings](#network-settings)).
@@ -799,6 +801,8 @@ owngit network reset
 ```
 
 `reset` removes the listen address and base URL. It keeps the allowed Hosts and trusted proxies unless you add `--clear-allowed-hosts` or `--clear-trusted-proxies`. No web page can do this.
+
+`network set` and `network reset` also take `--json`. They then print one JSON object: `ok`, the same report that `network show --json` prints, `applies_at_next_start` (true, since changes apply at the next start), `plain_http_accepted` (whether plain HTTP is accepted on this installation) and `warnings` (the notes the text output gives). A refusal is a JSON error with the code `invalid_arguments`, `acknowledgement_required` (an address other computers reach without `--accept-insecure-http`; nothing was saved) or `state_unavailable`.
 
 Network settings belong to this installation host: an offline backup does not carry them, and a restored installation starts with the defaults. When you finish web setup from another device by a name that OwnGit accepts only for the current run, the setup form offers to save it as an allowed Host.
 

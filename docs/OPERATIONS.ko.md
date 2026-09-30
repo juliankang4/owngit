@@ -575,7 +575,9 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
 
 ### 대시보드나 명령줄 한쪽에만 있는 작업
 
-설정 화면과 저장소 페이지에서 소유자가 하는 일은 모두 JSON을 출력하는 명령으로도 할 수 있습니다. 다음 일만 일부러 한쪽에만 둡니다.
+설정 화면과 저장소 페이지에서 소유자가 하는 일은 모두 명령으로도 할 수 있습니다. 이 명령은 대부분 JSON을 출력하며 일부는 `--json`을 붙였을 때만 출력합니다. 텍스트로만 출력하는 명령은 아래에 나오는 설치 호스트 복구 명령, 프로세스를 실행하거나 제어하는 명령, `uninstall`입니다. `--json`을 받는 `import status`와 `import configure`를 뺀 나머지 `import` 명령, 멈춰 있는 OwnGit에 쓰는 `owngit backup --output`과 `owngit restore`도 아직 텍스트로만 출력합니다.
+
+다음 일만 일부러 한쪽에만 둡니다.
 
 - 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고).
 - 대시보드에만 있음: 브라우저에 나오는 일반 HTTP 경고에 동의하는 일입니다. 그 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. `settings`나 `repo` 같은 클라이언트 명령은 실행할 때마다 `--accept-insecure-http`로 그 명령이 쓰는 일반 HTTP에 따로 동의합니다. `owngit network set --accept-insecure-http`는 다른 컴퓨터가 접속하는 주소를 저장할 때 대시보드와 같은 동의를 한 번 기록합니다([네트워크 설정](#네트워크-설정) 참고).
@@ -799,6 +801,8 @@ owngit network reset
 ```
 
 `reset`은 연결 주소와 기본 URL을 지웁니다. `--clear-allowed-hosts`나 `--clear-trusted-proxies`를 붙이지 않으면 허용한 Host와 신뢰하는 프록시는 그대로 둡니다. 웹 화면에서는 할 수 없습니다.
+
+`network set`과 `network reset`도 `--json`을 받습니다. 그러면 JSON 객체 하나를 출력합니다. 필드는 `ok`, `network show --json`과 같은 보고 내용, `applies_at_next_start`(바꾼 값은 다음 시작부터 적용되므로 true), `plain_http_accepted`(이 설치에서 일반 HTTP에 동의했는지), `warnings`(텍스트 출력에 나오는 안내)입니다. 거부되면 `invalid_arguments`, `acknowledgement_required`(다른 컴퓨터가 접속하는 주소에 `--accept-insecure-http`를 붙이지 않았고 아무것도 저장하지 않음), `state_unavailable` 중 하나의 코드로 JSON 오류를 출력합니다.
 
 네트워크 설정은 이 설치 호스트에 속합니다. 오프라인 백업에 포함되지 않으며 복원한 서버는 기본값으로 시작합니다. OwnGit이 이번 실행에서만 받아들이는 이름으로 다른 기기에서 웹 설정을 마치면, 설정 화면이 그 이름을 허용한 Host로 저장할지 묻습니다.
 
