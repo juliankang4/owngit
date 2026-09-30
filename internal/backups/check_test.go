@@ -244,3 +244,27 @@ func TestCheckRecordsNothingForAnExchangedBackup(t *testing.T) {
 		t.Fatalf("the exchanged backup was recorded %q", recorded.Verification)
 	}
 }
+
+// An upload refused for lack of room, before anything is read, keeps the
+// verified backup uploaded before, and the status still shows what is
+// there.
+func TestUploadRefusedForRoomKeepsTheUploadBefore(t *testing.T) {
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	archive := f.download(t, f.backUpNow(t))
+	ctx := context.Background()
+	_, err := f.service.ReceiveUpload(ctx, bytes.NewReader(archive), int64(len(archive)))
+	noErr(t, err)
+	f.waitForTask(t)
+	if _, err := f.service.ReceiveUpload(ctx, bytes.NewReader(archive), 1<<62); !errors.Is(err, ErrUploadRefused) || !strings.Contains(err.Error(), "free space") {
+		t.Fatalf("upload larger than the disk: %v", err)
+	}
+	status, err := f.service.Status(ctx)
+	noErr(t, err)
+	if status.Upload == nil || status.Upload.Status != UploadPassed {
+		t.Fatalf("upload after the refusal: %+v", status.Upload)
+	}
+	if _, err := os.Stat(filepath.Join(status.Upload.Path, "manifest.json")); err != nil {
+		t.Fatalf("the upload shown as passed is not there: %v", err)
+	}
+}

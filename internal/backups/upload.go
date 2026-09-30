@@ -75,10 +75,11 @@ func (s *Service) removeUploads() error {
 
 // ReceiveUpload unpacks the backup archive of size bytes read from body in
 // place of the uploaded backup kept before, and starts its verification.
-// It refuses before reading when the disk of the state folder lacks size
-// plus UploadRoom, reads at most size bytes, and stops when ctx ends. An
-// archive that is not a backup is refused with ErrUploadRefused and leaves
-// nothing behind. It fails with state.ErrBackupRunning while a backup runs
+// It refuses before reading, keeping the backup uploaded before, when the
+// disk of the state folder lacks size plus UploadRoom; reads at most size
+// bytes; and stops when ctx ends. An archive that is not a backup is
+// refused with ErrUploadRefused and leaves nothing behind, the backup
+// uploaded before included. It fails with state.ErrBackupRunning while a backup runs
 // and with ErrBusy while a verification or another upload runs.
 func (s *Service) ReceiveUpload(ctx context.Context, body io.Reader, size int64) (Upload, error) {
 	if size <= 0 {
@@ -89,6 +90,12 @@ func (s *Service) ReceiveUpload(ctx context.Context, body io.Reader, size int64)
 	s.mu.Unlock()
 	if err != nil {
 		return Upload{}, err
+	}
+	// A refusal before anything is read leaves the backup uploaded before
+	// as it is; the room it takes is not counted as free.
+	if err := recovery.CheckFreeSpace(s.Store.Dir(), uint64(size)+UploadRoom); err != nil {
+		s.end()
+		return Upload{}, fmt.Errorf("%w: %v (the upload leaves 1 GiB free)", ErrUploadRefused, err)
 	}
 	upload, err := s.unpack(ctx, body, size)
 	if err != nil {
@@ -110,12 +117,11 @@ func (s *Service) ReceiveUpload(ctx context.Context, body io.Reader, size int64)
 	return *upload, nil
 }
 
-// unpack replaces the uploaded backup with the archive read from body.
+// unpack replaces the uploaded backup with the archive read from body: the
+// one before is forgotten and removed first, so that what Status shows is
+// always what the folder holds.
 func (s *Service) unpack(ctx context.Context, body io.Reader, size int64) (*Upload, error) {
 	dir := s.uploadsPath()
-	if err := recovery.CheckFreeSpace(s.Store.Dir(), uint64(size)+UploadRoom); err != nil {
-		return nil, fmt.Errorf("%w: %v (the upload leaves 1 GiB free)", ErrUploadRefused, err)
-	}
 	s.mu.Lock()
 	if s.uploadTimer != nil {
 		s.uploadTimer.Stop()
