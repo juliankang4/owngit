@@ -1224,7 +1224,7 @@ An expired earlier name is free again, and a new repository or a rename can take
 
 #### Runners and helpers after a rename
 
-[Runner](AUTOMATIC_CHECKS.md) and [helper](CODING_TOOLS.md) credentials keep working after a rename, because they belong to the repository and not to its name. A runner or helper set up with the old address, through `--repository` or a clone's `origin`, keeps working at that address for 90 days. Switch it to the new name before then, for example `owngit runner --repository NEW-NAME`, because it stops at the old address when the 90 days end.
+[Runner](AUTOMATIC_CHECKS.md) and [helper](CODING_TOOLS.md) credentials keep working after a rename, because they belong to the repository and not to its name. A runner or helper set up with the old address, through `--repository` or a clone's `origin`, keeps working at that address for 90 days. Switch it to the new name before then, for example `owngit runner --repository NEW-NAME`, because it stops at the old address when the 90 days end. From then on the old address refuses it as a credential of another repository, the same answer it gets at a name that does not exist, so a credential never tells whether a name exists.
 
 If another repository later takes the old name, a credential of the renamed repository is refused there. When you issue a new credential, the output names the repository's current address in `repository_address`.
 
