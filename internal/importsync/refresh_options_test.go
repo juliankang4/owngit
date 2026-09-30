@@ -364,6 +364,28 @@ func TestUnusableSavedExtraNamespacesStopTheRun(t *testing.T) {
 	noErr(t, err)
 }
 
+// Saving an empty list over an unreadable one writes it, although the empty
+// list is also what the unreadable one reads as, and keeps sibling choices.
+func TestClearingUnusableSavedExtraNamespacesRepairsThem(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+	noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes='["refs/heads/"]' WHERE repository_id='project'`))
+	repaired, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: prefixesPointer()})
+	noErr(t, err)
+	if len(repaired.ExtraRefPrefixes) != 0 || !repaired.FollowUpstreamDeletions {
+		t.Fatalf("repaired = %+v", repaired)
+	}
+	source, _, err := f.store.ImportSource(ctx, "project")
+	noErr(t, err)
+	if len(source.ExtraRefPrefixes) != 0 || !source.FollowUpstreamDeletions {
+		t.Fatalf("stored source = %+v", source)
+	}
+	_, err = f.refresh()
+	noErr(t, err)
+}
+
 // A publication confirmed during reconciliation counts a ref it deleted as
 // deleted upstream, like the run that planned it.
 func TestReconciledDeletionIsCountedAsDeletedUpstream(t *testing.T) {

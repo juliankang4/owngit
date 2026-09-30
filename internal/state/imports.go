@@ -297,9 +297,11 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	}
 	defer tx.Rollback()
 	current, err := scanImportSource(tx.QueryRowContext(ctx, importSourceSelect+` WHERE repository_id=?`, input.RepositoryID))
-	if onlyImportSettingErrors(err) {
-		// The input replaces every option, so an unreadable saved option is
-		// what this change repairs. The rest of the row was read.
+	// The input replaces every option, so an unreadable saved option is
+	// what this change repairs, and it is written even when its default
+	// equals the replacement. The rest of the row was read.
+	repairs := onlyImportSettingErrors(err)
+	if repairs {
 		err = nil
 	}
 	switch {
@@ -333,7 +335,7 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 		// publishes under refresh choices that were changed after it began.
 		authorityChanged := current.URL != input.URL || current.Mode != input.Mode || current.GitOnlyConsent != input.GitOnlyConsent ||
 			current.AllowPrivateNetwork != input.AllowPrivateNetwork || !current.Options.SameTransport(input.Options) || !input.sameRefreshChoices(current)
-		if authorityChanged || current.Options.Limits != input.Options.Limits {
+		if authorityChanged || repairs || current.Options.Limits != input.Options.Limits {
 			previousAuthority := current.AuthorityRevision
 			if current.URL != input.URL {
 				current.SourceGeneration++
