@@ -62,9 +62,9 @@ func (err *RuntimeUnavailableError) Is(target error) bool { return target == Err
 // separate runner protocol.
 //
 // Start requires Store, Repositories and PullRequests, which the serving
-// process always sets. The command that forgets a foreign container builds a
-// Coordinator with only Store, because ForgetForeignContainer reads nothing
-// else.
+// process always sets. The command and the Checks page that forget a
+// foreign container build a Coordinator with only Store, because
+// ForgetForeignContainer reads nothing else.
 type Coordinator struct {
 	Store         *state.Store
 	Repositories  *repository.Manager

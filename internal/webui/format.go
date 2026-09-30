@@ -158,6 +158,7 @@ func templateFuncs() template.FuncMap {
 		"enableChecksAction":  enableChecksAction,
 		"disableChecksAction": disableChecksAction,
 		"cancelJobAction":     cancelJobAction,
+		"forgetJobAction":     forgetJobAction,
 		"rerunJobAction":      rerunJobAction,
 		"issueRunnerAction":   issueRunnerAction,
 		"revokeRunnerAction":  revokeRunnerAction,

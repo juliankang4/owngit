@@ -539,6 +539,8 @@ func noticeFor(notice string) []webui.Notice {
 		// Not a second success: nothing new was queued, and saying otherwise
 		// would suggest a fresh run exists.
 		return []webui.Notice{webui.Info(webui.MsgCCJobRerunExisting)}
+	case "check_container_forgotten":
+		return []webui.Notice{webui.Success(webui.MsgCCContainerForgotten)}
 	case "runner_token_revoked":
 		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
 	case "default_branch_saved":

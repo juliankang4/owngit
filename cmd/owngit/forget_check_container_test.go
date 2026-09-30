@@ -204,3 +204,18 @@ func TestForgetCheckContainerRemovesOnlyThatRecord(t *testing.T) {
 		t.Fatalf("records after release: %v", records)
 	}
 }
+
+func TestForgetCheckContainerPrintsJSON(t *testing.T) {
+	fixture := newForgetFixture(t)
+	fakeDocker(t, "new-daemon")
+	answer := commandJSON(t, func() error {
+		return forgetCheckContainer([]string{"--state-dir", fixture.stateDir, "--job", fixture.jobs[0], "--confirm-container-removed", "--json"})
+	})
+	if answer["ok"] != true || answer["job"] != fixture.jobs[0] || answer["repository"] != "sample" ||
+		answer["container_name"] != "owngit-check-"+fixture.jobs[0] || answer["daemon_id"] != "old-daemon" || answer["docker_unavailable"] != nil {
+		t.Fatalf("forget-check-container --json printed %v", answer)
+	}
+	if records := fixture.recorded(t); records[fixture.jobs[0]] || !records[fixture.jobs[1]] {
+		t.Fatalf("records after forgetting: %v", records)
+	}
+}

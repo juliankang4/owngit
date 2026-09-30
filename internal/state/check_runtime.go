@@ -177,6 +177,30 @@ func (s *Store) ActiveCheckContainers(ctx context.Context, limit int) ([]CheckCo
 		return nil, fmt.Errorf("%w: invalid runtime cleanup bound", ErrInvalidCheckJob)
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT job_id,repository_id,container_name,container_id,daemon_id,created_at FROM check_job_runtime_ownership ORDER BY created_at,job_id LIMIT ?`, limit)
+	return scanCheckContainers(rows, err)
+}
+
+// FinishedCheckContainers returns up to limit cleanup records of
+// repositoryID whose jobs finished. A start of OwnGit removes such a
+// container and its record on the Docker daemon it uses; a record that stays
+// belongs to another daemon, or Docker was unavailable, and only the owner
+// can confirm it is gone (ForgetCheckContainer). The job state is read in
+// the same statement, as ForgetCheckContainer reads it.
+func (s *Store) FinishedCheckContainers(ctx context.Context, repositoryID string, limit int) ([]CheckContainerOwnership, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, fmt.Errorf("%w: invalid runtime cleanup bound", ErrInvalidCheckJob)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT o.job_id,o.repository_id,o.container_name,o.container_id,o.daemon_id,o.created_at
+		FROM check_job_runtime_ownership o
+		WHERE o.repository_id=? AND NOT EXISTS (SELECT 1 FROM check_jobs WHERE id=o.job_id AND status IN (?,?,?))
+		ORDER BY o.created_at,o.job_id LIMIT ?`,
+		repositoryID, CheckJobPending, CheckJobClaimed, CheckJobStarted, limit)
+	return scanCheckContainers(rows, err)
+}
+
+// scanCheckContainers reads the cleanup records of a query that selected
+// their columns in the order of CheckContainerOwnership.
+func scanCheckContainers(rows *sql.Rows, err error) ([]CheckContainerOwnership, error) {
 	if err != nil {
 		return nil, err
 	}

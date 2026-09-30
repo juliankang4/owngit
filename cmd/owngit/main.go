@@ -994,8 +994,9 @@ func approveHost(arguments []string) error {
 
 // forgetCheckContainer releases the container cleanup record of one check job
 // whose Docker daemon OwnGit can no longer reach, such as after Docker was
-// reset or reinstalled. Like reset-admin it edits host-local state directly and
-// works whether or not the server is running. It removes no container, so the
+// reset or reinstalled, as the repository's Automatic checks page does. Like
+// reset-admin it edits host-local state directly and works whether or not the
+// server is running. It removes no container, so the
 // owner must first remove any leftover container or confirm that its daemon is
 // gone.
 func forgetCheckContainer(arguments []string) error {
@@ -1004,6 +1005,7 @@ func forgetCheckContainer(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	jobID := flags.String("job", "", "configured-check job identifier")
 	confirmed := flags.Bool("confirm-container-removed", false, "confirm that the job's container was removed or its Docker daemon no longer exists")
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -1026,6 +1028,21 @@ func forgetCheckContainer(arguments []string) error {
 		return err
 	}
 	record := forgotten.Record
+	dockerUnavailable := ""
+	if forgotten.DockerUnavailable != nil {
+		dockerUnavailable = forgotten.DockerUnavailable.Error()
+	}
+	if *asJSON {
+		return printJSON(struct {
+			OK                bool   `json:"ok"`
+			Job               string `json:"job"`
+			Repository        string `json:"repository"`
+			ContainerName     string `json:"container_name"`
+			ContainerID       string `json:"container_id,omitempty"`
+			DaemonID          string `json:"daemon_id"`
+			DockerUnavailable string `json:"docker_unavailable,omitempty"`
+		}{true, record.JobID, record.RepositoryID, record.ContainerName, record.ContainerID, record.DaemonID, dockerUnavailable})
+	}
 	containerID := record.ContainerID
 	if containerID == "" {
 		containerID = "(not yet assigned)"
@@ -1033,8 +1050,8 @@ func forgetCheckContainer(arguments []string) error {
 	fmt.Printf("Forgot the container cleanup record of job %s.\n", record.JobID)
 	fmt.Printf("Container name: %s\nContainer ID: %s\nDocker daemon: %s\nLabel: com.owngit.check-job=%s\n",
 		record.ContainerName, containerID, record.DaemonID, record.JobID)
-	if forgotten.DockerUnavailable != nil {
-		fmt.Printf("Docker could not be checked: %v\n", forgotten.DockerUnavailable)
+	if dockerUnavailable != "" {
+		fmt.Printf("Docker could not be checked: %s\n", dockerUnavailable)
 	}
 	fmt.Println("OwnGit removed no container. If that Docker daemon comes back, remove any container with this label yourself. Restart OwnGit to clean up check workspaces.")
 	return nil

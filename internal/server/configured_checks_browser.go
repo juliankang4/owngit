@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"owngit/internal/checkapi"
+	"owngit/internal/checkrun"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -95,8 +96,12 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
+		pending := action
+		if action == webui.ActionForgetCheckContainer {
+			pending = forgetContainerScope(postValue(request, "job_id"))
+		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
-			action: action, form: form, notices: []webui.Notice{notice},
+			action: pending, form: form, notices: []webui.Notice{notice},
 		}, status)
 		return
 	}
@@ -108,6 +113,8 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 		app.changeCheckConsent(writer, request, stored, summary, chrome, action)
 	case webui.ActionCancelCheckJob, webui.ActionRerunCheckJob:
 		app.changeCheckJob(writer, request, stored, summary, chrome, action)
+	case webui.ActionForgetCheckContainer:
+		app.forgetCheckContainer(writer, request, stored, summary, chrome)
 	default:
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: action, notices: []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)},
@@ -275,6 +282,56 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }
 
+// forgetContainerScope names the leftover container form of one job, so a
+// refusal is shown on that form only.
+func forgetContainerScope(jobID string) string {
+	return webui.ActionForgetCheckContainer + "-" + jobID
+}
+
+// forgetCheckContainer forgets the cleanup record of one finished job of
+// this repository once the owner confirmed its container is gone, as
+// "owngit forget-check-container" does. No container is removed.
+func (app *App) forgetCheckContainer(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
+	jobID := postValue(request, "job_id")
+	scope := forgetContainerScope(jobID)
+	refuse := func(notice webui.Notice, status int) {
+		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+			action: scope, notices: []webui.Notice{notice},
+		}, status)
+	}
+	if !formChecked(postValue(request, "container_removed")) {
+		refuse(webui.Error("container_removed", webui.MsgCCContainerRemovedNeeded), http.StatusUnprocessableEntity)
+		return
+	}
+	// The record names its repository; a job of another repository is not
+	// forgotten from this one's page.
+	record, exists, err := app.Store.CheckContainerOwnershipForJob(request.Context(), jobID)
+	if err == nil && (!exists || record.RepositoryID != stored.ID) {
+		err = checkrun.ErrNoContainerRecord
+	}
+	var forgotten checkrun.ForgottenContainer
+	if err == nil {
+		forgotten, err = (&checkrun.Coordinator{Store: app.Store}).ForgetForeignContainer(request.Context(), jobID)
+	}
+	switch {
+	case err == nil:
+		if forgotten.DockerUnavailable != nil {
+			logFailure(request, "Docker daemon identity read while forgetting a check container", forgotten.DockerUnavailable)
+		}
+		app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_container_forgotten", http.StatusSeeOther)
+	case errors.Is(err, checkrun.ErrNoContainerRecord):
+		refuse(webui.Error("", webui.MsgCCContainerMissing), http.StatusNotFound)
+	case errors.Is(err, checkrun.ErrContainerOnCurrentDaemon):
+		refuse(webui.Error("", webui.MsgCCContainerCurrentDaemon), http.StatusConflict)
+	case errors.Is(err, state.ErrCheckContainerJobActive):
+		refuse(webui.Error("", webui.MsgCCContainerJobActive), http.StatusConflict)
+	case errors.Is(err, state.ErrCheckContainerRecordChanged):
+		refuse(webui.Error("", webui.MsgCCContainerChanged), http.StatusConflict)
+	default:
+		refuse(webui.Error("", webui.MsgCCFailed), unavailable(request, "check container record removal", err))
+	}
+}
+
 func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, result configuredChecksState, status int) {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
 	self := configuredChecksURL(stored.ID)
@@ -334,6 +391,18 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 				page.ActiveRunnerTokens++
 			}
 		}
+	}
+
+	leftovers, err := app.Store.FinishedCheckContainers(request.Context(), stored.ID, maximumBrowserJobs)
+	if err != nil {
+		logFailure(request, "leftover check container read", err)
+		page.LeftoverUnavailable = true
+	}
+	for _, record := range leftovers {
+		page.LeftoverContainers = append(page.LeftoverContainers, webui.CheckContainerRow{
+			JobID: record.JobID, JobURL: configuredCheckJobURL(self, record.JobID),
+			ContainerName: record.ContainerName, ContainerID: record.ContainerID, DaemonID: record.DaemonID, CreatedAt: record.CreatedAt,
+		})
 	}
 
 	jobs, err := app.Store.LatestCheckJobs(request.Context(), stored.ID, maximumBrowserJobs+1)

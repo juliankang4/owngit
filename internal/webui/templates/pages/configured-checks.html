@@ -458,6 +458,53 @@
     {{end}}
   </section>
 
+  {{/* Records that could not be read are not an empty list, and no list
+       shows while nothing is left over. */}}
+  {{if $p.LeftoverUnavailable}}
+    <section class="sec" aria-labelledby="cc-leftover-h">
+      <div class="sec__bar"><h2 id="cc-leftover-h">{{bi $lang "cc.leftover.title"}}</h2></div>
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.leftover.unavailable"}}</span></p>
+    </section>
+  {{else if $p.LeftoverContainers}}
+    <section class="sec" aria-labelledby="cc-leftover-h">
+      <div class="sec__bar">
+        <h2 id="cc-leftover-h">{{bi $lang "cc.leftover.title"}}</h2>
+        <span class="sec__n">{{biCount $lang "item" (len $p.LeftoverContainers)}}</span>
+      </div>
+      <p class="f__help">{{bi $lang "cc.leftover.help"}}</p>
+      {{range $p.LeftoverContainers}}
+        {{/* Each record has its own scope, so a refusal marks only the form
+             that was sent. */}}
+        {{$scope := printf "%s-%s" forgetJobAction .JobID}}{{$fn := forAction $pending $scope $n}}
+        <div class="card">
+          <dl class="kv">
+            <div><dt>{{bi $lang "cc.leftover.job"}}</dt><dd><a class="mono" href="{{.JobURL}}">{{.JobID}}</a></dd></div>
+            <div><dt>{{bi $lang "cc.leftover.name"}}</dt><dd class="mono">{{.ContainerName}}</dd></div>
+            <div><dt>{{bi $lang "cc.leftover.id"}}</dt><dd>{{with .ContainerID}}<span class="mono">{{.}}</span>{{else}}{{bi $lang "cc.leftover.no_id"}}{{end}}</dd></div>
+            <div><dt>{{bi $lang "cc.leftover.daemon"}}</dt><dd class="mono">{{.DaemonID}}</dd></div>
+            <div><dt>{{bi $lang "cc.leftover.label"}}</dt><dd class="mono">com.owngit.check-job={{.JobID}}</dd></div>
+            <div><dt>{{bi $lang "cc.leftover.created"}}</dt><dd>{{biRelative $lang $.Chrome.Now .CreatedAt}}</dd></div>
+          </dl>
+          <form class="form" method="post" action="{{$p.SubmitURL}}">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <input type="hidden" name="action" value="{{forgetJobAction}}">
+            <input type="hidden" name="job_id" value="{{.JobID}}">
+            <div class="f">
+              <label class="check">
+                <input type="checkbox" name="container_removed" value="1" required
+                       {{template "fieldInvalid" dict "Notices" $fn "Scope" $scope "Field" "container_removed"}}>
+                <span class="check__t">{{bi $lang "cc.leftover.removed"}}</span>
+              </label>
+              {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $scope "Field" "container_removed"}}
+            </div>
+            {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" $scope "ID" (printf "forget-pw-%s" .JobID)}}
+            <div class="actions"><button type="submit" class="btn btn--danger">{{bi $lang "cc.leftover.forget"}}</button></div>
+          </form>
+        </div>
+      {{end}}
+    </section>
+  {{end}}
+
   <p class="ev__note ccmanual">{{bi $lang "cc.manual_helper"}}{{with $p.TasksURL}} <a href="{{.}}">{{bi $lang "tasks.tab"}}</a>{{end}}</p>
 {{end}}
 </div>

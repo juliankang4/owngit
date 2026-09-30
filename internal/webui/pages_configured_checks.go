@@ -127,6 +127,12 @@ type ConfiguredChecksPage struct {
 	// section says so instead of rendering an empty list that reads as "none".
 	JobsUnavailable bool
 
+	// LeftoverContainers are the container cleanup records of finished jobs
+	// (CheckContainerRow), and LeftoverUnavailable is true when they could
+	// not be read.
+	LeftoverContainers  []CheckContainerRow
+	LeftoverUnavailable bool
+
 	// CheckFile is what the default branch currently holds at the check file
 	// path.
 	CheckFile CheckFileView
