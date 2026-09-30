@@ -197,14 +197,14 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 }
 
 // admissionStop reports an admission step that failed because the run's
-// context ended (its deadline passed or it was cancelled) as that stop, so
-// the client gets the time limit or the cancellation instead of a state or
-// internal failure. It returns nil for any other failure, including one that
-// is already classified. No run is recorded yet, so there is nothing to
-// finish.
+// context ended (its deadline passed or it was cancelled; see stoppedBy) as
+// that stop, so the client gets the time limit or the cancellation instead of
+// a state or internal failure. It returns nil for any other failure,
+// including one that is already classified. No run is recorded yet, so there
+// is nothing to finish.
 func admissionStop(ctx context.Context, err error) *Problem {
 	var problem *Problem
-	if ctx.Err() == nil || !errors.Is(err, ctx.Err()) || errors.As(err, &problem) {
+	if !stoppedBy(ctx, err) || errors.As(err, &problem) {
 		return nil
 	}
 	return stoppedProblem(ctx, "during admission", err)

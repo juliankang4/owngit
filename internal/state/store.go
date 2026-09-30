@@ -2556,3 +2556,15 @@ func equalHash(left, right []byte) bool {
 	}
 	return different == 0
 }
+
+// StoppedByContext reports whether err is how the database answers work its
+// context stopped when the answer does not carry the context's error: SQLite
+// reports a statement interrupted for the context as SQLITE_INTERRUPT, and
+// database/sql reports a transaction it rolled back for the context as
+// sql.ErrTxDone. Only a caller whose context has ended may take either for
+// that end.
+func StoppedByContext(err error) bool {
+	const sqliteInterrupt = 9
+	var sqliteErr sqliteCodeError
+	return errors.Is(err, sql.ErrTxDone) || (errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteInterrupt)
+}

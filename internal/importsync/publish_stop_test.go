@@ -2,6 +2,7 @@ package importsync
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -68,6 +69,50 @@ func TestStoppedStageFailureKeepsGenuineStateFailures(t *testing.T) {
 	} {
 		if got := problemCode(stoppedStageFailure(tc.ctx, "publishing", tc.err)); got != tc.want {
 			t.Errorf("%s: code=%s want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+// sqliteResult is an error with a SQLite result code, as the driver reports.
+type sqliteResult int
+
+func (code sqliteResult) Error() string { return fmt.Sprintf("sqlite result (%d)", int(code)) }
+func (code sqliteResult) Code() int     { return int(code) }
+
+// A state read that the run's stop cut is that stop even when the database
+// answers without the context's error: SQLite reports an interrupted
+// statement, and database/sql a transaction it already rolled back. This
+// holds at admission and in a later stage; the read gets the run's context
+// already ended, and the context is live or a write for comparison.
+func TestStateReadCutByTheRunsStopIsTheStop(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	expired := newHookDeadline()
+	close(expired.done)
+	for _, answer := range []error{sqliteResult(9), sql.ErrTxDone} {
+		failure := fmt.Errorf("read: %w", answer)
+		for _, stop := range []struct {
+			ctx  context.Context
+			want string
+		}{{cancelled, CodeCancelled}, {expired, CodeLimit}} {
+			if got := admissionStop(stop.ctx, failure); got == nil || got.Code != stop.want {
+				t.Errorf("admission read %v after %v: %v", answer, stop.ctx.Err(), got)
+			}
+			read := runStateReadProblem("the repository's kept history and default branch protection could not be read", failure)
+			if got := problemCode(stoppedStageFailure(stop.ctx, "fetching", read)); got != stop.want {
+				t.Errorf("stage read %v after %v: %s", answer, stop.ctx.Err(), got)
+			}
+			write := newProblem(CodeStateUnavailable, "import run stage could not be recorded", failure)
+			if got := problemCode(stoppedStageFailure(stop.ctx, "fetching", write)); got != CodeStateUnavailable {
+				t.Errorf("stage write %v after %v: %s", answer, stop.ctx.Err(), got)
+			}
+		}
+		live := context.Background()
+		if got := admissionStop(live, failure); got != nil {
+			t.Errorf("admission read %v while live: %v", answer, got)
+		}
+		if got := problemCode(stoppedStageFailure(live, "fetching", runStateReadProblem("read", failure))); got != CodeStateUnavailable {
+			t.Errorf("stage read %v while live: %s", answer, got)
 		}
 	}
 }

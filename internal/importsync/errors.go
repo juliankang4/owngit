@@ -139,16 +139,24 @@ func stoppedProblem(ctx context.Context, stage string, cause error) *Problem {
 	return cancellationProblem(ctx, "import stopped "+stage, cause)
 }
 
+// stoppedBy reports whether err is a failure of work done with ctx that the
+// end of ctx caused: after ctx ended, err carries its error, or it is the
+// database's answer to a statement or transaction that ctx stopped, which does
+// not carry it (state.StoppedByContext).
+func stoppedBy(ctx context.Context, err error) bool {
+	return ctx.Err() != nil && (errors.Is(err, ctx.Err()) || state.StoppedByContext(err))
+}
+
 // stoppedStageFailure reports a local Git failure that the run's own
 // cancellation or deadline caused as that stop, the same way the transfer
 // stage does, instead of as bad content. A state database failure is
-// reclassified only when it is a run-context read (runStateReadProblem) whose
-// own cause is the run's context error; any other state failure, including a
+// reclassified only when it is a run-context read (runStateReadProblem) that
+// the run's stop cut (stoppedBy); any other state failure, including a
 // bookkeeping write joined with the stop's error, stays state_unavailable.
-// A failure that does not carry the context error is unchanged, and
+// A failure that does not carry a context error is unchanged, and
 // publication outcomes such as unresolved are never reclassified.
 func stoppedStageFailure(ctx context.Context, stage string, err error) error {
-	if err == nil || ctx.Err() == nil || !(errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) {
+	if err == nil || ctx.Err() == nil {
 		return err
 	}
 	problem := &Problem{Code: CodeUnclassified}
@@ -157,9 +165,11 @@ func stoppedStageFailure(ctx context.Context, stage string, err error) error {
 	// An unsupported destination can be one whose HEAD a stopped Git read
 	// could not show, so it is a stop too when it carries the stop's error.
 	case CodeIndexFailed, CodeVerifyFailed, CodePublishFailed, CodeRepositoryMissing, CodeNetwork, CodeProtocol, CodeUnsupported, CodeUnclassified:
-		return stoppedProblem(ctx, "while "+stage, err)
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return stoppedProblem(ctx, "while "+stage, err)
+		}
 	case CodeStateUnavailable:
-		if problem.runRead && errors.Is(problem.Cause, ctx.Err()) {
+		if problem.runRead && stoppedBy(ctx, problem.Cause) {
 			return stoppedProblem(ctx, "while "+stage, err)
 		}
 	}
