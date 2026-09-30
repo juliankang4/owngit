@@ -280,6 +280,20 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 	if content := format11Content(blank()); content != "" {
 		t.Fatalf("empty records need format 11: %s", content)
 	}
+	// Import history of HEAD, branches and tags, with kept-history refs, is
+	// what format 10 readers accept.
+	oid := strings.Repeat("a", 40)
+	history := blank()
+	history.ImportObservations = []ImportObservationManifest{{RefName: state.ImportHeadRef}, {RefName: "refs/heads/main"}, {RefName: "refs/tags/v1"}}
+	history.ImportIntents = []ImportIntentManifest{{
+		Expected: map[string]string{"refs/heads/main": oid, "refs/owngit/retained/heads/" + oid: ""},
+		Desired:  map[string]string{"refs/heads/main": strings.Repeat("b", 40), "refs/owngit/retained/heads/" + oid: oid},
+		Observed: map[string]string{"refs/heads/main": strings.Repeat("b", 40)},
+		Retained: map[string]string{"refs/owngit/retained/heads/" + oid: oid},
+	}}
+	if content := format11Content(history); content != "" {
+		t.Fatalf("branch and tag import history needs format 11: %s", content)
+	}
 	until := time.Unix(1_800_000_000, 0)
 	helper := state.Actor{Kind: state.ActorAccess}
 	for name, edit := range map[string]func(*Manifest){
@@ -297,6 +311,15 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		"overwrite diverged":        func(m *Manifest) { m.ImportSources[0].OverwriteDiverged = true },
 		"follow upstream deletions": func(m *Manifest) { m.ImportSources[0].FollowUpstreamDeletions = true },
 		"import extra refs":         func(m *Manifest) { m.ImportSources[0].ExtraRefPrefixes = []string{"refs/notes/"} },
+		"extra namespace observation": func(m *Manifest) {
+			m.ImportObservations = []ImportObservationManifest{{RefName: "refs/notes/commits"}}
+		},
+		"extra namespace intent": func(m *Manifest) {
+			m.ImportIntents = []ImportIntentManifest{{Observed: map[string]string{"refs/notes/commits": strings.Repeat("a", 40)}}}
+		},
+		"deletion intent": func(m *Manifest) {
+			m.ImportIntents = []ImportIntentManifest{{Expected: map[string]string{"refs/heads/gone": strings.Repeat("a", 40)}, Desired: map[string]string{"refs/heads/gone": ""}}}
+		},
 	} {
 		manifest := blank()
 		edit(&manifest)

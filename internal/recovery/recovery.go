@@ -1873,7 +1873,38 @@ func format11Content(manifest Manifest) string {
 			return "an import refresh option"
 		}
 	}
+	// Import history outlives the choices that made it: refs of an extra
+	// namespace and deletions stay recorded after the namespace is removed
+	// or following deletions is turned off, and format 10 readers accept
+	// only HEAD, branches and tags, and no deletion.
+	for _, observation := range manifest.ImportObservations {
+		if !format10ImportRef(observation.RefName) {
+			return "an import record outside branches and tags"
+		}
+	}
+	for _, intent := range manifest.ImportIntents {
+		for _, refs := range []map[string]string{intent.Expected, intent.Desired, intent.Observed} {
+			for ref := range refs {
+				if _, retained := intent.Retained[ref]; !retained && !format10ImportRef(ref) {
+					return "an import record outside branches and tags"
+				}
+			}
+		}
+		for _, desired := range intent.Desired {
+			if desired == "" {
+				return "an import deletion"
+			}
+		}
+	}
 	return ""
+}
+
+// format10ImportRef reports whether a format 10 reader accepts name in an
+// import record: HEAD, a branch or a tag.
+func format10ImportRef(name string) bool {
+	return name == state.ImportHeadRef ||
+		len(name) > len("refs/heads/") && strings.HasPrefix(name, "refs/heads/") ||
+		len(name) > len("refs/tags/") && strings.HasPrefix(name, "refs/tags/")
 }
 
 func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
