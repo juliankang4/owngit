@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -339,7 +342,101 @@ func TestCommittedImportChangeWarnsWhenStatusIsUnavailable(t *testing.T) {
 			if err != nil || printed != test.printed || warned != test.warning {
 				t.Fatalf("output=%q warning=%q err=%v", printed, warned, err)
 			}
+			// With --json the answer, status_error included, is the result
+			// on standard output, and nothing else is printed.
+			warned, err = captureStderr(func() error {
+				var runErr error
+				printed, runErr = captureStdout(func() error {
+					return importCommand(append(test.arguments, "--json", "--server", server.URL, "--accept-insecure-http", "--password-file", passwordPath))
+				})
+				return runErr
+			})
+			if err != nil || !sameJSON(printed, test.response) || warned != "" {
+				t.Fatalf("JSON output=%q warning=%q err=%v", printed, warned, err)
+			}
 		})
+	}
+}
+
+// sameJSON reports whether two JSON texts hold the same value.
+func sameJSON(got, want string) bool {
+	var gotValue, wantValue any
+	return json.Unmarshal([]byte(got), &gotValue) == nil && json.Unmarshal([]byte(want), &wantValue) == nil && reflect.DeepEqual(gotValue, wantValue)
+}
+
+// Each import command prints the server's answer with --json, the same facts
+// its text states, and a refusal stays a coded error.
+func TestImportCommandsPrintJSON(t *testing.T) {
+	root := t.TempDir()
+	passwordPath := writePrivateTestFile(t, filepath.Join(root, "admin"), "admin-password\n")
+	tokenPath := writePrivateTestFile(t, filepath.Join(root, "token"), "json-secret-token\n")
+	fixture := startImportCLIServer(t)
+	remote := []string{"--json", "--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+	runJSON := func(arguments ...string) (string, map[string]any) {
+		t.Helper()
+		printed, err := captureStdout(func() error { return importCommand(append(arguments, remote...)) })
+		var answer map[string]any
+		if err != nil || json.Unmarshal([]byte(printed), &answer) != nil || answer["ok"] != true {
+			t.Fatalf("%v output=%q err=%v", arguments, printed, err)
+		}
+		return printed, answer
+	}
+
+	_, added := runJSON("add", "private", "https://example.invalid/team/private.git", "--token-file", tokenPath)
+	if run, _ := added["run"].(map[string]any); run["status"] != "complete" || added["repository_id"] != "private" {
+		t.Fatalf("add answer %v", added)
+	}
+	_, refreshed := runJSON("refresh", fixture.repositoryID)
+	if run, _ := refreshed["run"].(map[string]any); run["status"] != "complete" {
+		t.Fatalf("refresh answer %v", refreshed)
+	}
+	_, history := runJSON("history", fixture.repositoryID)
+	if runs, _ := history["runs"].([]any); len(runs) != 1 {
+		t.Fatalf("history answer %v", history)
+	}
+	_, enabled := runJSON("schedule", fixture.repositoryID, "--enable", "--interval", "2h")
+	if enabled["enabled"] != true || enabled["interval_seconds"] != float64(7200) {
+		t.Fatalf("schedule answer %v", enabled)
+	}
+	if _, disabled := runJSON("schedule", fixture.repositoryID, "--disable"); disabled["enabled"] != false {
+		t.Fatalf("schedule disable answer %v", disabled)
+	}
+	if _, cancelled := runJSON("cancel", fixture.repositoryID); cancelled["cancelled"] != false {
+		t.Fatalf("cancel answer %v", cancelled)
+	}
+	printed, stored := runJSON("credentials", fixture.repositoryID, "--token-file", tokenPath)
+	if stored["credential_form"] != "bearer" || strings.Contains(printed, "json-secret-token") {
+		t.Fatalf("credentials answer %q", printed)
+	}
+	if _, cleared := runJSON("credentials", fixture.repositoryID, "--clear"); cleared["credential_form"] != "none" || cleared["credential_bound"] != false {
+		t.Fatalf("credentials clear answer %v", cleared)
+	}
+
+	printed, err := captureStdout(func() error { return importCommand(append([]string{"resolve", fixture.repositoryID}, remote...)) })
+	var reported strings.Builder
+	if printed != "" || reportError(&reported, err) != 1 || !strings.Contains(reported.String(), `"ok":false`) || !strings.Contains(reported.String(), "no unresolved publication") {
+		t.Fatalf("refused resolve output=%q reported=%q err=%v", printed, reported.String(), err)
+	}
+}
+
+// With --json a run still ends with the exit status of its outcome.
+func TestImportRunJSONKeepsTheExitStatus(t *testing.T) {
+	for _, test := range []struct {
+		answer string
+		code   int
+	}{
+		{`{"ok":true,"code":"cancelled","run":{"status":"cancelled"},"status":null}`, importCancelledExit},
+		{`{"ok":true,"run":{"status":"complete","refs_divergent":1},"status":{"refs":[{"name":"refs/heads/main","state":"diverged"}]}}`, importDivergedExit},
+		{`{"ok":true,"run":{"status":"complete","refs_divergent":0},"status":{"refs":[]}}`, 0},
+	} {
+		output, err := captureStdout(func() error { return printImportRun("project", []byte(test.answer), true) })
+		code := 0
+		if err != nil {
+			code = reportError(io.Discard, err)
+		}
+		if code != test.code || !sameJSON(output, test.answer) {
+			t.Fatalf("answer %s output=%q exit=%d err=%v", test.answer, output, code, err)
+		}
 	}
 }
 
@@ -359,7 +456,7 @@ func TestImportRunSaysWhenRefNamesCouldNotBeRead(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := captureStdout(func() error {
-				return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":2},"status":`+test.status+`}`))
+				return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":2},"status":`+test.status+`}`), false)
 			})
 			var exit *checkExit
 			if !errors.As(err, &exit) || exit.code != importDivergedExit || output != test.want {
@@ -372,7 +469,7 @@ func TestImportRunSaysWhenRefNamesCouldNotBeRead(t *testing.T) {
 // A cancelled run used to print its outcome and exit 0, as if it had finished.
 func TestCancelledImportRunExitsWithTheCancelledStatus(t *testing.T) {
 	output, err := captureStdout(func() error {
-		return printImportRun("project", []byte(`{"ok":false,"code":"cancelled","run":{"status":"cancelled"}}`))
+		return printImportRun("project", []byte(`{"ok":false,"code":"cancelled","run":{"status":"cancelled"}}`), false)
 	})
 	var exit *checkExit
 	if !errors.As(err, &exit) || exit.code != importCancelledExit || output != "Import for project was cancelled.\n" {
@@ -384,7 +481,7 @@ func TestCancelledImportRunExitsWithTheCancelledStatus(t *testing.T) {
 // completes, and the output says why the cancellation had no effect.
 func TestLateCancellationOfAPublishedImportIsExplained(t *testing.T) {
 	output, err := captureStdout(func() error {
-		return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":0,"cancel_requested_at":"2026-01-01T00:00:00Z"},"status":{"refs":[]}}`))
+		return printImportRun("project", []byte(`{"ok":true,"run":{"status":"complete","refs_divergent":0,"cancel_requested_at":"2026-01-01T00:00:00Z"},"status":{"refs":[]}}`), false)
 	})
 	if err != nil || output != "Import for project finished: complete.\nThe cancellation arrived after the import was published, so it did not stop it.\n" {
 		t.Fatalf("late cancel output=%q err=%v", output, err)
@@ -422,7 +519,7 @@ func TestUnusableImportCredentialFileIsAStructuredError(t *testing.T) {
 func TestImportOutputReportsRefsThatDifferFromTheSource(t *testing.T) {
 	runResult := `{"ok":true,"run":{"status":"complete","refs_divergent":2,"refs_deleted_upstream":1},
 		"status":{"refs":[{"name":"refs/heads/main","state":"diverged"},{"name":"refs/tags/v1","state":"deleted_at_source"},{"name":"refs/tags/v2","state":"tracked"}]}}`
-	output, err := captureStdout(func() error { return printImportRun("project", []byte(runResult)) })
+	output, err := captureStdout(func() error { return printImportRun("project", []byte(runResult), false) })
 	var exit *checkExit
 	if !errors.As(err, &exit) || exit.code != importDivergedExit {
 		t.Fatalf("divergent run err=%v", err)
@@ -433,7 +530,7 @@ func TestImportOutputReportsRefsThatDifferFromTheSource(t *testing.T) {
 		}
 	}
 	clean := `{"ok":true,"run":{"status":"complete","refs_divergent":0},"status":{"refs":[]}}`
-	if output, err := captureStdout(func() error { return printImportRun("project", []byte(clean)) }); err != nil || output != "Import for project finished: complete.\n" {
+	if output, err := captureStdout(func() error { return printImportRun("project", []byte(clean), false) }); err != nil || output != "Import for project finished: complete.\n" {
 		t.Fatalf("clean run output=%q err=%v", output, err)
 	}
 

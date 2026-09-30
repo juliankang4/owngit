@@ -60,16 +60,17 @@ func importCommand(arguments []string) error {
 
 func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit import <add|configure|refresh|status|history|cancel|schedule|credentials|resolve> [options]")
-	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH] [source options]")
+	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH] [source options] [--json]")
 	fmt.Fprintln(writer, "  import configure <name> [source options] [--json]   change the connection options, limits and refresh choices of a source")
-	fmt.Fprintln(writer, "  import refresh <name>")
+	fmt.Fprintln(writer, "  import refresh <name> [--json]")
 	fmt.Fprintln(writer, "  import status <name> [--json]")
-	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW]")
-	fmt.Fprintln(writer, "  import cancel <name>")
-	fmt.Fprintln(writer, "  import schedule <name> --enable --interval 1h | --disable")
-	fmt.Fprintln(writer, "  import credentials <name> [--token-file PATH | --basic-file PATH] [--ca-file PATH]")
-	fmt.Fprintln(writer, "  import credentials <name> --clear")
-	fmt.Fprintln(writer, "  import resolve <name>   accept the repository as it is after an unresolved publication")
+	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW] [--json]")
+	fmt.Fprintln(writer, "  import cancel <name> [--json]")
+	fmt.Fprintln(writer, "  import schedule <name> --enable --interval 1h | --disable [--json]")
+	fmt.Fprintln(writer, "  import credentials <name> [--token-file PATH | --basic-file PATH] [--ca-file PATH] [--json]")
+	fmt.Fprintln(writer, "  import credentials <name> --clear [--json]")
+	fmt.Fprintln(writer, "  import resolve <name> [--json]   accept the repository as it is after an unresolved publication")
+	fmt.Fprintln(writer, "With --json a command prints the server's answer as JSON; the exit status is the same as without it.")
 	fmt.Fprintln(writer, "Credentials are read from a private file or an interactive prompt, never from arguments or the environment.")
 	fmt.Fprintln(writer, "Source options:")
 	fmt.Fprintln(writer, "  --allow-plain-http[=false]              use an http:// source; its code and credentials can be read or changed in transit")
@@ -136,6 +137,7 @@ func importAdd(arguments []string) error {
 	basicFile := flags.String("basic-file", "", "private file containing a username and password on separate lines")
 	caFile := flags.String("ca-file", "", "PEM file containing source trust anchors")
 	options := addImportOptionFlags(flags)
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -163,7 +165,7 @@ func importAdd(arguments []string) error {
 	if *tokenFile != "" || *basicFile != "" {
 		form, username, password, token, err := readImportCredential(*tokenFile, *basicFile)
 		if err != nil {
-			return err
+			return jsonFailure(*asJSON, "invalid_arguments", err)
 		}
 		body["credential_form"] = form
 		body["username"] = username
@@ -185,11 +187,11 @@ func importAdd(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return printImportRun(flags.Arg(0), content)
+	return printImportRun(flags.Arg(0), content, *asJSON)
 }
 
 func importRefresh(arguments []string) error {
-	name, remote, err := parseNamedImport("import refresh", arguments)
+	name, remote, asJSON, err := parseNamedImport("import refresh", arguments)
 	if err != nil {
 		return err
 	}
@@ -205,7 +207,7 @@ func importRefresh(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return printImportRun(name, content)
+	return printImportRun(name, content, asJSON)
 }
 
 // importRunClientTimeout bounds one synchronous import run request. It is
@@ -384,6 +386,7 @@ func importHistory(arguments []string) error {
 	remote := addImportFlags(flags)
 	limit := flags.Int("limit", 20, "print at most `N` runs")
 	cursor := flags.Int64("cursor", 0, "print runs older than this `ROW`, as named by the previous page")
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -419,6 +422,9 @@ func importHistory(arguments []string) error {
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import history could not be read.")
 	}
+	if *asJSON {
+		return printIndentedJSON(content)
+	}
 	if len(response.Runs) == 0 {
 		fmt.Println("No import runs.")
 		return nil
@@ -433,7 +439,7 @@ func importHistory(arguments []string) error {
 }
 
 func importCancel(arguments []string) error {
-	name, remote, err := parseNamedImport("import cancel", arguments)
+	name, remote, asJSON, err := parseNamedImport("import cancel", arguments)
 	if err != nil {
 		return err
 	}
@@ -455,6 +461,9 @@ func importCancel(arguments []string) error {
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import cancellation could not be read.")
 	}
+	if asJSON {
+		return printIndentedJSON(content)
+	}
 	if response.Cancelled {
 		fmt.Printf("Cancellation requested for %s.\n", name)
 		return nil
@@ -466,7 +475,7 @@ func importCancel(arguments []string) error {
 // importResolve accepts the repository as it is after an unresolved
 // publication. The server writes no ref; it records the accepted state.
 func importResolve(arguments []string) error {
-	name, remote, err := parseNamedImport("import resolve", arguments)
+	name, remote, asJSON, err := parseNamedImport("import resolve", arguments)
 	if err != nil {
 		return err
 	}
@@ -489,6 +498,9 @@ func importResolve(arguments []string) error {
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import resolution could not be read.")
 	}
+	if asJSON {
+		return printIndentedJSON(content)
+	}
 	fmt.Printf("Accepted the current state of %s for %d unresolved publication intent(s). No ref was changed; the next refresh plans from the repository as it is.\n", name, len(response.Resolved))
 	response.StatusError.warn(name)
 	return nil
@@ -500,6 +512,7 @@ func importSchedule(arguments []string) error {
 	enable := flags.Bool("enable", false, "enable scheduled refresh")
 	disable := flags.Bool("disable", false, "disable scheduled refresh")
 	interval := flags.String("interval", "", "schedule interval, for example 1h")
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -534,6 +547,9 @@ func importSchedule(arguments []string) error {
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import schedule could not be read.")
 	}
+	if *asJSON {
+		return printIndentedJSON(content)
+	}
 	if response.Enabled {
 		fmt.Printf("Scheduled refresh enabled for %s, interval %s.\n", flags.Arg(0), time.Duration(response.IntervalSeconds)*time.Second)
 		return nil
@@ -549,6 +565,7 @@ func importCredentials(arguments []string) error {
 	basicFile := flags.String("basic-file", "", "private file containing a username and password on separate lines")
 	caFile := flags.String("ca-file", "", "PEM file containing source trust anchors")
 	clear := flags.Bool("clear", false, "remove the stored credential and source CA")
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -572,7 +589,7 @@ func importCredentials(arguments []string) error {
 		if *tokenFile != "" || *basicFile != "" || *caFile == "" {
 			form, username, password, token, err := readImportCredential(*tokenFile, *basicFile)
 			if err != nil {
-				return err
+				return jsonFailure(*asJSON, "invalid_arguments", err)
 			}
 			body = map[string]any{"form": form, "username": username, "password": password, "token": token}
 		}
@@ -609,6 +626,9 @@ func importCredentials(arguments []string) error {
 	}
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import credential state could not be read.")
+	}
+	if *asJSON {
+		return printIndentedJSON(content)
 	}
 	if response.StatusError != nil {
 		fmt.Printf("The credential change for %s was saved.\n", flags.Arg(0))
@@ -848,25 +868,27 @@ func printImportOptions(options *importsync.OptionsStatus) {
 	fmt.Println("Changed limits: " + strings.Join(changed, ", "))
 }
 
+// printIndentedJSON prints a server answer, which the caller has already
+// read, as the command's JSON result.
 func printIndentedJSON(content []byte) error {
 	var indented bytes.Buffer
 	if err := json.Indent(&indented, content, "", "  "); err != nil {
 		return cliProblem("invalid_response", "The response could not be read.")
 	}
-	fmt.Println(indented.String())
-	return nil
+	return writeJSON(indented.Bytes())
 }
 
-func parseNamedImport(name string, arguments []string) (string, *importFlags, error) {
+func parseNamedImport(name string, arguments []string) (string, *importFlags, bool, error) {
 	flags := newCommandFlagSet(name)
 	remote := addImportFlags(flags)
+	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
-		return "", nil, err
+		return "", nil, false, err
 	}
 	if flags.NArg() != 1 {
-		return "", nil, cliProblem("invalid_arguments", name+" requires <name>.")
+		return "", nil, false, cliProblem("invalid_arguments", name+" requires <name>.")
 	}
-	return flags.Arg(0), remote, nil
+	return flags.Arg(0), remote, *asJSON, nil
 }
 
 func parseImportFlags(flags *flag.FlagSet, arguments []string) error {
@@ -1086,7 +1108,11 @@ func (problem *importStatusError) warn(name string) {
 	fmt.Fprintf(os.Stderr, "Warning: the import status after the change could not be read (%s). Check it with owngit import status %s.\n", problem.Message, name)
 }
 
-func printImportRun(name string, content []byte) error {
+// printImportRun prints the result of an import or refresh run, as text or
+// with asJSON as the server's answer. Either way a cancelled run, and a
+// finished run that kept refs differing from the source, end with their own
+// exit status.
+func printImportRun(name string, content []byte, asJSON bool) error {
 	var response struct {
 		Code string `json:"code"`
 		Run  struct {
@@ -1104,10 +1130,25 @@ func printImportRun(name string, content []byte) error {
 	if err := json.Unmarshal(content, &response); err != nil {
 		return cliProblem("invalid_response", "Import run result could not be read.")
 	}
+	cancelled := response.Code == "cancelled"
+	divergent := response.Run.RefsDivergent
+	var exit error
+	switch {
+	case cancelled:
+		exit = &checkExit{code: importCancelledExit, err: errors.New("the import was cancelled")}
+	case divergent > 0:
+		exit = &checkExit{code: importDivergedExit, err: errors.New("refs differ from the import source")}
+	}
+	if asJSON {
+		if err := printIndentedJSON(content); err != nil {
+			return err
+		}
+		return exit
+	}
 	response.StatusError.warn(name)
-	if response.Code == "cancelled" {
+	if cancelled {
 		fmt.Printf("Import for %s was cancelled.\n", name)
-		return &checkExit{code: importCancelledExit, err: errors.New("the import was cancelled")}
+		return exit
 	}
 	fmt.Printf("Import for %s finished: %s.\n", name, response.Run.Status)
 	if response.Run.Status == "complete" && response.Run.CancelRequestedAt != nil {
@@ -1116,7 +1157,6 @@ func printImportRun(name string, content []byte) error {
 	if deleted := response.Run.RefsDeletedUpstream; deleted > 0 {
 		fmt.Printf("%d %s deleted at the source and kept here.\n", deleted, plural(deleted, "ref was", "refs were"))
 	}
-	divergent := response.Run.RefsDivergent
 	if divergent == 0 {
 		return nil
 	}
@@ -1145,7 +1185,7 @@ func printImportRun(name string, content []byte) error {
 			fmt.Printf("  %d not named here because the ref names could not be read in full. List them with owngit import status %s.\n", divergent-listed, name)
 		}
 	}
-	return &checkExit{code: importDivergedExit, err: errors.New("refs differ from the import source")}
+	return exit
 }
 
 func plural(count int64, one, many string) string {
