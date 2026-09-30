@@ -685,3 +685,29 @@ func TestHEADCannotMoveWhileRefsAreDeleted(t *testing.T) {
 		})
 	}
 }
+
+// A ref renamed here into a folder spelled in another case, such as
+// refs/Notes for refs/notes/, is not the observed ref: following deletions
+// does not delete it, and the preview does not list it.
+func TestDeletionKeepsARefRenamedIntoAnotherCase(t *testing.T) {
+	f := newFixture(t)
+	oid := f.commit("one", "one\n")
+	f.git(f.source, "update-ref", "refs/notes/commits", oid)
+	f.mustImport(ImportInput{Options: OptionsChange{ExtraRefPrefixes: prefixesPointer("refs/notes/"), FollowUpstreamDeletions: boolPointer(true)}})
+	path := f.destinationPath()
+	// Renamed through a third name, so storage that ignores case renames too.
+	noErr(t, os.Rename(filepath.Join(path, "refs", "notes"), filepath.Join(path, "refs", "renaming")))
+	noErr(t, os.Rename(filepath.Join(path, "refs", "renaming"), filepath.Join(path, "refs", "Notes")))
+	if names := f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"); names != "refs/Notes/commits" {
+		t.Fatalf("setup refs = %q", names)
+	}
+	f.git(f.source, "update-ref", "-d", "refs/notes/commits")
+	_, err := f.refresh()
+	noErr(t, err)
+	if names := f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"); names != "refs/Notes/commits" {
+		t.Fatalf("after refresh refs = %q", names)
+	}
+	if effects := f.refreshEffects(); len(effects) != 0 {
+		t.Fatalf("preview = %+v", effects)
+	}
+}

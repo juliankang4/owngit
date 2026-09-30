@@ -217,6 +217,16 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 		}
 	}
+	// A deletion candidate is held to the same spelling rule: a local ref
+	// found under the candidate's name only because storage ignores case,
+	// such as refs/Notes/x for refs/notes/x, is not the observed ref.
+	var candidates []string
+	for ref := range observations.refs {
+		if _, advertised := run.selected.upstream[ref]; !advertised && importedRef(ref, run.source.ExtraRefPrefixes) {
+			candidates = append(candidates, ref)
+		}
+	}
+	candidateConflicts := repository.RefNameConflicts(existing, candidates)
 	for ref, observed := range observations.refs {
 		if _, advertised := run.selected.upstream[ref]; advertised || !importedRef(ref, run.source.ExtraRefPrefixes) {
 			continue
@@ -224,7 +234,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		plan.deletedUpstream++
 		plan.deletedRefs = append(plan.deletedRefs, ref)
 		destination := dest[ref]
-		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 || !observations.signedIn[ref] ||
+		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 || !observations.signedIn[ref] || candidateConflicts[ref] ||
 			keptLocalRef(ref, destination, destSymrefs[ref] != "", destHEAD.target, headBranch, sourceHEAD.target) ||
 			!mayReplaceLocal(run.source, observed, destination) {
 			continue
