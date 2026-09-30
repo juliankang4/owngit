@@ -37,6 +37,8 @@ func TestRenamedRepositoryAnswersAtItsNewNameAndTheOldOneLeadsThere(t *testing.T
 	server, client, jar := openBrowser(t, fixture)
 	oldClone := filepath.Join(t.TempDir(), "old")
 	apiRunGit(t, "", "clone", "-q", server.URL+"/git/project.git", oldClone)
+	apiRunGit(t, oldClone, "config", "user.name", "API Test")
+	apiRunGit(t, oldClone, "config", "user.email", "api-test@example.invalid")
 
 	// The Settings tab offers the rename to an administrator, and the POST
 	// needs the session's CSRF token.
