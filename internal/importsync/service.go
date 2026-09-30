@@ -1041,9 +1041,9 @@ type RefreshEffect struct {
 	// source had when it was last observed.
 	LocalChanged bool `json:"local_changed"`
 	// History is "kept" when the repository's kept history keeps the local
-	// tip, "not_kept" when it does not (kept history is off, or the ref is in
-	// an extra namespace), and "unknown" when the repository's kept history
-	// setting could not be read.
+	// tip, and "not_kept" when it does not (kept history is off, or the ref
+	// is in an extra namespace). When the kept history setting cannot be
+	// read, no effect is listed and Status.RefreshEffectsUnknown is set.
 	History string `json:"history"`
 }
 
