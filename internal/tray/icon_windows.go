@@ -92,9 +92,10 @@ type app struct {
 	// address; openTarget is the proven address, or "".
 	opening    bool
 	openTarget string
-	// notifyPage is the dashboard page of the last notification shown,
-	// which a click on a notification opens.
-	notifyPage string
+	// clicked is the page a click on a notification opens. Windows says
+	// only that one of the icon's notifications was clicked, and earlier
+	// ones stay in the notification center.
+	clicked clickPages
 }
 
 type panelControls struct {
@@ -324,8 +325,8 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case wmContextMenu:
 			a.togglePanel()
 		case ninBalloonClick:
-			if a.notifyPage != "" {
-				a.openPage(a.notifyPage)
+			if a.clicked.page != "" {
+				a.openPage(a.clicked.page)
 			}
 		}
 		return 0
@@ -600,15 +601,16 @@ func (a *app) showNotification(notification server.TrayNotification) error {
 }
 
 // notify shows notification as the icon's notification, which Windows
-// shows as a toast, and keeps its page for a click. Its title and text are
-// cut to the lengths Windows takes.
+// shows as a toast, and keeps its page for a click (see clickPages). Its
+// title and text are cut to the lengths Windows takes.
 func (a *app) notify(notification *server.TrayNotification) bool {
 	if !a.iconAdded {
 		return false
 	}
 	data := a.iconData()
+	// Windows applies its own notification settings, and with Do not
+	// disturb on it keeps the notification in the notification center.
 	data.flags = nifInfo
-	data.infoFlags = niifRespectQuiet
 	body := notification.Body
 	if notification.Subtitle != "" {
 		body = notification.Subtitle + "\n" + body
@@ -620,7 +622,7 @@ func (a *app) notify(notification *server.TrayNotification) bool {
 	if call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) == 0 {
 		return false
 	}
-	a.notifyPage = notification.Path
+	a.clicked.add(*notification)
 	return true
 }
 

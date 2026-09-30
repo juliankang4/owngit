@@ -176,3 +176,31 @@ func TestDashboardPage(t *testing.T) {
 		t.Errorf("an unproven answer opened %q", page)
 	}
 }
+
+// A click that Windows cannot attribute opens a page that covers every
+// notification shown so far.
+func TestClickPagesCoverEveryNotificationShown(t *testing.T) {
+	push := func(path string) server.TrayNotification {
+		return server.TrayNotification{Kind: state.NotifyPush, Path: path}
+	}
+	pull := server.TrayNotification{Kind: state.NotifyPullRequest, Path: "/repositories/notes/pull-requests/1"}
+	for _, test := range []struct {
+		name  string
+		shown []server.TrayNotification
+		want  string
+	}{
+		{"one", []server.TrayNotification{pull}, pull.Path},
+		{"one page twice", []server.TrayNotification{push("/repositories/notes/commits?ref=main"), push("/repositories/notes/commits?ref=main")}, "/repositories/notes/commits?ref=main"},
+		{"pushes", []server.TrayNotification{push("/repositories/notes/commits?ref=main"), push("/repositories/household/commits?ref=main"), push("/activity")}, "/activity"},
+		{"pushes and a pull request", []server.TrayNotification{push("/repositories/notes/commits?ref=main"), push("/activity"), pull}, "/"},
+		{"a pull request, then pushes", []server.TrayNotification{pull, push("/activity"), push("/activity")}, "/"},
+	} {
+		var pages clickPages
+		for _, notification := range test.shown {
+			pages.add(notification)
+		}
+		if pages.page != test.want {
+			t.Errorf("%s: a click opens %q, want %q", test.name, pages.page, test.want)
+		}
+	}
+}

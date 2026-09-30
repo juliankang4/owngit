@@ -63,6 +63,28 @@ func (client *Client) DashboardPage(ctx context.Context, lang, path string) (str
 	return dashboard + path, nil
 }
 
+// clickPages is the page that a click on any of the notifications shown
+// so far opens, where Windows does not say which of them was clicked: the
+// page of them all when they share one, the activity page when they are
+// all pushes, and otherwise the dashboard's home page.
+type clickPages struct {
+	page       string
+	pushesOnly bool
+}
+
+func (pages *clickPages) add(notification server.TrayNotification) {
+	push := notification.Kind == state.NotifyPush
+	switch {
+	case pages.page == "":
+		pages.page, pages.pushesOnly = notification.Path, push
+	case pages.page == notification.Path:
+	case pages.pushesOnly && push:
+		pages.page = "/activity"
+	default:
+		pages.page, pages.pushesOnly = "/", false
+	}
+}
+
 // notifier shows the notifications of the event feed and keeps the feed's
 // cursor in the state directory once they are shown. The icon runs it after
 // each reading in which the server answered and the icon shows.

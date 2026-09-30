@@ -167,7 +167,6 @@ const (
 	nifTip             = 0x04
 	nifShowTip         = 0x80
 	nifInfo            = 0x10
-	niifRespectQuiet   = 0x80
 	mfString           = 0x0000
 	mfGrayed           = 0x0001
 	mfChecked          = 0x0008
