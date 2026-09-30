@@ -2,8 +2,17 @@
 
 package recovery
 
-import "golang.org/x/sys/unix"
+import (
+	"errors"
+
+	"golang.org/x/sys/unix"
+)
 
 func renameNoReplace(oldPath, newPath string) error {
-	return unix.RenamexNp(oldPath, newPath, unix.RENAME_EXCL)
+	err := unix.RenamexNp(oldPath, newPath, unix.RENAME_EXCL)
+	// File systems such as exFAT and FAT cannot rename exclusively.
+	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
+		return renameDirectoryOnce(oldPath, newPath, err)
+	}
+	return err
 }
