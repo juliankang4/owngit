@@ -819,3 +819,69 @@ func TestFailureBetweenTheTwoTransactionsIsUnresolved(t *testing.T) {
 		t.Fatalf("refs = %v", refs)
 	}
 }
+
+// With default branch protection on, the branch HEAD resolves to when a
+// refresh commits is never rewritten. HEAD, and each symbolic ref it
+// resolves through, cannot move while a protected rewrite is prepared, and
+// a HEAD moved onto the rewritten branch just before stops the refresh
+// before anything is written. Fast-forwards of the default branch still follow.
+func TestProtectedRewriteFollowsHEADWhereItCommits(t *testing.T) {
+	ctx := context.Background()
+	for _, test := range []string{"HEAD moved while prepared", "HEAD moved while prepared, main unchanged", "alias moved while prepared", "HEAD moved before the locks"} {
+		t.Run(test, func(t *testing.T) {
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.git(f.source, "branch", "dev")
+			f.mustImport(ImportInput{Options: OptionsChange{OverwriteDiverged: boolPointer(true)}})
+			path := f.destinationPath()
+			localDev := f.localWork("dev", "local dev\n")
+			f.git(f.source, "checkout", "--quiet", "dev")
+			sourceDev := f.commit("source dev", "source dev\n")
+			f.git(f.source, "checkout", "--quiet", "main")
+			// A write of the branch HEAD names makes Git lock HEAD itself;
+			// without one, only OwnGit's own lock holds it.
+			sourceMain := f.destinationRefs()["refs/heads/main"]
+			if test != "HEAD moved while prepared, main unchanged" {
+				sourceMain = f.commit("source main", "source main\n")
+			}
+			protect := true
+			_, err := f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+			noErr(t, err)
+			move := []string{"symbolic-ref", "HEAD", "refs/heads/dev"}
+			if test == "alias moved while prepared" {
+				f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/main")
+				f.git(path, "symbolic-ref", "HEAD", "refs/heads/local-alias")
+				move = []string{"symbolic-ref", "refs/heads/local-alias", "refs/heads/dev"}
+			}
+			if test == "HEAD moved before the locks" {
+				f.service.beforeRefTransaction = func() {
+					f.service.beforeRefTransaction = nil
+					f.git(path, move...)
+				}
+				// Nothing is written; as for any change made here during a
+				// publication, the moved HEAD leaves it for the owner.
+				if _, err := f.refresh(); err == nil || !strings.Contains(err.Error(), "the source rewrote refs/heads/dev, the protected default branch") {
+					t.Fatalf("refresh err = %v", err)
+				}
+				if refs := f.destinationRefs(); refs["refs/heads/dev"] != localDev || refs["refs/heads/main"] == sourceMain {
+					t.Fatalf("a refused refresh changed refs: %v", refs)
+				}
+				return
+			}
+			var moveErr error
+			var moveOutput []byte
+			f.service.whileRefsPrepared = func() {
+				f.service.whileRefsPrepared = nil
+				moveOutput, moveErr = exec.Command(f.gitPath, append([]string{"--git-dir", path}, move...)...).CombinedOutput()
+			}
+			_, err = f.refresh()
+			noErr(t, err)
+			if moveErr == nil || !strings.Contains(string(moveOutput), ".lock") {
+				t.Fatalf("a Git process moved HEAD during a protected rewrite: %v %s", moveErr, moveOutput)
+			}
+			if refs := f.destinationRefs(); refs["refs/heads/dev"] != sourceDev || refs["refs/heads/main"] != sourceMain {
+				t.Fatalf("refs = %v", refs)
+			}
+		})
+	}
+}

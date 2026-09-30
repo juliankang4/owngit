@@ -59,6 +59,10 @@ type publicationPlan struct {
 	skipped         []string
 	// keepHistory retains each replaced tip; see planPublication.
 	keepHistory bool
+	// rewrites are the branches the plan replaces other than by a
+	// fast-forward while default branch protection is on: publication
+	// must not apply one to the branch HEAD resolves to when it commits.
+	rewrites map[string]bool
 }
 
 // changesRefs reports whether applying the plan writes a destination ref or
@@ -132,6 +136,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	plan := &publicationPlan{
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
 		skipped: run.selected.skipped, headExpected: destHEAD, headDesired: destHEAD, keepHistory: run.writes.KeepHistory,
+		rewrites: map[string]bool{},
 	}
 	// A ref whose name or folder a file system can treat as the same as
 	// another destination ref's, the branch HEAD names, or another ref this
@@ -199,8 +204,11 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.desired[ref.Name] = upstream
 			plan.unchanged++
 		case mayReplaceLocal(run.source, observations.refs[ref.Name], destination):
-			if ref.Name == protected && !s.isAncestor(ctx, run, repositoryPath, destination, upstream) {
-				return nil, newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", ref.Name), nil)
+			if run.writes.ProtectDefaultBranch && strings.HasPrefix(ref.Name, "refs/heads/") && !s.isAncestor(ctx, run, repositoryPath, destination, upstream) {
+				if ref.Name == protected {
+					return nil, protectedRewriteProblem(ref.Name)
+				}
+				plan.rewrites[ref.Name] = true
 			}
 			plan.desired[ref.Name] = upstream
 			plan.updated++
@@ -313,6 +321,10 @@ func (s *Service) headBranch(ctx context.Context, repositoryPath string, destHEA
 		return "", newProblem(CodeDestinationChanged, "destination HEAD changed while the publication was planned", nil)
 	}
 	return terminal, nil
+}
+
+func protectedRewriteProblem(branch string) error {
+	return newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", branch), nil)
 }
 
 func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) bool {
@@ -732,13 +744,13 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		} else if err := s.authorityCurrent(ctx, run); err != nil {
 			commandErr = err
 			finalizationBlocked = true
-		} else if chain, err := s.lockHEADChainForDeletions(ctx, run, repositoryPath, plan); err != nil {
+		} else if chain, err := s.lockHEADChain(ctx, run, repositoryPath, plan); err != nil {
 			commandErr = err
 			finalizationBlocked = true
 		} else {
-			// With deletions, the refs HEAD resolves to are written in a second
-			// transaction, after the first has deleted refs and released the
-			// HEAD chain locks (see lockHEADChainForDeletions).
+			// With guarded changes, the refs HEAD resolves to are written in a
+			// second transaction, after the first has applied everything else
+			// and released the HEAD chain locks (see lockHEADChain).
 			// Once the first has written, like the HEAD write below, the
 			// second finishes the publication: a cancellation or deadline
 			// comes too late for it, and only a changed authority stops it.
@@ -1109,8 +1121,8 @@ type refCommand struct {
 // splitHEADBranchWrites moves the commands that write a ref HEAD resolves
 // to out of the first transaction: it holds HEAD.lock, and Git locks HEAD
 // itself to log a write of the branch HEAD names, so the two would collide.
-// The second transaction deletes nothing, since a ref HEAD resolves to is
-// never a deletion candidate.
+// The second transaction holds no guarded change: lockHEADChain stops a
+// publication that would delete or protectedly rewrite one of those refs.
 func splitHEADBranchWrites(commands []refCommand, branches []string) (first, second []refCommand) {
 	for _, command := range commands {
 		if slices.Contains(branches, command.ref) {
@@ -1124,7 +1136,8 @@ func splitHEADBranchWrites(commands []refCommand, branches []string) (first, sec
 
 // runRefTransaction applies commands in one prepared transaction and checks,
 // while they are prepared, that each ref is as planned and the run still
-// has authority, and with chain that HEAD resolves to no ref being deleted.
+// has authority, and with chain that HEAD resolves to no ref with a guarded
+// change (validatePreparedHEADGuards).
 func (s *Service) runRefTransaction(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, commands []refCommand, chain *headChainLock,
 	authority func(context.Context, *runState) error) error {
 	lines := make([]string, len(commands))
@@ -1150,7 +1163,7 @@ func (s *Service) runRefTransaction(ctx context.Context, run *runState, reposito
 				return err
 			}
 			if chain != nil {
-				if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan); err != nil {
+				if err := s.validatePreparedHEADGuards(preparedCtx, repositoryPath, plan); err != nil {
 					return err
 				}
 			}
@@ -1162,8 +1175,26 @@ func (s *Service) runRefTransaction(ctx context.Context, run *runState, reposito
 	return err
 }
 
-// planDeletes reports whether the plan deletes a destination ref.
-func planDeletes(plan *publicationPlan) bool {
+// guardedChange returns the problem of applying the plan to name while HEAD
+// resolves to it, or nil. Deleting the branch HEAD resolves to, or
+// rewriting it while default branch protection is on, is never allowed.
+func (plan *publicationPlan) guardedChange(name string) error {
+	if desired, planned := plan.desired[name]; planned && desired == "" && plan.expected[name] != "" {
+		return newProblem(CodeDestinationChanged, fmt.Sprintf("destination HEAD now resolves to %q, which this refresh deletes", name), nil)
+	}
+	if plan.rewrites[name] {
+		return protectedRewriteProblem(name)
+	}
+	return nil
+}
+
+// guardsHEAD reports whether the plan deletes a ref or rewrites a branch
+// under default branch protection: changes whose safety depends on where
+// HEAD resolves when they commit.
+func (plan *publicationPlan) guardsHEAD() bool {
+	if len(plan.rewrites) > 0 {
+		return true
+	}
 	for ref, desired := range plan.desired {
 		if ref != state.ImportHeadRef && desired == "" && plan.expected[ref] != "" {
 			return true
@@ -1173,43 +1204,47 @@ func planDeletes(plan *publicationPlan) bool {
 }
 
 // headChainLock holds HEAD and the loose symbolic refs of its chain while a
-// transaction that deletes refs is prepared and committed. branches are the
-// refs HEAD resolves to, its immediate target through the end of its chain.
+// transaction with guarded changes (publicationPlan.guardsHEAD) is prepared
+// and committed. branches are the refs HEAD resolves to, its immediate
+// target through the end of its chain, read under the locks.
 type headChainLock struct {
 	locks    []*headLock
 	branches []string
 }
 
-// lockHEADChainForDeletions keeps any Git process from moving HEAD, or a
-// symbolic ref it resolves through, onto a ref this transaction deletes:
-// OwnGit's own HEAD writers already wait for the repository lock this
-// publication holds, and these lock files make other Git writers fail
-// until the deleting transaction ends. The locks are always OwnGit's own,
-// never left to Git, so the protection does not depend on whether Git
-// locks HEAD for a write; writes to chain.branches go to a later
-// transaction (splitHEADBranchWrites). A plan without deletions takes none.
-// It runs right before the ref transaction, after the test hook
-// beforeRefTransaction, which may change the destination first.
-func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan) (*headChainLock, error) {
+// lockHEADChain fixes where HEAD resolves for a transaction that deletes
+// refs or rewrites a branch under default branch protection: OwnGit's own
+// HEAD writers already wait for the repository lock this publication
+// holds, and these lock files make other Git writers fail until that
+// transaction ends. The locks are always OwnGit's own, never left to Git,
+// so the guarantee does not depend on whether Git locks HEAD for a write.
+// Git does lock HEAD to log a write of the branch HEAD names, which would
+// collide, so writes to chain.branches go to a later transaction
+// (splitHEADBranchWrites); a guarded change to one of them stops the
+// publication here, before anything is written. A plan without guarded
+// changes takes no lock. It runs right before the ref transaction, after
+// the test hook beforeRefTransaction, which may change the destination
+// first.
+func (s *Service) lockHEADChain(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan) (*headChainLock, error) {
 	if s.beforeRefTransaction != nil {
 		s.beforeRefTransaction()
 	}
 	chain := &headChainLock{}
-	if !planDeletes(plan) {
+	if !plan.guardsHEAD() {
 		return chain, nil
 	}
 	name := "HEAD"
 	for depth := 0; depth < 32; depth++ {
 		identity, err := readRawHEAD(filepath.Join(repositoryPath, filepath.FromSlash(name)))
 		if errors.Is(err, os.ErrNotExist) && name != "HEAD" {
-			return chain, nil
+			break
 		}
 		if err != nil {
 			_ = chain.release()
-			return nil, newProblem(CodeRepositoryMissing, fmt.Sprintf("destination %s could not be read before deleting refs", name), err)
+			return nil, newProblem(CodeRepositoryMissing, fmt.Sprintf("destination %s could not be read before publication", name), err)
 		}
 		if identity.kind != headSymbolic && name != "HEAD" {
-			return chain, nil
+			break
 		}
 		lock, err := s.acquireRefFileLock(ctx, run, repositoryPath, name, identity)
 		if err != nil {
@@ -1218,13 +1253,22 @@ func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, 
 		}
 		chain.locks = append(chain.locks, lock)
 		if identity.kind != headSymbolic {
-			return chain, nil
+			break
 		}
 		chain.branches = append(chain.branches, identity.target)
 		name = identity.target
+		if depth == 31 {
+			_ = chain.release()
+			return nil, newProblem(CodeUnsupported, "destination HEAD chain exceeds its supported depth", nil)
+		}
 	}
-	_ = chain.release()
-	return nil, newProblem(CodeUnsupported, "destination HEAD chain exceeds its supported depth", nil)
+	for _, branch := range chain.branches {
+		if err := plan.guardedChange(branch); err != nil {
+			_ = chain.release()
+			return nil, err
+		}
+	}
+	return chain, nil
 }
 
 // release removes the lock files in reverse order. It is safe on nil.
@@ -1240,12 +1284,12 @@ func (chain *headChainLock) release() error {
 	return errors.Join(errs...)
 }
 
-// validatePreparedHEADKeepsDeletions reads HEAD and its chain again while
-// the deletions are prepared and HEAD cannot move (lockHEADChainForDeletions):
-// a HEAD moved since planning onto a ref being deleted, directly or through
-// its chain, stops the transaction.
-func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan) error {
-	if !planDeletes(plan) {
+// validatePreparedHEADGuards reads HEAD and its chain again while the
+// guarded changes are prepared and HEAD cannot move (lockHEADChain), and
+// stops the transaction if HEAD resolves to a ref it deletes or, under
+// default branch protection, rewrites.
+func (s *Service) validatePreparedHEADGuards(ctx context.Context, repositoryPath string, plan *publicationPlan) error {
+	if !plan.guardsHEAD() {
 		return nil
 	}
 	target, _, err := s.Repositories.ReadHead(ctx, repositoryPath)
@@ -1260,8 +1304,8 @@ func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, reposi
 		return newProblem(CodeRepositoryMissing, "destination symbolic HEAD chain could not be resolved", err)
 	}
 	for _, name := range []string{target, terminal} {
-		if desired, planned := plan.desired[name]; planned && desired == "" && plan.expected[name] != "" {
-			return newProblem(CodeDestinationChanged, fmt.Sprintf("destination HEAD now resolves to %q, which this refresh deletes", name), nil)
+		if err := plan.guardedChange(name); err != nil {
+			return err
 		}
 	}
 	return nil
