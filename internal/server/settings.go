@@ -142,24 +142,14 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	notice := "settings_saved"
 	switch action {
 	case webui.ActionEnableAccessPassword, webui.ActionChangeAccessPassword:
-		password := postValue(request, "access_password")
-		if validateErr := auth.ValidatePassword(password); validateErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(validateErr, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
+		err = app.setAccessPassword(request.Context(), verified.password, postValue(request, "access_password"))
+		switch {
+		case passwordRuleError(err):
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(err, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
 			return
-		}
-		same, sameErr := app.sameAsAdminPassword(request, verified.password, password)
-		if sameErr != nil {
-			app.renderNotSaved(writer, request, settings, csrf, action, "administrator password read", sameErr)
-			return
-		}
-		if same {
+		case errors.Is(err, errSharedSameAsAdmin):
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", webui.MsgSetupGenSameAsAdmin)}, http.StatusUnprocessableEntity)
 			return
-		}
-		var encoded string
-		encoded, err = auth.HashPassword(password)
-		if err == nil {
-			err = app.Store.SetAccessPassword(request.Context(), encoded)
 		}
 		ends, notice = generalCookie, "access_changed"
 		if action == webui.ActionEnableAccessPassword {
@@ -169,34 +159,24 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		err = app.Store.DisableAccessPassword(request.Context())
 		ends, notice = generalCookie, "access_disabled"
 	case webui.ActionChangeAdminPassword:
-		newPassword := postValue(request, "new_admin_password")
-		if validateErr := auth.ValidatePassword(newPassword); validateErr != nil {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", passwordRuleMessage(validateErr, webui.MsgSetupAdminShort))}, http.StatusUnprocessableEntity)
-			return
-		}
-		if verified.password == newPassword {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSettingsAdminSame)}, http.StatusUnprocessableEntity)
-			return
-		}
-		accessHash, hashErr := app.Store.PasswordHash(request.Context(), "access")
-		if hashErr != nil {
-			app.renderNotSaved(writer, request, settings, csrf, action, "shared password read", hashErr)
-			return
-		}
-		if accessHash != "" && auth.CheckPassword(accessHash, newPassword) {
-			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", webui.MsgSetupAdminSameAsGen)}, http.StatusUnprocessableEntity)
-			return
-		}
-		var encoded string
-		encoded, err = auth.HashPassword(newPassword)
-		if err == nil {
+		err = app.changeAdminPassword(request.Context(), verified, postValue(request, "new_admin_password"))
+		var refused webui.MessageCode
+		switch {
+		case passwordRuleError(err):
+			refused = passwordRuleMessage(err, webui.MsgSetupAdminShort)
+		case errors.Is(err, errAdminPasswordSame):
+			refused = webui.MsgSettingsAdminSame
+		case errors.Is(err, errAdminSameAsShared):
+			refused = webui.MsgSetupAdminSameAsGen
+		case errors.Is(err, state.ErrAccessChanged):
 			// A password changed since the confirmation is no longer the
 			// current one, so it cannot replace its replacement.
-			err = app.Store.ChangeAdminPassword(request.Context(), encoded, verified.version)
-		}
-		if errors.Is(err, state.ErrAccessChanged) {
 			notice, status := adminPasswordNotice(request, auth.ErrInvalidCredentials, "admin_password")
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{notice}, status)
+			return
+		}
+		if refused != "" {
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("new_admin_password", refused)}, http.StatusUnprocessableEntity)
 			return
 		}
 		ends, notice = adminCookie, "admin_password_changed"
@@ -214,13 +194,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 			return
 		}
-		err = app.Store.SetUpdateCheck(request.Context(), value == "on")
-		// Turning the check on asks for an answer soon instead of waiting
-		// for the daily interval. Turning it off takes effect at once,
-		// because the dashboard and the checker both read the saved value.
-		if err == nil && value == "on" && app.Releases != nil {
-			app.Releases.Wake()
-		}
+		err = app.savePolicies(request.Context(), state.PolicyChange{UpdateCheck: pointer(value == "on")})
 	case webui.ActionSetTrayIcon:
 		if !app.TrayAvailable {
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("tray_icon", webui.MsgSettingsTrayUnavailable)}, http.StatusConflict)
@@ -405,20 +379,6 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 	}
 	app.settingsSaved(writer, request, settingsResultURL(action, notice))
-}
-
-// sameAsAdminPassword reports whether password is the administrator
-// password: the one this request typed, when it typed one, or else the
-// saved one.
-func (app *App) sameAsAdminPassword(request *http.Request, verified, password string) (bool, error) {
-	if verified != "" {
-		return verified == password, nil
-	}
-	encoded, err := app.Store.PasswordHash(request.Context(), "admin")
-	if err != nil {
-		return false, err
-	}
-	return auth.CheckPassword(encoded, password), nil
 }
 
 // accessAction turns a save of the Access group into the change it asks

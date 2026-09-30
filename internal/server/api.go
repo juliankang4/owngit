@@ -43,6 +43,10 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		app.handleSettingsAPI(writer, request)
 		return
 	}
+	if name, ok := ownerSettingName(request.URL.Path); ok {
+		app.handleOwnerSettingAPI(writer, request, name)
+		return
+	}
 	if request.URL.Path == "/api/v1/backups" || strings.HasPrefix(request.URL.Path, "/api/v1/backups/") {
 		app.handleBackupsAPI(writer, request, settings)
 		return
@@ -76,6 +80,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		case "archive":
 			app.handleArchiveAPI(writer, request, settings, repositoryID, remainder)
+			return
+		case "default-branch", "delete":
+			app.handleRepositoryAdminAPI(writer, request, repositoryID, resource, remainder)
 			return
 		case "kept-history", "restore":
 			app.handleRestoreAPI(writer, request, settings, repositoryID, resource, remainder)
@@ -264,7 +271,8 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 		writeAPIError(writer, http.StatusUnauthorized, "authentication_required", "A shared general-access password is required.", nil)
 		return false
 	}
-	return app.checkAPIPassword(writer, request, "general", password)
+	_, ok = app.checkAPIPassword(writer, request, "general", password)
+	return ok
 }
 
 // checkAPIPassword verifies an API request's password of kind ("general" or
@@ -272,12 +280,13 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 // for a wrong password, 429 with Retry-After for a rate limit, 409 when a
 // wrong password cannot be counted because the saved login limits cannot
 // be read, and 503 without a challenge when the check could not be
-// completed, because the password may be right.
-func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Request, kind, password string) bool {
-	_, err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
+// completed, because the password may be right. An accepted password comes
+// with the version it was verified at.
+func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Request, kind, password string) (version int64, ok bool) {
+	version, err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
 	switch {
 	case err == nil:
-		return true
+		return version, true
 	case errors.Is(err, auth.ErrRateLimited):
 		if seconds := auth.RetryAfter(err); seconds > 0 {
 			writer.Header().Set("Retry-After", strconv.Itoa(seconds))
@@ -295,7 +304,7 @@ func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Reque
 	default:
 		writeAPIError(writer, unavailable(request, kind+" password check", err), "state_unavailable", "The password could not be verified. Try again later.", nil)
 	}
-	return false
+	return 0, false
 }
 
 func parseRepositoryAPIRoute(requestPath string) (string, string, string, bool) {

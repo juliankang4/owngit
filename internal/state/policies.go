@@ -85,6 +85,8 @@ type PolicyChange struct {
 	DeleteRequiresName *bool
 	LoginLimits        *LoginLimits
 	CrossSiteLinks     *CrossSiteLinks
+	// UpdateCheck allows the daily new-release check (Settings.UpdateCheck).
+	UpdateCheck *bool
 }
 
 // SavePolicies checks every policy change names and saves them all in one
@@ -140,6 +142,9 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 			return fmt.Errorf("invalid cross-site link choice %q", *change.CrossSiteLinks)
 		}
 		values[crossSiteLinksKey] = string(*change.CrossSiteLinks)
+	}
+	if change.UpdateCheck != nil {
+		values[updateCheckKey] = onOff(*change.UpdateCheck)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

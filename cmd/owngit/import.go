@@ -929,7 +929,7 @@ func readHiddenLine(reader *bufio.Reader, prompt string) (string, error) {
 	restore, err := disableEcho()
 	if err != nil {
 		signal.Stop(signals)
-		return "", cliProblem("invalid_arguments", "Input could not be hidden on this terminal. Use --token-file or --basic-file.")
+		return "", cliProblem("invalid_arguments", "Input could not be hidden on this terminal. Give it in a file instead; see the command's --help.")
 	}
 	var restoreOnce sync.Once
 	var restoreErr error

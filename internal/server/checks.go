@@ -453,13 +453,22 @@ func (app *App) authorizeHelper(writer http.ResponseWriter, request *http.Reques
 // credential, however long the dashboard remembers it, and neither is Do
 // not ask.
 func (app *App) authorizeAdminAPI(writer http.ResponseWriter, request *http.Request) bool {
+	_, ok := app.adminAPIProof(writer, request)
+	return ok
+}
+
+// adminAPIProof is authorizeAdminAPI for a change bound to the password
+// itself, such as replacing it: it also returns the password and the
+// version it was verified at.
+func (app *App) adminAPIProof(writer http.ResponseWriter, request *http.Request) (adminPasswordProof, bool) {
 	username, password, hasBasic := request.BasicAuth()
 	if !hasBasic || username != "admin" {
 		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit admin"`)
 		writeAPIError(writer, http.StatusUnauthorized, "admin_authentication_required", "The administrator password is required.", nil)
-		return false
+		return adminPasswordProof{}, false
 	}
-	return app.checkAPIPassword(writer, request, "admin", password)
+	version, ok := app.checkAPIPassword(writer, request, "admin", password)
+	return adminPasswordProof{password: password, version: version}, ok
 }
 
 func attemptFromRegistration(registration checkapi.AttemptRegistration, repositoryID, taskID, credentialID string, now time.Time) (state.CheckAttempt, *pullrequest.Problem) {

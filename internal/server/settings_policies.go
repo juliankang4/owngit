@@ -300,6 +300,9 @@ type settingsJSON struct {
 	BrowseLimits        *state.BrowseFields      `json:"browse_limits,omitempty"`
 	Maintenance         *state.MaintenanceFields `json:"maintenance,omitempty"`
 	UnusedObjectCleanup *state.CleanupFields     `json:"unused_object_cleanup,omitempty"`
+	// UpdateCheck is "on" when the daily new-release check may run, and
+	// "off" when it may not.
+	UpdateCheck *string `json:"update_check,omitempty"`
 }
 
 type settingsResponse struct {
@@ -311,6 +314,14 @@ type settingsResponse struct {
 	Unreadable []unreadableSetting `json:"unreadable,omitempty"`
 	// Warnings say what a PATCH turned off allows now, as Settings does.
 	Warnings []string `json:"warnings,omitempty"`
+	// UpdateCheckForcedOff is true when the server started with
+	// --no-update-check, which overrides update_check.
+	UpdateCheckForcedOff bool `json:"update_check_forced_off,omitempty"`
+	// AccessMode is "open" or "password", and AdminConfirmation how long a
+	// browser remembers the administrator password. Each is changed at its
+	// own address (handleOwnerSettingAPI).
+	AccessMode        string `json:"access_mode"`
+	AdminConfirmation string `json:"admin_confirmation"`
 }
 
 type unreadableSetting struct {
@@ -475,7 +486,15 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCleanupWarning))
 			}
 		}
-		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
+		if change.UpdateCheck != nil {
+			check, valid := parseOnOff(*change.UpdateCheck)
+			if !valid {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "update_check must be on or off.", nil)
+				return
+			}
+			policies.UpdateCheck = &check
+		}
+		if err := app.savePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
 		}
@@ -491,7 +510,18 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 		app.writeSettingsReadError(writer, request, err)
 		return
 	}
-	response := settingsResponse{OK: true, Settings: current, Warnings: warnings}
+	response := settingsResponse{OK: true, Settings: current, Warnings: warnings, UpdateCheckForcedOff: app.Releases == nil}
+	settings, err := app.Store.Settings(request.Context())
+	var confirmation state.AdminConfirmation
+	if err == nil {
+		confirmation, _, err = app.Store.AdminConfirmation(request.Context())
+	}
+	if err != nil {
+		app.writeSettingsReadError(writer, request, err)
+		return
+	}
+	response.Settings.UpdateCheck = pointer(onOff(settings.UpdateCheck))
+	response.AccessMode, response.AdminConfirmation = settings.AccessMode, string(confirmation)
 	for _, problem := range unreadable {
 		logFailure(request, "settings read", problem)
 		response.Unreadable = append(response.Unreadable, unreadableSetting{Setting: problem.Setting(), Message: problem.Advice()})

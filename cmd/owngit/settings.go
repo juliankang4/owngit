@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 func settingsCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printSettingsUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "settings requires show or set.")
+		return cliProblem("invalid_arguments", "settings requires show, set, access, admin-password or confirmation.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printSettingsUsage(os.Stdout)
@@ -29,16 +30,26 @@ func settingsCommand(arguments []string) error {
 		return settingsShow(arguments[1:])
 	case "set":
 		return settingsSet(arguments[1:])
+	case "access":
+		return settingsAccess(arguments[1:])
+	case "admin-password":
+		return settingsAdminPassword(arguments[1:])
+	case "confirmation":
+		return settingsConfirmation(arguments[1:])
 	default:
 		return cliProblem("invalid_arguments", "Unknown settings command: "+arguments[0])
 	}
 }
 
 func printSettingsUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit settings <show|set> --server URL --password-file PATH [options]")
-	fmt.Fprintln(writer, "  settings show   print the server-wide settings as JSON")
-	fmt.Fprintln(writer, "  settings set    change the settings named by its options")
+	fmt.Fprintln(writer, "Usage: owngit settings <show|set|access|admin-password|confirmation> --server URL --password-file PATH [options]")
+	fmt.Fprintln(writer, "  settings show             print the server-wide settings as JSON")
+	fmt.Fprintln(writer, "  settings set              change the settings named by its options")
+	fmt.Fprintln(writer, "  settings access           turn the shared password on, change it, or turn it off")
+	fmt.Fprintln(writer, "  settings admin-password   change the administrator password")
+	fmt.Fprintln(writer, "  settings confirmation     choose how long a browser remembers the administrator password")
 	fmt.Fprintln(writer, "The password file holds the administrator password. Each setting applies to what starts after it is saved.")
+	fmt.Fprintln(writer, "A new password is read from an owner-only file or typed at a hidden prompt, never given as an argument.")
 }
 
 func settingsShow(arguments []string) error {
@@ -88,6 +99,7 @@ func settingsSet(arguments []string) error {
 	cleanup := flags.String("unused-object-cleanup", "", "whether nightly maintenance removes objects no ref reaches that are older than the grace period: on or off")
 	cleanupGrace := flags.Int("cleanup-grace-days", 0, "the unused object cleanup grace period in days, from 2 to 365")
 	crossSite := flags.String("cross-site-links", "", "whether a link from another site keeps the shared sign-in: strict (open it again from OwnGit) or lax (keep the sign-in)")
+	updateCheck := flags.String("update-check", "", "whether OwnGit asks GitHub once a day for a newer release: on or off")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -113,6 +125,9 @@ func settingsSet(arguments []string) error {
 	}
 	if given["cross-site-links"] {
 		change["cross_site_links"] = *crossSite
+	}
+	if given["update-check"] {
+		change["update_check"] = *updateCheck
 	}
 	login := map[string]int64{}
 	if given["login-attempts"] {
@@ -271,4 +286,120 @@ func byteSize(option, value string) (int64, error) {
 		return 0, cliProblem("invalid_arguments", "--"+option+" takes an amount with B, KB, MB or GB, such as 4GB.")
 	}
 	return bytes, nil
+}
+
+// settingsAccess turns the shared password on or replaces it (--mode
+// password), or turns it off (--mode open), as the Access group of Settings
+// does. The shared password comes from a file or a hidden prompt.
+func settingsAccess(arguments []string) error {
+	flags := newCommandFlagSet("settings access")
+	remote := addImportFlags(flags)
+	mode := flags.String("mode", "", "open (no shared password) or password")
+	accessFile := flags.String("access-password-file", "", "owner-only file with the new shared password; without it, the password is asked for")
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
+		return err
+	}
+	body := map[string]any{"mode": *mode}
+	switch {
+	case *mode == "open" && *accessFile != "":
+		return cliProblem("invalid_arguments", "--mode open takes no shared password.")
+	case *mode == "password":
+		password, err := readNewPassword(*accessFile, "The new shared password", "--access-password-file")
+		if err != nil {
+			return err
+		}
+		body["password"] = password
+	case *mode != "open" && *mode != "password":
+		return cliProblem("invalid_arguments", "--mode takes open or password.")
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	content, err := client.Do(context.Background(), http.MethodPut, "/api/v1/settings/access", body)
+	if err != nil {
+		return err
+	}
+	return writeJSON(content)
+}
+
+// settingsAdminPassword replaces the administrator password that
+// --password-file holds with a new one from a file or a hidden prompt.
+func settingsAdminPassword(arguments []string) error {
+	flags := newCommandFlagSet("settings admin-password")
+	remote := addImportFlags(flags)
+	newFile := flags.String("new-password-file", "", "owner-only file with the new administrator password; without it, the password is asked for")
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
+		return err
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	password, err := readNewPassword(*newFile, "The new administrator password", "--new-password-file")
+	if err != nil {
+		return err
+	}
+	content, err := client.Do(context.Background(), http.MethodPut, "/api/v1/settings/admin-password", map[string]string{"password": password})
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr, "Put the new administrator password in the password files your commands use.")
+	return writeJSON(content)
+}
+
+// settingsConfirmation chooses how long a browser remembers the
+// administrator password, as Settings does. Do not ask ("never") needs
+// --acknowledge-no-ask.
+func settingsConfirmation(arguments []string) error {
+	flags := newCommandFlagSet("settings confirmation")
+	remote := addImportFlags(flags)
+	choice := flags.String("choice", "", "every, 30m, 1h, 8h, 1d, 7d, 30d or never (Do not ask)")
+	acknowledge := flags.Bool("acknowledge-no-ask", false, "with --choice never, confirm that anyone who can open the dashboard can then make administrator changes")
+	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
+		return err
+	}
+	if *choice == "" {
+		return cliProblem("invalid_arguments", "--choice is required.")
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	content, err := client.Do(context.Background(), http.MethodPut, "/api/v1/settings/admin-confirmation",
+		map[string]any{"admin_confirmation": *choice, "acknowledge_no_ask": *acknowledge})
+	if err != nil {
+		return err
+	}
+	return writeJSON(content)
+}
+
+// readNewPassword reads a new password, named what in messages, from the
+// owner-only file at path, or without a file from two hidden prompts on the
+// terminal. fileFlag names the option that gives the file.
+func readNewPassword(path, what, fileFlag string) (string, error) {
+	if path != "" {
+		file, err := readPasswordFile(path)
+		if err != nil {
+			return "", passwordFileProblem(err, what+" file")
+		}
+		return file.secret, nil
+	}
+	if info, err := os.Stdin.Stat(); err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return "", cliProblem("invalid_arguments", "Give "+fileFlag+", or run from an interactive terminal.")
+	}
+	reader := bufio.NewReader(os.Stdin)
+	first, err := readHiddenLine(reader, what+": ")
+	if err != nil {
+		return "", err
+	}
+	second, err := readHiddenLine(reader, "Type it again: ")
+	if err != nil {
+		return "", err
+	}
+	first, second = strings.TrimRight(first, "\r\n"), strings.TrimRight(second, "\r\n")
+	if first != second {
+		return "", cliProblem("invalid_arguments", "The two passwords differ. Nothing was changed.")
+	}
+	return first, nil
 }

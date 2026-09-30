@@ -1650,16 +1650,6 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 // change and older OwnGit builds ignore it.
 const updateCheckKey = "update_check"
 
-// SetUpdateCheck saves whether the new-release check may run.
-func (s *Store) SetUpdateCheck(ctx context.Context, enabled bool) error {
-	value := "off"
-	if enabled {
-		value = "on"
-	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, updateCheckKey, value)
-	return err
-}
-
 // Network settings are optional metadata keys like updateCheckKey, so they
 // need no schema change and older OwnGit builds ignore them. They are
 // machine-local: backups do not carry them. The allowed Host names are the

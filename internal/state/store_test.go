@@ -247,7 +247,8 @@ func TestUpdateCheckSettingDefaultsOnAndPersists(t *testing.T) {
 	if !settings.UpdateCheck {
 		t.Fatal("a state without the setting reads as off")
 	}
-	noErr(t, store.SetUpdateCheck(ctx, false))
+	off, on := false, true
+	noErr(t, store.SavePolicies(ctx, PolicyChange{UpdateCheck: &off}))
 	noErr(t, store.Close())
 
 	store, err = Open(ctx, directory)
@@ -256,7 +257,7 @@ func TestUpdateCheckSettingDefaultsOnAndPersists(t *testing.T) {
 	if settings, err := store.Settings(ctx); err != nil || settings.UpdateCheck {
 		t.Fatalf("after restart settings=%+v err=%v, want the check off", settings, err)
 	}
-	noErr(t, store.SetUpdateCheck(ctx, true))
+	noErr(t, store.SavePolicies(ctx, PolicyChange{UpdateCheck: &on}))
 	if settings, err := store.Settings(ctx); err != nil || !settings.UpdateCheck {
 		t.Fatalf("settings=%+v err=%v, want the check on", settings, err)
 	}

@@ -224,7 +224,7 @@ func TestUpdateCheckSettingNeedsTheAdministratorAndTakesEffect(t *testing.T) {
 func TestSettingsReportTheStartOptionOverride(t *testing.T) {
 	app, store, _, server := releaseApp(t, "v1.0.3")
 	app.Releases = nil // as with --no-update-check
-	noErr(t, store.SetUpdateCheck(context.Background(), true))
+	noErr(t, store.SavePolicies(context.Background(), state.PolicyChange{UpdateCheck: pointer(true)}))
 	client, _ := newBrowserClient(t)
 	body, _ := dashboardGET(t, client, server.URL+"/settings")
 	for _, want := range []webui.MessageCode{webui.MsgSettingsUpdateForced, webui.MsgSettingsUpdateSavedOn} {

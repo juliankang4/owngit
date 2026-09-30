@@ -83,7 +83,7 @@ func initializedState(t *testing.T, updateCheck bool) string {
 	store, err := state.Open(ctx, stateDir)
 	noErr(t, err)
 	noErr(t, store.CompleteSetup(ctx, repositories, "open", "", "synthetic-admin-hash", true))
-	noErr(t, store.SetUpdateCheck(ctx, updateCheck))
+	noErr(t, store.SavePolicies(ctx, state.PolicyChange{UpdateCheck: &updateCheck}))
 	noErr(t, store.Close())
 	return stateDir
 }

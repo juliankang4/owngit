@@ -107,17 +107,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusUnprocessableEntity)
 		return
 	}
-	// The change waits only briefly for the write lock, and a background
-	// activity count may hold the read lock far longer. The count does not
-	// depend on the default branch and is redone on a later page, so counting
-	// pauses for the change rather than being reported as another Git
-	// operation.
-	// The pause ends in a deferred call, so a panic cannot leave it behind.
-	err := func() error {
-		defer app.activity.pause(stored.ID, true)()
-		return app.Repositories.SetDefaultBranch(request.Context(), stored.ID, branch)
-	}()
-	if err != nil {
+	if err := app.setDefaultBranch(request.Context(), stored.ID, branch); err != nil {
 		switch {
 		case errors.Is(err, repository.ErrBranchNotFound):
 			chrome.Notices = append(chrome.Notices, webui.Error("branch", webui.MsgRepoDefaultBranchUnknown))
@@ -136,6 +126,19 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		return
 	}
 	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
+}
+
+// setDefaultBranch makes branch, an existing branch, the default branch of
+// repository id, for Settings and the owner API alike.
+func (app *App) setDefaultBranch(ctx context.Context, id, branch string) error {
+	// The change waits only briefly for the write lock, and a background
+	// activity count may hold the read lock far longer. The count does not
+	// depend on the default branch and is redone on a later page, so counting
+	// pauses for the change rather than being reported as another Git
+	// operation.
+	// The pause ends in a deferred call, so a panic cannot leave it behind.
+	defer app.activity.pause(id, true)()
+	return app.Repositories.SetDefaultBranch(ctx, id, branch)
 }
 
 func hasBranch(summary repository.Summary, name string) bool {
@@ -371,8 +374,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, http.StatusConflict)
 		return
 	}
-	// Names never contain spaces, so trimming only forgives a pasted space.
-	if name.Required && strings.TrimSpace(postValue(request, "confirm_name")) != stored.Name {
+	if !deleteNameConfirmed(name, stored.Name, postValue(request, "confirm_name")) {
 		chrome.Notices = append(chrome.Notices, webui.Error("confirm_name", webui.MsgRepoDeleteNameMismatch))
 	}
 	if len(chrome.Notices) != 0 {
@@ -386,45 +388,9 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		return
 	}
 
-	// A background activity count holds the repository's read lock for as long
-	// as its history walk takes, so counting pauses for the deletion, and the
-	// pause forgets what was counted before. The pause ends in a deferred
-	// call, so a panic cannot leave it behind.
-	result, err := func() (repository.DeleteResult, error) {
-		defer app.activity.pause(stored.ID, false)()
-		// Once confirmed, the deletion must not stop half way because the
-		// administrator closed the tab: the records go first, and a
-		// cancelled context would leave the file step for the next start.
-		return app.Repositories.Delete(context.WithoutCancel(request.Context()), stored.ID, repository.DeleteMode(mode))
-	}()
-	// The cause of a failed or incomplete deletion can name storage paths and
-	// the deletion token, so it goes to the server log, which the pages point
-	// the administrator to, and never into a page.
-	incomplete := errors.Is(err, repository.ErrDeleteIncomplete)
-	if incomplete {
-		// Delete also reports an older unfinished deletion of this name that
-		// it could not resume. A repository that still exists was not
-		// removed, so that case is a failure, not a removal.
-		if _, exists, lookupErr := app.Store.Repository(context.WithoutCancel(request.Context()), stored.ID); lookupErr != nil || exists {
-			incomplete = false
-		}
-	}
+	result, incomplete, err := app.deleteRepository(request.Context(), stored.ID, repository.DeleteMode(mode))
 	if err != nil && !incomplete {
-		code, status := webui.MsgRepoDeleteFailed, 0
-		if busy, ok := busyNotice(err); ok {
-			code, status = busy, http.StatusConflict
-			// While the repository is being prepared, no other Git operation
-			// can reach it, so the holder is the preparation attempt.
-			if busy == webui.MsgRepoBusyInUse && app.Repositories.Preparing(stored.ID) {
-				code = webui.MsgRepoBusyPreparing
-			}
-		} else if errors.Is(err, repository.ErrRepositoryNotFound) {
-			code, status = webui.MsgRepoDeleteGone, http.StatusNotFound
-		} else if errors.Is(err, repository.ErrDeletionRecordMismatch) {
-			status = internalError(request, "repository deletion", err)
-		} else {
-			status = unavailable(request, "repository deletion", err)
-		}
+		code, status := app.deleteFailure(request, stored.ID, err)
 		chrome.Notices = append(chrome.Notices, webui.Error("", code))
 		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, status)
 		return
@@ -437,6 +403,61 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	}
 	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, Incomplete: incomplete})
 	app.noticeRedirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
+}
+
+// deleteRepository deletes repository id in mode once the owner confirmed
+// it, for the delete page and the owner API alike. incomplete is true, with
+// the cause in err, when the repository is gone from OwnGit but its file
+// step is still owed; the next start finishes it.
+func (app *App) deleteRepository(ctx context.Context, id string, mode repository.DeleteMode) (result repository.DeleteResult, incomplete bool, err error) {
+	// A background activity count holds the repository's read lock for as long
+	// as its history walk takes, so counting pauses for the deletion, and the
+	// pause forgets what was counted before. The pause ends in a deferred
+	// call, so a panic cannot leave it behind.
+	result, err = func() (repository.DeleteResult, error) {
+		defer app.activity.pause(id, false)()
+		// Once confirmed, the deletion must not stop half way because the
+		// owner went away: the records go first, and a cancelled context
+		// would leave the file step for the next start.
+		return app.Repositories.Delete(context.WithoutCancel(ctx), id, mode)
+	}()
+	if errors.Is(err, repository.ErrDeleteIncomplete) {
+		// Delete also reports an older unfinished deletion of this name that
+		// it could not resume. A repository that still exists was not
+		// removed, so that case is a failure, not a removal.
+		_, exists, lookupErr := app.Store.Repository(context.WithoutCancel(ctx), id)
+		incomplete = lookupErr == nil && !exists
+	}
+	return result, incomplete, err
+}
+
+// deleteFailure says why a deletion of repository id failed with err, and
+// the status that answers it. The cause can name storage paths and the
+// deletion token, so it goes to the server log and never into an answer.
+func (app *App) deleteFailure(request *http.Request, id string, err error) (webui.MessageCode, int) {
+	if busy, ok := busyNotice(err); ok {
+		// While the repository is being prepared, no other Git operation
+		// can reach it, so the holder is the preparation attempt.
+		if busy == webui.MsgRepoBusyInUse && app.Repositories.Preparing(id) {
+			busy = webui.MsgRepoBusyPreparing
+		}
+		return busy, http.StatusConflict
+	}
+	switch {
+	case errors.Is(err, repository.ErrRepositoryNotFound):
+		return webui.MsgRepoDeleteGone, http.StatusNotFound
+	case errors.Is(err, repository.ErrDeletionRecordMismatch):
+		return webui.MsgRepoDeleteFailed, internalError(request, "repository deletion", err)
+	default:
+		return webui.MsgRepoDeleteFailed, unavailable(request, "repository deletion", err)
+	}
+}
+
+// deleteNameConfirmed reports whether typed confirms deleting the
+// repository called name under rule.
+func deleteNameConfirmed(rule webui.DeleteNameRule, name, typed string) bool {
+	// Names never contain spaces, so trimming only forgives a pasted space.
+	return !rule.Required || strings.TrimSpace(typed) == name
 }
 
 // deleteNameRule says whether a deletion asks for the typed name, as saved
