@@ -6,11 +6,34 @@ import (
 	"strings"
 )
 
-// LsRefsPrefixes are the ref prefixes an importer asks a protocol v2 server
-// for: HEAD, branches and tags, the refs an import can use. Refs in other
-// namespaces, such as pull request refs, are then never listed, so they
-// neither count toward MaxRefRecords nor enter a fetch.
-var LsRefsPrefixes = []string{"HEAD", "refs/heads/", "refs/tags/"}
+// LsRefsPrefixes returns the ref prefixes an importer asks a protocol v2
+// server for: HEAD, branches, tags and the source's extra namespaces, such
+// as refs/notes/, the refs an import can use. Refs in other namespaces, such
+// as pull request refs, are then never listed, so they neither count toward
+// MaxRefRecords nor enter a fetch. An extra namespace must be a ref name
+// followed by a slash.
+func LsRefsPrefixes(extra []string) ([]string, error) {
+	prefixes := []string{"HEAD", "refs/heads/", "refs/tags/"}
+	for _, prefix := range extra {
+		name, isNamespace := strings.CutSuffix(prefix, "/")
+		if !isNamespace || name == "HEAD" || validateRefName(name) != nil {
+			return nil, fmt.Errorf("%w: extra ref namespace %q is not a ref name followed by a slash", ErrInvalidOptions, prefix)
+		}
+		prefixes = append(prefixes, prefix)
+	}
+	return prefixes, nil
+}
+
+// hasRequestedPrefix reports whether name is one of prefixes or, for a
+// prefix that ends with a slash, starts with it.
+func hasRequestedPrefix(name string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if name == prefix || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(name, prefix)) {
+			return true
+		}
+	}
+	return false
+}
 
 // readV2Capabilities reads a protocol v2 capability advertisement after its
 // "version 2" packet, up to its flush packet. Its lines are bounded like the
@@ -74,15 +97,15 @@ func (s *parseState) readV2Capabilities() error {
 }
 
 // ParseLsRefs reads the answer to an ls-refs command that asked a protocol
-// v2 server for LsRefsPrefixes with the symrefs and peel arguments, after
-// capabilities, the Advertisement Parse returned for that server. The result
-// describes the source as Parse does for a v0 server: the refs, HEAD, their
-// peeled values and symrefs, validated by the same rules and bounded by the
-// same limits. A ref outside LsRefsPrefixes, which a server may list, is
-// validated and counted, then left out. No refs at all is Empty.
-func ParseLsRefs(source io.Reader, capabilities *Advertisement, options Options) (*Advertisement, error) {
-	if source == nil || capabilities == nil || capabilities.ProtocolVersion != 2 {
-		return nil, fmt.Errorf("%w: ls-refs needs a protocol v2 capability advertisement and a response body", ErrInvalidOptions)
+// v2 server for prefixes (from LsRefsPrefixes) with the symrefs and peel
+// arguments, after capabilities, the Advertisement Parse returned for that
+// server. The result describes the source as Parse does for a v0 server: the
+// refs, HEAD, their peeled values and symrefs, validated by the same rules
+// and bounded by the same limits. A ref outside prefixes, which a server may
+// list, is validated and counted, then left out. No refs at all is Empty.
+func ParseLsRefs(source io.Reader, capabilities *Advertisement, prefixes []string, options Options) (*Advertisement, error) {
+	if source == nil || capabilities == nil || capabilities.ProtocolVersion != 2 || len(prefixes) == 0 {
+		return nil, fmt.Errorf("%w: ls-refs needs a protocol v2 capability advertisement, the requested prefixes and a response body", ErrInvalidOptions)
 	}
 	limits, err := options.Limits.Effective()
 	if err != nil {
@@ -98,6 +121,7 @@ func ParseLsRefs(source io.Reader, capabilities *Advertisement, options Options)
 		},
 		names:    map[string]int{},
 		oidWidth: oidWidth(capabilities.ObjectFormat),
+		prefixes: prefixes,
 	}
 	if err := s.readLsRefs(); err != nil {
 		return nil, err
@@ -181,11 +205,7 @@ func (s *parseState) readLsRefsRecord(offset int64, line string) error {
 			return s.fail(offset, ErrInvalidRecord, "the record carries an attribute that was not requested")
 		}
 	}
-	requested := false
-	for _, prefix := range LsRefsPrefixes {
-		requested = requested || name == prefix || (strings.HasSuffix(prefix, "/") && strings.HasPrefix(name, prefix))
-	}
-	if !requested {
+	if !hasRequestedPrefix(name, s.prefixes) {
 		// ref-prefix only narrows the answer: gitprotocol-v2 lets a server
 		// list other refs and has the client filter them. Such a record is
 		// validated and counted like any other, then left out, so it is

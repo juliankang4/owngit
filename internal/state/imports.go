@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -120,15 +121,26 @@ type ImportSource struct {
 }
 
 // ImportSourceInput is one explicit source configuration mutation. Options
-// replace the saved ones; an empty redirect policy means refuse.
+// and the refresh choices replace the saved ones; an empty redirect policy
+// means refuse.
 type ImportSourceInput struct {
-	RepositoryID        string
-	URL                 string
-	Mode                string
-	GitOnlyConsent      bool
-	AllowPrivateNetwork bool
-	Options             ImportOptions
-	Now                 time.Time
+	RepositoryID            string
+	URL                     string
+	Mode                    string
+	GitOnlyConsent          bool
+	AllowPrivateNetwork     bool
+	OverwriteDiverged       bool
+	FollowUpstreamDeletions bool
+	ExtraRefPrefixes        []string
+	Options                 ImportOptions
+	Now                     time.Time
+}
+
+// sameRefreshChoices reports whether input keeps the refresh choices of
+// source.
+func (input ImportSourceInput) sameRefreshChoices(source ImportSource) bool {
+	return input.OverwriteDiverged == source.OverwriteDiverged && input.FollowUpstreamDeletions == source.FollowUpstreamDeletions &&
+		slices.Equal(input.ExtraRefPrefixes, source.ExtraRefPrefixes)
 }
 
 // ImportRun is one append-only initial import, refresh, or scheduled refresh.
@@ -270,6 +282,13 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	if err != nil {
 		return ImportSource{}, err
 	}
+	prefixes, err := encodeRefPrefixes(input.ExtraRefPrefixes)
+	if err != nil {
+		return ImportSource{}, err
+	}
+	if len(input.ExtraRefPrefixes) == 0 {
+		input.ExtraRefPrefixes = nil
+	}
 	releaseCredentialAuthority := s.LockImportCredentialAuthority(input.RepositoryID)
 	defer releaseCredentialAuthority()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -294,12 +313,15 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 		current = ImportSource{
 			RepositoryID: input.RepositoryID, URL: input.URL, SourceGeneration: priorGeneration + 1, AuthorityRevision: priorAuthority + 1,
 			CredentialGeneration: "", Mode: input.Mode, GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
+			OverwriteDiverged: input.OverwriteDiverged, FollowUpstreamDeletions: input.FollowUpstreamDeletions, ExtraRefPrefixes: input.ExtraRefPrefixes,
 			Options: input.Options, CreatedAt: input.Now, UpdatedAt: input.Now,
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
+			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
 			allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			current.RepositoryID, current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.CreatedAt.Unix(), current.UpdatedAt.Unix(),
+			boolInt(current.OverwriteDiverged), boolInt(current.FollowUpstreamDeletions), prefixes,
 			boolInt(input.Options.AllowPlainHTTP), input.Options.Redirects, input.Options.ApprovedRedirectOrigin, boolInt(input.Options.AllowReservedAddresses), limits); err != nil {
 			return ImportSource{}, err
 		}
@@ -307,9 +329,10 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 		return ImportSource{}, err
 	default:
 		// Limits apply to the next run, so changing only them keeps the
-		// execution authority of a run in progress.
+		// execution authority of a run in progress. A run in progress never
+		// publishes under refresh choices that were changed after it began.
 		authorityChanged := current.URL != input.URL || current.Mode != input.Mode || current.GitOnlyConsent != input.GitOnlyConsent ||
-			current.AllowPrivateNetwork != input.AllowPrivateNetwork || !current.Options.SameTransport(input.Options)
+			current.AllowPrivateNetwork != input.AllowPrivateNetwork || !current.Options.SameTransport(input.Options) || !input.sameRefreshChoices(current)
 		if authorityChanged || current.Options.Limits != input.Options.Limits {
 			previousAuthority := current.AuthorityRevision
 			if current.URL != input.URL {
@@ -323,13 +346,18 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 			current.Mode = input.Mode
 			current.GitOnlyConsent = input.GitOnlyConsent
 			current.AllowPrivateNetwork = input.AllowPrivateNetwork
+			current.OverwriteDiverged = input.OverwriteDiverged
+			current.FollowUpstreamDeletions = input.FollowUpstreamDeletions
+			current.ExtraRefPrefixes = input.ExtraRefPrefixes
 			current.Options = input.Options
 			current.UpdatedAt = input.Now
 			if _, err := tx.ExecContext(ctx, `UPDATE import_sources
 				SET url=?,source_generation=?,authority_revision=?,credential_generation=?,mode=?,git_only_consent=?,allow_private_network=?,updated_at=?,
+				overwrite_diverged=?,follow_upstream_deletions=?,extra_ref_prefixes=?,
 				allow_plain_http=?,redirect_policy=?,approved_redirect_origin=?,allow_reserved_addresses=?,limits_json=?
 				WHERE repository_id=? AND authority_revision=?`,
 				current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.UpdatedAt.Unix(),
+				boolInt(current.OverwriteDiverged), boolInt(current.FollowUpstreamDeletions), prefixes,
 				boolInt(current.Options.AllowPlainHTTP), current.Options.Redirects, current.Options.ApprovedRedirectOrigin, boolInt(current.Options.AllowReservedAddresses), limits,
 				input.RepositoryID, previousAuthority); err != nil {
 				return ImportSource{}, err
@@ -399,8 +427,9 @@ const importSourceSelect = `SELECT repository_id,url,source_generation,authority
 	overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
 	allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json FROM import_sources`
 
-// scanImportSource reads one source row. Unusable saved options are
-// reported as *ImportSourceSettingError beside the rest of the row.
+// scanImportSource reads one source row. Unusable saved options and extra
+// ref namespaces are reported as *ImportSourceSettingError beside the rest of
+// the row, which reads them as their defaults.
 func scanImportSource(scanner rowScanner) (ImportSource, error) {
 	var record ImportSource
 	var created, updated int64
@@ -413,12 +442,13 @@ func scanImportSource(scanner rowScanner) (ImportSource, error) {
 	}
 	record.CreatedAt = unixTime(created)
 	record.UpdatedAt = unixTime(updated)
+	var problems []error
+	record.Options, problems = decodeImportOptions(record.RepositoryID, plainHTTP, redirects, approved, reserved, limits)
 	var err error
 	if record.ExtraRefPrefixes, err = decodeRefPrefixes(prefixes); err != nil {
-		return ImportSource{}, fmt.Errorf("import source %q: %w", record.RepositoryID, err)
+		problems = append(problems, &ImportSourceSettingError{RepositoryID: record.RepositoryID, Setting: "extra_ref_prefixes", Cause: err})
 	}
-	record.Options, err = decodeImportOptions(record.RepositoryID, plainHTTP, redirects, approved, reserved, limits)
-	return record, err
+	return record, errors.Join(problems...)
 }
 
 func (s *Store) SetImportGitOnlyConsent(ctx context.Context, repositoryID string, consent bool, now time.Time) (ImportSource, error) {
@@ -1030,6 +1060,17 @@ func (s *Store) FinalizeImportPublication(ctx context.Context, intentID, receipt
 		}
 		seenObservations[observation.RefName] = true
 		if err := recordImportObservationTx(ctx, tx, observation); err != nil {
+			return err
+		}
+	}
+	// A ref this publication deleted, because the source deleted it, is no
+	// longer tracked: a local ref of the same name made later is local work.
+	for ref, desired := range intent.Desired {
+		if desired != "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM import_ref_observations WHERE repository_id=? AND source_generation=? AND ref_name=?`,
+			intent.RepositoryID, intent.SourceGeneration, ref); err != nil {
 			return err
 		}
 	}
@@ -1900,7 +1941,8 @@ func validateImportIntentRecord(record ImportIntent) error {
 	if err := validateImportIntentMap(record.Expected, true); err != nil {
 		return err
 	}
-	if err := validateImportIntentMap(record.Desired, false); err != nil {
+	// A desired absence deletes the ref, so it needs an expected value.
+	if err := validateImportIntentMap(record.Desired, true); err != nil {
 		return err
 	}
 	if err := validateImportObservedMap(record.Observed); err != nil {
@@ -1909,9 +1951,15 @@ func validateImportIntentRecord(record ImportIntent) error {
 	if err := validateImportIntentMap(record.Retained, false); err != nil {
 		return err
 	}
-	for ref := range record.Desired {
-		if _, exists := record.Expected[ref]; !exists {
+	for ref, desired := range record.Desired {
+		expected, exists := record.Expected[ref]
+		if !exists {
 			return errors.New("import intent desired ref has no expected value")
+		}
+		// A deletion follows the source: the ref it deletes is present and
+		// not a source fact.
+		if _, observed := record.Observed[ref]; desired == "" && (expected == "" || observed) {
+			return errors.New("import intent deletes a ref that is absent or that the source still has")
 		}
 	}
 	_, hasExpectedHEAD := record.Expected[ImportHeadRef]

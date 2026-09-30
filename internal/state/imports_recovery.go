@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Portable import recovery.
@@ -384,10 +385,15 @@ func importRecoveryCheckRef(name string) error {
 	if !validImportRefName(name) {
 		return fmt.Errorf("import recovery contains invalid ref %q", name)
 	}
-	if !hasImportRefPrefix(name, "refs/heads/") && !hasImportRefPrefix(name, "refs/tags/") {
-		return fmt.Errorf("import recovery ref %q is outside the promised branch and tag namespaces", name)
+	if hasImportRefPrefix(name, "refs/heads/") || hasImportRefPrefix(name, "refs/tags/") {
+		return nil
 	}
-	return nil
+	// A ref in an extra namespace a source imported, perhaps one it no longer
+	// imports, lies in a namespace such a list may hold.
+	if namespace, _, found := strings.Cut(strings.TrimPrefix(name, "refs/"), "/"); found && ValidateExtraRefPrefixes([]string{"refs/" + namespace + "/"}) == nil {
+		return nil
+	}
+	return fmt.Errorf("import recovery ref %q is outside the branch, tag and extra ref namespaces an import may write", name)
 }
 
 func hasImportRefPrefix(name, prefix string) bool {

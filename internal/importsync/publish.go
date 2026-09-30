@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -79,22 +80,43 @@ func (plan publicationPlan) changesRefs() bool {
 	return false
 }
 
+// mayReplaceLocal is the one rule for which local refs a refresh may change:
+// a ref this source generation observed, as observed, that still holds the
+// observed value, or, when the source overwrites diverged refs, one changed
+// locally since. Everything else is local work and stays.
+func mayReplaceLocal(source state.ImportSource, observed, local string) bool {
+	return observed != "" && (local == observed || source.OverwriteDiverged)
+}
+
+// keptLocalRef reports whether a local ref the source deleted stays whatever
+// the refresh choices are: it is absent, symbolic, or the branch a HEAD
+// names, so a repository never loses its default branch this way.
+func keptLocalRef(name, local string, symbolic bool, headTargets ...string) bool {
+	return local == "" || symbolic || slices.Contains(headTargets, name)
+}
+
 // planPublication applies the divergence rule:
 //
 //   - a missing destination ref is created;
 //   - an identical ref is unchanged;
-//   - a branch owned by this source generation follows an exact replacement or
-//     a proven fast-forward, retaining rewritten history;
-//   - a tag follows only when its exact previously observed object is still at
-//     the destination, and every replaced tag object is retained;
+//   - a ref this source generation observed follows the source when
+//     mayReplaceLocal allows it, retaining a replaced branch or tag tip;
+//   - a branch also follows a proven fast-forward of its observed value;
 //   - anything else is divergent and stays local.
 //
-// Upstream deletions never remove a local ref. The run follows the kept
-// history and default branch protection read when it started (run.writes):
-// without kept history a replaced tip is not retained, and while the
-// default branch is protected a refresh that would rewrite the branch HEAD
-// names is refused and publishes nothing, so a later refresh follows the
-// source once the protection is off or the source is a fast-forward again.
+// A ref the source no longer advertises is counted as deleted upstream. It
+// is deleted locally only when the source follows upstream deletions and
+// mayReplaceLocal allows it, and never when it is symbolic or a branch HEAD
+// names, or when the source advertises no published ref at all. Refs outside
+// the namespaces this run imports, such as those of an extra namespace the
+// source no longer imports, are neither counted nor changed.
+//
+// The run follows the kept history and default branch protection read when
+// it started (run.writes): without kept history a replaced tip is not
+// retained, and while the default branch is protected a refresh that would
+// rewrite the branch HEAD names is refused and publishes nothing, so a later
+// refresh follows the source once the protection is off or the source is a
+// fast-forward again.
 func (s *Service) planPublication(ctx context.Context, run *runState, repositoryPath string, dest, destSymrefs map[string]string, destHEAD headIdentity, observations priorObservations) (*publicationPlan, error) {
 	protected := ""
 	if run.writes.ProtectDefaultBranch && destHEAD.kind == headSymbolic {
@@ -161,10 +183,10 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.desired[ref.Name] = destination
 			plan.divergent++
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
-		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination && ref.Name == protected &&
-			!s.isAncestor(ctx, run, repositoryPath, destination, upstream):
-			return nil, newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", ref.Name), nil)
-		case observations.refs[ref.Name] != "" && observations.refs[ref.Name] == destination:
+		case mayReplaceLocal(run.source, observations.refs[ref.Name], destination):
+			if ref.Name == protected && !s.isAncestor(ctx, run, repositoryPath, destination, upstream) {
+				return nil, newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", ref.Name), nil)
+			}
 			plan.desired[ref.Name] = upstream
 			plan.updated++
 			if err := s.addRetention(ctx, run, repositoryPath, plan, dest, destSymrefs, ref.Name, destination, upstream); err != nil {
@@ -180,10 +202,22 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
 		}
 	}
-	for ref := range observations.refs {
-		if _, exists := plan.expected[ref]; !exists {
-			plan.deletedUpstream++
-			plan.deletedRefs = append(plan.deletedRefs, ref)
+	for ref, observed := range observations.refs {
+		if _, advertised := run.selected.upstream[ref]; advertised || !importedRef(ref, run.source.ExtraRefPrefixes) {
+			continue
+		}
+		plan.deletedUpstream++
+		plan.deletedRefs = append(plan.deletedRefs, ref)
+		destination := dest[ref]
+		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 ||
+			keptLocalRef(ref, destination, destSymrefs[ref] != "", destHEAD.target, sourceHEAD.target) ||
+			!mayReplaceLocal(run.source, observed, destination) {
+			continue
+		}
+		plan.expected[ref] = destination
+		plan.desired[ref] = ""
+		if err := s.addRetention(ctx, run, repositoryPath, plan, dest, destSymrefs, ref, destination, ""); err != nil {
+			return nil, err
 		}
 	}
 
@@ -254,16 +288,13 @@ func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath,
 	return false
 }
 
+// addRetention keeps the tip a branch or tag had before the plan replaces or
+// deletes it (newOID empty), unless kept history is off or a branch only
+// moves forward. Refs in extra namespaces keep no history.
 func (s *Service) addRetention(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, dest, destSymrefs map[string]string, refName, oldOID, newOID string) error {
-	if !plan.keepHistory {
-		return nil
-	}
 	kind, ok := refKind(refName)
-	if kind == "heads" && s.isAncestor(ctx, run, repositoryPath, oldOID, newOID) {
+	if !plan.keepHistory || !ok || (kind == "heads" && s.isAncestor(ctx, run, repositoryPath, oldOID, newOID)) {
 		return nil
-	}
-	if !ok {
-		return fmt.Errorf("ref %q has no retention kind", refName)
 	}
 	for _, name := range []string{repository.RetainedRefName(kind, oldOID), repository.ProvenanceRefName(kind, refShortName(refName), oldOID)} {
 		if err := addRequiredRetention(plan, dest, destSymrefs, name, oldOID); err != nil {
@@ -524,15 +555,15 @@ func (s *Service) publishRepositoryLocked(ctx context.Context, run *runState, re
 	if err := s.reconcileRepositoryIntentsLocked(ctx, repositoryPath, run.run.RepositoryID, run.runtimeGeneration, now); err != nil {
 		return publicationPlan{}, err
 	}
-	dest, destSymrefs, destHEAD, err := s.readDestinationState(ctx, repositoryPath)
+	dest, destSymrefs, destHEAD, err := s.readDestinationState(ctx, repositoryPath, run.source.ExtraRefPrefixes)
 	if err != nil {
-		return publicationPlan{}, err
-	}
-	if err := s.inspectPublicationRefKinds(ctx, run, repositoryPath, dest, destSymrefs, destHEAD); err != nil {
 		return publicationPlan{}, err
 	}
 	observations, err := s.observationMap(ctx, run)
 	if err != nil {
+		return publicationPlan{}, err
+	}
+	if err := s.inspectPublicationRefKinds(ctx, run, repositoryPath, dest, destSymrefs, destHEAD, observations); err != nil {
 		return publicationPlan{}, err
 	}
 	plan, err := s.planPublication(ctx, run, repositoryPath, dest, destSymrefs, destHEAD, observations)
@@ -612,9 +643,12 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 			continue
 		}
 		transactionRefs[ref] = expected
-		if expected == "" {
+		switch {
+		case expected == "":
 			commands = append(commands, "create "+ref+" "+desired)
-		} else {
+		case desired == "":
+			commands = append(commands, "delete "+ref+" "+expected)
+		default:
 			commands = append(commands, "update "+ref+" "+desired+" "+expected)
 		}
 	}
@@ -881,7 +915,10 @@ func (s *Service) recordAfterRefTransaction(ctx context.Context, record string, 
 	return write(recordCtx)
 }
 
-func (s *Service) inspectPublicationRefKinds(ctx context.Context, run *runState, repositoryPath string, refs, symrefs map[string]string, head headIdentity) error {
+// inspectPublicationRefKinds reads the exact kind of every ref the plan may
+// write: the advertised refs, the observed refs the source may have deleted,
+// and the retention refs of their current tips.
+func (s *Service) inspectPublicationRefKinds(ctx context.Context, run *runState, repositoryPath string, refs, symrefs map[string]string, head headIdentity, observations priorObservations) error {
 	storage, err := s.repositoryRefStorage(ctx, run, repositoryPath)
 	if err != nil {
 		return err
@@ -889,21 +926,26 @@ func (s *Service) inspectPublicationRefKinds(ctx context.Context, run *runState,
 	if storage != "files" {
 		return newProblem(CodeUnsupported, fmt.Sprintf("destination ref storage %q does not support exact ref-kind publication", storage), nil)
 	}
-	names := make([]string, 0, len(run.selected.refs))
+	names := make([]string, 0, len(run.selected.refs)+len(observations.refs))
 	for _, ref := range run.selected.refs {
 		names = append(names, ref.Name)
+	}
+	for ref := range observations.refs {
+		if _, advertised := run.selected.upstream[ref]; !advertised && importedRef(ref, run.source.ExtraRefPrefixes) {
+			names = append(names, ref)
+		}
 	}
 	if err := s.readExactRefKinds(ctx, repositoryPath, refs, symrefs, names); err != nil {
 		return newProblem(CodeRepositoryMissing, "destination candidate ref kinds could not be read", err)
 	}
 	retentionNames := make([]string, 0, len(names)*2+2)
-	for _, ref := range run.selected.refs {
-		oid := refs[ref.Name]
-		kind, ok := refKind(ref.Name)
+	for _, name := range names {
+		oid := refs[name]
+		kind, ok := refKind(name)
 		if oid == "" || !ok {
 			continue
 		}
-		retentionNames = append(retentionNames, repository.RetainedRefName(kind, oid), repository.ProvenanceRefName(kind, refShortName(ref.Name), oid))
+		retentionNames = append(retentionNames, repository.RetainedRefName(kind, oid), repository.ProvenanceRefName(kind, refShortName(name), oid))
 	}
 	if head.kind == headDetached {
 		retentionNames = append(retentionNames, detachedHEADRetentionNames(head.oid)...)
@@ -949,16 +991,37 @@ func (s *Service) readExactRefKinds(ctx context.Context, repositoryPath string, 
 	return nil
 }
 
-// publicationRefPrefixes bounds every destination ref query to fixed namespace
-// arguments. Selection by name happens in memory, so argv size never depends
-// on the number or length of transaction ref names.
-var publicationRefPrefixes = []string{"refs/heads", "refs/tags", "refs/owngit"}
+// publicationRefPrefixes bounds every destination ref query to namespace
+// arguments: branches, tags, OwnGit's refs, and the refs/<name> folder of each
+// other ref or extra ref prefix in names, once. Selection by name happens in
+// memory, so argv size never depends on the number or length of transaction
+// ref names, only on the few extra namespaces a source imports.
+func publicationRefPrefixes(names []string) []string {
+	return append(slices.Clone(fixedRefNamespaces), extraRefNamespaces(names)...)
+}
 
-// readPublicationRefs enumerates the fixed namespaces and then reads the exact
-// immediate kind of every named ref, including dangling and cyclic aliases that
-// enumeration omits.
+var fixedRefNamespaces = []string{"refs/heads", "refs/tags", "refs/owngit"}
+
+// extraRefNamespaces returns, once each, the refs/<name> folder of every ref
+// or ref prefix in names that is not a branch, tag or OwnGit ref.
+func extraRefNamespaces(names []string) []string {
+	var folders []string
+	for _, name := range names {
+		namespace, _, found := strings.Cut(strings.TrimPrefix(name, "refs/"), "/")
+		folder := "refs/" + namespace
+		if !strings.HasPrefix(name, "refs/") || !found || slices.Contains(fixedRefNamespaces, folder) || slices.Contains(folders, folder) {
+			continue
+		}
+		folders = append(folders, folder)
+	}
+	return folders
+}
+
+// readPublicationRefs enumerates the namespaces of names and then reads the
+// exact immediate kind of every named ref, including dangling and cyclic
+// aliases that enumeration omits.
 func (s *Service) readPublicationRefs(ctx context.Context, repositoryPath string, names []string) (map[string]string, map[string]string, error) {
-	records, _, err := s.Repositories.ReadRefs(ctx, repositoryPath, 0, publicationRefPrefixes...)
+	records, _, err := s.Repositories.ReadRefs(ctx, repositoryPath, 0, publicationRefPrefixes(names)...)
 	if err != nil {
 		return nil, nil, newProblem(CodeRepositoryMissing, "destination ref kinds could not be read", err)
 	}
@@ -1301,6 +1364,12 @@ func completeRunFromIntent(run *state.ImportRun, intent state.ImportIntent, now 
 			run.RefsUpdated++
 		}
 	}
+	for ref, desired := range intent.Desired {
+		// A deleted ref is one the source no longer has.
+		if _, observed := intent.Observed[ref]; desired == "" && !observed {
+			run.RefsDeletedUpstream++
+		}
+	}
 	if strings.Contains(intent.Reason, headDivergenceEvidence) {
 		run.RefsDivergent++
 	}
@@ -1326,8 +1395,10 @@ func (s *Service) markRunUnresolved(ctx context.Context, intent state.ImportInte
 	return s.Store.FinishImportRun(ctx, run)
 }
 
-func (s *Service) readDestinationState(ctx context.Context, repositoryPath string) (map[string]string, map[string]string, headIdentity, error) {
-	records, _, err := s.Repositories.ReadRefs(ctx, repositoryPath, 0, publicationRefPrefixes...)
+// readDestinationState reads the destination refs a publication may compare
+// or write, those in the source's extra namespaces included, and HEAD.
+func (s *Service) readDestinationState(ctx context.Context, repositoryPath string, extraRefPrefixes []string) (map[string]string, map[string]string, headIdentity, error) {
+	records, _, err := s.Repositories.ReadRefs(ctx, repositoryPath, 0, publicationRefPrefixes(extraRefPrefixes)...)
 	if err != nil {
 		return nil, nil, headIdentity{}, newProblem(CodeRepositoryMissing, "destination refs could not be read", err)
 	}

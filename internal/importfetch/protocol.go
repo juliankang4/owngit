@@ -134,11 +134,11 @@ func buildUploadRequest(advertisement *importgit.Advertisement, maximum int64) (
 	return request.Bytes(), nil
 }
 
-// buildLsRefsCommand encodes the protocol v2 ls-refs command for HEAD,
-// branches and tags, with their symref targets and peeled values.
-func buildLsRefsCommand(capabilities *importgit.Advertisement, maximum int64) ([]byte, error) {
+// buildLsRefsCommand encodes the protocol v2 ls-refs command for prefixes,
+// with their symref targets and peeled values.
+func buildLsRefsCommand(capabilities *importgit.Advertisement, prefixes []string, maximum int64) ([]byte, error) {
 	arguments := []string{"symrefs", "peel"}
-	for _, prefix := range importgit.LsRefsPrefixes {
+	for _, prefix := range prefixes {
 		arguments = append(arguments, "ref-prefix "+prefix)
 	}
 	return buildCommand("ls-refs", capabilities, arguments, maximum)

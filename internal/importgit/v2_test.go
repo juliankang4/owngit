@@ -87,11 +87,20 @@ func TestParseV2CapabilityAdvertisementRefusals(t *testing.T) {
 
 func lsRefs(t *testing.T, capabilities *Advertisement, options Options, records ...string) (*Advertisement, error) {
 	t.Helper()
+	return lsRefsWith(t, capabilities, nil, options, records...)
+}
+
+func lsRefsWith(t *testing.T, capabilities *Advertisement, extra []string, options Options, records ...string) (*Advertisement, error) {
+	t.Helper()
+	prefixes, err := LsRefsPrefixes(extra)
+	if err != nil {
+		t.Fatal(err)
+	}
 	body := ""
 	for _, record := range records {
 		body += pkt(record)
 	}
-	return ParseLsRefs(strings.NewReader(body+flush), capabilities, options)
+	return ParseLsRefs(strings.NewReader(body+flush), capabilities, prefixes, options)
 }
 
 // An ls-refs answer describes the source as a v0 advertisement does: refs,
@@ -166,13 +175,13 @@ func TestParseLsRefsRefusals(t *testing.T) {
 		sha1A+" refs/heads/a", sha1A+" refs/heads/b", sha1A+" refs/tags/c peeled:"+sha1B); err != nil {
 		t.Fatalf("at the record limit: %v", err)
 	}
-	if _, err := ParseLsRefs(strings.NewReader(pkt(sha1A+" refs/heads/main")), capabilities, Options{}); !errors.Is(err, ErrTruncated) {
+	if _, err := ParseLsRefs(strings.NewReader(pkt(sha1A+" refs/heads/main")), capabilities, []string{"HEAD"}, Options{}); !errors.Is(err, ErrTruncated) {
 		t.Fatalf("no flush: %v", err)
 	}
-	if _, err := ParseLsRefs(strings.NewReader(pkt(sha1A+" refs/heads/main")+flush+"x"), capabilities, Options{}); !errors.Is(err, ErrTrailingContent) {
+	if _, err := ParseLsRefs(strings.NewReader(pkt(sha1A+" refs/heads/main")+flush+"x"), capabilities, []string{"HEAD"}, Options{}); !errors.Is(err, ErrTrailingContent) {
 		t.Fatalf("trailing: %v", err)
 	}
-	if _, err := ParseLsRefs(strings.NewReader(flush), &Advertisement{ProtocolVersion: 0}, Options{}); !errors.Is(err, ErrInvalidOptions) {
+	if _, err := ParseLsRefs(strings.NewReader(flush), &Advertisement{ProtocolVersion: 0}, []string{"HEAD"}, Options{}); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatalf("v0 capabilities: %v", err)
 	}
 	long := Options{Limits: Limits{MaxTotalBytes: 64}}
@@ -205,5 +214,24 @@ func TestParseLsRefsLeavesOutUnrequestedRefs(t *testing.T) {
 	}
 	if only, err := lsRefs(t, capabilities, Options{}, sha1B+" refs/pull/1/head"); err != nil || !only.Empty {
 		t.Fatalf("only unrequested refs: %+v, %v", only, err)
+	}
+}
+
+// An extra namespace is listed with branches and tags; a name that only
+// starts with the same letters is not in it.
+func TestParseLsRefsKeepsExtraNamespaces(t *testing.T) {
+	capabilities := parseV2(t, v2Capabilities(true, githubCapabilities...))
+	result, err := lsRefsWith(t, capabilities, []string{"refs/notes/"}, Options{},
+		sha1A+" refs/heads/main", sha1B+" refs/notes/commits", sha1C+" refs/notesx/commits", sha1B+" refs/pull/1/head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Refs) != 2 || result.Refs[0].Name != "refs/heads/main" || result.Refs[1].Name != "refs/notes/commits" {
+		t.Fatalf("ls-refs = %+v", result.Refs)
+	}
+	for _, prefix := range []string{"refs/notes", "notes/", "refs/no tes/", "HEAD/", "refs//"} {
+		if _, err := LsRefsPrefixes([]string{prefix}); !errors.Is(err, ErrInvalidOptions) {
+			t.Fatalf("extra namespace %q: %v", prefix, err)
+		}
 	}
 }

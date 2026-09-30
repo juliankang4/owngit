@@ -71,6 +71,39 @@ func TestFetchV2ListsImportedRefsAndReadsSideBandPack(t *testing.T) {
 	}
 }
 
+// An extra namespace is asked for with branches and tags, and its refs are
+// listed and wanted; a namespace that is not a ref prefix is refused before
+// any request.
+func TestFetchV2AsksForExtraNamespaces(t *testing.T) {
+	const notes, pull = "3333333333333333333333333333333333333333", "4444444444444444444444444444444444444444"
+	refs := append(append([]string(nil), testV2Refs...), testPacket(notes+" refs/notes/commits\n"), testPacket(pull+" refs/pull/1/head\n"))
+	source := v2Source(t, refs, "000dpackfile\n"+testBand(1, "PACK")+"0000")
+	_, request := startSource(t, source)
+	request.ExtraRefPrefixes = []string{"refs/notes/"}
+	result, err := Fetch(context.Background(), request, consumeAll)
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if refs := result.Advertisement.Refs; len(refs) != 4 || refs[3].Name != "refs/notes/commits" {
+		t.Fatalf("refs = %+v", refs)
+	}
+	_, _, fetchBody := source.counts()
+	if !strings.HasSuffix(source.lsRefsBody, testPacket("ref-prefix refs/tags/\n")+testPacket("ref-prefix refs/notes/\n")+"0000") ||
+		!strings.Contains(fetchBody, "want "+notes) || strings.Contains(fetchBody, pull) {
+		t.Fatalf("ls-refs %q\nfetch %q", source.lsRefsBody, fetchBody)
+	}
+
+	idle := v2Source(t, testV2Refs, "")
+	_, request = startSource(t, idle)
+	request.ExtraRefPrefixes = []string{"refs/notes"}
+	if _, err := Fetch(context.Background(), request, consumeAll); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("namespace without a slash: %v", err)
+	}
+	if gets, posts, _ := idle.counts(); gets != 0 || posts != 0 {
+		t.Fatalf("a refused request reached the source: %d/%d", gets, posts)
+	}
+}
+
 func TestFetchV2SHA256AndEmptySource(t *testing.T) {
 	source := v2Source(t, []string{testPacket(testSHA256A + " refs/heads/main\n")}, "000dpackfile\n"+testBand(1, "PACK")+"0000")
 	source.advertisement = testV2Capabilities("sha256")

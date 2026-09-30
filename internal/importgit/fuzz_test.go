@@ -147,7 +147,7 @@ func FuzzParseLsRefs(f *testing.F) {
 	capabilities := &Advertisement{Service: DefaultService, ProtocolVersion: 2, ObjectFormat: FormatSHA1, Capabilities: []string{"ls-refs", "fetch"}}
 	f.Fuzz(func(t *testing.T, body []byte) {
 		options := Options{Limits: Limits{MaxPacketBytes: 4096, MaxTotalBytes: 1 << 16, MaxRefRecords: 64, MaxNameBytes: 256}}
-		result, err := ParseLsRefs(strings.NewReader(string(body)), capabilities, options)
+		result, err := ParseLsRefs(strings.NewReader(string(body)), capabilities, []string{"HEAD", "refs/heads/", "refs/tags/"}, options)
 		if err != nil {
 			var parseError *ParseError
 			if result != nil || !errors.As(err, &parseError) {

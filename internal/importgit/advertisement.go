@@ -287,7 +287,9 @@ type parseState struct {
 	records int
 	// v2 accepts a protocol v2 capability advertisement.
 	v2 bool
-	// unrequested holds the ls-refs names outside LsRefsPrefixes, which are
+	// prefixes are the ref prefixes an ls-refs command asked for.
+	prefixes []string
+	// unrequested holds the ls-refs names outside prefixes, which are
 	// validated and left out, so a repeated one is still refused.
 	unrequested map[string]bool
 }

@@ -149,7 +149,10 @@ type Request struct {
 	// RootCAPEM optionally adds source-specific trust anchors to the system
 	// roots. Normal certificate chain and original-hostname checks still run.
 	RootCAPEM []byte
-	Limits    Limits
+	// ExtraRefPrefixes are ref namespaces, such as refs/notes/, that a
+	// protocol v2 server is asked for beside HEAD, branches and tags.
+	ExtraRefPrefixes []string
+	Limits           Limits
 }
 
 // PackConsumer synchronously consumes one validated raw PACK stream. It must

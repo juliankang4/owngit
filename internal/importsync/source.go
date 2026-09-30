@@ -89,17 +89,33 @@ func refNameTooLong(name string) string {
 	return fmt.Sprintf("ref %q... is %d bytes; imported branch, tag, and HEAD target names are limited to %d bytes", name[:64], len(name), maxSelectedRefNameBytes)
 }
 
-// selectedRefs is the promised branch and tag subset of one advertisement.
-// Other namespaces are reported, never published, and a case-only collision is
-// refused because a case-insensitive filesystem cannot hold both names. A name
-// longer than maxSelectedRefNameBytes is refused before any pack is indexed.
+// importedRef reports whether a refresh publishes the named ref: a branch,
+// a tag, or a ref in one of the source's extra namespaces. The extra
+// namespaces never overlap refs/owngit/ (state.ValidateExtraRefPrefixes).
+func importedRef(name string, extra []string) bool {
+	if strings.HasPrefix(name, "refs/heads/") || strings.HasPrefix(name, "refs/tags/") {
+		return true
+	}
+	for _, prefix := range extra {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// selectedRefs is the published subset of one advertisement: branches, tags
+// and the source's extra namespaces. Other namespaces are reported, never
+// published, and a case-only collision is refused because a case-insensitive
+// filesystem cannot hold both names. A name longer than
+// maxSelectedRefNameBytes is refused before any pack is indexed.
 type selectedRefs struct {
 	refs     []importgit.Ref
 	upstream map[string]string
 	skipped  []string
 }
 
-func selectRefs(advertisement *importgit.Advertisement) (selectedRefs, error) {
+func selectRefs(advertisement *importgit.Advertisement, extra []string) (selectedRefs, error) {
 	result := selectedRefs{upstream: map[string]string{}}
 	folded := map[string]string{}
 	for _, ref := range advertisement.Refs {
@@ -108,10 +124,7 @@ func selectRefs(advertisement *importgit.Advertisement) (selectedRefs, error) {
 		case name == "HEAD":
 			// HEAD is tracked separately through the advertisement's HEAD facts.
 			continue
-		case strings.HasPrefix(name, "refs/owngit/"):
-			result.skipped = append(result.skipped, name)
-			continue
-		case !strings.HasPrefix(name, "refs/heads/") && !strings.HasPrefix(name, "refs/tags/"):
+		case !importedRef(name, extra):
 			result.skipped = append(result.skipped, name)
 			continue
 		}
@@ -196,8 +209,9 @@ func headSymrefTarget(advertisement *importgit.Advertisement) string {
 	return advertisement.Head.SymrefTarget
 }
 
-// refKind maps a promised ref to the retention naming component used by the
-// Git update hook.
+// refKind maps a branch or tag to the retention naming component used by
+// the Git update hook. Refs in extra namespaces have no kind: their replaced
+// tips are not kept.
 func refKind(name string) (string, bool) {
 	switch {
 	case strings.HasPrefix(name, "refs/heads/"):

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -106,9 +107,18 @@ func TestImportSourceReadersAndBindingCarryRefreshOptions(t *testing.T) {
 		t.Fatalf("sources=%+v err=%v", sources, err)
 	}
 	carries("ImportSources", sources[0])
-	configured, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "project", URL: source.URL, Mode: ImportModeCoexistence, Now: testImportNow().Add(time.Minute)})
+	configured, err := store.ConfigureImportSource(ctx, ImportSourceInput{
+		RepositoryID: "project", URL: source.URL, Mode: source.Mode, Now: testImportNow().Add(time.Minute),
+		OverwriteDiverged: true, FollowUpstreamDeletions: true, ExtraRefPrefixes: []string{"refs/notes/"},
+	})
 	noErr(t, err)
 	carries("ConfigureImportSource", configured)
+	if configured.AuthorityRevision != source.AuthorityRevision {
+		t.Fatalf("an unchanged configuration advanced the authority: %d to %d", source.AuthorityRevision, configured.AuthorityRevision)
+	}
+	stored, _, err := store.ImportSource(ctx, "project")
+	noErr(t, err)
+	carries("ImportSource after ConfigureImportSource", stored)
 
 	snapshot, err := store.ReadImportBinding(ctx, "project")
 	noErr(t, err)
@@ -118,9 +128,41 @@ func TestImportSourceReadersAndBindingCarryRefreshOptions(t *testing.T) {
 	noErr(t, err)
 	carries("RestoreImportBinding", source)
 
-	noErr(t, store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes='[1]'`))
-	if _, _, err := store.ImportSource(ctx, "project"); err == nil {
-		t.Fatal("an unreadable extra ref list was read as none")
+	// An unreadable list is named as its setting beside the rest of the
+	// source, never read as no namespaces without an error.
+	for _, text := range []string{`[1]`, `["refs/heads/"]`} {
+		noErr(t, store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes=?`, text))
+		source, exists, err := store.ImportSource(ctx, "project")
+		var setting *ImportSourceSettingError
+		if !exists || !errors.As(err, &setting) || setting.Setting != "extra_ref_prefixes" || source.URL == "" || !source.OverwriteDiverged {
+			t.Fatalf("unreadable list %s: source=%+v exists=%v err=%v", text, source, exists, err)
+		}
+	}
+}
+
+// A refresh choice is execution authority: changing one stops a run in
+// progress, and the saved values are written with the source.
+func TestConfigureImportSourceStoresRefreshChoicesAsAuthority(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	source := configureTestImportSource(t, store, "project")
+	for index, input := range []ImportSourceInput{
+		{OverwriteDiverged: true},
+		{OverwriteDiverged: true, FollowUpstreamDeletions: true},
+		{OverwriteDiverged: true, FollowUpstreamDeletions: true, ExtraRefPrefixes: []string{"refs/notes/"}},
+		{},
+	} {
+		input.RepositoryID, input.URL, input.Mode, input.Now = "project", source.URL, source.Mode, testImportNow().Add(time.Duration(index+1)*time.Minute)
+		changed, err := store.ConfigureImportSource(ctx, input)
+		noErr(t, err)
+		if changed.AuthorityRevision != source.AuthorityRevision+int64(index)+1 || changed.OverwriteDiverged != input.OverwriteDiverged ||
+			changed.FollowUpstreamDeletions != input.FollowUpstreamDeletions || !slices.Equal(changed.ExtraRefPrefixes, input.ExtraRefPrefixes) {
+			t.Fatalf("change %d: %+v", index, changed)
+		}
+	}
+	if _, err := store.ConfigureImportSource(ctx, ImportSourceInput{RepositoryID: "project", URL: source.URL, Mode: source.Mode, Now: testImportNow().Add(time.Hour),
+		ExtraRefPrefixes: []string{"refs/owngit/x/"}}); err == nil {
+		t.Fatal("a reserved namespace was stored")
 	}
 }
 
@@ -810,6 +852,46 @@ func TestValidateImportRecoveryRefusesInconsistentSnapshots(t *testing.T) {
 				t.Fatalf("error=%v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+// A backup holds refs of an extra namespace a source imports, or once
+// imported, and publications that deleted a ref the source deleted. A ref
+// in OwnGit's own namespace, and a deletion of an absent ref, are refused.
+func TestValidateImportRecoveryAcceptsExtraNamespacesAndDeletions(t *testing.T) {
+	now := testImportNow()
+	oid := strings.Repeat("a", 40)
+	run := testImportRun(t, strings.Repeat("1", 32), "project", 1, ImportKindRefresh, ImportRunComplete)
+	run.FinishedAt = now
+	receipt := `{"HEAD":"absent","refs/heads/gone":"","refs/notes/commits":"` + oid + `"}`
+	snapshot := func(observed string, expectedGone string) RecoveryState {
+		return RecoveryState{
+			Repositories: []Repository{{ID: "project", Name: "Project", CreatedAt: now}},
+			ImportSources: []ImportSource{{
+				RepositoryID: "project", URL: "https://example.invalid/team/project.git", SourceGeneration: 1, AuthorityRevision: 1,
+				Mode: ImportModeStandalone, CreatedAt: now, UpdatedAt: now,
+			}},
+			ImportRuns: []ImportRun{run},
+			ImportObservations: []ImportObservation{{
+				RepositoryID: "project", SourceGeneration: 1, RefName: observed, OID: oid, ObservedAt: now, RunID: run.ID,
+			}},
+			ImportIntents: []ImportIntent{{
+				ID: strings.Repeat("2", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1, Status: ImportIntentComplete,
+				Expected: map[string]string{ImportHeadRef: "absent", "refs/heads/gone": expectedGone, "refs/notes/commits": ""},
+				Desired:  map[string]string{ImportHeadRef: "absent", "refs/heads/gone": "", "refs/notes/commits": oid},
+				Observed: map[string]string{ImportHeadRef: "absent", "refs/notes/commits": oid}, Retained: map[string]string{},
+				ReceiptJSON: receipt, ReceiptDigest: ImportReceiptDigest(receipt), CreatedAt: now, UpdatedAt: now,
+			}},
+		}
+	}
+	if err := ValidateImportRecovery(snapshot("refs/notes/commits", oid)); err != nil {
+		t.Fatalf("extra namespace and deletion: %v", err)
+	}
+	if err := ValidateImportRecovery(snapshot("refs/owngit/keep", oid)); err == nil {
+		t.Fatal("an observation in OwnGit's namespace was accepted")
+	}
+	if err := ValidateImportRecovery(snapshot("refs/notes/commits", "")); err == nil {
+		t.Fatal("a deletion of an absent ref was accepted")
 	}
 }
 

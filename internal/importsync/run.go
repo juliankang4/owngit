@@ -516,7 +516,7 @@ func (s *Service) adoptAdvertisement(run *runState, advertisement *importgit.Adv
 	if target := advertisement.Head.SymrefTarget; target != "" && !strings.HasPrefix(target, "refs/heads/") {
 		return newProblem(CodeUnsupportedRefs, fmt.Sprintf("source HEAD targets unsupported ref %q", target), nil)
 	}
-	selected, err := selectRefs(advertisement)
+	selected, err := selectRefs(advertisement, run.source.ExtraRefPrefixes)
 	if err != nil {
 		return newProblem(CodeUnsupportedRefs, err.Error(), err)
 	}
@@ -547,6 +547,7 @@ func (s *Service) requestFor(ctx context.Context, run *runState) (importfetch.Re
 		AllowReservedAddresses: options.AllowReservedAddresses,
 		Redirects:              options.Redirects,
 		ApprovedRedirectOrigin: options.ApprovedRedirectOrigin,
+		ExtraRefPrefixes:       run.source.ExtraRefPrefixes,
 		Limits:                 run.limits.Fetch,
 	}
 	credential, exists, err := s.Store.LoadImportCredentials(ctx, run.run.RepositoryID)

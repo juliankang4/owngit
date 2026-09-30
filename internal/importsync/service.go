@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -257,10 +258,11 @@ type ConfigureInput struct {
 	Mode                Mode
 	GitOnlyConsent      bool
 	AllowPrivateNetwork bool
-	// Options changes the connection options and limits. What it leaves
-	// unchanged keeps its saved value, except that a changed URL resets the
-	// transport options: consent given for one address never carries over to
-	// another.
+	// Options changes the connection options, limits and refresh choices.
+	// What it leaves unchanged keeps its saved value, except that a changed
+	// URL resets the transport options and the choices to overwrite diverged
+	// refs and follow upstream deletions: consent given for one address never
+	// carries over to another.
 	Options OptionsChange
 	// RepeatsSaved marks Options as a form that sends every transport choice
 	// again, as drawn for the saved address. With a new URL, only the choices
@@ -271,41 +273,62 @@ type ConfigureInput struct {
 
 // OptionsChange changes some of a source's options. A nil field keeps the
 // value it applies to. Limits holds only the limits to change, by their
-// state.ImportLimitFields name.
+// state.ImportLimitFields name. OverwriteDiverged, FollowUpstreamDeletions
+// and ExtraRefPrefixes are the refresh choices of state.ImportSource.
 type OptionsChange struct {
-	AllowPlainHTTP         *bool
-	Redirects              *string
-	ApprovedRedirectOrigin *string
-	AllowReservedAddresses *bool
-	Limits                 map[string]int64
+	AllowPlainHTTP          *bool
+	Redirects               *string
+	ApprovedRedirectOrigin  *string
+	AllowReservedAddresses  *bool
+	Limits                  map[string]int64
+	OverwriteDiverged       *bool
+	FollowUpstreamDeletions *bool
+	ExtraRefPrefixes        *[]string
 }
 
-// WithoutRepeated returns the change without the transport choices that
-// repeat saved: a plain HTTP or exceptional destination choice equal to the
-// saved one, and a redirect policy and origin that both equal the saved
-// ones. What remains was chosen in this change.
-func (c OptionsChange) WithoutRepeated(saved state.ImportOptions) OptionsChange {
-	if c.AllowPlainHTTP != nil && *c.AllowPlainHTTP == saved.AllowPlainHTTP {
-		c.AllowPlainHTTP = nil
+// WithoutRepeated returns the change without the address-bound choices that
+// repeat saved: a plain HTTP, exceptional destination, overwrite or
+// upstream deletion choice equal to the saved one, and a redirect policy and
+// origin that both equal the saved ones. What remains was chosen in this
+// change.
+func (c OptionsChange) WithoutRepeated(saved state.ImportSource) OptionsChange {
+	repeats := func(choice **bool, saved bool) {
+		if *choice != nil && **choice == saved {
+			*choice = nil
+		}
 	}
-	if c.AllowReservedAddresses != nil && *c.AllowReservedAddresses == saved.AllowReservedAddresses {
-		c.AllowReservedAddresses = nil
-	}
-	redirects, origin := saved.Redirects, saved.ApprovedRedirectOrigin
+	repeats(&c.AllowPlainHTTP, saved.Options.AllowPlainHTTP)
+	repeats(&c.AllowReservedAddresses, saved.Options.AllowReservedAddresses)
+	repeats(&c.OverwriteDiverged, saved.OverwriteDiverged)
+	repeats(&c.FollowUpstreamDeletions, saved.FollowUpstreamDeletions)
+	redirects, origin := saved.Options.Redirects, saved.Options.ApprovedRedirectOrigin
 	if c.Redirects != nil {
 		redirects = *c.Redirects
 	}
 	if c.ApprovedRedirectOrigin != nil {
 		origin = *c.ApprovedRedirectOrigin
 	}
-	if redirects == saved.Redirects && origin == saved.ApprovedRedirectOrigin {
+	if redirects == saved.Options.Redirects && origin == saved.Options.ApprovedRedirectOrigin {
 		c.Redirects, c.ApprovedRedirectOrigin = nil, nil
 	}
 	return c
 }
 
-// apply returns options with this change made.
-func (c OptionsChange) apply(options state.ImportOptions) (state.ImportOptions, error) {
+// apply makes this change to the options and refresh choices of input.
+func (c OptionsChange) apply(input *state.ImportSourceInput) error {
+	if c.OverwriteDiverged != nil {
+		input.OverwriteDiverged = *c.OverwriteDiverged
+	}
+	if c.FollowUpstreamDeletions != nil {
+		input.FollowUpstreamDeletions = *c.FollowUpstreamDeletions
+	}
+	if c.ExtraRefPrefixes != nil {
+		if err := state.ValidateExtraRefPrefixes(*c.ExtraRefPrefixes); err != nil {
+			return err
+		}
+		input.ExtraRefPrefixes = slices.Clone(*c.ExtraRefPrefixes)
+	}
+	options := &input.Options
 	if c.AllowPlainHTTP != nil {
 		options.AllowPlainHTTP = *c.AllowPlainHTTP
 	}
@@ -318,7 +341,7 @@ func (c OptionsChange) apply(options state.ImportOptions) (state.ImportOptions, 
 		// HTTP choice matters only for the approved policy (checkOptions).
 		if *c.ApprovedRedirectOrigin != "" {
 			if _, err := importfetch.ParseRedirectOrigin(*c.ApprovedRedirectOrigin, true); err != nil {
-				return options, err
+				return err
 			}
 		}
 		options.ApprovedRedirectOrigin = *c.ApprovedRedirectOrigin
@@ -330,19 +353,22 @@ func (c OptionsChange) apply(options state.ImportOptions) (state.ImportOptions, 
 		// A limit is set to a value in its range; setting its default value
 		// returns it to the default.
 		if err := state.CheckImportLimit(name, value); err != nil {
-			return options, err
+			return err
 		}
 		field, _ := options.Limits.Field(name)
 		*field = value
 	}
-	return options, nil
+	return nil
 }
 
 // replaces reports whether the change sets the named saved option (see
 // state.ImportSourceSettingError), so an unreadable one can be repaired.
 func (c OptionsChange) replaces(setting string) bool {
-	if setting == "limits" {
+	switch setting {
+	case "limits":
 		return len(c.Limits) > 0
+	case "extra_ref_prefixes":
+		return c.ExtraRefPrefixes != nil
 	}
 	return c.Redirects != nil
 }
@@ -368,25 +394,25 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 		return state.ImportSource{}, newProblem(CodeInvalidSource, err.Error(), err)
 	}
 	return s.configure(ctx, input.RepositoryID, input.Options.replaces, func(current state.ImportSource, exists bool) (state.ImportSourceInput, error) {
-		options := state.DefaultImportOptions()
+		source := state.ImportSourceInput{
+			RepositoryID: input.RepositoryID, URL: url, Mode: string(mode),
+			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: state.DefaultImportOptions(),
+		}
 		change := input.Options
 		switch {
 		case exists && current.URL == url:
-			options = current.Options
+			source.Options = current.Options
+			source.OverwriteDiverged, source.FollowUpstreamDeletions = current.OverwriteDiverged, current.FollowUpstreamDeletions
+			source.ExtraRefPrefixes = current.ExtraRefPrefixes
 		case exists:
-			options = current.Options.WithoutTransport()
+			source.Options = current.Options.WithoutTransport()
+			source.ExtraRefPrefixes = current.ExtraRefPrefixes
 			if input.RepeatsSaved {
-				change = change.WithoutRepeated(current.Options)
+				change = change.WithoutRepeated(current)
 			}
 		}
-		options, err := change.apply(options)
-		if err != nil {
-			return state.ImportSourceInput{}, err
-		}
-		return state.ImportSourceInput{
-			RepositoryID: input.RepositoryID, URL: url, Mode: string(mode),
-			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: options,
-		}, nil
+		err := change.apply(&source)
+		return source, err
 	})
 }
 
@@ -398,14 +424,13 @@ func (s *Service) ChangeOptions(ctx context.Context, repositoryID string, change
 		if !exists {
 			return state.ImportSourceInput{}, newProblem(CodeNotConfigured, "configure an import source first", ErrNotConfigured)
 		}
-		options, err := change.apply(current.Options)
-		if err != nil {
-			return state.ImportSourceInput{}, err
-		}
-		return state.ImportSourceInput{
+		source := state.ImportSourceInput{
 			RepositoryID: repositoryID, URL: current.URL, Mode: current.Mode,
-			GitOnlyConsent: current.GitOnlyConsent, AllowPrivateNetwork: current.AllowPrivateNetwork, Options: options,
-		}, nil
+			GitOnlyConsent: current.GitOnlyConsent, AllowPrivateNetwork: current.AllowPrivateNetwork, Options: current.Options,
+			OverwriteDiverged: current.OverwriteDiverged, FollowUpstreamDeletions: current.FollowUpstreamDeletions, ExtraRefPrefixes: current.ExtraRefPrefixes,
+		}
+		err := change.apply(&source)
+		return source, err
 	})
 }
 
@@ -680,8 +705,8 @@ type ImportInput struct {
 	GitOnlyConsent      bool
 	AllowPrivateNetwork bool
 	Credentials         *Credentials
-	// Options changes the new source's connection options and limits from
-	// their defaults.
+	// Options changes the new source's connection options, limits and
+	// refresh choices from their defaults.
 	Options OptionsChange
 	Limits  Limits
 }
@@ -698,15 +723,15 @@ type ImportResult struct {
 // when that destination does not exist, and performs a bounded initial import.
 // Reconfiguration of an existing repository is ConfigureSource plus Refresh.
 func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, error) {
-	options, err := input.Options.apply(state.DefaultImportOptions())
+	source := state.ImportSourceInput{Options: state.DefaultImportOptions()}
+	if err := input.Options.apply(&source); err != nil {
+		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
+	}
+	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes, source.Options.AllowPlainHTTP)
 	if err != nil {
 		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
 	}
-	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes, options.AllowPlainHTTP)
-	if err != nil {
-		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
-	}
-	if options, err = s.checkOptions(url, options); err != nil {
+	if source.Options, err = s.checkOptions(url, source.Options); err != nil {
 		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
 	}
 	name := strings.TrimSpace(input.Name)
@@ -727,10 +752,9 @@ func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, 
 			return ImportResult{}, err
 		}
 	}
-	snapshot, written, err := s.bindNewImport(ctx, ConfigureInput{
-		RepositoryID: repositoryID, URL: url, Mode: input.Mode,
-		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
-	}, options, input.Credentials)
+	source.RepositoryID, source.URL, source.Mode = repositoryID, url, string(input.Mode)
+	source.GitOnlyConsent, source.AllowPrivateNetwork = input.GitOnlyConsent, input.AllowPrivateNetwork
+	snapshot, written, err := s.bindNewImport(ctx, source, input.Credentials)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -833,7 +857,7 @@ func (s *Service) forgetOrphanImports(ctx context.Context) error {
 // bindNewImport snapshots any existing source and credential binding under the
 // repository lock, refuses a destination that appeared after the unlocked
 // pre-check, and only then writes this import's source and credentials.
-func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, options state.ImportOptions, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
+func (s *Service) bindNewImport(ctx context.Context, input state.ImportSourceInput, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(input.RepositoryID)
 	lock.Lock()
@@ -851,18 +875,15 @@ func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, optio
 		lock.Unlock()
 		return nil, state.ImportSource{}, newProblem(CodeRepositoryTaken, "repository destination already exists", nil)
 	}
-	mode := input.Mode
-	if mode == "" {
-		mode = ModeStandalone
+	if input.Mode == "" {
+		input.Mode = string(ModeStandalone)
 	}
-	if !mode.valid() {
+	if !Mode(input.Mode).valid() {
 		lock.Unlock()
 		return nil, state.ImportSource{}, newProblem(CodeInvalidSource, "mode must be standalone or coexistence", nil)
 	}
-	source, err := s.Store.ConfigureImportSource(ctx, state.ImportSourceInput{
-		RepositoryID: input.RepositoryID, URL: input.URL, Mode: string(mode),
-		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: options, Now: now,
-	})
+	input.Now = now
+	source, err := s.Store.ConfigureImportSource(ctx, input)
 	if err != nil {
 		lock.Unlock()
 		return nil, state.ImportSource{}, newProblem(CodeStateUnavailable, "import source could not be recorded", err)
@@ -1004,6 +1025,26 @@ type RefStatus struct {
 	State     string `json:"state"`
 }
 
+// RefreshEffect is a local ref that the next refresh would change if the
+// choice it needs is on, as the source stood at its last complete refresh.
+type RefreshEffect struct {
+	Name string `json:"name"`
+	// Effect is "replace" for a diverged ref that the source's value
+	// replaces, which needs overwrite_diverged, or "delete" for a ref the
+	// source deleted, which needs follow_upstream_deletions, and
+	// overwrite_diverged too when LocalChanged.
+	Effect   string `json:"effect"`
+	LocalOID string `json:"local_oid"`
+	// LocalChanged reports that the local ref no longer holds the value the
+	// source had when it was last observed.
+	LocalChanged bool `json:"local_changed"`
+	// History is "kept" when the repository's kept history keeps the local
+	// tip, "not_kept" when it does not (kept history is off, or the ref is in
+	// an extra namespace), and "unknown" when the repository's kept history
+	// setting could not be read.
+	History string `json:"history"`
+}
+
 // ScheduleStatus reports the opt-in schedule and whether it is due.
 type ScheduleStatus struct {
 	Enabled        bool       `json:"enabled"`
@@ -1039,6 +1080,10 @@ type Status struct {
 	Schedule          *ScheduleStatus `json:"schedule,omitempty"`
 	Options           *OptionsStatus  `json:"options,omitempty"`
 	Runtime           RuntimeStatus   `json:"runtime"`
+
+	// RefreshEffects lists, among Refs, the local refs that the choices to
+	// overwrite diverged refs and follow upstream deletions would change.
+	RefreshEffects []RefreshEffect `json:"refresh_effects,omitempty"`
 }
 
 // OptionsStatus reports a source's connection options and the limits its next
@@ -1052,18 +1097,26 @@ type OptionsStatus struct {
 	// ChangedLimits names the ones the owner set.
 	Limits        state.ImportLimits `json:"limits"`
 	ChangedLimits []string           `json:"changed_limits,omitempty"`
+	// OverwriteDiverged, FollowUpstreamDeletions and ExtraRefPrefixes are
+	// the refresh choices, which a backup keeps.
+	OverwriteDiverged       bool     `json:"overwrite_diverged"`
+	FollowUpstreamDeletions bool     `json:"follow_upstream_deletions"`
+	ExtraRefPrefixes        []string `json:"extra_ref_prefixes"`
 	// Problem says which saved option cannot be used and where to set it
 	// again. The options above then show what could be read.
 	Problem string `json:"problem,omitempty"`
 }
 
-// DescribeOptions describes a source's options and the limits a run uses.
-// readErr is the error the source read reported, if any; unusable saved
-// options in it become the Problem.
-func DescribeOptions(options state.ImportOptions, readErr error) *OptionsStatus {
+// DescribeOptions describes a source's options, the limits a run uses and
+// its refresh choices. readErr is the error the source read reported, if
+// any; unusable saved options in it become the Problem.
+func DescribeOptions(source state.ImportSource, readErr error) *OptionsStatus {
+	options := source.Options
 	status := &OptionsStatus{
 		AllowPlainHTTP: options.AllowPlainHTTP, Redirects: options.Redirects,
 		ApprovedRedirectOrigin: options.ApprovedRedirectOrigin, AllowReservedAddresses: options.AllowReservedAddresses,
+		OverwriteDiverged: source.OverwriteDiverged, FollowUpstreamDeletions: source.FollowUpstreamDeletions,
+		ExtraRefPrefixes: append([]string{}, source.ExtraRefPrefixes...),
 	}
 	var problems []string
 	for _, setting := range settingErrors(readErr) {
@@ -1109,7 +1162,7 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 	}
 	// A saved option that cannot be used is reported beside the rest of the
 	// status, so the owner can see and set it again.
-	status.Options = DescribeOptions(source.Options, err)
+	status.Options = DescribeOptions(source, err)
 	status.Configured = true
 	status.URL = source.URL
 	status.Mode = source.Mode
@@ -1234,6 +1287,8 @@ var errDestinationBusy = errors.New("destination repository is being written")
 
 func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source state.ImportSource) error {
 	var destination map[string]string
+	symbolic := map[string]bool{}
+	headTarget := ""
 	path, _, exists, err := s.Repositories.ExistingPath(ctx, source.RepositoryID)
 	status.RepositoryExists = err == nil && exists
 	// Status never waits for a writer such as an import publication or a
@@ -1245,13 +1300,17 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 		var records []repository.RefRecord
 		readErr := errDestinationBusy
 		if lock.TryRLock() {
-			records, _, readErr = s.Repositories.ReadRefs(ctx, path, 0, "refs/heads", "refs/tags")
+			records, _, readErr = s.Repositories.ReadRefs(ctx, path, 0, append([]string{"refs/heads", "refs/tags"}, extraRefNamespaces(source.ExtraRefPrefixes)...)...)
+			if readErr == nil {
+				headTarget, _, readErr = s.Repositories.ReadHead(ctx, path)
+			}
 			lock.RUnlock()
 		}
 		if readErr == nil {
 			destination = make(map[string]string, len(records))
 			for _, record := range records {
 				destination[record.Name] = record.OID
+				symbolic[record.Name] = record.SymrefTarget != ""
 			}
 			if status.ObjectFormat == "" {
 				if format, formatErr := s.Repositories.ObjectFormat(ctx, path); formatErr == nil {
@@ -1288,10 +1347,19 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 		switch {
 		case observation.SourceGeneration != source.SourceGeneration:
 			ref.State = "earlier_source"
+		case !importedRef(observation.RefName, source.ExtraRefPrefixes):
+			// An extra namespace the source no longer imports: its refs are
+			// left as they are, not deleted.
+			ref.State = "not_imported"
 		case latestRunID != "" && observation.RunID != latestRunID:
 			ref.State = "deleted_at_source"
 			if local, present := destination[observation.RefName]; present {
 				ref.LocalOID = local
+				if !keptLocalRef(observation.RefName, local, symbolic[observation.RefName], headTarget) {
+					status.RefreshEffects = append(status.RefreshEffects, RefreshEffect{
+						Name: observation.RefName, Effect: "delete", LocalOID: local, LocalChanged: local != observation.OID,
+					})
+				}
 			}
 		case destination == nil:
 			ref.State = "unknown_local"
@@ -1305,9 +1373,32 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 				ref.State = "tracked"
 			default:
 				ref.State = "diverged"
+				if !symbolic[observation.RefName] {
+					status.RefreshEffects = append(status.RefreshEffects, RefreshEffect{
+						Name: observation.RefName, Effect: "replace", LocalOID: local, LocalChanged: true,
+					})
+				}
 			}
 		}
 		status.Refs = append(status.Refs, ref)
+	}
+	if len(status.RefreshEffects) == 0 {
+		return nil
+	}
+	history := "unknown"
+	writes, err := s.Store.RefWrites(ctx, source.RepositoryID)
+	if err == nil {
+		history = "not_kept"
+		if writes.KeepHistory {
+			history = "kept"
+		}
+	}
+	for index := range status.RefreshEffects {
+		effect := &status.RefreshEffects[index]
+		effect.History = history
+		if _, branchOrTag := refKind(effect.Name); !branchOrTag {
+			effect.History = "not_kept"
+		}
 	}
 	return nil
 }

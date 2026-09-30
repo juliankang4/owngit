@@ -48,6 +48,10 @@ func fetch(ctx context.Context, request Request, consume PackConsumer, lookup re
 	if len(request.RootCAPEM) > limits.MaxCABundleBytes {
 		return nil, fetchError("validate private CA", ErrInvalidRequest, nil)
 	}
+	prefixes, err := importgit.LsRefsPrefixes(request.ExtraRefPrefixes)
+	if err != nil {
+		return nil, fetchError("validate ref prefixes", ErrInvalidRequest, nil)
+	}
 	bundle := append([]byte(nil), request.RootCAPEM...)
 	roots, err := rootPool(bundle)
 	if err != nil {
@@ -80,7 +84,7 @@ func fetch(ctx context.Context, request Request, consume PackConsumer, lookup re
 	defer connector.close()
 
 	budget := &bodyBudget{remaining: limits.MaxTotalBodyBytes}
-	advertisement, client, base, err := fetchAdvertisement(fetchContext, connector, base, authentication, limits, budget)
+	advertisement, client, base, err := fetchAdvertisement(fetchContext, connector, base, authentication, prefixes, limits, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -156,11 +160,12 @@ func discover(ctx context.Context, connector *connector, base *url.URL, authenti
 
 // fetchAdvertisement reads what the source advertises. It asks for Git
 // protocol v2. A v2 server answers with its capabilities, and an ls-refs
-// command then lists only HEAD, branches and tags (importgit.LsRefsPrefixes),
-// so refs an import does not use, such as pull request refs, are neither
-// listed nor counted. A server without v2 answers with its v0 or v1
-// advertisement of every ref, which is used as before.
-func fetchAdvertisement(ctx context.Context, connector *connector, base *url.URL, authentication Authentication, limits Limits, budget *bodyBudget) (*importgit.Advertisement, *http.Client, *url.URL, error) {
+// command then lists only prefixes: HEAD, branches, tags and the source's
+// extra namespaces (importgit.LsRefsPrefixes), so refs an import does not
+// use, such as pull request refs, are neither listed nor counted. A server
+// without v2 answers with its v0 or v1 advertisement of every ref, which is
+// used as before.
+func fetchAdvertisement(ctx context.Context, connector *connector, base *url.URL, authentication Authentication, prefixes []string, limits Limits, budget *bodyBudget) (*importgit.Advertisement, *http.Client, *url.URL, error) {
 	response, client, base, err := discover(ctx, connector, base, authentication, limits)
 	if err != nil {
 		return nil, nil, nil, err
@@ -181,7 +186,7 @@ func fetchAdvertisement(ctx context.Context, connector *connector, base *url.URL
 		return nil, nil, nil, advertisementError(err)
 	}
 	if advertisement.ProtocolVersion == 2 {
-		advertisement, err = listRefs(ctx, client, base, connector.authenticationFor(base, authentication), advertisement, limits, budget)
+		advertisement, err = listRefs(ctx, client, base, connector.authenticationFor(base, authentication), advertisement, prefixes, limits, budget)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -192,8 +197,8 @@ func fetchAdvertisement(ctx context.Context, connector *connector, base *url.URL
 // listRefs runs the ls-refs command of a protocol v2 server that advertised
 // capabilities. Its answer has the advertisement's limits and counts toward
 // the total body budget.
-func listRefs(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, capabilities *importgit.Advertisement, limits Limits, budget *bodyBudget) (*importgit.Advertisement, error) {
-	body, err := buildLsRefsCommand(capabilities, limits.MaxRequestBytes)
+func listRefs(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, capabilities *importgit.Advertisement, prefixes []string, limits Limits, budget *bodyBudget) (*importgit.Advertisement, error) {
+	body, err := buildLsRefsCommand(capabilities, prefixes, limits.MaxRequestBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +210,7 @@ func listRefs(ctx context.Context, client *http.Client, base *url.URL, authentic
 	if !contentLengthWithin(response, limits.Advertisement.MaxTotalBytes) || !contentLengthWithin(response, budget.remaining) {
 		return nil, fetchError("read advertisement", ErrResponseTooLarge, nil)
 	}
-	advertisement, err := importgit.ParseLsRefs(budget.reader(response.Body), capabilities, importgit.Options{
+	advertisement, err := importgit.ParseLsRefs(budget.reader(response.Body), capabilities, prefixes, importgit.Options{
 		Service: importgit.DefaultService,
 		Limits:  limits.Advertisement,
 	})

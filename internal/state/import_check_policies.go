@@ -191,7 +191,7 @@ func decodeImportLimits(text string) (ImportLimits, error) {
 // cannot be used. The source's other fields were read.
 type ImportSourceSettingError struct {
 	RepositoryID string
-	// Setting is "limits" or "redirects".
+	// Setting is "limits", "redirects" or "extra_ref_prefixes".
 	Setting string
 	Cause   error
 }
@@ -204,14 +204,18 @@ func (e *ImportSourceSettingError) Unwrap() error { return e.Cause }
 
 // Advice says which setting to save again and where.
 func (e *ImportSourceSettingError) Advice() string {
-	if e.Setting == "limits" {
+	switch e.Setting {
+	case "limits":
 		return "This source's saved import limits cannot be used. Set them again on the repository's Import tab, or with owngit import configure --limit."
+	case "extra_ref_prefixes":
+		return "This source's saved extra ref namespaces cannot be used. Set them again on the repository's Import tab, or with owngit import configure --extra-ref-prefixes."
 	}
 	return "This source's saved redirect choice cannot be used. Set it again on the repository's Import tab, or with owngit import configure --redirects."
 }
 
-// decodeImportOptions reads the option columns of one source row.
-func decodeImportOptions(repositoryID string, plainHTTP bool, redirects, approved string, reserved bool, limitsText string) (ImportOptions, error) {
+// decodeImportOptions reads the option columns of one source row and lists
+// each unusable one.
+func decodeImportOptions(repositoryID string, plainHTTP bool, redirects, approved string, reserved bool, limitsText string) (ImportOptions, []error) {
 	options := ImportOptions{AllowPlainHTTP: plainHTTP, Redirects: redirects, ApprovedRedirectOrigin: approved, AllowReservedAddresses: reserved}
 	var problems []error
 	if limits, err := decodeImportLimits(limitsText); err != nil {
@@ -222,7 +226,7 @@ func decodeImportOptions(repositoryID string, plainHTTP bool, redirects, approve
 	if err := validateImportRedirects(redirects, approved); err != nil {
 		problems = append(problems, &ImportSourceSettingError{RepositoryID: repositoryID, Setting: "redirects", Cause: err})
 	}
-	return options, errors.Join(problems...)
+	return options, problems
 }
 
 // validateImportRedirects checks the policy and that an origin is stored

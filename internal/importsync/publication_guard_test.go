@@ -254,7 +254,7 @@ func TestPublicationRefQueriesUseFixedNamespaceArguments(t *testing.T) {
 		t.Fatal(err)
 	}
 	argumentBytes := 0
-	for _, prefix := range publicationRefPrefixes {
+	for _, prefix := range publicationRefPrefixes(names) {
 		argumentBytes += len(prefix) + 1
 	}
 	nameBytes := 0
