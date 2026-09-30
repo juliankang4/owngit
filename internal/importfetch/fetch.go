@@ -147,10 +147,8 @@ func discover(ctx context.Context, connector *connector, base *url.URL, authenti
 		if redirects+1 > maxRedirects {
 			return nil, nil, nil, fetchError("follow redirect", ErrRedirect, ErrTooManyRedirects)
 		}
-		if originKey(next) != originKey(base) {
-			if client, err = connector.connect(ctx, next); err != nil {
-				return nil, nil, nil, err
-			}
+		if client, err = connector.connect(ctx, next); err != nil {
+			return nil, nil, nil, err
 		}
 		base = next
 	}

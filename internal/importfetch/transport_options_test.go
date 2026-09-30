@@ -428,3 +428,50 @@ func TestDependentBoundsFollowTheirLimits(t *testing.T) {
 		}
 	}
 }
+
+type hostResolver struct {
+	answers map[string][]netip.Addr
+	calls   map[string]int
+}
+
+func (r *hostResolver) LookupNetIP(_ context.Context, _ string, host string) ([]netip.Addr, error) {
+	r.calls[host]++
+	return r.answers[host], nil
+}
+
+// A redirect back to an origin already reached uses the address selected
+// for it the first time, not a new answer.
+func TestEachOriginIsResolvedOncePerFetch(t *testing.T) {
+	source := packSource(t, "")
+	sourceServer, _ := startPlainSource(t, source)
+	mirror := &scriptedSource{t: t}
+	mirrorServer, _ := startPlainSource(t, mirror)
+	port := func(server *httptest.Server) string {
+		return strconv.Itoa(server.Listener.Addr().(*net.TCPAddr).Port)
+	}
+	sourceOrigin := "http://source.test:" + port(sourceServer)
+	mirrorOrigin := "http://mirror.test:" + port(mirrorServer)
+	source.handler = func(writer http.ResponseWriter, request *http.Request) bool {
+		if request.URL.Path != "/old.git/info/refs" {
+			return false
+		}
+		http.Redirect(writer, request, mirrorOrigin+"/hop/info/refs?service=git-upload-pack", http.StatusFound)
+		return true
+	}
+	mirror.handler = func(writer http.ResponseWriter, request *http.Request) bool {
+		http.Redirect(writer, request, sourceOrigin+"/group/repo.git/info/refs?service=git-upload-pack", http.StatusFound)
+		return true
+	}
+	loopback := []netip.Addr{netip.MustParseAddr("127.0.0.1")}
+	resolver := &hostResolver{answers: map[string][]netip.Addr{"source.test": loopback, "mirror.test": loopback}, calls: map[string]int{}}
+	request := Request{
+		URL: sourceOrigin + "/old.git", AllowPrivateNetwork: true, AllowPlainHTTP: true,
+		Redirects: RedirectApproved, ApprovedRedirectOrigin: mirrorOrigin,
+	}
+	if _, err := fetch(context.Background(), request, consumeAll, resolver); err != nil {
+		t.Fatalf("redirect back to the source: %v", err)
+	}
+	if resolver.calls["source.test"] != 1 || resolver.calls["mirror.test"] != 1 {
+		t.Fatalf("resolutions = %v, want one per origin", resolver.calls)
+	}
+}

@@ -529,7 +529,8 @@ var (
 // connector opens pinned connections for one fetch. The source origin keeps
 // its own trust anchors and credentials; any other origin a redirect reaches
 // gets the system trust anchors and no credentials. Every origin is resolved
-// and checked under the same address policy and pinned to one address.
+// once and checked under the same address policy, and every request to it
+// uses the one address selected then.
 type connector struct {
 	policy         addressPolicy
 	allowPlainHTTP bool
@@ -539,21 +540,30 @@ type connector struct {
 	sourceRoots    *x509.CertPool
 	limits         Limits
 	lookup         resolver
+	clients        map[string]*http.Client
 	transports     []*http.Transport
 }
 
 func (c *connector) connect(ctx context.Context, base *url.URL) (*http.Client, error) {
+	origin := originKey(base)
+	if client, exists := c.clients[origin]; exists {
+		return client, nil
+	}
 	resolved, err := resolveSource(ctx, base, c.policy, c.lookup)
 	if err != nil {
 		return nil, err
 	}
 	roots := c.sourceRoots
-	if originKey(base) != c.sourceOrigin {
+	if origin != c.sourceOrigin {
 		if roots, err = rootPool(nil); err != nil {
 			return nil, err
 		}
 	}
 	client, transport := newHTTPClient(resolved, roots, c.limits)
+	if c.clients == nil {
+		c.clients = map[string]*http.Client{}
+	}
+	c.clients[origin] = client
 	c.transports = append(c.transports, transport)
 	return client, nil
 }
