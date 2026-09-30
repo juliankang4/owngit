@@ -18,7 +18,7 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 	store, ctx, now := fixture.store, context.Background(), fixture.now
 	window := func(kind string, after, until time.Time, limit int) ([]FeedRecord, int) {
 		t.Helper()
-		records, total, err := store.FeedRecords(ctx, kind, after, until, limit)
+		records, total, err := store.FeedRecords(ctx, kind, after, until, nil, limit)
 		noErr(t, err)
 		return records, total
 	}
@@ -74,6 +74,11 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 	if total != 2 || !slices.Equal(ids, []string{"run-failed=Project", "run-gone=gone"}) || records[0].Message != "the source did not answer" {
 		t.Fatalf("failed imports %d %v", total, ids)
 	}
+	// Only the records include accepts are counted and returned.
+	gone := func(record FeedRecord) bool { return record.RepositoryID == "gone" }
+	if records, total, err := store.FeedRecords(ctx, NotifyImportFailed, now, now.Add(4*time.Second), gone, 10); err != nil || total != 1 || records[0].ID != "run-gone" {
+		t.Fatalf("failed imports of a gone repository %d %+v %v", total, records, err)
+	}
 
 	noErr(t, store.Exec(ctx, `INSERT INTO backup_runs(id,kind,status,destination,message,started_at,finished_at) VALUES(?,'scheduled','failed','/backups','the disk is full',?,?)`,
 		strings.Repeat("a", 32), now.Unix(), now.Add(5*time.Second).Unix()))
@@ -82,7 +87,7 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 	if records, total := window(NotifyBackupFailed, now, now.Add(5*time.Second), 10); total != 1 || records[0].Message != "the disk is full" || records[0].RepositoryID != "" {
 		t.Fatalf("failed backups %d %+v", total, records)
 	}
-	if _, _, err := store.FeedRecords(ctx, NotifyPush, now, now, 1); err == nil {
+	if _, _, err := store.FeedRecords(ctx, NotifyPush, now, now, nil, 1); err == nil {
 		t.Fatal("pushes were read as timed records")
 	}
 }

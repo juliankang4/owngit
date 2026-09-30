@@ -40,8 +40,9 @@ const trayFeedDelay = time.Minute
 // one; more become one notification that counts them.
 const trayFeedSeparate = 3
 
-// trayFeedRecords bounds the records of one kind a read looks at.
-const trayFeedRecords = 100
+// trayRecordKinds are the kinds the feed reads by the time their records
+// were written.
+var trayRecordKinds = []string{state.NotifyPullRequest, state.NotifyCheckFailed, state.NotifyImportFailed, state.NotifyBackupFailed}
 
 // TrayEvents is the answer of TrayEventsPath.
 type TrayEvents struct {
@@ -73,9 +74,9 @@ type TrayNotification struct {
 type trayCursor struct {
 	// Push is the sequence of the last push reported or dropped.
 	Push int64 `json:"p"`
-	// Time is the time, in Unix seconds, up to which records of the other
-	// kinds were reported or dropped.
-	Time int64 `json:"t"`
+	// Times holds, for each of trayRecordKinds, the time in Unix seconds up
+	// to which its records were reported or dropped.
+	Times map[string]int64 `json:"t"`
 	// Update is the newer release reported or known when the feed started.
 	Update string `json:"u"`
 }
@@ -88,8 +89,13 @@ func (cursor trayCursor) encode() string {
 func decodeTrayCursor(value string) (trayCursor, bool) {
 	content, err := base64.RawURLEncoding.DecodeString(value)
 	var cursor trayCursor
-	if err != nil || json.Unmarshal(content, &cursor) != nil || cursor.Push < 0 || cursor.Time <= 0 {
+	if err != nil || json.Unmarshal(content, &cursor) != nil || cursor.Push < 0 {
 		return trayCursor{}, false
+	}
+	for _, kind := range trayRecordKinds {
+		if cursor.Times[kind] <= 0 {
+			return trayCursor{}, false
+		}
 	}
 	return cursor, true
 }
@@ -231,7 +237,8 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 	if err != nil {
 		return TrayEvents{}, err
 	}
-	until := app.now().Add(-trayFeedDelay).Truncate(time.Second)
+	now := app.now().Truncate(time.Second)
+	until := now.Add(-trayFeedDelay)
 	update := ""
 	if app.Releases != nil && settings.UpdateCheck {
 		if release, newer := app.Releases.Newer(); newer {
@@ -241,8 +248,12 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 	cursor := feed.cursor
 	// A cursor past the last push this database ever recorded belongs to
 	// other records, such as those a restore replaced.
+	// A new cursor starts now: what came before is never reported.
 	if !feed.resume || cursor.Push > lastPush {
-		cursor = trayCursor{Push: lastPush, Time: until.Unix(), Update: update}
+		cursor = trayCursor{Push: lastPush, Times: map[string]int64{}, Update: update}
+		for _, kind := range trayRecordKinds {
+			cursor.Times[kind] = now.Unix()
+		}
 		return TrayEvents{OK: true, Cursor: cursor.encode(), Started: true, Notifications: []TrayNotification{}}, nil
 	}
 	events := TrayEvents{OK: true, Notifications: []TrayNotification{}}
@@ -253,20 +264,27 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 	var notifications []TrayNotification
 	notifications, cursor.Push = app.pushNotifications(request, feed, pushes, cursor.Push, lastPush)
 	events.Notifications = append(events.Notifications, notifications...)
-	// A clock that went back leaves the time where it was until it passes
-	// it again.
-	if after := time.Unix(cursor.Time, 0); until.After(after) {
-		for _, kind := range []string{state.NotifyPullRequest, state.NotifyCheckFailed, state.NotifyImportFailed, state.NotifyBackupFailed} {
-			if !feed.shows(kind) {
-				continue
+	for _, kind := range trayRecordKinds {
+		// A kind that is off drops what was written up to now; one that is
+		// on reads what is a minute old. A clock that went back leaves the
+		// time where it was until it passes it again.
+		after := time.Unix(cursor.Times[kind], 0)
+		if !feed.shows(kind) {
+			if now.After(after) {
+				cursor.Times[kind] = now.Unix()
 			}
-			records, total, err := app.Store.FeedRecords(ctx, kind, after, until, trayFeedRecords)
-			if err != nil {
-				return TrayEvents{}, err
-			}
-			events.Notifications = append(events.Notifications, app.recordNotifications(feed, kind, records, total)...)
+			continue
 		}
-		cursor.Time = until.Unix()
+		if !until.After(after) {
+			continue
+		}
+		include := func(record state.FeedRecord) bool { return !app.dropped(feed, originKey(kind, record.ID)) }
+		records, total, err := app.Store.FeedRecords(ctx, kind, after, until, include, trayFeedSeparate+1)
+		if err != nil {
+			return TrayEvents{}, err
+		}
+		events.Notifications = append(events.Notifications, app.recordNotifications(feed, kind, records, total)...)
+		cursor.Times[kind] = until.Unix()
 	}
 	if update != "" && update != cursor.Update {
 		if feed.shows(state.NotifyUpdate) {
@@ -419,21 +437,15 @@ func repositoryPath(repositoryID string) string {
 	return "/repositories/" + url.PathEscape(repositoryID)
 }
 
-// recordNotifications words the records of one kind: one notification each,
-// or one for all when there are more than trayFeedSeparate.
+// recordNotifications words the records of one kind that the icon shows,
+// total of them of which records are the first: one notification each, or
+// one for all when there are more than trayFeedSeparate.
 func (app *App) recordNotifications(feed trayFeedRequest, kind string, records []state.FeedRecord, total int) []TrayNotification {
 	text := func(code webui.MessageCode, args ...any) string {
 		return fmt.Sprintf(webui.Text(feed.lang, code), args...)
 	}
-	kept := []state.FeedRecord{}
-	for _, record := range records {
-		if !app.dropped(feed, originKey(kind, record.ID)) {
-			kept = append(kept, record)
-		}
-	}
 	notifications := []TrayNotification{}
-	// Records past the bound are counted as shown.
-	if count := len(kept) + total - len(records); count > trayFeedSeparate {
+	if count := total; count > trayFeedSeparate {
 		last := records[len(records)-1]
 		summary := TrayNotification{ID: originKey(kind, last.ID) + "+" + strconv.Itoa(count), Kind: kind, Path: "/activity"}
 		summary.Title = text(map[string]webui.MessageCode{
@@ -442,7 +454,7 @@ func (app *App) recordNotifications(feed trayFeedRequest, kind string, records [
 		}[kind], count)
 		return append(notifications, summary)
 	}
-	for _, record := range kept {
+	for _, record := range records {
 		notification := TrayNotification{ID: originKey(kind, record.ID), Kind: kind, Body: record.Message}
 		switch kind {
 		case state.NotifyPullRequest:

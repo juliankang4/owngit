@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -234,12 +235,20 @@ func TestTrayEventsCursorRules(t *testing.T) {
 		t.Fatalf("turned on again, the push was reported: %+v", later)
 	}
 
-	replaced := trayCursor{Push: 99, Time: clock.now().Unix(), Update: ""}.encode()
+	times := map[string]int64{}
+	for _, kind := range trayRecordKinds {
+		times[kind] = clock.now().Unix()
+	}
+	replaced := trayCursor{Push: 99, Times: times, Update: ""}.encode()
 	if again := feedRead(t, app, replaced, nil); !again.Started || len(again.Notifications) != 0 {
 		t.Fatalf("a cursor past the last push %+v", again)
 	}
 	if again := feedRead(t, app, "e30", nil); !again.Started {
 		t.Fatalf("a cursor without a time %+v", again)
+	}
+	delete(times, state.NotifyBackupFailed)
+	if again := feedRead(t, app, trayCursor{Push: 1, Times: times}.encode(), nil); !again.Started {
+		t.Fatalf("a cursor without the time of a kind %+v", again)
 	}
 
 	for name, query := range map[string]url.Values{
@@ -341,4 +350,99 @@ func newReleaseURL(t *testing.T, tag string) string {
 	t.Helper()
 	_, address := newReleaseEndpoint(t, tag)
 	return address
+}
+
+// failedImport records an import of site that did not finish at at.
+func failedImport(t *testing.T, app *App, id string, at time.Time) {
+	t.Helper()
+	noErr(t, app.Store.Exec(context.Background(), `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,message,created_at) VALUES(?,'site',1,1,'scheduled','failed',?,?,'the source did not answer',?)`,
+		id, at.Unix(), at.Unix(), at.Unix()))
+}
+
+// What was recorded before the feed started, or before the icon was shown
+// again (hiding removes its cursor), is never reported; what follows is.
+func TestTrayEventsStartAfterWhatCameBefore(t *testing.T) {
+	app, clock, _, _ := feedApp(t)
+	failedImport(t, app, "before-start", clock.now().Add(-30*time.Second))
+	start := feedRead(t, app, "", nil)
+	clock.add(time.Second)
+	failedImport(t, app, "after-start", clock.now())
+	clock.add(time.Minute)
+	first := feedRead(t, app, start.Cursor, nil)
+	if got := onlyNotification(t, first); got.ID != "import_failed:after-start" {
+		t.Fatalf("after the start %+v", got)
+	}
+
+	// Hidden, then shown again with no cursor, next to an import.
+	failedImport(t, app, "while-hidden", clock.now().Add(-10*time.Second))
+	shown := feedRead(t, app, "", nil)
+	if !shown.Started || len(shown.Notifications) != 0 {
+		t.Fatalf("shown again %+v", shown)
+	}
+	clock.add(2 * time.Minute)
+	if later := feedRead(t, app, shown.Cursor, nil); len(later.Notifications) != 0 {
+		t.Fatalf("an import from while hidden was reported: %+v", later.Notifications)
+	}
+}
+
+// Records written while their kind, or all notifications, were off are
+// dropped even when the kind is on again before they are a minute old,
+// while a kind that stays on keeps its records that are not yet due.
+func TestTrayEventsOffDropsWhatCameMeanwhile(t *testing.T) {
+	app, clock, _, _ := feedApp(t)
+	start := feedRead(t, app, "", nil)
+	clock.add(time.Second)
+	failedImport(t, app, "while-all-off", clock.now())
+	clock.add(10 * time.Second)
+	off := feedRead(t, app, start.Cursor, url.Values{"kinds": {""}})
+	clock.add(time.Minute)
+	if got := feedRead(t, app, off.Cursor, nil); len(got.Notifications) != 0 {
+		t.Fatalf("an import from while all were off: %+v", got.Notifications)
+	}
+
+	// Imports off, pull requests on: the pull request due later stays.
+	start = feedRead(t, app, off.Cursor, nil)
+	clock.add(time.Second)
+	failedImport(t, app, "while-imports-off", clock.now())
+	_, err := app.Store.CreatePullRequest(context.Background(), "notes", "Weekly review", "feature", "main", strings.Repeat("a", 40), strings.Repeat("b", 40), state.ReviewNotRequested, clock.now())
+	noErr(t, err)
+	clock.add(10 * time.Second)
+	importsOff := feedRead(t, app, start.Cursor, url.Values{"kinds": {"pull_request"}})
+	if len(importsOff.Notifications) != 0 {
+		t.Fatalf("before a minute passed: %+v", importsOff.Notifications)
+	}
+	clock.add(time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, importsOff.Cursor, nil)); got.ID != "pull_request:notes/1" {
+		t.Fatalf("with imports on again %+v", got)
+	}
+}
+
+// "Only what I did not do" counts only what came from elsewhere, also
+// beyond the records a read shows one by one.
+func TestTrayEventsOnlyOthersCountsWhatCameFromElsewhere(t *testing.T) {
+	app, clock, _, _ := feedApp(t)
+	local := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/import", nil)
+	local.RemoteAddr = "127.0.0.1:12345"
+	others := url.Values{"only_others": {"1"}}
+	start := feedRead(t, app, "", others)
+	mine := func(round string) {
+		for index := range 104 {
+			id := round + "-" + strconv.Itoa(index)
+			failedImport(t, app, id, clock.now())
+			app.trayOrigins.note(local, originKey(state.NotifyImportFailed, id))
+		}
+	}
+	clock.add(time.Second)
+	mine("first")
+	clock.add(time.Minute)
+	first := feedRead(t, app, start.Cursor, others)
+	if len(first.Notifications) != 0 {
+		t.Fatalf("only this computer's imports: %+v", first.Notifications)
+	}
+	mine("second")
+	failedImport(t, app, "remote", clock.now())
+	clock.add(time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, first.Cursor, others)); got.ID != "import_failed:remote" {
+		t.Fatalf("an import from elsewhere after 104 of this computer's %+v", got)
+	}
 }

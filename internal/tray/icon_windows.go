@@ -93,8 +93,7 @@ type app struct {
 	opening    bool
 	openTarget string
 	// clicked is the page a click on a notification opens. Windows says
-	// only that one of the icon's notifications was clicked, and earlier
-	// ones stay in the notification center.
+	// only that one of the icon's notifications was clicked, not which.
 	clicked clickPages
 }
 
@@ -608,8 +607,9 @@ func (a *app) notify(notification *server.TrayNotification) bool {
 		return false
 	}
 	data := a.iconData()
-	// Windows applies its own notification settings, and with Do not
-	// disturb on it keeps the notification in the notification center.
+	// Windows applies its own notification settings: with Do not disturb
+	// on it shows nothing, and it does not keep the notification in the
+	// notification center.
 	data.flags = nifInfo
 	body := notification.Body
 	if notification.Subtitle != "" {

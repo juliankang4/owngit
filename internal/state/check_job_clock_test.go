@@ -53,7 +53,7 @@ func TestCheckJobFinishIsTheTimeOwnGitRecordedIt(t *testing.T) {
 			// read the failure once.
 			reads := 0
 			for from := fixture.now.Add(-2 * time.Hour); from.Before(fixture.now.Add(2 * time.Hour)); from = from.Add(time.Minute) {
-				_, total, err := store.FeedRecords(ctx, NotifyCheckFailed, from, from.Add(time.Minute), 10)
+				_, total, err := store.FeedRecords(ctx, NotifyCheckFailed, from, from.Add(time.Minute), nil, 10)
 				noErr(t, err)
 				reads += total
 			}

@@ -55,24 +55,20 @@ var feedQueries = map[string]string{
 		WHERE b.status IN ('failed','interrupted') AND COALESCE(b.finished_at, b.started_at) > ? AND COALESCE(b.finished_at, b.started_at) <= ? ORDER BY 8, b.id`,
 }
 
-// FeedRecords returns up to limit records of kind written after after and
-// up to until, both whole seconds, the oldest first, and how many there
-// are in all.
-func (s *Store) FeedRecords(ctx context.Context, kind string, after, until time.Time, limit int) ([]FeedRecord, int, error) {
+// FeedRecords reads the records of kind written after after and up to
+// until, both whole seconds, the oldest first, that include accepts (nil
+// accepts all). It returns the first limit of them and how many there are.
+func (s *Store) FeedRecords(ctx context.Context, kind string, after, until time.Time, include func(FeedRecord) bool, limit int) ([]FeedRecord, int, error) {
 	query, known := feedQueries[kind]
 	if !known {
 		return nil, 0, fmt.Errorf("the event feed has no records of kind %q", kind)
 	}
-	var total int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM (`+query+`)`, after.Unix(), until.Unix()).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-	rows, err := s.db.QueryContext(ctx, query+` LIMIT ?`, after.Unix(), until.Unix(), limit)
+	rows, err := s.db.QueryContext(ctx, query, after.Unix(), until.Unix())
 	if err != nil {
 		return nil, 0, err
 	}
 	defer rows.Close()
-	records := []FeedRecord{}
+	records, total := []FeedRecord{}, 0
 	for rows.Next() {
 		record := FeedRecord{Kind: kind}
 		var at int64
@@ -80,7 +76,12 @@ func (s *Store) FeedRecords(ctx context.Context, kind string, after, until time.
 			return nil, 0, err
 		}
 		record.At = time.Unix(at, 0)
-		records = append(records, record)
+		if include != nil && !include(record) {
+			continue
+		}
+		if total++; len(records) < limit {
+			records = append(records, record)
+		}
 	}
 	return records, total, rows.Err()
 }
