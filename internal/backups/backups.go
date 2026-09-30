@@ -413,13 +413,20 @@ func (s *Service) checkRoom(ctx context.Context, run state.BackupRun) (note stri
 
 // verify rehearses a restore of the backup at output within the limit.
 func (s *Service) verify(ctx context.Context, output string) error {
+	return s.verifyWith(ctx, func(ctx context.Context, gitPath string) (recovery.Verification, error) {
+		return recovery.Verify(ctx, output, "", gitPath)
+	})
+}
+
+// verifyWith runs the verification rehearse within the limit.
+func (s *Service) verifyWith(ctx context.Context, rehearse func(ctx context.Context, gitPath string) (recovery.Verification, error)) error {
 	limit := s.VerifyLimit
 	if limit == 0 {
 		limit = DefaultVerifyLimit
 	}
 	bounded, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	result, err := recovery.Verify(bounded, output, "", s.Repositories.Git.GitPath)
+	result, err := rehearse(bounded, s.Repositories.Git.GitPath)
 	switch {
 	case ctx.Err() != nil:
 		return ctx.Err()

@@ -111,7 +111,11 @@ func openRun(run state.BackupRun) (*recovery.BackupFolder, *recovery.BackupCopy,
 }
 
 // StartCheck verifies the backup of run id again, as a new backup is
-// verified, and returns at once. The result is recorded with the run and
+// verified, and returns at once. The backup stays held from the check that
+// the run owns it until the verification ends, and is verified only as the
+// backup with the run's manifest (recovery.BackupCopy.Verify), so a folder
+// that another backup took the name of meanwhile is never recorded as
+// this run's. The result is recorded with the run and
 // kept as LastCheck. It fails with ErrNoBackup or ErrBackupGone when there
 // is nothing to verify, with state.ErrBackupRunning while a backup runs
 // and with ErrBusy while another verification or an upload runs.
@@ -124,11 +128,11 @@ func (s *Service) StartCheck(ctx context.Context, id string) (Check, error) {
 	if err != nil {
 		return Check{}, err
 	}
-	backup.Close()
-	folder.Close()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.begin(ctx, "check"); err != nil {
+		backup.Close()
+		folder.Close()
 		return Check{}, err
 	}
 	check := &Check{RunID: run.ID, BackupName: run.BackupName, Status: CheckRunning, StartedAt: s.now()}
@@ -137,18 +141,25 @@ func (s *Service) StartCheck(ctx context.Context, id string) (Check, error) {
 	go func(ctx context.Context) {
 		defer s.work.Done()
 		defer s.end()
-		s.finishCheck(ctx, run, check)
+		defer folder.Close()
+		defer backup.Close()
+		s.finishCheck(ctx, run, backup, check)
 	}(s.ctx)
 	return *check, nil
 }
 
-// finishCheck verifies the backup of run and records the result.
-func (s *Service) finishCheck(ctx context.Context, run state.BackupRun, check *Check) {
+// finishCheck verifies backup, the held backup of run, and records the
+// result. A folder that holds another backup records nothing for run.
+func (s *Service) finishCheck(ctx context.Context, run state.BackupRun, backup *recovery.BackupCopy, check *Check) {
 	status, message, verification := CheckPassed, "", state.BackupVerifyPassed
-	err := s.verify(ctx, runPath(run))
+	err := s.verifyWith(ctx, func(ctx context.Context, gitPath string) (recovery.Verification, error) {
+		return backup.Verify(ctx, "", gitPath)
+	})
 	switch {
 	case ctx.Err() != nil:
 		status, message, verification = CheckFailed, "OwnGit stopped before the verification finished.", ""
+	case errors.Is(err, recovery.ErrReplaced):
+		status, message, verification = CheckFailed, "The backup folder holds another backup now, so nothing was recorded for this one.", ""
 	case err != nil:
 		status, message, verification = CheckFailed, err.Error(), state.BackupVerifyFailed
 	}

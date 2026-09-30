@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -189,5 +190,57 @@ func TestUploadedBackupIsVerifiedAndReplacedOrRemoved(t *testing.T) {
 	noErr(t, restarted.Stop(ctx))
 	if _, err := os.Lstat(filepath.Join(f.store.Dir(), UploadsFolder)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the upload from before stayed: %v", err)
+	}
+}
+
+// exchange swaps the folders of two backups by name. It says false when
+// Windows keeps the first from being renamed because OwnGit holds it.
+func exchange(t *testing.T, first, second string) bool {
+	t.Helper()
+	aside := first + ".aside"
+	if err := os.Rename(first, aside); err != nil && runtime.GOOS == "windows" {
+		return false
+	} else {
+		noErr(t, err)
+	}
+	noErr(t, os.Rename(second, first))
+	noErr(t, os.Rename(aside, second))
+	return true
+}
+
+// A backup whose folder another backup takes the name of while it is
+// verified again is not recorded as verified by the other backup.
+func TestCheckRecordsNothingForAnExchangedBackup(t *testing.T) {
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	first := f.backUpNow(t)
+	// The second backup holds another commit, so no bundle of it passes
+	// for one of the first.
+	work := filepath.Join(filepath.Dir(f.store.Dir()), "work")
+	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("changed"), 0o600))
+	git(t, work, "commit", "-am", "changed")
+	remote, err := f.manager.Path("project")
+	noErr(t, err)
+	git(t, work, "push", remote, "HEAD:refs/heads/main")
+	second := f.backUpNow(t)
+	noErr(t, f.store.RecordBackupVerification(context.Background(), first.ID, state.BackupVerifyFailed))
+
+	_, err = f.service.StartCheck(context.Background(), first.ID)
+	noErr(t, err)
+	if !exchange(t, runPath(first), runPath(second)) {
+		f.waitForTask(t)
+		if recorded := f.run(t, first.ID); recorded.Verification != state.BackupVerifyPassed {
+			t.Fatalf("the held backup, which could not be exchanged, was recorded %q", recorded.Verification)
+		}
+		return
+	}
+	f.waitForTask(t)
+	status, err := f.service.Status(context.Background())
+	noErr(t, err)
+	if status.Check.Status != CheckFailed || !strings.Contains(status.Check.Message, "another backup") {
+		t.Fatalf("check of an exchanged backup: %+v", status.Check)
+	}
+	if recorded := f.run(t, first.ID); recorded.Verification != state.BackupVerifyFailed {
+		t.Fatalf("the exchanged backup was recorded %q", recorded.Verification)
 	}
 }

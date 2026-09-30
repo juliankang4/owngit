@@ -1,6 +1,7 @@
 package recovery
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -277,4 +279,18 @@ func RestoreLimit(dir string) (string, error) {
 		return limit.FileSystem, nil
 	}
 	return "", err
+}
+
+// ErrReplaced says that a backup's folder held another backup by the time
+// it was read than the one that was opened.
+var ErrReplaced = errors.New("the folder holds another backup than the one that was opened")
+
+// Verify verifies the backup as Verify does, while it stays held, and only
+// as the backup that was opened: its manifest must have ManifestSHA256,
+// and the manifest's digests bind every bundle to it. A folder that holds
+// another backup by the time it is read fails with ErrReplaced.
+func (c *BackupCopy) Verify(ctx context.Context, temporary, gitPath string) (Verification, error) {
+	operations := defaultRestoreOperations()
+	operations.manifestSHA256 = c.ManifestSHA256
+	return verify(ctx, filepath.Join(c.folder.area.Dir(), c.name), temporary, gitPath, operations)
 }

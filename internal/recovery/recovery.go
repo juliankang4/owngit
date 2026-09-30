@@ -578,6 +578,10 @@ type restoreOperations struct {
 	// rehearsal, set by Verify, is told what the backup holds and how each
 	// repository's checks ended.
 	rehearsal *Verification
+	// manifestSHA256, when set, is the SHA-256 the manifest must have: the
+	// backup is then that one backup, whose bundles the manifest's digests
+	// bind to it, whatever its folder holds by the time it is read.
+	manifestSHA256 string
 }
 
 func defaultRestoreOperations() restoreOperations {
@@ -666,9 +670,12 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		return err
 	}
 
-	manifest, err := readManifest(filepath.Join(inputRoot, manifestName))
+	manifest, digest, err := readManifestDigest(filepath.Join(inputRoot, manifestName))
 	if err != nil {
 		return err
+	}
+	if operations.manifestSHA256 != "" && digest != operations.manifestSHA256 {
+		return fmt.Errorf("%s: %w", input, ErrReplaced)
 	}
 	if err := validateManifest(manifest); err != nil {
 		return err
@@ -1362,19 +1369,35 @@ func manifestFields() []manifestField {
 }
 
 func readManifest(manifestPath string) (Manifest, error) {
+	manifest, _, err := readManifestDigest(manifestPath)
+	return manifest, err
+}
+
+// readManifestDigest reads the manifest at manifestPath and returns the
+// SHA-256 of the whole file with it.
+func readManifestDigest(manifestPath string) (Manifest, string, error) {
 	if err := requireRegularFile(manifestPath); err != nil {
-		return Manifest{}, err
+		return Manifest{}, "", err
 	}
 	file, err := os.Open(manifestPath)
 	if err != nil {
-		return Manifest{}, err
+		return Manifest{}, "", err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Manifest{}, err
+		return Manifest{}, "", err
 	}
-	return decodeManifest(file, info.Size(), manifestLimit)
+	digest := sha256.New()
+	content := io.TeeReader(file, digest)
+	manifest, err := decodeManifest(content, info.Size(), manifestLimit)
+	if err == nil {
+		_, err = io.Copy(io.Discard, content)
+	}
+	if err != nil {
+		return Manifest{}, "", err
+	}
+	return manifest, hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 // decodeManifest reads a manifest of size bytes with memory bounded by its
