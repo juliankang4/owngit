@@ -45,7 +45,7 @@ type folderResult struct {
 	Truncated       bool              `json:"truncated"`
 	StartedAtParent bool              `json:"started_at_parent,omitempty"`
 	SuggestedName   string            `json:"suggested_name,omitempty"`
-	SkippedNames    bool              `json:"skipped_names,omitempty"`
+	SkippedFolders  bool              `json:"skipped_folders,omitempty"`
 	Error           webui.MessageCode `json:"error,omitempty"`
 }
 
@@ -263,33 +263,47 @@ func listFolders(ctx context.Context, path string, showHidden, start bool) (fold
 		}
 		name := entry.Name()
 		child := filepath.Join(path, name)
-		if !entry.IsDir() {
-			if entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
-				continue
-			}
-			info, err := os.Stat(child)
-			if errors.Is(err, fs.ErrNotExist) || folderLinkLoop(err) || folderNotDirectory(err) {
-				continue
-			}
-			if err != nil {
-				return folderResult{}, err
-			}
-			if !info.IsDir() {
-				continue
-			}
+		if !entry.IsDir() && entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+			continue
 		}
 		if !showHidden {
 			hidden, err := chooserHidden(child, name)
-			if err != nil {
+			if err := ctx.Err(); err != nil {
 				return folderResult{}, err
+			}
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return folderResult{}, err
+				}
+				result.SkippedFolders = true
+				continue
 			}
 			if hidden {
 				continue
 			}
 		}
 		if !utf8.ValidString(name) {
-			result.SkippedNames = true
+			result.SkippedFolders = true
 			continue
+		}
+		if !entry.IsDir() {
+			info, err := os.Stat(child)
+			if err := ctx.Err(); err != nil {
+				return folderResult{}, err
+			}
+			if errors.Is(err, fs.ErrNotExist) || folderLinkLoop(err) || folderNotDirectory(err) {
+				continue
+			}
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return folderResult{}, err
+				}
+				result.SkippedFolders = true
+				continue
+			}
+			if !info.IsDir() {
+				continue
+			}
 		}
 		result.Folders = append(result.Folders, folderEntry{Name: name, Path: child})
 	}

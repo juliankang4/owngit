@@ -11,7 +11,7 @@ const (
 	MsgFolderLoading           MessageCode = "folder.loading"
 	MsgFolderLimit             MessageCode = "folder.limit"
 	MsgFolderParentOpened      MessageCode = "folder.parent_opened"
-	MsgFolderSkippedNames      MessageCode = "folder.skipped_names"
+	MsgFolderSkippedFolders    MessageCode = "folder.skipped_folders"
 	MsgFolderName              MessageCode = "folder.name"
 	MsgFolderCreate            MessageCode = "folder.create"
 	MsgFolderCreated           MessageCode = "folder.created"
@@ -42,7 +42,7 @@ var folderCatalog = map[MessageCode]message{
 	MsgFolderLoading:           {en: "Loading folders…", ko: "폴더를 불러오는 중…"},
 	MsgFolderLimit:             {en: "This folder is large. Only folders from the first 2,000 entries are shown, sorted by name. You can type a path in the setup form.", ko: "항목이 많은 폴더입니다. 처음 2,000개 항목에 있는 폴더만 이름순으로 표시합니다. 설치 화면에서 경로를 직접 입력해도 됩니다."},
 	MsgFolderParentOpened:      {en: "That folder does not exist yet. Its nearest existing parent is open. Create a folder here or choose another.", ko: "아직 없는 폴더라 가장 가까운 상위 폴더를 열었습니다. 여기에서 새 폴더를 만들거나 다른 폴더를 선택하세요."},
-	MsgFolderSkippedNames:      {en: "Some folders have names this page cannot display and are not shown. The other folders are listed.", ko: "이 화면에서 표시할 수 없는 이름의 폴더는 제외했습니다. 나머지 폴더는 표시합니다."},
+	MsgFolderSkippedFolders:    {en: "Some folders could not be shown. The other folders are listed.", ko: "일부 폴더를 표시하지 못했습니다. 나머지 폴더는 표시합니다."},
 	MsgFolderName:              {en: "New folder name", ko: "새 폴더 이름"},
 	MsgFolderCreate:            {en: "Create folder", ko: "폴더 만들기"},
 	MsgFolderCreated:           {en: "Folder created and opened.", ko: "폴더를 만들고 열었습니다."},

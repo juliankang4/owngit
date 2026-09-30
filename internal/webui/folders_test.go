@@ -43,8 +43,8 @@ func TestFolderChooserRequestsOnlySetupEndpoints(t *testing.T) {
 		"body.set('csrf', token.value)", "body.set('path', values.path)", "body.set('name', values.name)",
 		"body.set('start', values.start ? '1' : '')", "load(current, false, false, false, true)",
 		"if (start && result.suggested_name) { name.value = result.suggested_name; }",
-		"skipped.hidden = !result.skipped_names", "result.started_at_parent ? 'folder.parent_opened'",
-		"!result.skipped_names ? 'folder.empty'", "field.value.trim()", "list.hidden = true",
+		"skipped.hidden = !result.skipped_folders", "result.started_at_parent ? 'folder.parent_opened'",
+		"!result.skipped_folders ? 'folder.empty'", "field.value.trim()", "list.hidden = true",
 		"label.textContent = folder.name", "field.value = current", "dialog.showModal()", "opener.focus()",
 		"ready = false", "say(result.error)", "controller.abort()", "list.replaceChildren()",
 	} {

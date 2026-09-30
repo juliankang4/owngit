@@ -500,7 +500,7 @@
         locationOf(result, showRoots);
         ready = true;
         limit.hidden = !result.truncated;
-        skipped.hidden = !result.skipped_names;
+        skipped.hidden = !result.skipped_folders;
         if (start && result.suggested_name) { name.value = result.suggested_name; }
         result.folders.forEach(function (folder) {
           var row = document.createElement('li');
@@ -516,7 +516,7 @@
           list.appendChild(row);
         });
         say(created ? 'folder.created' : (result.started_at_parent ? 'folder.parent_opened' :
-          (!result.folders.length && !result.truncated && !result.skipped_names ? 'folder.empty' : '')));
+          (!result.folders.length && !result.truncated && !result.skipped_folders ? 'folder.empty' : '')));
         if (focusList) {
           setBusy(false);
           var first = list.querySelector('button');
