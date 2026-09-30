@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/webui"
 )
@@ -328,7 +330,11 @@ func TestShareLinksAreManagedByTheAdministrator(t *testing.T) {
 	if page := browserGET(t, client, server.URL+"/repositories/project/share-links"); page.status == http.StatusOK {
 		t.Fatal("general access opened the Share links screen")
 	}
-	for name, password := range map[string]string{"general access": "shared-password", "wrong password": "wrong-password"} {
+	// A helper token is a repository's own credential, not the administrator.
+	helperHash := sha256.Sum256([]byte("synthetic-helper-token"))
+	_, _, err := fixture.store.CreateHelperCredential(context.Background(), "project", "helper", "", helperHash[:], time.Now())
+	noErr(t, err)
+	for name, password := range map[string]string{"general access": "shared-password", "wrong password": "wrong-password", "helper token": "synthetic-helper-token"} {
 		response := adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/project/share-links", nil, password)
 		response.Body.Close()
 		if response.StatusCode != http.StatusUnauthorized {
