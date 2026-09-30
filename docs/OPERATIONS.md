@@ -1922,20 +1922,25 @@ When OwnGit stops during a scheduled backup or back up now, the backup is record
 
 ### Where backups can be written
 
-Backup and restore make each new folder under a temporary name beside its final place and then rename it, except that a backup on the file systems described at the end of this section is moved into a new folder instead. The folder that holds it must therefore be one where no other account can rename or remove what OwnGit puts there.
+Backup and restore make each new folder under a temporary name beside its final place and then rename it, except that on a file system that cannot rename without replacing, described at the end of this section, a backup is moved into a new folder instead. The folder that holds it must therefore be one where no other account can rename or remove what OwnGit puts there.
 
 - On macOS and Linux, that folder and every folder on the way to it must be ones that no other account can change, as on the way to the state directory; a sticky folder such as `/tmp` is accepted. Otherwise OwnGit stops before it creates anything, names the folder, and gives the `chmod` command that fixes it when there is one. You can also choose a folder that only this account can change.
 - Missing folders on the way are created, private to this account, but only inside a folder where no other account can create names, so not directly in `/tmp`.
 - On Windows, OwnGit follows no link, junction or mounted volume on the way, and keeps the folders on the way from being renamed while it works.
-- The backup and the restored repository folder may be on a network share, except when OwnGit runs as root or as an elevated administrator on Windows. A restore also needs a file system that can rename without replacing, as described below. The restored state directory must be on a local disk, as every state directory must.
+- The backup and the restored repository folder may be on a network share, except when OwnGit runs as root or as an elevated administrator on Windows. A restore also needs what the file system can do, as described below. The restored state directory must be on a local disk, as every state directory must.
 
-Some file systems cannot rename a folder without replacing what is at the new name, such as exFAT and FAT on macOS, and NFS and some other network shares on Linux.
+Two kinds of file system need care:
 
-- Backups work there. OwnGit creates the backup's folder, which fails when anything is at that name, and moves the finished backup into it with the manifest last, writing each part to disk on the way. A folder left without a manifest by a stop in the middle is not a backup, and OwnGit neither counts nor removes it.
-- A restore does not. On macOS and Linux, `owngit restore` checks both target folders before it starts, and on such a file system it stops, names the file system (for example `exfat`) and changes nothing. Restore to a folder on another disk.
-- `owngit backup verify` rehearses in the system's temporary folder, so it can check a backup stored on such a disk.
+- Some cannot rename a folder without replacing what is at the new name, such as exFAT on macOS, and NFS and some other network shares on Linux.
+- On some, macOS keeps each file's attributes in a separate file named `._` and the file's name, such as FAT16 and FAT32 volumes on macOS.
 
-Backing up to an exFAT disk, and the refusal to restore onto one, were tested on macOS; NFS was not tested.
+Backups work on both. On a file system that cannot rename without replacing, OwnGit creates the backup's folder, which fails when anything is at that name, and moves the finished backup into it with the manifest last, writing each part to disk on the way. A folder left without a manifest by a stop in the middle is not a backup, and OwnGit neither counts nor removes it. When OwnGit removes an old backup, it also removes the `._` files that macOS keeps beside the backup's files. Any other file in the backup's folder, including one only named like a `._` file, still keeps the backup in place. `owngit backup verify` rehearses in the system's temporary folder, so it can check a backup stored on either kind of disk.
+
+Restoring repositories works on neither. On macOS and Linux, `owngit restore` checks the target folders before any work. It stops, names the file system (for example `exfat` or `msdos`) and changes nothing when the repository folder's file system cannot rename without replacing, or when macOS keeps attributes there in `._` files, which Git would read as part of the restored repositories. Restore the repositories to a folder on another disk.
+
+The restored state directory needs only the rename without replacing. It can be on a FAT16 or FAT32 volume on macOS while the repositories go to another disk, but not on exFAT.
+
+Backing up to exFAT, FAT16 and FAT32 volumes, verifying and removing those backups, and the restore refusals, were tested on macOS with disk images; NFS was not tested.
 
 ### Verifying a backup
 
