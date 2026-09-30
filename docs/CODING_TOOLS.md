@@ -363,14 +363,16 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 Each repository carries `id`, `name`, `description`, `created_at`, and
 `clone_url`; `repo show` adds `default_branch` when the branches can be read
-at that moment. `repo list` returns at most 1000 repositories, with
+at that moment, and `push_ref_namespaces`, the ref namespaces a push may
+change ([Other ref namespaces](OPERATIONS.md#other-ref-namespaces)). `repo list` returns at most 1000 repositories, with
 `truncated` true when there are more. `repo create` applies the browser form's
 rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, or `invalid_repository_description` (over 500
 bytes).
 
 `owngit repo settings show` and `owngit repo settings set` read and change one
-repository's [kept history and default branch protection](OPERATIONS.md#kept-history).
+repository's [kept history and default branch protection](OPERATIONS.md#kept-history)
+and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
 Unlike the other `repo` commands, they need the administrator password in
 `--password-file`. Inside a clone they take `--server` and `--repository` from
 `origin`, and the password file must then name that server

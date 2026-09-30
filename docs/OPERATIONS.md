@@ -518,8 +518,8 @@ Settings has five tabs. Each is its own address, so it works as an ordinary link
 - **General** (`/settings`): the display choices of this browser (language, appearance and repository list order), which apply at once and never ask for a password, and the new-release [update check](#new-release-notice) for the whole server.
 - **Access** (`/settings/access`): who can read and push (anyone who reaches OwnGit, or only people with the shared password), [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), the administrator password, and [how often it is asked](#administrator-password-check).
 - **Network** (`/settings/network`): the connection of this browser, the [network settings](#network-settings) and [sharing on your tailnet](#share-on-your-tailnet-over-https).
-- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
-- **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator, and how long [raw check logs](#raw-check-logs) are kept.
+- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
+- **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup).
 
 Each part of a tab has its own Save and Cancel, and Save sends only that part. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Network settings apply at the next start; everything else applies as soon as you save.
 
@@ -540,14 +540,22 @@ The question lists each change, showing a password only as entered, and offers S
 
 ### Server settings on the command line
 
-These settings are shown with their saved values only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and how long [raw check logs](#raw-check-logs) are kept. Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
+These settings are shown with their saved values only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup). Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
 
 The command line reads and changes the same settings through the administrator API. Both commands need `--server` and a `--password-file` holding the administrator password:
 
 - `owngit settings show` prints these settings as JSON.
 - `owngit settings set` changes only the ones its options name, such as `--session 7d`.
 
-When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it. While the server-wide kept history choice cannot be read, pushes and imports to every repository that follows it are refused.
+In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, and the browsing limits, repository maintenance and unused object cleanup are `browse_limits`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others.
+
+When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it. Meanwhile only what depends on that setting stops, and its message names the setting:
+
+- the server-wide kept history choice: pushes and imports to every repository that follows it are refused;
+- the Git transfer limits: Git requests are refused;
+- the browsing limits: files, diffs and comparisons are not shown;
+- repository maintenance: no repository is maintained;
+- unused object cleanup: no object is removed, and maintenance goes on without it.
 
 These settings belong to this installation host and are not in backups, so a restored installation starts with the defaults.
 
@@ -1128,6 +1136,26 @@ To keep the default branch from being rewritten or deleted, turn on Protect the 
 
 A new repository starts on `main`. To start new repositories on another branch, such as `trunk`, change Initial branch under New repositories on the Settings Repositories tab, or run `owngit settings set --initial-branch trunk`. The name uses up to 100 letters, digits, `-`, `_`, `.` and `/`, and must be one Git accepts. It applies to repositories created afterwards, in the dashboard, on the command line or through the API. Existing repositories keep their branches, and an import takes its source's default branch. The page of an empty repository shows the `git push` command for its branch.
 
+### Other ref namespaces
+
+A push may change branches (`refs/heads/`) and tags (`refs/tags/`). To let one repository accept other refs as well, such as Git notes under `refs/notes/`, an administrator lists their namespaces under Other ref namespaces on the repository's Settings tab, one per line, or runs:
+
+```sh
+owngit repo settings set --repository NAME --extra-ref-prefixes refs/notes/,refs/meta/
+```
+
+None is listed by default, and an empty value removes them all. A change applies to pushes that start after you save.
+
+- Each namespace starts with `refs/` and ends with `/`, such as `refs/notes/`. It uses only ASCII letters, digits, `-`, `_`, `.` and `/`, and is at most 100 characters long. A repository lists at most 32.
+- OwnGit refuses a namespace inside or around `refs/heads/`, `refs/tags/`, its own `refs/owngit/` or another listed namespace, in any letter case. It also refuses two namespaces whose shared folder is spelled in different letter case, such as `refs/notes/a/` and `refs/Notes/b/`.
+- Refs in these namespaces have no kept history and no protection. A push can overwrite or delete them, and their earlier value is not kept. OwnGit still refuses a ref whose name some file systems treat as the same as an existing ref's.
+- A push to any other ref is refused with `OwnGit accepts branches, tags and the ref namespaces listed in the repository's settings.`
+- A push that would update a symbolic ref other than `HEAD` is refused, in any namespace, with a message to push the ref it points to directly.
+- If the saved list cannot be read, pushes to the repository are refused until you save the list again.
+- Backups carry the list and the refs in these namespaces, and a restore brings both back. Imports still publish only branches and tags.
+
+`owngit repo settings show` prints the list as `extra_ref_prefixes`, and the repository settings API takes the same field, which replaces the whole list. Anyone with general access can see where a push may go: `owngit repo show` and the MCP tool `repository_show` list the accepted namespaces in `push_ref_namespaces`, or say in `push_ref_namespaces_error` why the list cannot be read.
+
 ### Deleting a repository
 
 An administrator deletes a repository with Delete repository, at the end of the repository's tabs. The page asks you to type the repository's name, unless that is turned off (see below), and asks for the administrator password when Settings require it. You choose what happens to the files:
@@ -1554,10 +1582,31 @@ Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept 
 ## Git transfer limits
 
 - Each Git request (clone, fetch, push, archive) can receive at most 4 GB, send at most 4 GB, and must finish within 30 minutes. To change these limits, use Largest transfer and Longest transfer under Git transfers on the Settings Repositories tab, or run `owngit settings set --transfer-size 8GB --transfer-time 2h`. The size goes from 1 MB to 64 GB (1 GB is 1024 MB), and the time from 1 minute to 24 hours. A change applies to transfers that start afterwards. Higher limits let large or slow transfers keep the server busy for longer and use more disk space.
-- A push over the size is refused with HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`. A clone or fetch over a limit is cut off. A transfer whose client moves no data for 60 seconds is stopped too. OwnGit does not host Git LFS, so a repository whose history is larger than the size limit cannot be cloned through it; keep large binary files out of Git history.
-- At most 5 Git requests run at once, and one repository can use at most 4 of them, so one repository's slow transfers never block the others. A request that finds no free place waits up to 90 seconds, then gets HTTP 503 with `Git service is busy with other transfers; try again shortly`; run the command again.
+- A push over the size is refused with HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`. A clone or fetch over a limit is cut off. A transfer whose client moves no data for the idle limit (1 minute by default) is stopped too. OwnGit does not host Git LFS, so a repository whose history is larger than the size limit cannot be cloned through it; keep large binary files out of Git history.
+- One repository runs at most 4 Git requests at once. The server keeps 1 extra slot that only a repository with no transfer running may take, so one busy repository never makes the others wait, and at most 5 requests run in all. A request that finds no free slot waits up to 90 seconds, then gets HTTP 503 with `Git service is busy with other transfers; try again shortly`; run the command again.
+- To change the transfers per repository, the extra slots, the idle limit or the wait for a slot, open Transfers at once and waiting under Git transfers on the Settings Repositories tab, or run `owngit settings set` with `--transfer-per-repository` (1 to 32), `--transfer-extra-slots` (0 to 32), `--transfer-idle` (10 seconds to 1 hour, such as `1m`) and `--transfer-queue` (5 seconds to 10 minutes, such as `90s`). The settings API fields are `per_repository`, `extra_slots`, `idle_seconds` and `queue_seconds` in `git_transfer`. A change applies to requests that ask for a slot after you save. Lowering a number never stops a transfer already running; new ones wait until enough have ended. Raising any of them above its default warns that transfers can hold slots longer and make other clients wait.
 - Too many wrong passwords pause the address that sent them, and Git then gets HTTP 429 (Too Many Requests) with `Retry-After`. See [Login attempt limits](#login-attempt-limits).
 - When OwnGit is stopped, it waits up to 10 seconds for running requests, then ends the rest and logs how many it ended.
+
+## Browsing limits
+
+Browsing limits cap how much one page reads to show a file, a diff or a pull request comparison, so a very large file or change cannot tie up the server. To change them, open Browsing limits on the Settings Repositories tab, or run `owngit settings set` with the options below. Sizes are written like `4MB` or `256KB` (1 MB is 1024 KB).
+
+| Limit | Default | Range | Option |
+|---|---|---|---|
+| Raw file download | 10 MB | 1 MB to 256 MB | `--browse-raw` |
+| File view | 2 MB | 64 KB to 64 MB | `--browse-file` |
+| Commit diff, for all files of a commit page | 2 MB | 64 KB to 64 MB | `--browse-commit-diff` |
+| One file's diff alone | 8 MB | 64 KB to 64 MB | `--browse-file-diff` |
+| One file within a commit page | 256 KB | 16 KB to 16 MB | `--browse-commit-file` |
+| Pull request comparison | 8 MB | 64 KB to 64 MB | `--browse-compare` |
+| Comparison time | 20 seconds | 5 seconds to 1 minute | `--browse-compare-time` |
+
+- A raw file over its limit is not downloaded from the browser; clone the repository to get it. The file view shows the part that fits and offers the rest as a download. A file whose diff is larger than the limit within a commit page is listed there with a link to its diff alone.
+- New limits apply to pages opened after you save. A page still stops at its own time limit, so a comparison time longer than that ends with the page's error instead of a partial comparison.
+- The pull request diff of the API, `owngit pr diff` and the MCP tool `pull_request_diff` keep their own fixed budget, equal to the defaults.
+- Raising any limit above its default warns that larger views use more memory and may delay other pages.
+- In the settings API, the group `browse_limits` has `raw_bytes`, `file_bytes`, `commit_patch_bytes`, `file_patch_bytes`, `commit_file_bytes`, `compare_bytes` and `compare_seconds`.
 
 ## Storage
 
@@ -1603,7 +1652,31 @@ OwnGit remembers each repository's branches and tags between its own writes. It 
 
 ### Maintenance
 
-OwnGit maintains each repository while nobody uses it. After five minutes without a push or request following a change, it packs loose refs and objects and updates the commit-graph. Between 03:00 and 05:00 local time it also combines the packs of a repository that has more than 20. Maintenance never deletes objects or kept history. It holds the repository only while a step runs, so a push or page that arrives then waits for that step, and it logs one line per run. At start, OwnGit removes temporary pack and lock files that an interrupted Git command left behind and names them in the log.
+OwnGit maintains each repository while nobody uses it, so Git stays fast and uses less space. After five minutes without a push or request following a change, it packs loose refs and objects and updates the commit-graph. In a daily window, 03:00 to 05:00 local time, it also combines the packs of a repository that has more than 20. Maintenance never deletes a ref or kept history, and it deletes no object unless [unused object cleanup](#unused-object-cleanup) is on. It holds the repository only while a step runs, so a push or page that arrives then waits for that step, and it logs one line per run. At start, OwnGit removes temporary pack and lock files that an interrupted Git command left behind and names them in the log.
+
+To change maintenance, open Repository maintenance on the Settings Storage & recovery tab, or run `owngit settings set` with these options:
+
+- `--maintenance on` or `--maintenance off`: whether maintenance runs at all. It is on by default. While it is off, no repository is maintained, cleanup included, and the log says so once.
+- `--maintenance-window 3-5`: the daily window in whole hours of the host's local time. Start and end must differ. A window may pass midnight, such as `22-6`, and then belongs to the date it started.
+- `--maintenance-idle 5m`: how long a repository must go unused first, from 1 minute to 24 hours.
+- `--maintenance-step-time 30m`: how long each ordinary step may take, from 1 minute to 24 hours.
+- `--maintenance-consolidation-time 2h`: how long combining all of a repository's packs may take, from 1 minute to 24 hours.
+- `--maintenance-packs 20`: the daily window combines the packs of a repository that has more than this many, from 2 to 1000.
+
+The values shown are the defaults. The settings API fields in `maintenance` are `enabled`, `window_start_hour`, `window_end_hour`, `idle_seconds`, `command_seconds`, `full_repack_seconds` and `pack_threshold`. A change applies from the next maintenance, and one already running finishes with the choices it started with. Turning maintenance off, or making the window longer than 2 hours, shows a warning: Git can slow down and use more space, and a wider window can keep the computer busy while you work. If the saved choices cannot be read, no repository is maintained until you set them again, and the log names the setting.
+
+### Unused object cleanup
+
+Unused object cleanup removes old Git objects that no ref reaches, such as what a force push left behind when its history was not kept. It is off by default, and while it is off nothing is removed. To turn it on, open Unused object cleanup on the Settings Storage & recovery tab, or run `owngit settings set --unused-object-cleanup on`.
+
+- It removes an object only when no ref reaches it and it is older than the grace period: 14 days by default, from 2 to 365 days (`--cleanup-grace-days`). The 2 day minimum keeps a new object safe while a transfer, import or check may still use it.
+- It never removes anything a ref reaches, including branches, tags, [other ref namespaces](#other-ref-namespaces), kept history and pull request refs. Packs marked with a `.keep` file stay as they are, and cleanup does not run while a backup holds the repository.
+- It runs once a night for each repository, in the maintenance window and only while maintenance is on. It takes the place of that night's pack combining and rewrites all of the repository's packs, so a large repository takes longer. When someone uses the repository, it stops after the current step and continues later.
+- While a repository has an unfinished check (queued, claimed or running) or an import in progress, its cleanup waits for the next maintenance window. If cleanup has already removed the commit of a check job, running that job again is refused with `check_source_missing`.
+- It needs Git 2.37 or newer on the host. With an older Git the cleanup fails, the log says why, and nothing is removed.
+- Turning it on warns that unreachable objects older than the grace period may be removed for good.
+
+Cleanup is not a way to remove history or a pushed secret, because whatever kept history or another ref still reaches stays. See [Backups](#backups) for what removes a secret. The settings API fields in `unused_object_cleanup` are `enabled` and `grace_days`. If the saved choice cannot be read, no object is removed and maintenance goes on without cleanup; the log names the setting.
 
 ### State database upgrades
 
@@ -1621,7 +1694,7 @@ While OwnGit runs, it can make backups itself: on a schedule that you set, or at
 
 Kept history protects against force-pushes and deletions, but it is not a backup.
 
-A secret that was ever pushed stays in the repository's Git data, even after a force-push or branch deletion and even with kept history off, and anyone who can read the repository and has its commit ID can still open it in the browser. While the repository keeps history, it also stays in kept history and in every later backup. Only [deleting the repository](#deleting-a-repository) with its files removes it, and earlier backups still contain it. Rotate any secret you push by mistake.
+A secret that was ever pushed stays in the repository's Git data, even after a force-push or branch deletion and even with kept history off, and anyone who can read the repository and has its commit ID can still open it in the browser. While the repository keeps history, it also stays in kept history and in every later backup. Only [deleting the repository](#deleting-a-repository) with its files removes it for certain, and earlier backups still contain it. [Unused object cleanup](#unused-object-cleanup) keeps anything that kept history or another ref still reaches, so do not rely on it. Rotate any secret you push by mistake.
 
 ### Scheduled backups
 
@@ -1739,19 +1812,19 @@ owngit backup \
 A backup holds a manifest and one Git bundle per nonempty repository. Together they carry:
 
 - every ref including kept history, and each repository's HEAD and metadata;
-- each repository's own kept history choice and default branch protection;
+- each repository's own kept history choice, default branch protection and [other ref namespaces](#other-ref-namespaces);
 - pull requests, reviews and merge records;
 - tasks, check configurations and results, and automatic-check policies and jobs;
 - import sources and history;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
 
-A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits and the raw log retention).
+A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, repository maintenance, unused object cleanup and the raw log retention).
 
 A backup holds up to 1 GiB of OwnGit records, counted by the memory they take and not counting the repositories; backup refuses a larger state. Creating and restoring a backup hold its records in memory, so more records need more memory.
 
 ### Backup versions
 
-OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, such as a repository's own kept history choice or default branch protection, or its manifest would pass the 64 MiB that version 10 allows. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
+OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, such as a repository's own kept history choice, default branch protection or other ref namespaces, or its manifest would pass the 64 MiB that version 10 allows. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
 
 ### Restoring a backup
 
@@ -1774,7 +1847,7 @@ After a restore, start `owngit serve` with the restored state before you use it 
 
 - Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
 - Raw logs are absent, and unsettled import publications are closed without being applied.
-- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, a link from another site opens without the shared sign-in, and the administrator password check and the new release check are back at their defaults. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
+- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
 
 ### When a backup or restore is interrupted
 
