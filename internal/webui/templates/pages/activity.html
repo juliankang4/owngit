@@ -9,6 +9,10 @@
 
 <section class="sec">
   {{if $p.Days}}
+    {{if $p.Truncated}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{if notZero $p.Activity.SelectedDate}}{{biF $lang "activity.truncated_day" (number $p.ListLimit)}}{{else}}{{biF $lang "activity.truncated" (number $p.ListLimit)}}{{end}}</span></p>
+    {{end}}
+
     {{range $p.Days}}
       <div class="daygroup">
         <h2 class="daygroup__h">{{biDayHeading $lang $now .Date}}</h2>

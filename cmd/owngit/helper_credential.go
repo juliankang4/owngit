@@ -56,6 +56,14 @@ func (admin *helperAdminFlags) client() (*apiclient.Client, error) {
 	if admin.server == "" || admin.repository == "" || admin.passwordFile == "" {
 		return nil, cliProblem("invalid_arguments", "--server, --repository, and --password-file are required.")
 	}
+	return admin.serverClient()
+}
+
+// serverClient is client for a command that --repository only narrows.
+func (admin *helperAdminFlags) serverClient() (*apiclient.Client, error) {
+	if admin.server == "" || admin.passwordFile == "" {
+		return nil, cliProblem("invalid_arguments", "--server and --password-file are required.")
+	}
 	parsed, err := apiclient.ValidateServer(admin.server, admin.acceptInsecureHTTP)
 	if err != nil {
 		return nil, err
@@ -261,11 +269,17 @@ func helperCredentialList(arguments []string) error {
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
-	client, err := admin.client()
+	client, err := admin.serverClient()
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), "GET", admin.repositoryPath()+"/helper-credentials", nil)
+	// Without --repository it lists every repository's credentials, as
+	// the dashboard's Coding tools page does.
+	path := "/api/v1/helper-credentials"
+	if admin.repository != "" {
+		path = admin.repositoryPath() + "/helper-credentials"
+	}
+	content, err := client.Do(context.Background(), "GET", path, nil)
 	if err != nil {
 		return err
 	}
@@ -378,4 +392,5 @@ func (reserved *reservedTokenFile) preserve() error {
 func printHelperCredentialUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit helper-credential <create|list|revoke> [options]")
 	fmt.Fprintln(writer, "Credential management requires the current administrator password. The token is delivered only through --output and stored only as a hash.")
+	fmt.Fprintln(writer, "list without --repository lists the credentials of every repository.")
 }

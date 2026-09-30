@@ -152,6 +152,7 @@
     <div class="sb__list">
       <a class="sb__item" href="{{$nav.OverviewURL}}"{{if eq $sb.Place "home"}} aria-current="page"{{end}}>{{icon "home"}}<span class="sb__name">{{bi $lang "app.nav.home"}}</span></a>
       {{with $nav.ActivityURL}}<a class="sb__item" href="{{.}}"{{if eq $sb.Place "activity"}} aria-current="page"{{end}}>{{icon "activity"}}<span class="sb__name">{{bi $lang "activity.title"}}</span></a>{{end}}
+      {{with $nav.CodingURL}}<a class="sb__item" href="{{.}}"{{if eq $sb.Place "coding-tools"}} aria-current="page"{{end}}>{{icon "terminal"}}<span class="sb__name">{{bi $lang "coding.title"}}</span></a>{{end}}
       {{with $nav.SettingsURL}}<a class="sb__item" href="{{.}}"{{if eq $sb.Place "settings"}} aria-current="page"{{end}}>{{icon "settings"}}<span class="sb__name">{{bi $lang "settings.title"}}</span></a>{{end}}
     </div>
     <div class="sb__sec" data-sb-repos>

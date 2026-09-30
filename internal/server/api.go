@@ -35,7 +35,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	}
 	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
 	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
-		!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) {
+		!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 		return
 	}
@@ -49,6 +49,18 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	}
 	if request.URL.Path == "/api/v1/backups" || strings.HasPrefix(request.URL.Path, "/api/v1/backups/") {
 		app.handleBackupsAPI(writer, request, settings)
+		return
+	}
+	if request.URL.Path == activityAPIPath {
+		app.handleActivityAPI(writer, request, settings)
+		return
+	}
+	if request.URL.Path == taskViewAPIPath || strings.HasPrefix(request.URL.Path, taskViewAPIPath+"/") {
+		app.handleTaskViewAPI(writer, request, settings)
+		return
+	}
+	if request.URL.Path == allHelperCredentialsAPIPath {
+		app.handleAllHelperCredentialsAPI(writer, request)
 		return
 	}
 	if id, ok := repositoryAPIRoute(request.URL.Path); ok {

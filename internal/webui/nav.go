@@ -11,7 +11,7 @@ type Sidebar struct {
 	InRepo   bool
 	RepoName string
 	Tabs     RepoTabs
-	// Place is "home", "activity", "settings", "new", or "import" outside a
+	// Place is "home", "activity", "coding-tools", "settings", "new", or "import" outside a
 	// repository, and "" when the page is none of them.
 	Place string
 }
@@ -44,6 +44,8 @@ func (s Sidebar) Current() MessageCode {
 		return MsgNavHome
 	case "activity":
 		return MsgActivityTitle
+	case "coding-tools":
+		return MsgCodingTitle
 	case "settings":
 		return MsgSettingsTitle
 	case "new":
@@ -69,6 +71,8 @@ func sidebarOf(page Page) Sidebar {
 		return Sidebar{Place: "home"}
 	case ActivityPage, *ActivityPage:
 		return Sidebar{Place: "activity"}
+	case CodingToolsPage, *CodingToolsPage:
+		return Sidebar{Place: "coding-tools"}
 	case SettingsPage, *SettingsPage:
 		return Sidebar{Place: "settings"}
 	case NewRepositoryPage, *NewRepositoryPage:

@@ -3,14 +3,11 @@ package server
 import (
 	"context"
 	"net/http"
-	"sort"
 
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
-
-const maximumBrowserTaskAttempts = 100
 
 func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
@@ -38,20 +35,16 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		page.UnavailableReason = webui.MsgErrUnavailable
 		app.render(writer, request, unavailable(request, step, err), page)
 	}
-	tasks, err := app.Store.Tasks(request.Context(), stored.ID)
-	if err != nil {
-		answerUnavailable("task list read", err)
-		return
-	}
 
 	// An opened task reads only its newest attempts, bounded by the display
 	// limit, instead of every attempt in the repository.
-	selected := request.URL.Query().Get("task")
-	if selected != "" {
-		for _, task := range tasks {
-			if task.ID != selected {
-				continue
-			}
+	if selected := request.URL.Query().Get("task"); selected != "" {
+		task, exists, err := app.Store.Task(request.Context(), stored.ID, selected)
+		if err != nil {
+			answerUnavailable("task record read", err)
+			return
+		}
+		if exists {
 			attempts, more, err := app.Store.RecentCheckAttemptsForTask(request.Context(), stored.ID, task.ID, maximumBrowserTaskAttempts)
 			if err != nil {
 				answerUnavailable("task attempt read", err)
@@ -68,38 +61,31 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		page.NotFound = true
 	}
 
-	// Tasks with the newest repository registration appear first. The stored
-	// sequence remains the authority and is never replaced with a list index.
-	sort.SliceStable(tasks, func(left, right int) bool {
-		if tasks[left].LastRegisteredSequence != tasks[right].LastRegisteredSequence {
-			return tasks[left].LastRegisteredSequence > tasks[right].LastRegisteredSequence
-		}
-		if !tasks[left].UpdatedAt.Equal(tasks[right].UpdatedAt) {
-			return tasks[left].UpdatedAt.After(tasks[right].UpdatedAt)
-		}
-		return tasks[left].ID > tasks[right].ID
-	})
-
-	// Each list row shows only its task's latest attempt, so the list reads
-	// one attempt per displayed task.
-	for _, task := range tasks {
-		summaryView := browserTaskSummary(task)
-		latest, exists, err := app.Store.LatestCheckAttemptForTask(request.Context(), stored.ID, task.ID)
-		if err != nil {
-			page.Tasks = nil
-			answerUnavailable("latest attempt read", err)
-			return
-		}
-		if exists {
-			summaryView.Latest = app.browserAttemptRecord(request.Context(), latest)
-		}
-		page.Tasks = append(page.Tasks, summaryView)
+	views, err := app.repositoryTaskViews(request.Context(), stored.ID)
+	if err != nil {
+		answerUnavailable("task list read", err)
+		return
 	}
+	page.Tasks = app.browserTaskSummaries(request.Context(), views)
 	if page.NotFound {
 		app.render(writer, request, http.StatusNotFound, page)
 		return
 	}
 	app.render(writer, request, http.StatusOK, page)
+}
+
+// browserTaskSummaries builds the list rows of views, each with its latest
+// attempt.
+func (app *App) browserTaskSummaries(ctx context.Context, views []taskView) []webui.TaskSummary {
+	summaries := make([]webui.TaskSummary, 0, len(views))
+	for _, view := range views {
+		summary := browserTaskSummary(view.task)
+		if view.hasLatest {
+			summary.Latest = app.browserAttemptRecord(ctx, view.latest)
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries
 }
 
 func browserCheckConfiguration(configuration state.CheckConfiguration, configured bool) webui.CheckConfigurationView {

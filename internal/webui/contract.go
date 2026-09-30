@@ -78,6 +78,7 @@ const (
 	SectionRepository NavSection = "repository"
 	SectionActivity   NavSection = "activity"
 	SectionSettings   NavSection = "settings"
+	SectionCoding     NavSection = "coding-tools"
 	SectionSetup      NavSection = "setup"
 	SectionAuth       NavSection = "auth"
 )
@@ -214,6 +215,7 @@ type Nav struct {
 
 	OverviewURL  string
 	ActivityURL  string
+	CodingURL    string
 	SettingsURL  string
 	NewRepoURL   string
 	NewImportURL string

@@ -21,6 +21,7 @@ var helpCommands = []struct {
 	{"backup schedule", false}, {"backup schedule show", true}, {"backup schedule set", true}, {"backup schedule off", true}, {"restore", true}, {"upgrade-backup", true}, {"tray", true},
 	{"repo", false}, {"repo list", true}, {"repo show", true}, {"repo create", true},
 	{"repo kept-history", true}, {"repo restore", false}, {"repo restore preview", true}, {"repo restore apply", true},
+	{"activity", true}, {"tasks", true},
 	{"pr", false}, {"pr create", true}, {"pr list", true}, {"pr show", true}, {"pr diff", true},
 	{"pr review", false}, {"pr review request", true}, {"pr review submit", true}, {"pr review skip", true},
 	{"pr mergeability", true}, {"pr merge", true},

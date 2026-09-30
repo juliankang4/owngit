@@ -456,6 +456,8 @@ const (
 	MsgActivityUnavail    MessageCode = "activity.unavailable"
 	MsgActivityNotBuilt   MessageCode = "activity.unavailable.not_built"
 	MsgActivityNoChecks   MessageCode = "activity.no_check_claim"
+	MsgActivityTruncated  MessageCode = "activity.truncated"
+	MsgActivityDayCut     MessageCode = "activity.truncated_day"
 )
 
 // Generic and HTTP errors.
@@ -1807,6 +1809,14 @@ var catalog = map[MessageCode]message{
 	MsgActivityNotBuilt: {
 		en: "The activity index has not been built yet.",
 		ko: "활동 색인을 아직 만들지 않았습니다.",
+	},
+	MsgActivityTruncated: {
+		en: "Only the newest %s commits are shown. Choose a date to see others.",
+		ko: "최신 커밋 %s개만 보여 줍니다. 다른 커밋을 보려면 날짜를 고르세요.",
+	},
+	MsgActivityDayCut: {
+		en: "Only the newest %s commits of this day are shown.",
+		ko: "이 날짜의 최신 커밋 %s개만 보여 줍니다.",
 	},
 	// Two separate statements a reader needs: which day a commit is counted
 	// on, and that activity is not a check result. The date is the author's

@@ -271,25 +271,13 @@ func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	year := selectedYear(request, app.now().Year())
-	ctx := request.Context()
-	observation := app.observeActivity(ctx, repositories, app.activityKeys(ctx, repositories), app.activityLimit())
-	graph := buildActivityGraph(observation.counts, year, app.now(), len(repositories))
-	observation.describe(&graph)
-	selectedDay := request.URL.Query().Get("date")
-	if parsed, err := time.ParseInLocation("2006-01-02", selectedDay, app.now().Location()); err == nil && parsed.Year() == year {
-		graph.SelectedDate = parsed
-	} else {
-		selectedDay = ""
+	// A day outside the chosen year, or not a day at all, lists the year.
+	var day time.Time
+	if parsed, err := time.ParseInLocation("2006-01-02", request.URL.Query().Get("date"), app.now().Location()); err == nil && parsed.Year() == year {
+		day = parsed
 	}
-	var entries []webui.ActivityEntry
-	for _, item := range observation.entries {
-		if item.Commit.AuthorDate.Year() == year && (selectedDay == "" || item.Commit.AuthorDate.Format("2006-01-02") == selectedDay) {
-			entries = append(entries, item)
-		}
-	}
-	sortActivityEntries(entries)
-	groups := groupActivity(entries)
-	app.render(writer, request, http.StatusOK, webui.ActivityPage{Chrome: chrome, Activity: graph, Days: groups})
+	listing := app.readActivity(request, repositories, year, day)
+	app.render(writer, request, http.StatusOK, webui.ActivityPage{Chrome: chrome, Activity: listing.graph, Days: groupActivity(listing.entries), Truncated: listing.truncated, ListLimit: maximumActivityEntries})
 }
 
 func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
@@ -1551,11 +1539,14 @@ func emptyActivityGraph(year int, now time.Time, scope string) webui.ActivityGra
 
 func selectedYear(request *http.Request, fallback int) int {
 	year, err := strconv.Atoi(request.URL.Query().Get("year"))
-	if err != nil || year < 1970 || year > 9999 {
+	if err != nil || !activityYearInRange(year) {
 		return fallback
 	}
 	return year
 }
+
+// activityYearInRange reports whether year is one an activity graph shows.
+func activityYearInRange(year int) bool { return year >= 1970 && year <= 9999 }
 
 func sortActivityEntries(entries []webui.ActivityEntry) {
 	sort.SliceStable(entries, func(left, right int) bool {

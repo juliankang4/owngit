@@ -1,0 +1,128 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
+
+<div class="phead">
+  <h1>{{bi $lang "coding.title"}}</h1>
+  <p>{{bi $lang "coding.intro"}}</p>
+</div>
+
+<div class="card">
+  <dl class="kv">
+    <div><dt>{{bi $lang "coding.server"}}</dt><dd class="mono">{{$p.Server}}</dd></div>
+  </dl>
+  {{if $p.PlainHTTP}}<p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "coding.plain_http"}}</span></p>{{end}}
+  {{if $p.PasswordFile}}<p class="ev__note">{{icon "lock"}}<span>{{bi $lang "coding.password_file"}}</span></p>{{end}}
+</div>
+
+<section class="sec">
+  <div class="sec__bar"><h2>{{bi $lang "coding.skill.title"}}</h2></div>
+  <p>{{bi $lang "coding.skill.help"}}</p>
+  {{template "codingCommand" dict "Lang" $lang "ID" "skill-command" "Label" (bi $lang "coding.skill.command") "Value" $p.SkillCommand}}
+</section>
+
+<section class="sec">
+  <div class="sec__bar"><h2>{{bi $lang "coding.mcp.title"}}</h2></div>
+  <p>{{bi $lang "coding.mcp.help"}}</p>
+  {{template "codingCommand" dict "Lang" $lang "ID" "claude-command" "Label" (bi $lang "coding.mcp.claude") "Value" $p.ClaudeCommand}}
+  {{template "codingCommand" dict "Lang" $lang "ID" "codex-command" "Label" (bi $lang "coding.mcp.codex") "Value" $p.CodexCommand}}
+  {{template "codingCommand" dict "Lang" $lang "ID" "mcp-command" "Label" (bi $lang "coding.mcp.other") "Value" $p.MCPCommand "Help" (bi $lang "coding.mcp.other_help")}}
+  <p class="f__help">{{bi $lang "coding.path"}}</p>
+  <p class="f__help">{{bi $lang "coding.mcp.checks"}}</p>
+</section>
+
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "coding.credentials.title"}}</h2>
+    {{if and $p.CredentialsShown (not $p.CredentialsUnavailable)}}<span class="sec__n">{{biCount $lang "item" (len $p.Credentials)}}</span>{{end}}
+  </div>
+  {{if not $p.CredentialsShown}}
+    {{/* The credentials were not read for this viewer. */}}
+    <p class="scope">{{icon "lock"}}<span>{{bi $lang "coding.credentials.admin"}}</span>{{with $.Chrome.Nav.AdminLoginURL}} <a href="{{.}}">{{bi $lang "admin.title"}}</a>{{end}}</p>
+  {{else if $p.CredentialsUnavailable}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "coding.credentials.unavailable"}}</span></p>
+  {{else}}
+    <p>{{bi $lang "coding.credentials.help"}}</p>
+    {{if $p.Credentials}}
+      <div class="creds">
+        {{range $p.Credentials}}
+          {{$c := .Credential}}
+          <div class="cred{{if $c.Revoked}} cred--off{{end}}">
+            <div class="cred__top">
+              <span class="cred__l" dir="auto">{{$c.Label}}</span>
+              {{if $c.Revoked}}
+                <span class="pill pill--off">{{icon "slash"}}{{bi $lang "helper.revoked"}}</span>
+              {{else}}
+                <span class="pill pill--on">{{icon "check"}}{{bi $lang "helper.active"}}</span>
+              {{end}}
+            </div>
+            <dl class="kv kv--tight">
+              <div><dt>{{bi $lang "coding.repository"}}</dt><dd><a href="{{.ManageURL}}"><span dir="auto">{{.RepositoryName}}</span></a></dd></div>
+              {{if notZero $c.CreatedAt}}<div><dt>{{bi $lang "helper.created_at"}}</dt><dd>{{biDateTime $lang $c.CreatedAt}}</dd></div>{{end}}
+              <div>
+                <dt>{{bi $lang "helper.last_used"}}</dt>
+                <dd>{{if notZero $c.LastUsedAt}}{{biDateTime $lang $c.LastUsedAt}}{{else}}{{bi $lang "helper.never_used"}}{{end}}</dd>
+              </div>
+              {{if notZero $c.RevokedAt}}<div><dt>{{bi $lang "helper.revoked_at"}}</dt><dd>{{biDateTime $lang $c.RevokedAt}}</dd></div>{{end}}
+            </dl>
+          </div>
+        {{end}}
+      </div>
+    {{else}}
+      <p class="empty">{{bi $lang "coding.credentials.none"}}</p>
+    {{end}}
+  {{end}}
+</section>
+
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "coding.tasks.title"}}</h2>
+    {{if not $p.TasksUnavailable}}<span class="sec__n">{{biCount $lang "item" (len $p.Tasks)}}</span>{{end}}
+  </div>
+  {{if $p.TasksUnavailable}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "coding.tasks.unavailable"}}</span></p>
+  {{else if $p.Tasks}}
+    <div class="tasklist">
+      {{range $p.Tasks}}
+        {{$t := .Task}}
+        <a class="taskrow" href="{{$t.URL}}">
+          <span class="taskrow__t"><span class="ev__sub" dir="auto">{{.RepositoryName}}</span> <span dir="auto">{{$t.Title}}</span></span>
+          <span class="taskrow__s">{{template "stateChip" dict "Lang" $lang "S" (taskState $t.Status)}}</span>
+          <span class="taskrow__e">
+            {{if $t.HasAttempt}}
+              {{template "stateChip" dict "Lang" $lang "S" (recordState $t.Latest)}}
+              <span class="mono">{{$t.Latest.RevisionShortOID}}</span>
+            {{else}}
+              {{template "stateChip" dict "Lang" $lang "S" (attemptState "absent")}}
+            {{end}}
+          </span>
+          <span class="taskrow__b">{{biText $lang (budget "en" $t.CyclesUsed $t.CycleLimit) (budget "ko" $t.CyclesUsed $t.CycleLimit)}}</span>
+          <span class="taskrow__w">{{biRelative $lang $now $t.UpdatedAt}}</span>
+        </a>
+      {{end}}
+    </div>
+    {{if $p.TasksTruncated}}
+      <p class="hm__warn">{{icon "warning"}}<span>{{biF $lang "coding.tasks.truncated" (number $p.TasksLimit)}}</span></p>
+    {{end}}
+  {{else}}
+    <p class="empty">{{bi $lang "coding.tasks.none"}}</p>
+  {{end}}
+</section>
+{{end}}
+
+{{/* One command with a copy button, like the clone address. The field can
+     be selected by hand; the script reveals the button. */}}
+{{define "codingCommand"}}
+<div class="clonefield clonefield--wide" data-clone>
+  <label class="clonefield__l" for="{{.ID}}">{{.Label}}</label>
+  <div class="clonefield__row">
+    <input id="{{.ID}}" class="clonefield__v mono" type="text" readonly value="{{.Value}}"
+           spellcheck="false" autocomplete="off" data-select-on-focus{{with .Help}} aria-describedby="{{$.ID}}-help"{{end}}>
+    <button type="button" class="btn clonefield__copy" data-copy="{{.ID}}" hidden>{{icon "copy"}}<span>{{bi .Lang "repo.overview.copy"}}</span></button>
+  </div>
+  <p class="clonefield__note" role="status">
+    <span data-copy-done hidden>{{icon "check"}}{{bi .Lang "repo.overview.copied"}}</span>
+    <span data-copy-fail hidden>{{icon "info"}}{{bi .Lang "repo.overview.copy_failed"}}</span>
+  </p>
+  {{with .Help}}<p class="clonefield__note" id="{{$.ID}}-help">{{.}}</p>{{end}}
+</div>
+{{end}}

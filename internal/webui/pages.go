@@ -600,6 +600,10 @@ type ActivityPage struct {
 	Activity ActivityGraph
 	// Days groups entries by calendar day, newest first.
 	Days []ActivityDayGroup
+	// Truncated is true when the year or the chosen day has more commits
+	// than the list shows; ListLimit is how many it shows then.
+	Truncated bool
+	ListLimit int
 	// OlderURL and NewerURL page through history. Empty when unavailable.
 	OlderURL string
 	NewerURL string

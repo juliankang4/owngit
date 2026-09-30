@@ -28,6 +28,7 @@ var pageNames = []string{
 	"settings",
 	"overview",
 	"activity",
+	"coding-tools",
 	"repository",
 	"new-repository",
 	"new-import",
@@ -256,6 +257,8 @@ func documentTitle(page Page, lang Lang) string {
 		section = Text(lang, MsgActivityTitle)
 	case *ActivityPage:
 		section = Text(lang, MsgActivityTitle)
+	case CodingToolsPage, *CodingToolsPage:
+		section = Text(lang, MsgCodingTitle)
 	case RepositoryPage:
 		section = p.Repo.Name
 	case *RepositoryPage:

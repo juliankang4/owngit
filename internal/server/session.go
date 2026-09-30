@@ -289,7 +289,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 		query := strings.TrimSpace(request.URL.Query().Get("q"))
 		nav := webui.Nav{
 			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query, Order: app.listOrder(writer, request),
-			OverviewURL: "/", ActivityURL: "/activity", SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
+			OverviewURL: "/", ActivityURL: "/activity", CodingURL: codingToolsPath, SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
 			AdminLoginURL: "/admin/login?next=" + url.QueryEscape(loginNext(request)),
 		}
 		if generalOK && settings.AccessMode == "password" {

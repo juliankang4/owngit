@@ -454,6 +454,8 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleReleaseDismiss(writer, request, settings)
 	case request.URL.Path == "/activity" && request.Method == http.MethodGet:
 		app.handleActivity(writer, request, settings)
+	case request.URL.Path == codingToolsPath && request.Method == http.MethodGet:
+		app.handleCodingTools(writer, request, settings)
 	case strings.HasPrefix(request.URL.Path, "/repositories/") && (request.Method == http.MethodGet || request.Method == http.MethodPost):
 		app.handleRepositoryRoute(writer, request, settings)
 	case strings.HasPrefix(request.URL.Path, "/repositories/") && strings.HasSuffix(request.URL.Path, "/raw") && request.Method == http.MethodHead:

@@ -2669,6 +2669,8 @@ span.hm__cell { cursor: default; }
 .rhead__id { display: grid; gap: 4px; min-width: 0; }
 
 .clonefield { display: grid; gap: 4px; width: min(440px, 100%); min-width: 0; }
+/* A command the Coding tools page offers is longer than a clone address. */
+.clonefield--wide { width: 100%; margin-top: 12px; }
 .clonefield__l { font-size: 11px; color: var(--text-3); }
 .clonefield__row { display: flex; min-width: 0; }
 .clonefield__v {
