@@ -18,12 +18,12 @@ Only the latest release receives fixes.
 
 ## Scope
 
-OwnGit is meant for one owner, or a small group that shares one password, on a computer, NAS, or home server reached through a private network or VPN. Public Internet hosting is out of scope (see [Access and security](README.md#access-and-security)), so a report about exposing OwnGit directly to the Internet without a VPN or TLS reverse proxy describes expected behavior.
+OwnGit is meant for one owner, or a small group that shares one password, on a computer, NAS, or home server reached through a private network or VPN. Public Internet hosting is out of scope (see [Access and security](README.md#access-and-security)), so a report about exposing OwnGit directly to the Internet without a VPN or TLS reverse proxy describes expected behavior. The one exception is the optional public address for share links: it is off by default, and when the owner turns it on it must answer share links and the files their pages load and nothing else. A path there that reaches anything more is a security problem.
 
 What OwnGit does at the network boundary:
 
 - It serves plain HTTP and has no built-in TLS. TLS comes from Tailscale on this computer, when the owner shares OwnGit on the tailnet over HTTPS, or from a reverse proxy in front of OwnGit.
-- It refuses requests that Tailscale Funnel forwards from the Internet, and ignores `Tailscale-User-*` identity headers.
+- On its own address it refuses requests that Tailscale Funnel forwards from the Internet, and ignores `Tailscale-User-*` identity headers. The public address for share links is a separate listener, which the owner may connect to Funnel.
 - It believes the `X-Forwarded-Proto`, `X-Forwarded-For`, and `X-Forwarded-Host` headers only from proxy addresses the owner configures, and from none by default.
 
 Host and runner check commands run with their account's permissions and are not a sandbox.
