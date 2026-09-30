@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/recovery"
 	"owngit/internal/state"
 )
 
@@ -253,8 +254,8 @@ func noErrf(t testing.TB, err error, format string, args ...any) {
 }
 
 // A restore starts the server-wide settings at their defaults whether the
-// backed-up installation chose stricter or looser ones, and says so with
-// where to set them again.
+// backed-up installation chose stricter or looser ones, and its output says
+// so, with everything else a backup leaves out, and where to set it again.
 func TestRestoreStartsServerSettingsAtTheirDefaultsAndSaysSo(t *testing.T) {
 	ctx := context.Background()
 	for name, change := range map[string]state.PolicyChange{
@@ -283,8 +284,12 @@ func TestRestoreStartsServerSettingsAtTheirDefaultsAndSaysSo(t *testing.T) {
 				return restoreState([]string{"--input", backup, "--state-dir", restoredState, "--repository-root", filepath.Join(root, "restored-repositories")})
 			})
 			noErr(t, err)
-			if !strings.Contains(output, restoredSettingsNotice()) || !strings.Contains(output, "a sign-in with the shared password lasts 12 hours") ||
-				!strings.Contains(output, "owngit settings set") {
+			for _, note := range recovery.RestoreNotes() {
+				if !strings.Contains(output, "- "+note+"\n") {
+					t.Fatalf("restore output lacks %q:\n%s", note, output)
+				}
+			}
+			if !strings.Contains(output, "a sign-in with the shared password lasts 12 hours") || !strings.Contains(output, "owngit settings set") {
 				t.Fatalf("restore output:\n%s", output)
 			}
 			restored, err := state.Open(ctx, restoredState)

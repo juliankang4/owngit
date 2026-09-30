@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -166,7 +167,7 @@ func TestOfflineBackupAndRestorePrintJSON(t *testing.T) {
 	output, err = captureStdout(restore(backup))
 	var restored restoreResult
 	if err != nil || json.Unmarshal([]byte(output), &restored) != nil || !restored.OK || restored.StateDir != restoredState || restored.RepositoryRoot != restoredRepositories ||
-		restored.Verification == nil || !restored.Verification.Verified || len(restored.Notes) != 2 || restored.Notes[1] != restoredSettingsNotice() {
+		restored.Verification == nil || !restored.Verification.Verified || !reflect.DeepEqual(restored.Notes, recovery.RestoreNotes()) {
 		t.Fatalf("restore output=%q err=%v", output, err)
 	}
 	if _, err := os.Stat(filepath.Join(restoredState, "owngit.sqlite")); err != nil {

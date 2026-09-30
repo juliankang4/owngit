@@ -413,8 +413,8 @@ var backupsCatalog = map[MessageCode]message{
 		ko: "전에 시작하던 방법으로 OwnGit을 다시 시작하세요.",
 	},
 	MsgBackupRestoreAfter: {
-		en: "The command says what a backup does not bring back, such as sessions, network settings and the backup schedule. The renamed folders stay until you remove them.",
-		ko: "세션, 네트워크 설정, 백업 일정처럼 백업에 들어 있지 않은 것은 명령이 알려 줍니다. 이름을 바꾼 폴더는 직접 지울 때까지 남습니다.",
+		en: "When it finishes, the command lists what a backup does not bring back and how to set it up again, such as sessions, tokens and credentials, check and import settings, network settings and the backup schedule. The renamed folders stay until you remove them.",
+		ko: "복원이 끝나면 세션, 토큰과 인증 정보, 체크와 가져오기 설정, 네트워크 설정, 백업 일정처럼 백업에 들어 있지 않은 것과 다시 설정하는 방법을 명령이 알려 줍니다. 이름을 바꾼 폴더는 직접 지울 때까지 남습니다.",
 	},
 	MsgBackupUploadTitle: {
 		en: "Restore from a backup file",

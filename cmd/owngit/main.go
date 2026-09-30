@@ -1256,47 +1256,15 @@ func restoreState(arguments []string) error {
 	if err := recovery.Restore(ctx, *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
 		return fail("restore_failed", err)
 	}
-	result.Notes = []string{"Previous sessions, trusted hosts, and network settings were not restored.", restoredSettingsNotice()}
+	result.Notes = recovery.RestoreNotes()
 	if *asJSON {
 		return writeJSONValue(result)
 	}
-	fmt.Printf("Offline backup restored to %s with repositories at %s. %s\n", result.StateDir, result.RepositoryRoot, result.Notes[0])
-	fmt.Println(result.Notes[1])
-	return nil
-}
-
-// restoredSettingsNotice names the server-wide settings that a restore
-// starts at their defaults, as on a new installation, and where to set
-// them again. A backup does not carry them, whether they were stricter or
-// looser than the defaults. Sizes use the units of Settings, where 1 GB is
-// 1024 MB.
-func restoredSettingsNotice() string {
-	limits, login := state.DefaultGitTransferLimits, state.DefaultLoginLimits
-	return fmt.Sprintf("Server-wide settings start at their defaults, as on a new installation: a sign-in with the shared password lasts %s, "+
-		"new repositories start on %s, one Git transfer may move %d GB and take %s, raw check logs are kept %s, "+
-		"repositories that follow the server keep overwritten and deleted history, deleting a repository asks for its name, "+
-		"%d wrong passwords within %s pause an address for %s, and a link from another site opens without the shared sign-in. "+
-		"Git transfer slots and waits, browsing limits, check ceilings and repository maintenance are at their defaults, and unused object cleanup is off. "+
-		"Each repository's own kept history choice and default branch protection come back with it. "+
-		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
-		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,
-		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()),
-		login.Attempts, plainDuration(login.Window), plainDuration(login.Pause))
-}
-
-// plainDuration writes a whole number of days, hours or minutes in words.
-func plainDuration(duration time.Duration) string {
-	for _, unit := range []struct {
-		size time.Duration
-		name string
-	}{{24 * time.Hour, "day"}, {time.Hour, "hour"}, {time.Minute, "minute"}} {
-		if count := duration / unit.size; count == 1 && duration == unit.size {
-			return "1 " + unit.name
-		} else if count > 1 && duration%unit.size == 0 {
-			return fmt.Sprintf("%d %ss", count, unit.name)
-		}
+	fmt.Printf("Offline backup restored to %s with repositories at %s.\n", result.StateDir, result.RepositoryRoot)
+	for _, note := range result.Notes {
+		fmt.Println("- " + note)
 	}
-	return duration.String()
+	return nil
 }
 
 // readPrivatePassword reads a password file for a command that sends it to
