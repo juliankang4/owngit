@@ -271,9 +271,10 @@ checks turn off until they are enabled again. They are fields of `execution`:
 | `container_writable_root` | Let commands change the container's files | The root filesystem is writable. Commands still run as OwnGit's own user, so they can change only the image files that user may change, and the changes are discarded with the container. |
 | `container_missing_enforcement` | Limits this computer's Docker may not enforce | A list of `memory`, `swap`, `cpu` and `pids`. A listed limit that Docker cannot enforce no longer stops the check; the check can then use more of it than its limit. A limit not listed still stops the check, naming it. |
 
-When a job runs a tag, downloads its image, or runs without an accepted limit,
-the first check's output starts with the image ID and the limits that were
-not enforced, so the job page and `check-job show` state what actually ran.
+When a job runs a tag, downloads its image, or runs while Docker does not
+enforce a limit the policy accepts as missing, the first check's output starts
+with the image ID and the limits that were not enforced, so the job page and
+`check-job show` state what actually ran.
 
 Commands always run as OwnGit's own user (or a fixed nonroot user when OwnGit
 runs as root), never as the image's user. The files they write in the

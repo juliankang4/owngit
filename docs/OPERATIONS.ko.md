@@ -580,7 +580,7 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
 
 다음 일만 일부러 한쪽에만 둡니다.
 
-- 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고).
+- 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고). `owngit restore`와 `owngit backup --output`은 OwnGit이 멈춰 있을 때만 동작하므로 대시보드는 복원을 실행하지 않고 [복원 순서](#대시보드의-복원-안내)를 보여 줍니다.
 - 대시보드에만 있음: 브라우저에 나오는 일반 HTTP 경고에 동의하는 일입니다. 그 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. `settings`나 `repo` 같은 클라이언트 명령은 실행할 때마다 `--accept-insecure-http`로 그 명령이 쓰는 일반 HTTP에 따로 동의합니다. `owngit network set --accept-insecure-http`는 다른 컴퓨터가 접속하는 주소를 저장할 때 대시보드와 같은 동의를 한 번 기록합니다([네트워크 설정](#네트워크-설정) 참고).
 - 실행되는 프로그램: `owngit serve`는 OwnGit을 실행하고, `owngit service`는 서비스로 설치하고 제어하며, `owngit runner`는 자동 체크를 실행하고, `owngit mcp`는 코딩 도구에 MCP 서버를 제공합니다. 프로세스를 시작하거나 제어하는 명령이라 대시보드 양식이 없습니다.
 - 코딩 도구의 기록: 작업(task), 수정 라운드, 시도(`owngit check task new`, `check cycle reserve`, `check run`)는 코딩 도구가 남기는 증거입니다([코딩 도구](CODING_TOOLS.ko.md) 참고). 대시보드는 이 기록을 보여 주기만 하고 만들지는 않습니다. `owngit tasks`는 대시보드에 보이는 이 기록을 출력합니다.
