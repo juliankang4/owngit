@@ -9,6 +9,7 @@ import (
 
 	"owngit/internal/importfetch"
 	"owngit/internal/importgit"
+	"owngit/internal/state"
 )
 
 // Stable problem codes. A later HTTP or CLI binding maps them to user-facing
@@ -166,7 +167,7 @@ func problemCode(err error) string {
 	}
 	var fetchError *importfetch.Error
 	if errors.As(err, &fetchError) {
-		return classifyFetchError(err).Code
+		return classifyFetchError(err, Limits{}).Code
 	}
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -178,8 +179,11 @@ func problemCode(err error) string {
 }
 
 // classifyFetchError maps one transport failure to a stable code and a safe
-// summary. Messages never include remote response bytes or credentials.
-func classifyFetchError(err error) *Problem {
+// summary. Messages never include remote response bytes or credentials; a
+// refused address or redirect origin is named because the owner decides
+// whether to allow it. limits are the run's limits, for naming the one that
+// was reached.
+func classifyFetchError(err error, limits Limits) *Problem {
 	if err == nil {
 		return nil
 	}
@@ -195,25 +199,31 @@ func classifyFetchError(err error) *Problem {
 		}
 	}
 	switch {
+	case errors.Is(fetchError, importfetch.ErrPlainHTTP):
+		return newProblem(CodeInvalidSource, importfetch.ErrPlainHTTP.Error(), err)
 	case errors.Is(fetchError, importfetch.ErrInvalidRequest):
 		return newProblem(CodeInvalidSource, "source request is invalid (check the URL and credential sizes)", err)
 	case errors.Is(fetchError, importfetch.ErrNameResolution):
 		return newProblem(CodeNetwork, "source host name could not be resolved", err)
 	case errors.Is(fetchError, importfetch.ErrAddressPolicy):
-		return newProblem(CodeNetwork, "a resolved source address is forbidden; private-network consent may be required", err)
+		return newProblem(CodeNetwork, addressPolicyMessage(fetchError), err)
 	case errors.Is(fetchError, importfetch.ErrConnection):
 		if message := tlsFailureMessage(err); message != "" {
 			return newProblem(CodeNetwork, message, err)
 		}
 		return newProblem(CodeNetwork, "source connection or response body failed", err)
 	case errors.Is(fetchError, importfetch.ErrRedirect):
-		return newProblem(CodeProtocol, "source redirect was refused", err)
+		return newProblem(CodeProtocol, redirectMessage(fetchError), err)
 	case errors.Is(fetchError, importfetch.ErrHTTPStatus):
 		return newProblem(CodeNetwork, "source returned an unexpected HTTP status", err)
 	case errors.Is(fetchError, importfetch.ErrMediaType), errors.Is(fetchError, importfetch.ErrContentEncoding), errors.Is(fetchError, importfetch.ErrResponseHeaders):
 		return newProblem(CodeProtocol, "source returned an unsupported HTTP response", err)
 	case errors.Is(err, importgit.ErrTooManyRefs):
-		return newProblem(CodeTooManyRefs, fmt.Sprintf("source lists more than %d refs, the most an import accepts; for a source without Git protocol v2, refs it does not import such as pull request refs count too; clone the source and push its branches and tags to a new repository instead", importgit.DefaultLimits().MaxRefRecords), err)
+		refs := limits.Fetch.Advertisement.MaxRefRecords
+		if refs == 0 {
+			refs = importgit.DefaultLimits().MaxRefRecords
+		}
+		return newProblem(CodeTooManyRefs, fmt.Sprintf("source lists more than %d refs, the most this import accepts; for a source without Git protocol v2, refs it does not import such as pull request refs count too; raise this source's ref limit, or clone the source and push its branches and tags to a new repository instead", refs), err)
 	case errors.Is(fetchError, importfetch.ErrRequestTooLarge), errors.Is(fetchError, importfetch.ErrResponseTooLarge):
 		return newProblem(CodeTooLarge, "source exceeds a configured transfer bound", err)
 	case errors.Is(fetchError, importfetch.ErrAdvertisement):
@@ -239,6 +249,52 @@ func classifyFetchError(err error) *Problem {
 	default:
 		return newProblem(CodeNetwork, "source request failed", err)
 	}
+}
+
+// addressPolicyMessage names a refused source address, its range and the
+// consent that would allow it.
+func addressPolicyMessage(fetchError *importfetch.Error) string {
+	if fetchError.Address == "" {
+		return "a resolved source address is forbidden"
+	}
+	refused := fmt.Sprintf("source address %s is in the %s", fetchError.Address, fetchError.AddressRange)
+	switch fetchError.Consent {
+	case importfetch.ConsentPrivateNetwork:
+		return refused + "; allow private network access for this source to connect to it"
+	case importfetch.ConsentExceptionalDestination:
+		return refused + "; allow this exceptional destination for this source to connect to it"
+	}
+	return refused + ", which an import never connects to"
+}
+
+// redirectMessage says why a source redirect was not followed and what
+// would follow it, when anything can.
+func redirectMessage(fetchError *importfetch.Error) string {
+	switch {
+	case errors.Is(fetchError, importfetch.ErrRedirectLoop):
+		return "source redirects form a loop"
+	case errors.Is(fetchError, importfetch.ErrTooManyRedirects):
+		return "source redirected too many times"
+	case errors.Is(fetchError, importfetch.ErrRedirectDowngrade):
+		return "source redirected from HTTPS to plain HTTP; allow plain HTTP for this source to follow it"
+	case errors.Is(fetchError, importfetch.ErrRedirectTarget):
+		return "source redirected to an address that does not end with info/refs?service=git-upload-pack, so it is not followed"
+	case errors.Is(fetchError, importfetch.ErrRedirectRequest):
+		return "source redirected a Git request after discovery; an import follows only the first request's redirect"
+	case fetchError.RedirectOrigin != "":
+		return fmt.Sprintf("source redirected to %s; approve that origin for this source's redirects to follow it", fetchError.RedirectOrigin)
+	}
+	return "source redirected; allow redirects for this source to follow it"
+}
+
+// sourceReadProblem reports a source that could not be read, naming a saved
+// option that cannot be used and where to set it again.
+func sourceReadProblem(err error) *Problem {
+	var setting *state.ImportSourceSettingError
+	if errors.As(err, &setting) {
+		return newProblem(CodeStateUnavailable, setting.Advice(), err)
+	}
+	return newProblem(CodeStateUnavailable, "import source could not be read", err)
 }
 
 // tlsFailureMessage names a TLS certificate or handshake failure, which is

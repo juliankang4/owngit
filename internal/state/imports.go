@@ -115,15 +115,19 @@ type ImportSource struct {
 	OverwriteDiverged       bool
 	FollowUpstreamDeletions bool
 	ExtraRefPrefixes        []string
+	// Options are the machine-local connection choices and limits.
+	Options ImportOptions
 }
 
-// ImportSourceInput is one explicit source configuration mutation.
+// ImportSourceInput is one explicit source configuration mutation. Options
+// replace the saved ones; an empty redirect policy means refuse.
 type ImportSourceInput struct {
 	RepositoryID        string
 	URL                 string
 	Mode                string
 	GitOnlyConsent      bool
 	AllowPrivateNetwork bool
+	Options             ImportOptions
 	Now                 time.Time
 }
 
@@ -256,6 +260,16 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	if input.Now.IsZero() {
 		return ImportSource{}, errors.New("import source time is required")
 	}
+	if input.Options.Redirects == "" {
+		input.Options.Redirects = ImportRedirectRefuse
+	}
+	if err := input.Options.validate(); err != nil {
+		return ImportSource{}, err
+	}
+	limits, err := encodeImportLimits(input.Options.Limits)
+	if err != nil {
+		return ImportSource{}, err
+	}
 	releaseCredentialAuthority := s.LockImportCredentialAuthority(input.RepositoryID)
 	defer releaseCredentialAuthority()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -264,6 +278,11 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	}
 	defer tx.Rollback()
 	current, err := scanImportSource(tx.QueryRowContext(ctx, importSourceSelect+` WHERE repository_id=?`, input.RepositoryID))
+	if onlyImportSettingErrors(err) {
+		// The input replaces every option, so an unreadable saved option is
+		// what this change repairs. The rest of the row was read.
+		err = nil
+	}
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		// A deleted and re-created source must not collide with authority stamped
@@ -275,32 +294,44 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 		current = ImportSource{
 			RepositoryID: input.RepositoryID, URL: input.URL, SourceGeneration: priorGeneration + 1, AuthorityRevision: priorAuthority + 1,
 			CredentialGeneration: "", Mode: input.Mode, GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
-			CreatedAt: input.Now, UpdatedAt: input.Now,
+			Options: input.Options, CreatedAt: input.Now, UpdatedAt: input.Now,
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at)
-			VALUES(?,?,?,?,?,?,?,?,?,?)`,
-			current.RepositoryID, current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.CreatedAt.Unix(), current.UpdatedAt.Unix()); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO import_sources(repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
+			allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			current.RepositoryID, current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.CreatedAt.Unix(), current.UpdatedAt.Unix(),
+			boolInt(input.Options.AllowPlainHTTP), input.Options.Redirects, input.Options.ApprovedRedirectOrigin, boolInt(input.Options.AllowReservedAddresses), limits); err != nil {
 			return ImportSource{}, err
 		}
 	case err != nil:
 		return ImportSource{}, err
 	default:
-		changed := current.URL != input.URL || current.Mode != input.Mode || current.GitOnlyConsent != input.GitOnlyConsent || current.AllowPrivateNetwork != input.AllowPrivateNetwork
-		if changed {
+		// Limits apply to the next run, so changing only them keeps the
+		// execution authority of a run in progress.
+		authorityChanged := current.URL != input.URL || current.Mode != input.Mode || current.GitOnlyConsent != input.GitOnlyConsent ||
+			current.AllowPrivateNetwork != input.AllowPrivateNetwork || !current.Options.SameTransport(input.Options)
+		if authorityChanged || current.Options.Limits != input.Options.Limits {
+			previousAuthority := current.AuthorityRevision
 			if current.URL != input.URL {
 				current.SourceGeneration++
 				current.CredentialGeneration = ""
 			}
+			if authorityChanged {
+				current.AuthorityRevision++
+			}
 			current.URL = input.URL
-			current.AuthorityRevision++
 			current.Mode = input.Mode
 			current.GitOnlyConsent = input.GitOnlyConsent
 			current.AllowPrivateNetwork = input.AllowPrivateNetwork
+			current.Options = input.Options
 			current.UpdatedAt = input.Now
 			if _, err := tx.ExecContext(ctx, `UPDATE import_sources
-				SET url=?,source_generation=?,authority_revision=?,credential_generation=?,mode=?,git_only_consent=?,allow_private_network=?,updated_at=?
+				SET url=?,source_generation=?,authority_revision=?,credential_generation=?,mode=?,git_only_consent=?,allow_private_network=?,updated_at=?,
+				allow_plain_http=?,redirect_policy=?,approved_redirect_origin=?,allow_reserved_addresses=?,limits_json=?
 				WHERE repository_id=? AND authority_revision=?`,
-				current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.UpdatedAt.Unix(), input.RepositoryID, current.AuthorityRevision-1); err != nil {
+				current.URL, current.SourceGeneration, current.AuthorityRevision, current.CredentialGeneration, current.Mode, boolInt(current.GitOnlyConsent), boolInt(current.AllowPrivateNetwork), current.UpdatedAt.Unix(),
+				boolInt(current.Options.AllowPlainHTTP), current.Options.Redirects, current.Options.ApprovedRedirectOrigin, boolInt(current.Options.AllowReservedAddresses), limits,
+				input.RepositoryID, previousAuthority); err != nil {
 				return ImportSource{}, err
 			}
 		}
@@ -311,15 +342,40 @@ func (s *Store) ConfigureImportSource(ctx context.Context, input ImportSourceInp
 	return current, nil
 }
 
+// ImportSource reads one source. When only its saved options cannot be used,
+// it returns the rest of the source, exists true and an error of type
+// *ImportSourceSettingError, so a caller can repair the option; any other
+// caller treats the error as a failed read.
 func (s *Store) ImportSource(ctx context.Context, repositoryID string) (ImportSource, bool, error) {
 	record, err := scanImportSource(s.db.QueryRowContext(ctx, importSourceSelect+` WHERE repository_id=?`, repositoryID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return ImportSource{}, false, nil
 	}
+	if onlyImportSettingErrors(err) {
+		return record, true, err
+	}
 	if err != nil {
 		return ImportSource{}, false, err
 	}
 	return record, true, nil
+}
+
+// onlyImportSettingErrors reports whether err is nothing but unusable saved
+// options.
+func onlyImportSettingErrors(err error) bool {
+	if err == nil {
+		return false
+	}
+	var setting *ImportSourceSettingError
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, one := range joined.Unwrap() {
+			if !errors.As(one, &setting) {
+				return false
+			}
+		}
+		return true
+	}
+	return errors.As(err, &setting)
 }
 
 func (s *Store) ImportSources(ctx context.Context) ([]ImportSource, error) {
@@ -340,14 +396,19 @@ func (s *Store) ImportSources(ctx context.Context) ([]ImportSource, error) {
 }
 
 const importSourceSelect = `SELECT repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
-	overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes FROM import_sources`
+	overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
+	allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json FROM import_sources`
 
+// scanImportSource reads one source row. Unusable saved options are
+// reported as *ImportSourceSettingError beside the rest of the row.
 func scanImportSource(scanner rowScanner) (ImportSource, error) {
 	var record ImportSource
 	var created, updated int64
-	var prefixes string
+	var prefixes, redirects, approved, limits string
+	var plainHTTP, reserved bool
 	if err := scanner.Scan(&record.RepositoryID, &record.URL, &record.SourceGeneration, &record.AuthorityRevision, &record.CredentialGeneration, &record.Mode,
-		&record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated, &record.OverwriteDiverged, &record.FollowUpstreamDeletions, &prefixes); err != nil {
+		&record.GitOnlyConsent, &record.AllowPrivateNetwork, &created, &updated, &record.OverwriteDiverged, &record.FollowUpstreamDeletions, &prefixes,
+		&plainHTTP, &redirects, &approved, &reserved, &limits); err != nil {
 		return ImportSource{}, err
 	}
 	record.CreatedAt = unixTime(created)
@@ -356,7 +417,8 @@ func scanImportSource(scanner rowScanner) (ImportSource, error) {
 	if record.ExtraRefPrefixes, err = decodeRefPrefixes(prefixes); err != nil {
 		return ImportSource{}, fmt.Errorf("import source %q: %w", record.RepositoryID, err)
 	}
-	return record, nil
+	record.Options, err = decodeImportOptions(record.RepositoryID, plainHTTP, redirects, approved, reserved, limits)
+	return record, err
 }
 
 func (s *Store) SetImportGitOnlyConsent(ctx context.Context, repositoryID string, consent bool, now time.Time) (ImportSource, error) {

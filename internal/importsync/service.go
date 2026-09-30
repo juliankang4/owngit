@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"owngit/internal/importfetch"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -256,6 +257,57 @@ type ConfigureInput struct {
 	Mode                Mode
 	GitOnlyConsent      bool
 	AllowPrivateNetwork bool
+	// Options changes the connection options and limits. What it leaves
+	// unchanged keeps its saved value, except that a changed URL resets the
+	// transport options: consent given for one address never carries over to
+	// another.
+	Options OptionsChange
+}
+
+// OptionsChange changes some of a source's options. A nil field keeps the
+// value it applies to. Limits holds only the limits to change, by their
+// state.ImportLimitFields name.
+type OptionsChange struct {
+	AllowPlainHTTP         *bool
+	Redirects              *string
+	ApprovedRedirectOrigin *string
+	AllowReservedAddresses *bool
+	Limits                 map[string]int64
+}
+
+// apply returns options with this change made.
+func (c OptionsChange) apply(options state.ImportOptions) (state.ImportOptions, error) {
+	if c.AllowPlainHTTP != nil {
+		options.AllowPlainHTTP = *c.AllowPlainHTTP
+	}
+	if c.Redirects != nil {
+		options.Redirects = *c.Redirects
+	}
+	if c.ApprovedRedirectOrigin != nil {
+		options.ApprovedRedirectOrigin = *c.ApprovedRedirectOrigin
+	}
+	if c.AllowReservedAddresses != nil {
+		options.AllowReservedAddresses = *c.AllowReservedAddresses
+	}
+	for name, value := range c.Limits {
+		// A limit is set to a value in its range; setting its default value
+		// returns it to the default.
+		if err := state.CheckImportLimit(name, value); err != nil {
+			return options, err
+		}
+		field, _ := options.Limits.Field(name)
+		*field = value
+	}
+	return options, nil
+}
+
+// replaces reports whether the change sets the named saved option (see
+// state.ImportSourceSettingError), so an unreadable one can be repaired.
+func (c OptionsChange) replaces(setting string) bool {
+	if setting == "limits" {
+		return len(c.Limits) > 0
+	}
+	return c.Redirects != nil
 }
 
 // ConfigureSource persists source identity and consent without importing. The
@@ -265,10 +317,6 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 	if input.RepositoryID == "" {
 		return state.ImportSource{}, newProblem(CodeInvalidSource, "repository identifier is required", nil)
 	}
-	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes)
-	if err != nil {
-		return state.ImportSource{}, newProblem(CodeInvalidSource, err.Error(), err)
-	}
 	mode := input.Mode
 	if mode == "" {
 		mode = ModeStandalone
@@ -276,18 +324,85 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 	if !mode.valid() {
 		return state.ImportSource{}, newProblem(CodeInvalidSource, "mode must be standalone or coexistence", nil)
 	}
-	now := s.clock()
-	lock := s.Repositories.Locks.For(input.RepositoryID)
-	lock.Lock()
-	previous, _, readErr := s.Store.ImportSource(ctx, input.RepositoryID)
-	if readErr != nil {
-		lock.Unlock()
-		return state.ImportSource{}, newProblem(CodeStateUnavailable, "import source could not be read", readErr)
+	// The URL's form is checked here and its scheme against the options in
+	// configure, once the options it goes with are known.
+	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes, true)
+	if err != nil {
+		return state.ImportSource{}, newProblem(CodeInvalidSource, err.Error(), err)
 	}
-	source, err := s.Store.ConfigureImportSource(ctx, state.ImportSourceInput{
-		RepositoryID: input.RepositoryID, URL: url, Mode: string(mode),
-		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Now: now,
+	return s.configure(ctx, input.RepositoryID, input.Options.replaces, func(current state.ImportSource, exists bool) (state.ImportSourceInput, error) {
+		options := state.DefaultImportOptions()
+		switch {
+		case exists && current.URL == url:
+			options = current.Options
+		case exists:
+			options = current.Options.WithoutTransport()
+		}
+		options, err := input.Options.apply(options)
+		if err != nil {
+			return state.ImportSourceInput{}, err
+		}
+		return state.ImportSourceInput{
+			RepositoryID: input.RepositoryID, URL: url, Mode: string(mode),
+			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: options,
+		}, nil
 	})
+}
+
+// ChangeOptions changes some options of a configured source and keeps the
+// rest, including options that cannot be read only when the change replaces
+// them.
+func (s *Service) ChangeOptions(ctx context.Context, repositoryID string, change OptionsChange) (state.ImportSource, error) {
+	return s.configure(ctx, repositoryID, change.replaces, func(current state.ImportSource, exists bool) (state.ImportSourceInput, error) {
+		if !exists {
+			return state.ImportSourceInput{}, newProblem(CodeNotConfigured, "configure an import source first", ErrNotConfigured)
+		}
+		options, err := change.apply(current.Options)
+		if err != nil {
+			return state.ImportSourceInput{}, err
+		}
+		return state.ImportSourceInput{
+			RepositoryID: repositoryID, URL: current.URL, Mode: current.Mode,
+			GitOnlyConsent: current.GitOnlyConsent, AllowPrivateNetwork: current.AllowPrivateNetwork, Options: options,
+		}, nil
+	})
+}
+
+// configure is the one locked read, change and write of a source. The
+// change sees the saved source. A saved option that cannot be read reaches
+// it as its default, and the change is refused unless it replaces that
+// option: replaces reports whether it does, by the setting's name.
+func (s *Service) configure(ctx context.Context, repositoryID string, replaces func(setting string) bool, change func(current state.ImportSource, exists bool) (state.ImportSourceInput, error)) (state.ImportSource, error) {
+	now := s.clock()
+	lock := s.Repositories.Locks.For(repositoryID)
+	lock.Lock()
+	previous, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	var settingErr *state.ImportSourceSettingError
+	for _, problem := range settingErrors(err) {
+		if replaces(problem.Setting) {
+			continue
+		}
+		lock.Unlock()
+		return state.ImportSource{}, newProblem(CodeStateUnavailable, problem.Advice(), problem)
+	}
+	if err != nil && !errors.As(err, &settingErr) {
+		lock.Unlock()
+		return state.ImportSource{}, sourceReadProblem(err)
+	}
+	input, err := change(previous, exists)
+	if err == nil {
+		input.Options, err = s.checkOptions(input.URL, input.Options)
+	}
+	if err != nil {
+		lock.Unlock()
+		var problem *Problem
+		if errors.As(err, &problem) {
+			return state.ImportSource{}, err
+		}
+		return state.ImportSource{}, newProblem(CodeInvalidSource, err.Error(), err)
+	}
+	input.Now = now
+	source, err := s.Store.ConfigureImportSource(ctx, input)
 	lock.Unlock()
 	if err != nil {
 		return state.ImportSource{}, newProblem(CodeStateUnavailable, "import source could not be recorded", err)
@@ -302,6 +417,62 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 	return source, nil
 }
 
+// settingErrors lists the unusable saved options a source read reported.
+func settingErrors(err error) []*state.ImportSourceSettingError {
+	if err == nil {
+		return nil
+	}
+	var all []*state.ImportSourceSettingError
+	errs := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		errs = joined.Unwrap()
+	}
+	for _, one := range errs {
+		var setting *state.ImportSourceSettingError
+		if errors.As(one, &setting) {
+			all = append(all, setting)
+		}
+	}
+	return all
+}
+
+// checkOptions checks a source URL with its options and returns the options
+// in stored form: the URL and an approved origin follow the transport's
+// rules, an origin is kept only for the approved-origin policy, a limit equal
+// to its default is not stored, and the stages fit in the run.
+func (s *Service) checkOptions(rawURL string, options state.ImportOptions) (state.ImportOptions, error) {
+	if _, err := canonicalSourceURL(rawURL, s.effectiveLimits().Fetch.MaxURLBytes, options.AllowPlainHTTP); err != nil {
+		return options, err
+	}
+	switch options.Redirects {
+	case "", state.ImportRedirectRefuse, state.ImportRedirectSameOrigin:
+		if options.Redirects == "" {
+			options.Redirects = state.ImportRedirectRefuse
+		}
+		options.ApprovedRedirectOrigin = ""
+	case state.ImportRedirectApproved:
+		origin, err := importfetch.ParseRedirectOrigin(options.ApprovedRedirectOrigin, options.AllowPlainHTTP)
+		if err != nil {
+			return options, err
+		}
+		options.ApprovedRedirectOrigin = origin
+	default:
+		return options, errors.New("redirects must be refuse, same_origin, or approved")
+	}
+	if err := options.Limits.Validate(); err != nil {
+		return options, err
+	}
+	defaults := limitValues(DefaultLimits())
+	for _, field := range state.ImportLimitFields {
+		value, _ := options.Limits.Field(field.Name)
+		standard, _ := defaults.Field(field.Name)
+		if *value == *standard {
+			*value = 0
+		}
+	}
+	return options, checkSourceLimits(options.Limits)
+}
+
 // SetCredentials stores machine-local credentials bound to the current source
 // configuration. nil clears them.
 func (s *Service) SetCredentials(ctx context.Context, repositoryID string, credential *Credentials) error {
@@ -311,7 +482,7 @@ func (s *Service) SetCredentials(ctx context.Context, repositoryID string, crede
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
 		lock.Unlock()
-		return newProblem(CodeStateUnavailable, "import source could not be read", err)
+		return sourceReadProblem(err)
 	}
 	if !exists {
 		lock.Unlock()
@@ -406,7 +577,10 @@ type ImportInput struct {
 	GitOnlyConsent      bool
 	AllowPrivateNetwork bool
 	Credentials         *Credentials
-	Limits              Limits
+	// Options changes the new source's connection options and limits from
+	// their defaults.
+	Options OptionsChange
+	Limits  Limits
 }
 
 // ImportResult reports the repository and the run record of an import,
@@ -421,8 +595,15 @@ type ImportResult struct {
 // when that destination does not exist, and performs a bounded initial import.
 // Reconfiguration of an existing repository is ConfigureSource plus Refresh.
 func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, error) {
-	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes)
+	options, err := input.Options.apply(state.DefaultImportOptions())
 	if err != nil {
+		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
+	}
+	url, err := canonicalSourceURL(input.URL, s.effectiveLimits().Fetch.MaxURLBytes, options.AllowPlainHTTP)
+	if err != nil {
+		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
+	}
+	if options, err = s.checkOptions(url, options); err != nil {
 		return ImportResult{}, newProblem(CodeInvalidSource, err.Error(), err)
 	}
 	name := strings.TrimSpace(input.Name)
@@ -446,7 +627,7 @@ func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, 
 	snapshot, written, err := s.bindNewImport(ctx, ConfigureInput{
 		RepositoryID: repositoryID, URL: url, Mode: input.Mode,
 		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
-	}, input.Credentials)
+	}, options, input.Credentials)
 	if err != nil {
 		return ImportResult{}, err
 	}
@@ -549,7 +730,7 @@ func (s *Service) forgetOrphanImports(ctx context.Context) error {
 // bindNewImport snapshots any existing source and credential binding under the
 // repository lock, refuses a destination that appeared after the unlocked
 // pre-check, and only then writes this import's source and credentials.
-func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
+func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, options state.ImportOptions, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(input.RepositoryID)
 	lock.Lock()
@@ -577,7 +758,7 @@ func (s *Service) bindNewImport(ctx context.Context, input ConfigureInput, crede
 	}
 	source, err := s.Store.ConfigureImportSource(ctx, state.ImportSourceInput{
 		RepositoryID: input.RepositoryID, URL: input.URL, Mode: string(mode),
-		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Now: now,
+		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: options, Now: now,
 	})
 	if err != nil {
 		lock.Unlock()
@@ -636,7 +817,7 @@ func (s *Service) RefreshScheduled(ctx context.Context, repositoryID string, lim
 func (s *Service) kindFor(ctx context.Context, repositoryID string) (string, error) {
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
-		return "", newProblem(CodeStateUnavailable, "import source could not be read", err)
+		return "", sourceReadProblem(err)
 	}
 	if !exists {
 		return "", newProblem(CodeNotConfigured, "configure an import source first", ErrNotConfigured)
@@ -753,7 +934,49 @@ type Status struct {
 	StagingIssues     int             `json:"staging_issues"`
 	UpstreamDeletions int64           `json:"upstream_deletions"`
 	Schedule          *ScheduleStatus `json:"schedule,omitempty"`
+	Options           *OptionsStatus  `json:"options,omitempty"`
 	Runtime           RuntimeStatus   `json:"runtime"`
+}
+
+// OptionsStatus reports a source's connection options and the limits its next
+// run uses.
+type OptionsStatus struct {
+	AllowPlainHTTP         bool   `json:"allow_plain_http"`
+	Redirects              string `json:"redirects"`
+	ApprovedRedirectOrigin string `json:"approved_redirect_origin,omitempty"`
+	AllowReservedAddresses bool   `json:"allow_reserved_addresses"`
+	// Limits are the limits in force, the owner's or the built-in ones.
+	// ChangedLimits names the ones the owner set.
+	Limits        state.ImportLimits `json:"limits"`
+	ChangedLimits []string           `json:"changed_limits,omitempty"`
+	// Problem says which saved option cannot be used and where to set it
+	// again. The options above then show what could be read.
+	Problem string `json:"problem,omitempty"`
+}
+
+// optionsStatus describes a source's options and the limits a run uses.
+func optionsStatus(options state.ImportOptions, readErr error) *OptionsStatus {
+	status := &OptionsStatus{
+		AllowPlainHTTP: options.AllowPlainHTTP, Redirects: options.Redirects,
+		ApprovedRedirectOrigin: options.ApprovedRedirectOrigin, AllowReservedAddresses: options.AllowReservedAddresses,
+	}
+	var problems []string
+	for _, setting := range settingErrors(readErr) {
+		problems = append(problems, setting.Advice())
+	}
+	limits, err := SourceLimits(options.Limits)
+	if err != nil {
+		problems = append(problems, "This source's import limits cannot be used: "+err.Error())
+		limits, _ = SourceLimits(state.ImportLimits{})
+	}
+	status.Limits = limitValues(limits)
+	for _, field := range state.ImportLimitFields {
+		if value, _ := options.Limits.Field(field.Name); *value != 0 {
+			status.ChangedLimits = append(status.ChangedLimits, field.Name)
+		}
+	}
+	status.Problem = strings.Join(problems, " ")
+	return status
 }
 
 const (
@@ -773,12 +996,15 @@ var reconcilePageLimit = reconcilePageSize
 func (s *Service) Status(ctx context.Context, repositoryID string) (Status, error) {
 	status := Status{RepositoryID: repositoryID, Runtime: s.runtimeStatus()}
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
-	if err != nil {
-		return Status{}, newProblem(CodeStateUnavailable, "import source could not be read", err)
+	if err != nil && len(settingErrors(err)) == 0 {
+		return Status{}, sourceReadProblem(err)
 	}
 	if !exists {
 		return status, nil
 	}
+	// A saved option that cannot be used is reported beside the rest of the
+	// status, so the owner can see and set it again.
+	status.Options = optionsStatus(source.Options, err)
 	status.Configured = true
 	status.URL = source.URL
 	status.Mode = source.Mode
@@ -1222,7 +1448,7 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 func (s *Service) SetSchedule(ctx context.Context, repositoryID string, enabled bool, interval time.Duration) (state.ImportSchedule, error) {
 	_, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
-		return state.ImportSchedule{}, newProblem(CodeStateUnavailable, "import source could not be read", err)
+		return state.ImportSchedule{}, sourceReadProblem(err)
 	}
 	if !exists {
 		return state.ImportSchedule{}, newProblem(CodeNotConfigured, "configure an import source first", ErrNotConfigured)

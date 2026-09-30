@@ -93,7 +93,7 @@ func TestTLSFailureIsNamed(t *testing.T) {
 		{errors.New("connection reset by peer"), "source connection or response body failed"},
 	}
 	for _, test := range tests {
-		problem := classifyFetchError(fmt.Errorf("%w: %w", connection, test.cause))
+		problem := classifyFetchError(fmt.Errorf("%w: %w", connection, test.cause), Limits{})
 		if problem.Code != CodeNetwork || !strings.HasPrefix(problem.Message, test.want) {
 			t.Errorf("cause %T classified as %s %q, want %q", test.cause, problem.Code, problem.Message, test.want)
 		}
@@ -105,11 +105,11 @@ func TestTLSFailureIsNamed(t *testing.T) {
 // count and what to do instead.
 func TestTooManyRefsIsExplained(t *testing.T) {
 	tooLarge := &importfetch.Error{Op: "read advertisement", Kind: importfetch.ErrResponseTooLarge}
-	problem := classifyFetchError(fmt.Errorf("%w: %w", tooLarge, importgit.ErrTooManyRefs))
+	problem := classifyFetchError(fmt.Errorf("%w: %w", tooLarge, importgit.ErrTooManyRefs), Limits{})
 	if problem.Code != CodeTooManyRefs || !strings.Contains(problem.Message, "more than 50000 refs") || !strings.Contains(problem.Message, "pull request refs") {
 		t.Fatalf("too many refs classified as %s %q", problem.Code, problem.Message)
 	}
-	if problem := classifyFetchError(tooLarge); problem.Code != CodeTooLarge || problem.Message != "source exceeds a configured transfer bound" {
+	if problem := classifyFetchError(tooLarge, Limits{}); problem.Code != CodeTooLarge || problem.Message != "source exceeds a configured transfer bound" {
 		t.Fatalf("other bound classified as %s %q", problem.Code, problem.Message)
 	}
 }

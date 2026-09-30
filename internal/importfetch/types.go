@@ -39,7 +39,17 @@ type Error struct {
 	Op         string
 	Kind       error
 	StatusCode int
-	cause      error
+	// Address, AddressRange and Consent describe a refused destination: the
+	// resolved address, the special-purpose range it belongs to, and the
+	// consent that would allow it (ConsentPrivateNetwork,
+	// ConsentExceptionalDestination, or empty when nothing can).
+	Address      string
+	AddressRange string
+	Consent      string
+	// RedirectOrigin is the checked scheme and host a refused redirect
+	// pointed to, when it is not an origin this source may follow.
+	RedirectOrigin string
+	cause          error
 }
 
 func (e *Error) Error() string {
@@ -47,8 +57,13 @@ func (e *Error) Error() string {
 	if e.Op != "" {
 		prefix += " " + e.Op
 	}
-	if e.StatusCode != 0 {
+	switch {
+	case e.StatusCode != 0:
 		return fmt.Sprintf("%s: %v (HTTP %d)", prefix, e.Kind, e.StatusCode)
+	case e.Address != "":
+		return fmt.Sprintf("%s: %v (%s, %s)", prefix, e.Kind, e.Address, e.AddressRange)
+	case e.RedirectOrigin != "":
+		return fmt.Sprintf("%s: %v (to %s)", prefix, e.Kind, e.RedirectOrigin)
 	}
 	return fmt.Sprintf("%s: %v", prefix, e.Kind)
 }
@@ -99,7 +114,7 @@ func DefaultLimits() Limits {
 	const maxPack = int64(16 << 30)
 	return Limits{
 		Advertisement:         advertisement,
-		MaxRequestBytes:       8 << 20,
+		MaxRequestBytes:       defaultMaxRequestBytes,
 		MaxPackBytes:          maxPack,
 		MaxTotalBodyBytes:     maxPack + sidebandOverhead(maxPack) + 2*advertisement.MaxTotalBytes + 64,
 		MaxHeaderBytes:        64 << 10,
@@ -118,6 +133,19 @@ type Request struct {
 	URL                 string
 	Authentication      Authentication
 	AllowPrivateNetwork bool
+	// AllowPlainHTTP permits an http:// URL, and a redirect to one. The
+	// source's code and credentials then travel unencrypted.
+	AllowPlainHTTP bool
+	// AllowReservedAddresses permits usable special-purpose unicast
+	// addresses, such as documentation or benchmarking ranges, for this
+	// source. Private addresses still need AllowPrivateNetwork.
+	AllowReservedAddresses bool
+	// Redirects is RedirectRefuse (also when empty), RedirectSameOrigin or
+	// RedirectApproved. ApprovedRedirectOrigin is the one other origin that
+	// RedirectApproved follows. Credentials and RootCAPEM stay with the
+	// source origin.
+	Redirects              string
+	ApprovedRedirectOrigin string
 	// RootCAPEM optionally adds source-specific trust anchors to the system
 	// roots. Normal certificate chain and original-hostname checks still run.
 	RootCAPEM []byte

@@ -63,8 +63,7 @@ type runState struct {
 // per-repository run mutex is held for the whole run so two imports cannot
 // stage and publish the same repository concurrently.
 func (s *Service) execute(parent context.Context, repositoryID, name, description, kind string, limits Limits, newDestination bool, snapshot *state.ImportBindingSnapshot, written state.ImportSource) (state.ImportRun, error) {
-	limits, err := limits.effective()
-	if err != nil {
+	if _, err := limits.effective(); err != nil {
 		return state.ImportRun{}, newProblem(CodeRuntimeUnavailable, err.Error(), err)
 	}
 	mutex := s.repositoryLock(repositoryID)
@@ -79,10 +78,18 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 		if stop := admissionStop(ctx, err); stop != nil {
 			return state.ImportRun{}, stop
 		}
-		return state.ImportRun{}, newProblem(CodeStateUnavailable, "import source could not be read", err)
+		return state.ImportRun{}, sourceReadProblem(err)
 	}
 	if !exists {
 		return state.ImportRun{}, newProblem(CodeNotConfigured, "configure an import source first", ErrNotConfigured)
+	}
+	// The run keeps the limits it starts with; a later change applies to the
+	// next run.
+	if limits, err = limits.withSource(source.Options.Limits); err == nil {
+		limits, err = limits.effective()
+	}
+	if err != nil {
+		return state.ImportRun{}, newProblem(CodeInvalidSource, "this source's import limits cannot be used: "+err.Error(), err)
 	}
 	credentialRevision, credentialBlocked := s.Store.ImportCredentialAuthority(repositoryID)
 	if credentialBlocked {
@@ -463,7 +470,7 @@ func (s *Service) fetchAndStage(ctx context.Context, run *runState) error {
 		if run.consumeErr != nil {
 			return run.consumeErr
 		}
-		return classifyFetchError(err)
+		return classifyFetchError(err, run.limits)
 	}
 	if run.advertisement == nil {
 		if result == nil || result.Advertisement == nil {
@@ -532,10 +539,15 @@ func (s *Service) requestFor(ctx context.Context, run *runState) (importfetch.Re
 	if err := s.authorityCurrent(ctx, run); err != nil {
 		return importfetch.Request{}, err
 	}
+	options := run.source.Options
 	request := importfetch.Request{
-		URL:                 run.source.URL,
-		AllowPrivateNetwork: run.source.AllowPrivateNetwork,
-		Limits:              run.limits.Fetch,
+		URL:                    run.source.URL,
+		AllowPrivateNetwork:    run.source.AllowPrivateNetwork,
+		AllowPlainHTTP:         options.AllowPlainHTTP,
+		AllowReservedAddresses: options.AllowReservedAddresses,
+		Redirects:              options.Redirects,
+		ApprovedRedirectOrigin: options.ApprovedRedirectOrigin,
+		Limits:                 run.limits.Fetch,
 	}
 	credential, exists, err := s.Store.LoadImportCredentials(ctx, run.run.RepositoryID)
 	if err != nil {

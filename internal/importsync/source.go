@@ -1,14 +1,13 @@
 package importsync
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 
+	"owngit/internal/importfetch"
 	"owngit/internal/importgit"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -29,37 +28,16 @@ func (m Mode) valid() bool {
 	return m == ModeStandalone || m == ModeCoexistence
 }
 
-// canonicalSourceURL applies the same structural rules the confined transport
-// enforces, so configuration fails before any network work. The canonical
-// string is the persisted source identity; a change advances the generation.
-func canonicalSourceURL(raw string, maxBytes int) (string, error) {
+// canonicalSourceURL applies the rules the confined transport enforces, so
+// configuration fails before any network work. The canonical string is the
+// persisted source identity; a change advances the generation.
+func canonicalSourceURL(raw string, maxBytes int, allowPlainHTTP bool) (string, error) {
 	if maxBytes <= 0 {
 		maxBytes = 8192
 	}
-	if raw == "" || len(raw) > maxBytes || strings.ContainsAny(raw, "\x00\r\n") {
-		return "", errors.New("source URL is empty, too long, or contains control bytes")
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Opaque != "" ||
-		parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return "", errors.New("source URL must be an absolute HTTPS URL without user information, query, or fragment")
-	}
-	if strings.ContainsAny(parsed.Host, "\x00\r\n ") || parsed.Hostname() == "" {
-		return "", errors.New("source URL host is invalid")
-	}
-	for _, character := range parsed.Hostname() {
-		if character > 127 {
-			return "", errors.New("source URL host must be ASCII (use its ASCII encoding)")
-		}
-	}
-	if strings.Contains(parsed.Hostname(), "%") {
-		return "", errors.New("source URL host must not contain an IPv6 zone identifier")
-	}
-	if port := parsed.Port(); port != "" {
-		number, err := strconv.Atoi(port)
-		if err != nil || number < 1 || number > 65535 {
-			return "", errors.New("source URL port is invalid")
-		}
+	parsed, err := importfetch.ParseSourceURL(raw, maxBytes, allowPlainHTTP)
+	if err != nil {
+		return "", err
 	}
 	return parsed.String(), nil
 }

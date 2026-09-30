@@ -17,7 +17,7 @@ func TestAdvertisementLimitNormalization(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := effectiveLimits(Limits{Advertisement: input})
+		got, err := EffectiveLimits(Limits{Advertisement: input})
 		if err != nil || got.Advertisement != want || got.MaxPackBytes != DefaultLimits().MaxPackBytes {
 			t.Fatalf("effective limits = %+v, %v, want advertisement %+v", got, err, want)
 		}

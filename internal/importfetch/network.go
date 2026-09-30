@@ -28,33 +28,104 @@ type source struct {
 	selected netip.Addr
 }
 
-func parseSource(raw string, maxBytes int) (*url.URL, error) {
+// ErrPlainHTTP reports an http:// source URL or redirect for a source that
+// was not allowed to use plain HTTP.
+var ErrPlainHTTP = errors.New("source URL uses plain HTTP; allow plain HTTP for this source to use it")
+
+// ParseSourceURL applies the source URL rules shared by configuration and the
+// transport: an absolute HTTPS URL, or HTTP when allowPlainHTTP is set, with
+// an ASCII host and no user information, query or fragment. Its messages name
+// the rule and never repeat the URL, which could hold a secret.
+func ParseSourceURL(raw string, maxBytes int, allowPlainHTTP bool) (*url.URL, error) {
 	if raw == "" || len(raw) > maxBytes || strings.ContainsAny(raw, "\x00\r\n") {
-		return nil, fetchError("validate source", ErrInvalidRequest, nil)
+		return nil, errors.New("source URL is empty, too long, or contains control bytes")
 	}
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.Opaque != "" ||
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.Opaque != "" ||
 		parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return nil, fetchError("validate source", ErrInvalidRequest, nil)
+		return nil, errors.New("source URL must be an absolute HTTPS URL without user information, query, or fragment")
 	}
+	if parsed.Scheme == "http" && !allowPlainHTTP {
+		return nil, ErrPlainHTTP
+	}
+	if err := checkHost(parsed); err != nil {
+		return nil, err
+	}
+	return parsed, nil
+}
+
+// ParseRedirectOrigin checks an approved redirect origin, such as
+// https://mirror.example, and returns it in canonical form: lowercase host and
+// no default port. An http origin needs allowPlainHTTP, like a source URL.
+func ParseRedirectOrigin(raw string, allowPlainHTTP bool) (string, error) {
+	if raw == "" || len(raw) > 2048 || strings.ContainsAny(raw, "\x00\r\n") {
+		return "", errors.New("approved redirect origin is empty, too long, or contains control bytes")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" || parsed.Opaque != "" ||
+		parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return "", errors.New("approved redirect origin must be a scheme and host such as https://mirror.example, without a path")
+	}
+	if parsed.Scheme == "http" && !allowPlainHTTP {
+		return "", errors.New("approved redirect origin uses plain HTTP; allow plain HTTP for this source to use it")
+	}
+	if err := checkHost(parsed); err != nil {
+		return "", err
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := parsed.Port(); port != "" && port != defaultPort(parsed.Scheme) {
+		host += ":" + port
+	}
+	return parsed.Scheme + "://" + host, nil
+}
+
+func checkHost(parsed *url.URL) error {
 	if strings.ContainsAny(parsed.Host, "\x00\r\n ") || parsed.Hostname() == "" {
-		return nil, fetchError("validate source", ErrInvalidRequest, nil)
+		return errors.New("source URL host is invalid")
 	}
 	for _, character := range parsed.Hostname() {
 		if character > 127 {
-			return nil, fetchError("validate source", ErrInvalidRequest, nil)
+			return errors.New("source URL host must be ASCII (use its ASCII encoding)")
 		}
 	}
 	if strings.Contains(parsed.Hostname(), "%") {
 		// Scoped IPv6 destinations are link-local in normal use and do not give
 		// TLS an unambiguous source identity.
-		return nil, fetchError("validate source", ErrInvalidRequest, nil)
+		return errors.New("source URL host must not contain an IPv6 zone identifier")
 	}
 	if port := parsed.Port(); port != "" {
 		number, err := strconv.Atoi(port)
 		if err != nil || number < 1 || number > 65535 {
-			return nil, fetchError("validate source", ErrInvalidRequest, nil)
+			return errors.New("source URL port is invalid")
 		}
+	}
+	return nil
+}
+
+func defaultPort(scheme string) string {
+	if scheme == "http" {
+		return "80"
+	}
+	return "443"
+}
+
+// originKey identifies the scheme, host and port that a URL reaches, with
+// the default port written out, so equal origins compare equal.
+func originKey(target *url.URL) string {
+	port := target.Port()
+	if port == "" {
+		port = defaultPort(target.Scheme)
+	}
+	return target.Scheme + "://" + net.JoinHostPort(strings.ToLower(target.Hostname()), port)
+}
+
+func parseSource(raw string, maxBytes int, allowPlainHTTP bool) (*url.URL, error) {
+	parsed, err := ParseSourceURL(raw, maxBytes, allowPlainHTTP)
+	if err != nil {
+		return nil, fetchError("validate source", ErrInvalidRequest, err)
 	}
 	return parsed, nil
 }
@@ -73,7 +144,15 @@ func endpoint(base *url.URL, suffix string, query string) *url.URL {
 	return &target
 }
 
-func resolveSource(ctx context.Context, base *url.URL, allowPrivate bool, lookup resolver) (*source, error) {
+// addressPolicy is what one source may reach beyond public unicast
+// addresses. Each consent is separate: an exceptional destination does not
+// make a private address reachable, nor the reverse.
+type addressPolicy struct {
+	allowPrivate  bool
+	allowReserved bool
+}
+
+func resolveSource(ctx context.Context, base *url.URL, policy addressPolicy, lookup resolver) (*source, error) {
 	host := base.Hostname()
 	var addresses []netip.Addr
 	if literal, err := netip.ParseAddr(host); err == nil {
@@ -93,13 +172,13 @@ func resolveSource(ctx context.Context, base *url.URL, allowPrivate bool, lookup
 	// response is refused without private-network consent instead of silently
 	// choosing its public member.
 	for _, address := range addresses {
-		if !addressAllowed(address, allowPrivate) {
-			return nil, fetchError("validate source address", ErrAddressPolicy, nil)
+		if err := policy.check(address); err != nil {
+			return nil, err
 		}
 	}
 	port := base.Port()
 	if port == "" {
-		port = "443"
+		port = defaultPort(base.Scheme)
 	}
 	return &source{base: base, host: host, port: port, selected: addresses[0]}, nil
 }
@@ -122,71 +201,127 @@ func uniqueAddresses(input []netip.Addr) []netip.Addr {
 	return result
 }
 
-var alwaysForbiddenPrefixes = mustPrefixes(
-	"0.0.0.0/8",
-	"169.254.0.0/16",
-	"192.0.0.0/24",
-	"192.0.2.0/24",
-	"192.88.99.0/24",
-	"198.18.0.0/15",
-	"198.51.100.0/24",
-	"203.0.113.0/24",
-	"224.0.0.0/4",
-	"240.0.0.0/4",
-	"64:ff9b::/96",
-	"64:ff9b:1::/48",
-	"100::/64",
-	"2001::/32",
-	"2001:2::/48",
-	"2001:db8::/32",
-	"2001:10::/28",
-	"2001:20::/28",
-	"2002::/16",
-	"3fff::/20",
-	"5f00::/16",
-	"fec0::/10",
-	"fe80::/10",
-	"ff00::/8",
+// Consents an address can require, as reported in Error.Consent.
+const (
+	ConsentPrivateNetwork         = "private_network"
+	ConsentExceptionalDestination = "exceptional_destination"
 )
 
-var (
-	sharedAddressPrefix            = netip.MustParsePrefix("100.64.0.0/10")
-	deprecatedIPv4CompatiblePrefix = netip.MustParsePrefix("::/96")
+type destinationKind int
+
+const (
+	destinationPublic destinationKind = iota
+	// destinationPrivate needs private-network consent.
+	destinationPrivate
+	// destinationReserved is usable special-purpose unicast. It needs this
+	// source's exceptional-destination consent.
+	destinationReserved
+	// destinationRefused is never reachable: malformed, unspecified,
+	// multicast, scoped, deprecated or not a destination at all.
+	destinationRefused
 )
 
-func mustPrefixes(values ...string) []netip.Prefix {
-	prefixes := make([]netip.Prefix, 0, len(values))
-	for _, value := range values {
-		prefixes = append(prefixes, netip.MustParsePrefix(value))
-	}
-	return prefixes
+type specialRange struct {
+	prefix netip.Prefix
+	name   string
+	kind   destinationKind
 }
 
-func addressAllowed(address netip.Addr, allowPrivate bool) bool {
+func special(prefix, name string, kind destinationKind) specialRange {
+	return specialRange{prefix: netip.MustParsePrefix(prefix), name: name, kind: kind}
+}
+
+// specialRanges are the special-purpose ranges of the IANA IPv4 and IPv6
+// registries that are not public destinations.
+var specialRanges = []specialRange{
+	special("0.0.0.0/8", "this-network range", destinationRefused),
+	special("10.0.0.0/8", "private range", destinationPrivate),
+	special("100.64.0.0/10", "shared address range", destinationPrivate),
+	special("127.0.0.0/8", "loopback range", destinationPrivate),
+	special("169.254.0.0/16", "link-local range", destinationReserved),
+	special("172.16.0.0/12", "private range", destinationPrivate),
+	special("192.0.0.0/24", "IETF protocol assignment range", destinationReserved),
+	special("192.0.2.0/24", "documentation range", destinationReserved),
+	special("192.88.99.0/24", "6to4 relay range", destinationReserved),
+	special("192.168.0.0/16", "private range", destinationPrivate),
+	special("198.18.0.0/15", "benchmarking range", destinationReserved),
+	special("198.51.100.0/24", "documentation range", destinationReserved),
+	special("203.0.113.0/24", "documentation range", destinationReserved),
+	special("224.0.0.0/4", "multicast range", destinationRefused),
+	special("240.0.0.0/4", "reserved range", destinationRefused),
+	special("::1/128", "loopback address", destinationPrivate),
+	// IPv4-compatible IPv6 addresses are deprecated, and their embedded IPv4
+	// bits must not bypass classification. The loopback above comes first.
+	special("::/96", "deprecated IPv4-compatible range", destinationRefused),
+	special("64:ff9b::/96", "NAT64 range", destinationReserved),
+	special("64:ff9b:1::/48", "local NAT64 range", destinationReserved),
+	special("100::/64", "discard-only range", destinationReserved),
+	special("2001::/32", "Teredo range", destinationReserved),
+	special("2001:2::/48", "benchmarking range", destinationReserved),
+	special("2001:10::/28", "ORCHID range", destinationRefused),
+	special("2001:20::/28", "ORCHIDv2 range", destinationRefused),
+	special("2001:db8::/32", "documentation range", destinationReserved),
+	special("2002::/16", "6to4 range", destinationReserved),
+	special("3fff::/20", "documentation range", destinationReserved),
+	special("5f00::/16", "segment routing range", destinationReserved),
+	special("fc00::/7", "unique local range", destinationPrivate),
+	special("fe80::/10", "link-local range", destinationRefused),
+	special("fec0::/10", "deprecated site-local range", destinationRefused),
+	special("ff00::/8", "multicast range", destinationRefused),
+}
+
+var nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
+
+// classifyAddress names the range an address belongs to and what reaching
+// it takes. An address outside every special range is public when it is
+// global unicast and refused otherwise.
+func classifyAddress(address netip.Addr) (destinationKind, string) {
 	if !address.IsValid() || address.Zone() != "" {
-		return false
+		return destinationRefused, "scoped or invalid address"
 	}
 	address = address.Unmap()
-	// IPv4-compatible IPv6 addresses are deprecated and their embedded IPv4
-	// bits must not bypass destination classification. IPv4-mapped addresses
-	// were normalized above, while the real IPv6 loopback remains an explicit
-	// private-consent case below.
-	if address != netip.IPv6Loopback() && deprecatedIPv4CompatiblePrefix.Contains(address) {
-		return false
+	if address.IsUnspecified() {
+		return destinationRefused, "unspecified address"
 	}
-	for _, prefix := range alwaysForbiddenPrefixes {
-		if prefix.Contains(address) {
-			return false
+	for _, candidate := range specialRanges {
+		if candidate.prefix.Contains(address) {
+			return candidate.kind, candidate.name + " " + candidate.prefix.String()
 		}
 	}
-	if address.IsUnspecified() || address.IsMulticast() || address.IsLinkLocalUnicast() ||
-		address.IsLinkLocalMulticast() {
-		return false
+	if !address.IsGlobalUnicast() {
+		return destinationRefused, "non-unicast address"
 	}
-	if address.IsLoopback() || address.IsPrivate() || sharedAddressPrefix.Contains(address) {
-		return allowPrivate
+	return destinationPublic, ""
+}
+
+// check refuses an address this policy does not reach, naming the address,
+// its range and the consent that would allow it.
+func (p addressPolicy) check(address netip.Addr) error {
+	kind, name := classifyAddress(address)
+	consent := ""
+	allowed := false
+	switch kind {
+	case destinationPublic:
+		allowed = true
+	case destinationPrivate:
+		allowed, consent = p.allowPrivate, ConsentPrivateNetwork
+	case destinationReserved:
+		allowed, consent = p.allowReserved, ConsentExceptionalDestination
 	}
-	return address.IsGlobalUnicast()
+	if !allowed {
+		display := ""
+		if address.IsValid() {
+			display = address.Unmap().String()
+		}
+		return &Error{Op: "validate source address", Kind: ErrAddressPolicy, Address: display, AddressRange: name, Consent: consent}
+	}
+	// A NAT64 address reaches the IPv4 address it embeds, which must be
+	// reachable on its own terms too.
+	if nat64Prefix.Contains(address.Unmap()) {
+		bytes := address.Unmap().As16()
+		return p.check(netip.AddrFrom4([4]byte{bytes[12], bytes[13], bytes[14], bytes[15]}))
+	}
+	return nil
 }
 
 func rootPool(bundle []byte) (*x509.CertPool, error) {
@@ -339,9 +474,10 @@ func safeContextCause(ctx context.Context, fallback error) error {
 	return fallback
 }
 
-func do(client *http.Client, request *http.Request) (*http.Response, error) {
-	// Call RoundTrip directly so a Location header is never parsed into a
-	// destination by http.Client's redirect machinery.
+// roundTrip sends one request. It calls RoundTrip directly so a Location
+// header is never followed by http.Client's redirect machinery; only
+// discover follows a redirect, under the source's redirect policy.
+func roundTrip(client *http.Client, request *http.Request) (*http.Response, error) {
 	response, err := client.Transport.RoundTrip(request)
 	if err != nil {
 		if response != nil && response.Body != nil {
@@ -349,11 +485,140 @@ func do(client *http.Client, request *http.Request) (*http.Response, error) {
 		}
 		return nil, fetchError("request", ErrConnection, safeContextCause(request.Context(), err))
 	}
-	if response.StatusCode >= 300 && response.StatusCode < 400 {
+	return response, nil
+}
+
+// do sends a request whose answer is never a redirect: an upload-pack POST
+// is not replayed to another location.
+func do(client *http.Client, request *http.Request) (*http.Response, error) {
+	response, err := roundTrip(client, request)
+	if err != nil {
+		return nil, err
+	}
+	if isRedirect(response.StatusCode) {
 		_ = response.Body.Close()
-		return nil, fetchError("request", ErrRedirect, nil)
+		return nil, fetchError("request", ErrRedirect, ErrRedirectRequest)
 	}
 	return response, nil
+}
+
+func isRedirect(status int) bool {
+	return status >= 300 && status < 400
+}
+
+// Redirect policies of one source.
+const (
+	RedirectRefuse     = "refuse"
+	RedirectSameOrigin = "same_origin"
+	RedirectApproved   = "approved"
+)
+
+// maxRedirects bounds the redirects one discovery follows.
+const maxRedirects = 5
+
+// Why a redirect was refused, beyond the policy itself. Each is the cause of
+// an ErrRedirect error.
+var (
+	ErrRedirectLoop      = errors.New("source redirects form a loop")
+	ErrTooManyRedirects  = errors.New("source redirected too many times")
+	ErrRedirectDowngrade = errors.New("source redirected from HTTPS to plain HTTP")
+	ErrRedirectTarget    = errors.New("source redirect target is not a Git repository address")
+	ErrRedirectRequest   = errors.New("source redirected a request that is never followed")
+)
+
+// connector opens pinned connections for one fetch. The source origin keeps
+// its own trust anchors and credentials; any other origin a redirect reaches
+// gets the system trust anchors and no credentials. Every origin is resolved
+// and checked under the same address policy and pinned to one address.
+type connector struct {
+	policy         addressPolicy
+	allowPlainHTTP bool
+	redirects      string
+	sourceOrigin   string
+	approvedOrigin string
+	sourceRoots    *x509.CertPool
+	limits         Limits
+	lookup         resolver
+	transports     []*http.Transport
+}
+
+func (c *connector) connect(ctx context.Context, base *url.URL) (*http.Client, error) {
+	resolved, err := resolveSource(ctx, base, c.policy, c.lookup)
+	if err != nil {
+		return nil, err
+	}
+	roots := c.sourceRoots
+	if originKey(base) != c.sourceOrigin {
+		if roots, err = rootPool(nil); err != nil {
+			return nil, err
+		}
+	}
+	client, transport := newHTTPClient(resolved, roots, c.limits)
+	c.transports = append(c.transports, transport)
+	return client, nil
+}
+
+func (c *connector) close() {
+	for _, transport := range c.transports {
+		transport.CloseIdleConnections()
+	}
+}
+
+// authenticationFor returns the credentials a request to base may carry:
+// the source's own for the source origin, none for any other origin, even
+// an approved one.
+func (c *connector) authenticationFor(base *url.URL, authentication Authentication) Authentication {
+	if originKey(base) != c.sourceOrigin {
+		return Authentication{}
+	}
+	return authentication
+}
+
+// redirectBase checks one redirect of the advertisement request and returns
+// the repository URL it moves to. Like Git, OwnGit follows a redirect only
+// for this first request, and only to an address that still ends with
+// info/refs?service=git-upload-pack, whose prefix becomes the repository URL
+// for every later request.
+func (c *connector) redirectBase(target *url.URL, location string) (*url.URL, error) {
+	if c.redirects != RedirectSameOrigin && c.redirects != RedirectApproved {
+		return nil, fetchError("follow redirect", ErrRedirect, nil)
+	}
+	if location == "" || len(location) > c.limits.MaxURLBytes || strings.ContainsAny(location, "\x00\r\n") {
+		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
+	}
+	next, err := target.Parse(location)
+	if err != nil {
+		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
+	}
+	if next.Scheme == "http" && !c.allowPlainHTTP {
+		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectDowngrade)
+	}
+	if next.Fragment != "" || next.RawQuery != "service=git-upload-pack" || !strings.HasSuffix(next.Path, "/info/refs") ||
+		(next.RawPath != "" && !strings.HasSuffix(next.RawPath, "/info/refs")) {
+		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
+	}
+	next.Path = strings.TrimSuffix(next.Path, "/info/refs")
+	next.RawPath = strings.TrimSuffix(next.RawPath, "/info/refs")
+	next.RawQuery = ""
+	base, err := parseSource(next.String(), c.limits.MaxURLBytes, c.allowPlainHTTP)
+	if err != nil {
+		return nil, fetchError("follow redirect", ErrRedirect, ErrRedirectTarget)
+	}
+	origin := originKey(base)
+	if origin != c.sourceOrigin && (c.redirects != RedirectApproved || origin != c.approvedOrigin) {
+		return nil, &Error{Op: "follow redirect", Kind: ErrRedirect, RedirectOrigin: displayOrigin(base)}
+	}
+	return base, nil
+}
+
+// displayOrigin is the canonical scheme and host of a checked URL, for
+// naming a redirect destination to the owner.
+func displayOrigin(target *url.URL) string {
+	origin, err := ParseRedirectOrigin(target.Scheme+"://"+target.Host, true)
+	if err != nil {
+		return ""
+	}
+	return origin
 }
 
 func contentLengthWithin(response *http.Response, maximum int64) bool {

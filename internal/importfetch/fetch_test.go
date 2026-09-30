@@ -375,7 +375,7 @@ func TestAddressPolicyChecksWholePinnedAnswerSetOnce(t *testing.T) {
 				test.addresses,
 				{netip.MustParseAddr("9.9.9.9")},
 			}}
-			if _, err := resolveSource(context.Background(), base, test.consent, resolver); !errors.Is(err, ErrAddressPolicy) {
+			if _, err := resolveSource(context.Background(), base, addressPolicy{allowPrivate: test.consent}, resolver); !errors.Is(err, ErrAddressPolicy) {
 				t.Fatalf("address-set error = %v", err)
 			}
 			if resolver.calls != 1 {
@@ -414,8 +414,8 @@ func TestAddressPolicyPrivateConsentAndHardRefusals(t *testing.T) {
 		{"2001:db8::1", true, false},
 	}
 	for _, test := range tests {
-		if got := addressAllowed(netip.MustParseAddr(test.address), test.consent); got != test.want {
-			t.Errorf("addressAllowed(%s, %v) = %v, want %v", test.address, test.consent, got, test.want)
+		if got := (addressPolicy{allowPrivate: test.consent}).check(netip.MustParseAddr(test.address)) == nil; got != test.want {
+			t.Errorf("address %s with private consent %v allowed = %v, want %v", test.address, test.consent, got, test.want)
 		}
 	}
 }
@@ -642,7 +642,7 @@ func fetchCancellationCoversConsumer(t *testing.T, timeout time.Duration) bool {
 }
 
 func TestEndpointPreservesRepositoryPathEscaping(t *testing.T) {
-	base, err := parseSource("https://source.example/group%2Frepo.git/", 1024)
+	base, err := parseSource("https://source.example/group%2Frepo.git/", 1024, false)
 	if err != nil {
 		t.Fatal(err)
 	}

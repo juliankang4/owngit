@@ -3,10 +3,12 @@ package importsync
 import (
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"owngit/internal/gitexec"
 	"owngit/internal/importfetch"
+	"owngit/internal/state"
 )
 
 // Limits bound every import stage. Zero fields take their default value.
@@ -125,7 +127,120 @@ func (l Limits) effective() (Limits, error) {
 	if limits.LFS.MaxObjectListBytes < 64<<10 || limits.LFS.MaxTypeListBytes < 64<<10 {
 		return Limits{}, errors.New("import LFS output bounds are too small")
 	}
+	fetch, err := importfetch.EffectiveLimits(limits.Fetch)
+	if err != nil {
+		return Limits{}, fmt.Errorf("import transfer limits are invalid: %w", err)
+	}
+	limits.Fetch = fetch
 	return limits, nil
+}
+
+// withSource fills the limits a caller left unset from a source's saved
+// limits; effective fills the rest with the defaults. A caller's own limit
+// wins, so a server that bounds its request by a run time keeps that bound.
+// The bounds that follow from a saved limit are derived here unless the
+// caller set them: the LFS listing output grows with the objects scanned,
+// and the transport derives its request and total body bounds.
+func (l Limits) withSource(saved state.ImportLimits) (Limits, error) {
+	if err := saved.Validate(); err != nil {
+		return Limits{}, err
+	}
+	seconds := func(target *time.Duration, value int64) error {
+		if value == 0 || *target != 0 {
+			return nil
+		}
+		if value > int64(math.MaxInt64/time.Second) {
+			return errors.New("import limit is too long")
+		}
+		*target = time.Duration(value) * time.Second
+		return nil
+	}
+	for _, item := range []struct {
+		target *time.Duration
+		value  int64
+	}{
+		{&l.RunTimeout, saved.RunSeconds}, {&l.Fetch.TotalTimeout, saved.FetchSeconds},
+		{&l.IndexTimeout, saved.IndexSeconds}, {&l.VerifyTimeout, saved.VerifySeconds},
+		{&l.Fetch.TLSHandshakeTimeout, saved.TLSHandshakeSeconds}, {&l.Fetch.ResponseHeaderTimeout, saved.ResponseHeaderSeconds},
+	} {
+		if err := seconds(item.target, item.value); err != nil {
+			return Limits{}, err
+		}
+	}
+	if saved.PackBytes != 0 && l.Fetch.MaxPackBytes == 0 {
+		l.Fetch.MaxPackBytes = saved.PackBytes
+	}
+	if saved.AdvertisementBytes != 0 && l.Fetch.Advertisement.MaxTotalBytes == 0 {
+		l.Fetch.Advertisement.MaxTotalBytes = saved.AdvertisementBytes
+	}
+	if saved.Refs != 0 && l.Fetch.Advertisement.MaxRefRecords == 0 {
+		l.Fetch.Advertisement.MaxRefRecords = int(saved.Refs)
+	}
+	if saved.LFSObjects != 0 && l.LFS.MaxObjects == 0 {
+		l.LFS.MaxObjects = int(saved.LFSObjects)
+		defaults := DefaultLimits().LFS
+		if saved.LFSObjects > int64(defaults.MaxObjects) {
+			// The listings scale with the objects they name; the defaults are
+			// sized for the default object count. Bounded by the object
+			// ceiling, the product cannot overflow.
+			scale := func(target *int64, value int64) {
+				if *target == 0 {
+					*target = (value*saved.LFSObjects + int64(defaults.MaxObjects) - 1) / int64(defaults.MaxObjects)
+				}
+			}
+			scale(&l.LFS.MaxObjectListBytes, defaults.MaxObjectListBytes)
+			scale(&l.LFS.MaxTypeListBytes, defaults.MaxTypeListBytes)
+		}
+	}
+	return l, nil
+}
+
+// checkSourceLimits refuses saved limits whose stages cannot finish inside
+// the run: the fetch, verification and indexing each within the run time, and
+// indexing, which reads the pack while it arrives, within the fetch time.
+func checkSourceLimits(saved state.ImportLimits) error {
+	limits, err := Limits{}.withSource(saved)
+	if err != nil {
+		return err
+	}
+	if limits, err = limits.effective(); err != nil {
+		return err
+	}
+	switch {
+	case limits.Fetch.TotalTimeout > limits.RunTimeout:
+		return fmt.Errorf("the fetch time (%s) is longer than the run time (%s); raise the run time too", limits.Fetch.TotalTimeout, limits.RunTimeout)
+	case limits.VerifyTimeout > limits.RunTimeout:
+		return fmt.Errorf("the verification time (%s) is longer than the run time (%s); raise the run time too", limits.VerifyTimeout, limits.RunTimeout)
+	case limits.IndexTimeout > limits.Fetch.TotalTimeout:
+		return fmt.Errorf("the indexing time (%s) is longer than the fetch time (%s), which includes indexing; raise the fetch time too", limits.IndexTimeout, limits.Fetch.TotalTimeout)
+	}
+	return nil
+}
+
+// limitValues states effective limits in the units a source saves them.
+func limitValues(l Limits) state.ImportLimits {
+	return state.ImportLimits{
+		PackBytes:             l.Fetch.MaxPackBytes,
+		AdvertisementBytes:    l.Fetch.Advertisement.MaxTotalBytes,
+		Refs:                  int64(l.Fetch.Advertisement.MaxRefRecords),
+		RunSeconds:            int64(l.RunTimeout / time.Second),
+		FetchSeconds:          int64(l.Fetch.TotalTimeout / time.Second),
+		IndexSeconds:          int64(l.IndexTimeout / time.Second),
+		VerifySeconds:         int64(l.VerifyTimeout / time.Second),
+		TLSHandshakeSeconds:   int64(l.Fetch.TLSHandshakeTimeout / time.Second),
+		ResponseHeaderSeconds: int64(l.Fetch.ResponseHeaderTimeout / time.Second),
+		LFSObjects:            int64(l.LFS.MaxObjects),
+	}
+}
+
+// SourceLimits returns the limits a run of a source with these saved limits
+// uses, for showing them and for bounding a request that waits for the run.
+func SourceLimits(saved state.ImportLimits) (Limits, error) {
+	limits, err := Limits{}.withSource(saved)
+	if err != nil {
+		return Limits{}, err
+	}
+	return limits.effective()
 }
 
 // commandLimits is the per-command bound used for every import-owned Git

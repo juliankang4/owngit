@@ -22,18 +22,22 @@ const (
 )
 
 // Fetch obtains one advertised source snapshot and, when nonempty, one raw
-// full PACK. It performs no retry. The source host is resolved once, the whole
-// answer set is checked, and every HTTPS request dials one selected literal
-// address while TLS verifies the original hostname.
+// full PACK. It performs no retry. Each origin the fetch reaches is resolved
+// once, its whole answer set is checked, and every request to it dials one
+// selected literal address while TLS verifies the original hostname.
 func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result, error) {
+	return fetch(ctx, request, consume, net.DefaultResolver)
+}
+
+func fetch(ctx context.Context, request Request, consume PackConsumer, lookup resolver) (*Result, error) {
 	if ctx == nil {
 		return nil, fetchError("validate request", ErrInvalidRequest, nil)
 	}
-	limits, err := effectiveLimits(request.Limits)
+	limits, err := EffectiveLimits(request.Limits)
 	if err != nil {
 		return nil, err
 	}
-	base, err := parseSource(request.URL, limits.MaxURLBytes)
+	base, err := parseSource(request.URL, limits.MaxURLBytes, request.AllowPlainHTTP)
 	if err != nil {
 		return nil, err
 	}
@@ -49,18 +53,34 @@ func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result,
 	if err != nil {
 		return nil, err
 	}
+	connector := &connector{
+		policy:         addressPolicy{allowPrivate: request.AllowPrivateNetwork, allowReserved: request.AllowReservedAddresses},
+		allowPlainHTTP: request.AllowPlainHTTP,
+		redirects:      request.Redirects,
+		sourceOrigin:   originKey(base),
+		sourceRoots:    roots,
+		limits:         limits,
+		lookup:         lookup,
+	}
+	switch request.Redirects {
+	case "", RedirectRefuse, RedirectSameOrigin:
+	case RedirectApproved:
+		approved, err := ParseRedirectOrigin(request.ApprovedRedirectOrigin, request.AllowPlainHTTP)
+		if err != nil {
+			return nil, fetchError("validate redirect policy", ErrInvalidRequest, err)
+		}
+		parsed, _ := url.Parse(approved)
+		connector.approvedOrigin = originKey(parsed)
+	default:
+		return nil, fetchError("validate redirect policy", ErrInvalidRequest, nil)
+	}
 
 	fetchContext, cancel := context.WithTimeout(ctx, limits.TotalTimeout)
 	defer cancel()
-	resolved, err := resolveSource(fetchContext, base, request.AllowPrivateNetwork, net.DefaultResolver)
-	if err != nil {
-		return nil, err
-	}
-	client, transport := newHTTPClient(resolved, roots, limits)
-	defer transport.CloseIdleConnections()
+	defer connector.close()
 
 	budget := &bodyBudget{remaining: limits.MaxTotalBodyBytes}
-	advertisement, err := fetchAdvertisement(fetchContext, client, resolved.base, authentication, limits, budget)
+	advertisement, client, base, err := fetchAdvertisement(fetchContext, connector, base, authentication, limits, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +98,7 @@ func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result,
 	if err != nil {
 		return nil, err
 	}
-	packBytes, err := fetchPack(fetchContext, client, resolved.base, authentication, advertisement, requestBody, consume, limits, budget)
+	packBytes, err := fetchPack(fetchContext, client, base, connector.authenticationFor(base, authentication), advertisement, requestBody, consume, limits, budget)
 	if err != nil {
 		return nil, err
 	}
@@ -89,31 +109,70 @@ func Fetch(ctx context.Context, request Request, consume PackConsumer) (*Result,
 	}, nil
 }
 
+// discover requests the advertisement and follows the redirects the
+// source's policy allows. It returns the answer, the client pinned to the
+// origin that gave it, and the repository URL every later request uses.
+func discover(ctx context.Context, connector *connector, base *url.URL, authentication Authentication, limits Limits) (*http.Response, *http.Client, *url.URL, error) {
+	client, err := connector.connect(ctx, base)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	visited := map[string]bool{}
+	for redirects := 0; ; redirects++ {
+		target := endpoint(base, "info/refs", "service=git-upload-pack")
+		visited[target.String()] = true
+		request, err := newRequest(ctx, http.MethodGet, target, nil, connector.authenticationFor(base, authentication), advertisementMediaType, "", "version=2")
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if len(target.String()) > limits.MaxURLBytes || requestHeaderBytes(request) > limits.MaxHeaderBytes {
+			return nil, nil, nil, fetchError("encode advertisement request", ErrInvalidRequest, nil)
+		}
+		response, err := roundTrip(client, request)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if !isRedirect(response.StatusCode) {
+			return response, client, base, nil
+		}
+		location := response.Header.Get("Location")
+		_ = response.Body.Close()
+		next, err := connector.redirectBase(target, location)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		if visited[endpoint(next, "info/refs", "service=git-upload-pack").String()] {
+			return nil, nil, nil, fetchError("follow redirect", ErrRedirect, ErrRedirectLoop)
+		}
+		if redirects+1 > maxRedirects {
+			return nil, nil, nil, fetchError("follow redirect", ErrRedirect, ErrTooManyRedirects)
+		}
+		if originKey(next) != originKey(base) {
+			if client, err = connector.connect(ctx, next); err != nil {
+				return nil, nil, nil, err
+			}
+		}
+		base = next
+	}
+}
+
 // fetchAdvertisement reads what the source advertises. It asks for Git
 // protocol v2. A v2 server answers with its capabilities, and an ls-refs
 // command then lists only HEAD, branches and tags (importgit.LsRefsPrefixes),
 // so refs an import does not use, such as pull request refs, are neither
 // listed nor counted. A server without v2 answers with its v0 or v1
 // advertisement of every ref, which is used as before.
-func fetchAdvertisement(ctx context.Context, client *http.Client, base *url.URL, authentication Authentication, limits Limits, budget *bodyBudget) (*importgit.Advertisement, error) {
-	target := endpoint(base, "info/refs", "service=git-upload-pack")
-	request, err := newRequest(ctx, http.MethodGet, target, nil, authentication, advertisementMediaType, "", "version=2")
+func fetchAdvertisement(ctx context.Context, connector *connector, base *url.URL, authentication Authentication, limits Limits, budget *bodyBudget) (*importgit.Advertisement, *http.Client, *url.URL, error) {
+	response, client, base, err := discover(ctx, connector, base, authentication, limits)
 	if err != nil {
-		return nil, err
-	}
-	if len(target.String()) > limits.MaxURLBytes || requestHeaderBytes(request) > limits.MaxHeaderBytes {
-		return nil, fetchError("encode advertisement request", ErrInvalidRequest, nil)
-	}
-	response, err := do(client, request)
-	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	defer response.Body.Close()
 	if err := validateResponse(response, http.StatusOK, advertisementMediaType); err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	if !contentLengthWithin(response, limits.Advertisement.MaxTotalBytes) || !contentLengthWithin(response, budget.remaining) {
-		return nil, fetchError("read advertisement", ErrResponseTooLarge, nil)
+		return nil, nil, nil, fetchError("read advertisement", ErrResponseTooLarge, nil)
 	}
 	advertisement, err := importgit.Parse(budget.reader(response.Body), importgit.Options{
 		Service:    importgit.DefaultService,
@@ -121,12 +180,15 @@ func fetchAdvertisement(ctx context.Context, client *http.Client, base *url.URL,
 		ProtocolV2: true,
 	})
 	if err != nil {
-		return nil, advertisementError(err)
+		return nil, nil, nil, advertisementError(err)
 	}
 	if advertisement.ProtocolVersion == 2 {
-		return listRefs(ctx, client, base, authentication, advertisement, limits, budget)
+		advertisement, err = listRefs(ctx, client, base, connector.authenticationFor(base, authentication), advertisement, limits, budget)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
-	return advertisement, nil
+	return advertisement, client, base, nil
 }
 
 // listRefs runs the ls-refs command of a protocol v2 server that advertised
@@ -332,7 +394,9 @@ func validBearerToken(token string) bool {
 	return token != ""
 }
 
-func effectiveLimits(input Limits) (Limits, error) {
+// EffectiveLimits fills unset limits with defaults, derives the dependent
+// bounds, and refuses values the transport will not run with.
+func EffectiveLimits(input Limits) (Limits, error) {
 	defaults := DefaultLimits()
 	limits := input
 	advertisement, err := limits.Advertisement.Effective()
@@ -340,22 +404,19 @@ func effectiveLimits(input Limits) (Limits, error) {
 		return Limits{}, fetchError("validate advertisement limits", ErrInvalidRequest, nil)
 	}
 	limits.Advertisement = advertisement
-	integerLimits := []struct {
-		value        *int64
-		defaultValue int64
-	}{
-		{&limits.MaxRequestBytes, defaults.MaxRequestBytes},
-		{&limits.MaxPackBytes, defaults.MaxPackBytes},
-		{&limits.MaxTotalBodyBytes, defaults.MaxTotalBodyBytes},
-		{&limits.MaxHeaderBytes, defaults.MaxHeaderBytes},
-	}
-	for _, item := range integerLimits {
-		if *item.value < 0 {
+	for _, value := range []int64{limits.MaxRequestBytes, limits.MaxPackBytes, limits.MaxTotalBodyBytes, limits.MaxHeaderBytes} {
+		if value < 0 {
 			return Limits{}, fetchError("validate limits", ErrInvalidRequest, nil)
 		}
-		if *item.value == 0 {
-			*item.value = item.defaultValue
-		}
+	}
+	if limits.MaxPackBytes == 0 {
+		limits.MaxPackBytes = defaults.MaxPackBytes
+	}
+	if limits.MaxHeaderBytes == 0 {
+		limits.MaxHeaderBytes = defaults.MaxHeaderBytes
+	}
+	if err := deriveBounds(&limits); err != nil {
+		return Limits{}, err
 	}
 	intLimits := []struct {
 		value        *int
@@ -389,9 +450,40 @@ func effectiveLimits(input Limits) (Limits, error) {
 			*item.value = item.defaultValue
 		}
 	}
-	if limits.MaxPackBytes < 4 || limits.MaxPackBytes > math.MaxInt64-8 ||
+	if limits.MaxPackBytes < 4 || limits.MaxPackBytes > math.MaxInt64/2 ||
 		limits.MaxRequestBytes < 1 || limits.MaxTotalBodyBytes < 1 || limits.MaxHeaderBytes < 1 {
 		return Limits{}, fetchError("validate limits", ErrInvalidRequest, nil)
 	}
 	return limits, nil
+}
+
+// defaultMaxRequestBytes is the upload-pack request bound for the default
+// ref limit, and the least a derived bound is.
+const defaultMaxRequestBytes = 8 << 20
+
+// wantPacketBytes bounds one "want <oid>" packet: a length prefix, the
+// keyword and a SHA-256 object name.
+const wantPacketBytes = 4 + len("want ") + 64 + 1
+
+// deriveBounds fills the bounds that follow from others when a caller left
+// them unset: the upload-pack request from the ref limit, which bounds the
+// wants, and the total body from the pack and two advertisement answers
+// (discovery and ls-refs). Each step is checked before it can overflow.
+func deriveBounds(limits *Limits) error {
+	if limits.MaxRequestBytes == 0 {
+		refs := int64(limits.Advertisement.MaxRefRecords) + 1
+		if refs > (math.MaxInt64-(64<<10))/int64(wantPacketBytes) {
+			return fetchError("validate limits", ErrInvalidRequest, nil)
+		}
+		limits.MaxRequestBytes = max(defaultMaxRequestBytes, refs*int64(wantPacketBytes)+64<<10)
+	}
+	if limits.MaxTotalBodyBytes == 0 {
+		pack, advertisement := limits.MaxPackBytes, limits.Advertisement.MaxTotalBytes
+		if pack < 0 || pack > math.MaxInt64/2 || advertisement < 0 || advertisement > (math.MaxInt64/2-64)/2 {
+			return fetchError("validate limits", ErrInvalidRequest, nil)
+		}
+		// sidebandOverhead(pack) is below pack/100, so the sum fits.
+		limits.MaxTotalBodyBytes = pack + sidebandOverhead(pack) + 2*advertisement + 64
+	}
+	return nil
 }

@@ -448,19 +448,31 @@ func (s *Store) RestoreImportBinding(ctx context.Context, repositoryID string, s
 		if err != nil {
 			return err
 		}
+		options := snapshot.Source.Options
+		if err := options.validate(); err != nil {
+			return err
+		}
+		limits, err := encodeImportLimits(options.Limits)
+		if err != nil {
+			return err
+		}
 		if _, err := s.db.ExecContext(ctx, `INSERT INTO import_sources(
 			repository_id,url,source_generation,authority_revision,credential_generation,mode,git_only_consent,allow_private_network,created_at,updated_at,
-			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes)
-			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+			overwrite_diverged,follow_upstream_deletions,extra_ref_prefixes,
+			allow_plain_http,redirect_policy,approved_redirect_origin,allow_reserved_addresses,limits_json)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 			ON CONFLICT(repository_id) DO UPDATE SET
 			url=excluded.url,source_generation=excluded.source_generation,authority_revision=excluded.authority_revision,
 			credential_generation=excluded.credential_generation,mode=excluded.mode,git_only_consent=excluded.git_only_consent,
 			allow_private_network=excluded.allow_private_network,created_at=excluded.created_at,updated_at=excluded.updated_at,
-			overwrite_diverged=excluded.overwrite_diverged,follow_upstream_deletions=excluded.follow_upstream_deletions,extra_ref_prefixes=excluded.extra_ref_prefixes`,
+			overwrite_diverged=excluded.overwrite_diverged,follow_upstream_deletions=excluded.follow_upstream_deletions,extra_ref_prefixes=excluded.extra_ref_prefixes,
+			allow_plain_http=excluded.allow_plain_http,redirect_policy=excluded.redirect_policy,approved_redirect_origin=excluded.approved_redirect_origin,
+			allow_reserved_addresses=excluded.allow_reserved_addresses,limits_json=excluded.limits_json`,
 			snapshot.Source.RepositoryID, snapshot.Source.URL, snapshot.Source.SourceGeneration, snapshot.Source.AuthorityRevision,
 			snapshot.Source.CredentialGeneration, snapshot.Source.Mode, boolInt(snapshot.Source.GitOnlyConsent), boolInt(snapshot.Source.AllowPrivateNetwork),
 			snapshot.Source.CreatedAt.Unix(), snapshot.Source.UpdatedAt.Unix(),
-			boolInt(snapshot.Source.OverwriteDiverged), boolInt(snapshot.Source.FollowUpstreamDeletions), prefixes); err != nil {
+			boolInt(snapshot.Source.OverwriteDiverged), boolInt(snapshot.Source.FollowUpstreamDeletions), prefixes,
+			boolInt(options.AllowPlainHTTP), options.Redirects, options.ApprovedRedirectOrigin, boolInt(options.AllowReservedAddresses), limits); err != nil {
 			return err
 		}
 	} else if _, err := s.db.ExecContext(ctx, `DELETE FROM import_sources WHERE repository_id=?`, repositoryID); err != nil {
@@ -480,7 +492,8 @@ func (s *Store) RestoreImportBinding(ctx context.Context, repositoryID string, s
 	if snapshot.SourceExists {
 		if !exists || source.URL != snapshot.Source.URL || source.SourceGeneration != snapshot.Source.SourceGeneration ||
 			source.AuthorityRevision != snapshot.Source.AuthorityRevision || source.CredentialGeneration != snapshot.Source.CredentialGeneration ||
-			source.Mode != snapshot.Source.Mode || source.GitOnlyConsent != snapshot.Source.GitOnlyConsent || source.AllowPrivateNetwork != snapshot.Source.AllowPrivateNetwork {
+			source.Mode != snapshot.Source.Mode || source.GitOnlyConsent != snapshot.Source.GitOnlyConsent || source.AllowPrivateNetwork != snapshot.Source.AllowPrivateNetwork ||
+			!source.Options.SameTransport(snapshot.Source.Options) || source.Options.Limits != snapshot.Source.Options.Limits {
 			return errors.New("import source snapshot could not be read back")
 		}
 	} else if exists {
