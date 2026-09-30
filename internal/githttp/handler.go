@@ -150,44 +150,14 @@ func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if h.Authorize != nil {
 		allowed, err := h.Authorize(request)
-		var policyErr *state.PolicyError
-		switch {
-		case errors.Is(err, auth.ErrRateLimited):
-			// Not 401: Git erases the stored password it sent when the answer
-			// is 401, and a right password must outlast a lockout. Git 2.54
-			// repeats a 429 at once, without end, unless Retry-After asks it
-			// to wait; it stops at a wait over http.maxRetryTime. The wait is
-			// what remains of this address's pause.
-			if seconds := auth.RetryAfter(err); seconds > 0 {
-				writer.Header().Set("Retry-After", strconv.Itoa(seconds))
-			}
-			http.Error(writer, "too many authentication attempts; try again later", http.StatusTooManyRequests)
-			return
-		case errors.As(err, &policyErr):
-			// The saved login limits cannot be read, so a wrong password
-			// could not be counted; the right one still passes.
-			http.Error(writer, policyErr.Advice(), http.StatusConflict)
-			return
-		case err != nil:
-			http.Error(writer, "authentication is unavailable; try again later", http.StatusServiceUnavailable)
-			return
-		}
-		if !allowed {
-			writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit"`)
-			http.Error(writer, "authentication required", http.StatusUnauthorized)
+		if err != nil || !allowed {
+			RefuseCredentials(writer, err)
 			return
 		}
 	}
 	route, ok := parseRoute(request)
 	if !ok {
 		http.NotFound(writer, request)
-		return
-	}
-	gzipped, ok := requestBodyEncoding(request)
-	if !ok {
-		// RFC 7694: name the accepted request encoding in the refusal.
-		writer.Header().Set("Accept-Encoding", "gzip")
-		http.Error(writer, "unsupported Content-Encoding; send gzip or an uncompressed body", http.StatusUnsupportedMediaType)
 		return
 	}
 	// The path names the repository by its address. An alias redirects: Git
@@ -211,6 +181,65 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 	route.repositoryID = address.RepositoryID
+	h.serve(writer, request, route)
+}
+
+// RefuseCredentials answers a Git request whose credentials were not
+// accepted: err is nil for credentials that were checked and refused,
+// auth.ErrRateLimited for a client address that may not try a password
+// now, a state.PolicyError when a wrong password could not be counted, and
+// anything else when the check could not be completed, which the caller
+// has logged. Only refused credentials ask for a password again.
+func RefuseCredentials(writer http.ResponseWriter, err error) {
+	var policyErr *state.PolicyError
+	switch {
+	case err == nil || errors.Is(err, auth.ErrInvalidCredentials):
+		writer.Header().Set("WWW-Authenticate", `Basic realm="OwnGit"`)
+		http.Error(writer, "authentication required", http.StatusUnauthorized)
+	case errors.Is(err, auth.ErrRateLimited):
+		// Not 401: Git erases the stored password it sent when the answer
+		// is 401, and a right password must outlast a lockout. Git 2.54
+		// repeats a 429 at once, without end, unless Retry-After asks it
+		// to wait; it stops at a wait over http.maxRetryTime. The wait is
+		// what remains of this address's pause.
+		if seconds := auth.RetryAfter(err); seconds > 0 {
+			writer.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
+		http.Error(writer, "too many authentication attempts; try again later", http.StatusTooManyRequests)
+	case errors.As(err, &policyErr):
+		// The saved login limits cannot be read, so a wrong password
+		// could not be counted; the right one still passes.
+		http.Error(writer, policyErr.Advice(), http.StatusConflict)
+	default:
+		http.Error(writer, "authentication is unavailable; try again later", http.StatusServiceUnavailable)
+	}
+}
+
+// ServeRead serves a clone or fetch of repositoryID, which the caller has
+// already authorized, to a request whose path ends with suffix after the
+// repository's part, such as info/refs. A push is refused.
+func (h *Handler) ServeRead(writer http.ResponseWriter, request *http.Request, repositoryID, suffix string) {
+	route, ok := serviceRoute(request, repositoryID, suffix)
+	if !ok {
+		http.NotFound(writer, request)
+		return
+	}
+	if route.service != "git-upload-pack" {
+		http.Error(writer, "this address can only be cloned and fetched; pushes are refused", http.StatusForbidden)
+		return
+	}
+	h.serve(writer, request, route)
+}
+
+// serve runs the Git service of route for an authorized request.
+func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route route) {
+	gzipped, ok := requestBodyEncoding(request)
+	if !ok {
+		// RFC 7694: name the accepted request encoding in the refusal.
+		writer.Header().Set("Accept-Encoding", "gzip")
+		http.Error(writer, "unsupported Content-Encoding; send gzip or an uncompressed body", http.StatusUnsupportedMediaType)
+		return
+	}
 	// A request for a repository postpones its maintenance until it ends.
 	h.Repositories.NoteRepositoryUse(route.repositoryID)
 	defer h.Repositories.NoteRepositoryUse(route.repositoryID)
@@ -798,6 +827,12 @@ func parseRoute(request *http.Request) (route, bool) {
 	if repository.ValidateID(id) != nil {
 		return route{}, false
 	}
+	return serviceRoute(request, id, suffix)
+}
+
+// serviceRoute is the route of a Smart HTTP request for repository id whose
+// path ends with suffix after the repository.
+func serviceRoute(request *http.Request, id, suffix string) (route, bool) {
 	switch {
 	case request.Method == http.MethodGet && suffix == "info/refs":
 		services, present := request.URL.Query()["service"]
