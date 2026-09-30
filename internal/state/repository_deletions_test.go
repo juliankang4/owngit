@@ -120,6 +120,9 @@ func seedRepositoryRecords(t *testing.T, fixture *checkJobFixture) {
 		Name: "run-" + strings.Repeat("e", 32), RepositoryID: "project", RunID: run.ID, Token: strings.Repeat("f", 32),
 		State: ImportStagingActive, CreatedAt: testImportNow(),
 	}))
+	secret := sha256.Sum256([]byte("synthetic share secret"))
+	_, err = store.CreateShareLink(ctx, ShareLink{RepositoryID: "project", Scope: ShareBrowse, Label: "reviewer", CreatedAt: testImportNow()}, secret[:])
+	noErr(t, err)
 	_, err = store.RecordPush(ctx, PushEvent{RepositoryID: "project", Ref: "refs/heads/main", NewOID: strings.Repeat("a", 40), RefsUpdated: 1, Actor: Actor{Kind: ActorAccess}, PushedAt: testImportNow()})
 	noErr(t, err)
 	noErr(t, store.RegisterImportInitialDestination(ctx, ImportInitialDestination{
@@ -141,7 +144,7 @@ func TestRepositoryDeletionRemovesEveryRecordKeyedByRepository(t *testing.T) {
 	before := repositoryKeyedCounts(t, store, "project")
 	for _, table := range []string{"check_jobs", "check_attempts", "check_results", "check_raw_logs", "check_raw_log_starts", "tasks", "check_policies", "check_runner_credentials",
 		"helper_credentials", "pull_requests", "import_sources", "import_runs", "import_publication_intents", "import_schedules", "import_stagings",
-		"import_initial_destinations", "direct_review_credentials", "push_events", "repositories"} {
+		"import_initial_destinations", "direct_review_credentials", "push_events", "share_links", "repositories"} {
 		if before[table] == 0 {
 			t.Fatalf("fixture wrote no %s rows: %v", table, before)
 		}
