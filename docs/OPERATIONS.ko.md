@@ -1173,7 +1173,7 @@ owngit repo settings set --repository NAME --extra-ref-prefixes refs/notes/,refs
 git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push http://HOST:7654/git/NEW-NAME.git 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
 ```
 
-브랜치와 태그만 돌아오고 보관된 기록, 풀 리퀘스트, 체크는 돌아오지 않습니다. 남긴 저장소의 주 브랜치가 `main`이 아니면 푸시한 뒤 기본 브랜치를 바꾸세요.
+이 명령으로는 브랜치와 태그만 돌아오고 보관된 기록, 풀 리퀘스트, 체크는 돌아오지 않습니다. `refs/notes/` 같은 ref도 되살리려면 먼저 새 저장소의 [다른 ref 이름공간](#다른-ref-이름공간)에 그 이름공간을 적고, `'refs/notes/*:refs/notes/*'`처럼 맞는 refspec을 명령에 더하세요. 남긴 저장소의 주 브랜치가 `main`이 아니면 푸시한 뒤 기본 브랜치를 바꾸세요.
 
 #### 삭제가 거부될 때
 
@@ -1216,7 +1216,7 @@ git ls-remote --heads --tags owngit
 
 이런 두 이름을 이미 가진 저장소도 있을 수 있습니다. 두 이름을 구별하는 시스템에서 복사해 온 경우가 그 예입니다. 이때는 둘 중 하나를 `git push origin --delete NAME`으로 지울 때까지 두 이름 모두 만들거나 바꾸는 푸시를 거부합니다. 이 삭제는 지정한 ref만 바꾸며 기록 보관이 켜져 있으면 그 ref의 마지막 커밋이 보관된 기록에 남습니다. 기본 브랜치는 어떤 철자로도 이렇게 지울 수 없으니 다른 쪽 이름을 지우거나 먼저 다른 기본 브랜치를 고르세요.
 
-OwnGit은 `refs/heads/*`와 `refs/tags/*`로 가는 푸시만 받으므로, 다른 호스트의 미러 clone에서 `git push --mirror`를 하면 `refs/pull/*` 같은 ref 때문에 실패합니다. 두 OwnGit 서버 사이에서 푸시하면 보관된 기록과 저장소 기록은 옮겨지지 않으니, 그것까지 옮기려면 [백업](#백업)을 쓰세요. 계속 쓰는 호스트에서 변경 사항을 받아 오려면 [다른 Git 호스트에서 가져오기](#다른-git-호스트에서-가져오기)를 보세요.
+푸시로 바꿀 수 있는 것은 브랜치(`refs/heads/*`)와 태그(`refs/tags/*`), 그리고 관리자가 저장소마다 [다른 ref 이름공간](#다른-ref-이름공간)에 적은 `refs/notes/` 같은 이름공간입니다. 그 밖의 ref와 `refs/owngit/`는 언제나 거부합니다. 그래서 다른 호스트의 미러 clone에서 `git push --mirror`를 하면 `refs/pull/*` 같은 ref 때문에 실패합니다. 두 OwnGit 서버 사이에서 푸시하면 보관된 기록과 저장소 기록은 옮겨지지 않으니, 그것까지 옮기려면 [백업](#백업)을 쓰세요. 계속 쓰는 호스트에서 변경 사항을 받아 오려면 [다른 Git 호스트에서 가져오기](#다른-git-호스트에서-가져오기)를 보세요.
 
 ### 다른 호스트에 사본 두기
 

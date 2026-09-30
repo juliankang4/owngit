@@ -1173,7 +1173,7 @@ To bring a kept repository back, create an empty repository with the same name i
 git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push http://HOST:7654/git/NEW-NAME.git 'refs/heads/*:refs/heads/*' 'refs/tags/*:refs/tags/*'
 ```
 
-Only branches and tags come back; kept history, pull requests and checks do not. If the kept repository's main branch is not `main`, change the default branch afterwards.
+This command brings back only branches and tags; kept history, pull requests and checks do not come back. To bring back refs such as `refs/notes/` as well, first list their namespace under [Other ref namespaces](#other-ref-namespaces) of the new repository, then add a matching refspec such as `'refs/notes/*:refs/notes/*'`. If the kept repository's main branch is not `main`, change the default branch afterwards.
 
 #### When deletion is refused
 
@@ -1216,7 +1216,7 @@ A push that creates or updates a branch or tag is refused when its name, or any 
 
 A repository can already hold two such names, for example after it was copied from a system that tells them apart. Pushes that create or update either one are refused until you delete one of them with `git push origin --delete NAME`. That deletion changes only the ref you name, and its last commit stays in kept history when kept history is on. The default branch cannot be deleted this way under any spelling: delete the other name, or choose another default branch first.
 
-OwnGit accepts pushes only to `refs/heads/*` and `refs/tags/*`, so `git push --mirror` from another host's mirror clone fails for refs such as `refs/pull/*`. Pushing between two OwnGit installations carries neither kept history nor repository records; use a [backup](#backups) for those. To keep pulling from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
+A push may change branches (`refs/heads/*`) and tags (`refs/tags/*`), plus the namespaces an administrator lists for that repository under [Other ref namespaces](#other-ref-namespaces), such as `refs/notes/`. Every other ref, and always `refs/owngit/`, is refused, so `git push --mirror` from another host's mirror clone fails for refs such as `refs/pull/*`. Pushing between two OwnGit installations carries neither kept history nor repository records; use a [backup](#backups) for those. To keep pulling from a host that stays in use, see [Importing from another Git host](#importing-from-another-git-host).
 
 ### Keeping a copy on another host
 
