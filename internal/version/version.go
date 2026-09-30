@@ -7,4 +7,4 @@
 package version
 
 // Version is the only application version literal in the source tree.
-const Version = "1.1.2"
+const Version = "1.1.3"

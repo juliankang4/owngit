@@ -6,59 +6,91 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-**Upgrading:** the first start of this version upgrades the state database from schema 15 to 16. Before it does, OwnGit makes an offline backup of the state in a folder beside the state directory, such as `~/.config/owngit-backups`, and the log names the command that restores it; `owngit upgrade-backup off` turns this backup off. An earlier version refuses the upgraded database, so to go back, restore that backup with the earlier version. Backups are still written in version 10, which 1.0.3 to 1.1.2 restore, unless they hold records that only the new version 11 can hold, such as a repository's own kept history choice. Every folder on the way to the state directory, to backups and to a restore target must now be on a local disk for every account, so a state directory reached through a network share is refused.
+## [1.1.3] - 2026-10-01
 
-Pushes and imports now refuse branches and tags whose name, or any folder in it, matches another ref apart from letter case, Unicode encoding or letters that some file systems treat as equal, so a repository that already holds two such names (for example `main` and `Main`) refuses pushes that create or update either one. Delete one of them with `git push origin --delete NAME`; the other ref keeps its value, the default branch cannot be deleted this way under any spelling, and the deleted commit stays in kept history when kept history is on.
+This release fixes security problems rated Medium and Low. Upgrading is recommended.
+
+**Upgrading:** the first start of 1.1.3 upgrades the state database from schema 15 to 16. Before it does, OwnGit makes an offline backup of the state in a folder beside the state directory, such as `~/.config/owngit-backups`, and the log names the command that restores it. `owngit upgrade-backup off` turns this backup off. Earlier versions refuse the upgraded database, so to go back, restore that backup with the earlier version. OwnGit now refuses to open or upgrade a state database whose tables, indexes, triggers or views were changed by hand; undo the change, or restore a backup with the OwnGit version that made it. Backups are still written in format 10, which 1.0.3 to 1.1.2 restore, unless they hold records that only the new format 11 can hold, such as a repository's own kept history choice, or more records than format 10 allows. The state directory and every folder on the way to it must now be on a local disk, so a state directory reached through a network share is refused. Backups and restores write only into folders that no other account can change; when OwnGit refuses a folder, it names it and prints the command that fixes it when there is one.
+
+Pushes and imports now refuse a branch or tag whose name, or any folder in it, matches another ref except for letter case, Unicode encoding or letters that some file systems treat as equal. A repository that already holds two such names, for example `main` and `Main`, refuses pushes that create or update either one. Delete one of them with `git push origin --delete NAME`. The other ref keeps its value, the default branch cannot be deleted this way under any spelling, and the deleted commit stays in kept history when kept history is on.
+
+**Changes for scripts:** JSON from the API, the command line and MCP writes Unicode direction controls as `\uXXXX` escapes; the values are unchanged. API requests and MCP arguments that are not valid UTF-8, or that escape half of a UTF-16 surrogate pair, are refused with `invalid_json` or `invalid_arguments` instead of being stored with replacement characters. The administrator API, including the helper credential, check and import owner routes, needs the administrator password in the Basic header for reads as well as changes, as the command line sends it. A source with more refs than an import accepts fails with `too_many_refs`. An interrupted `owngit restore` says that nothing was restored and exits with 130. When the command line's own time limit ends a request, it reports `connection_failed`. A script that runs `owngit network set` with an address other computers reach over plain HTTP must add `--accept-insecure-http` once.
 
 ### Added
 
 - One-line installers for Linux, macOS and Windows download the latest or a named release, check it against `SHA256SUMS`, install `owngit` and run it as a service.
-- `owngit update` prints the command that updates OwnGit the way it was installed, and the new-release notice shows it to a confirmed administrator with a Copy button. `owngit uninstall` removes the service and names the command that removes the program.
-- A container image for Linux on x64 and ARM64, `ghcr.io/juliankang4/owngit`, with a Compose file. It runs as a non-root account with its data in one volume, shows the setup link through `docker compose exec -it owngit owngit setup-link`, and updates with `docker compose pull && docker compose up -d`.
-- A helper script for Proxmox VE hosts, `https://owngit.app/proxmox.sh`, creates an unprivileged Debian 13 container, installs OwnGit in it with the one-line installer, and can keep the repositories in a folder of the host. Nothing from the OwnGit release runs on the host, and the script never changes an existing container.
-- `owngit doctor` and a Checkup card in Settings list problems such as a stopped server, Windows folders that the Administrators group owns, or a firewall that keeps other devices out, each with one command that repairs it.
-- Kept history can be turned off for the whole server or for one repository, and a repository's default branch can be protected from rewrites and deletion, in Settings, the API, `owngit settings set` and `owngit repo settings`.
-- `owngit repo kept-history`, `owngit repo restore preview` and `apply`, the matching API routes and MCP tools list kept history and restore files, with the same preview and the same check that the branch has not moved as the restore pages.
-- Check mergeability on the pull request page, `owngit pr mergeability`, `GET /api/v1/repositories/{id}/pull-requests/{number}/mergeability` and the MCP tool `pull_request_mergeability` answer whether a pull request can merge now: clean with the merge method, conflict with the conflicting paths, unavailable with the reason, or stale when a branch moved. OwnGit checks only when asked and writes nothing.
-- A pull request can have a Markdown description, its title and description can be edited, and a review can carry a note. An edit based on an outdated version is refused with `stale_edit`. `owngit pr edit`, `--body-file`, `--note-file` and the MCP tool `pull_request_edit` do the same from the command line, and results name who recorded the current review.
+- `owngit update` prints the command that updates OwnGit the way it was installed, and the new-release notice shows it to a confirmed administrator. `owngit uninstall` removes the service and names the command that removes the program.
+- A container image for Linux on x64 and ARM64, `ghcr.io/juliankang4/owngit`, comes with a Compose file and runs as a non-root account with its data in one volume. It updates with `docker compose pull && docker compose up -d`.
+- A helper script for Proxmox VE hosts, `https://owngit.app/proxmox.sh`, creates an unprivileged Debian 13 container and installs OwnGit in it with the one-line installer. It can keep the repositories in a folder of the host, and it never changes an existing container.
+- An OwnGit icon in the Windows notification area, the macOS menu bar and the Linux desktop panel (with `gjs` and GTK 4) shows whether OwnGit is running or needs attention, the clone address and the latest pushes, and opens the dashboard. `owngit service install` sets it up to open at sign-in, and `owngit tray on` and `off` or a switch in Settings show or hide it without stopping OwnGit.
+- `owngit tray read` prints what the icon's panel shows and `owngit tray open` opens the dashboard, so other desktop panels, such as the Omarchy bar widget in `integrations/omarchy`, can use them.
+- `owngit doctor` and a Checkup card in Settings list problems such as a stopped server, Windows folders that the Administrators group owns, or a firewall that keeps other devices out, with a repair command or advice for each.
+- Kept history can be turned off for the whole server or for one repository, and a repository's default branch can be protected from rewrites and deletion. Both are in Settings, the API, `owngit settings set` and `owngit repo settings`.
+- `owngit repo kept-history`, `owngit repo restore preview` and `apply`, the matching API routes and MCP tools list kept history and restore files. They use the same preview, and the same check that the branch has not moved, as the restore pages.
+- The pull request page, `owngit pr mergeability`, the API and the MCP tool `pull_request_mergeability` answer on request whether a pull request can merge now, and name the conflicting paths when it cannot. The check writes nothing.
+- A pull request can have a Markdown description, its title and description can be edited, and a review can carry a note. `owngit pr edit` and the MCP tool `pull_request_edit` do the same, and an edit based on an outdated version is refused with `stale_edit`.
 - `owngit backup verify` rehearses a restore in a temporary folder and reports whether the backup restores, without changing it or the running OwnGit. `owngit restore --verify` restores only a verified backup.
 - Settings has five tabs, General, Access, Network, Repositories, and Storage & recovery, with a Save for each part, and asks before you leave it with unsaved changes.
 - New settings choose how long a sign-in with the shared password lasts, the branch new repositories start on, the Git transfer size and time limits, and how long raw check logs are kept. `owngit settings show` and `owngit settings set` read and change them.
 - The Access tab chooses how often the dashboard asks for the administrator password, from every time to once in 30 days, or never. By default it asks again after 30 minutes.
+- More settings choose whether deleting a repository asks for its name, the login attempt limits, whether a link from another site keeps you signed in, and the Tailscale HTTPS port, and can replace what another service serves on that port. Each keeps the earlier behavior by default, and none is in backups.
 - The repository lists share one row layout, and a Sort control orders them by latest update or by name, remembered in each browser.
+- Scheduled backups run every 12 hours, every day or every week while OwnGit serves, verify each backup and keep the newest copies (7 by default). `owngit backup now`, `status`, `runs` and `schedule`, the owner API under `/api/v1/backups` and a `backup_status` summary for coding tools work with them.
+- A Backups group in Settings, Storage & recovery sets up scheduled backups and shows the last and next ones with a Back up now button. Each backup can be verified again, downloaded as a tar file, or restored with the command shown for it, and `owngit backup check`, `download` and `upload` do the same from the command line.
+- An uploaded backup file is verified first and shows the command that restores it. It is kept until OwnGit starts again or for at most 24 hours, so run that command, with OwnGit stopped, before you start OwnGit again.
+- The OwnGit icon shows desktop notifications for pushes, new pull requests, failed checks, imports or backups that did not finish, and a new OwnGit version; each kind can be turned off in the icon's panel or with `owngit tray notifications`. On Windows they are notification area balloons, which Windows does not show or keep while Do not disturb is on.
+- Each import source can allow plain HTTP, follow redirects to the same origin or one approved origin, allow a special-purpose destination address, and change its size and time limits. Every choice is off or at the earlier value by default, shows a warning, and is also in the import API, `owngit import add` and the new `owngit import configure`.
+- An import can bring in ref namespaces beyond branches and tags, such as `refs/notes/`. Before a refresh changes anything, the owner sees its effect on each ref and chooses whether it follows deletions at the source and whether it overwrites branches that diverged in OwnGit; the protected default branch is never rewritten.
+- The setup page has a Choose button beside the repository folder, which browses the folders of the computer running OwnGit and can create a new one. Only the browser doing setup can use it, and only until setup is finished.
+- Settings choose how many Git transfers run at once and how long they may wait, how much a page shows when browsing files, diffs and comparisons, and when repository maintenance runs. Each keeps the earlier behavior by default.
+- Unused object cleanup, off by default, removes objects that no ref and no kept history reach once they are older than a grace period of at least 2 days (14 by default), inside the maintenance window. A check whose commit it removed can no longer be run again.
+- An administrator can let one repository accept pushes to other ref namespaces, such as Git notes under `refs/notes/`. Refs there have no kept history or protection.
+- A repository can be renamed on its Settings tab, with `owngit repo rename` or through the API, keeping its history, pull requests and checks. For 90 days the old address still leads to it for pages, the API and Git.
+- Read-only share links open one repository, for browsing or also cloning, to someone without the shared password. The owner creates them on the repository's Share links page, with `owngit repo share` or through the API, with an optional expiry and extra password, and can revoke them.
+- Share links can be published on a separate public address, such as one reached through Tailscale Funnel or a reverse proxy, while the rest of OwnGit stays private. It is off by default and set in Settings, Network or with `owngit network set --public-share-listen` and `--public-share-url`.
+- `owngit activity` and the MCP tool `activity` list recent commits as the Activity page does, and `owngit tasks` lists check tasks as the Checks tab does. The Activity page and these commands show the newest 1,000 commits and say when the list is cut.
+- A Coding tools page shows the commands that connect coding tools to this server through the skill and MCP, with Copy buttons, and lists recent tasks.
+- Owner tasks that needed the dashboard also work from the command line with `--json`: `owngit settings access`, `settings admin-password`, `settings confirmation`, `settings set --update-check`, `repo default-branch` and `repo delete`. New passwords come only from a file only you can read or from a hidden prompt.
+- The import commands, `owngit backup --output` and `owngit restore` print JSON with `--json`, including failures with a stable error code. Without `--json` their output is unchanged.
+- The Automatic checks page lists leftover check containers that OwnGit could not remove, and forgets one once you confirm it is gone.
+- Configured checks that run in containers have new options, each off by default with a warning, such as an image tag instead of a digest, downloading a missing image and an existing named Docker network. Save and turn on checks, or `owngit check-policy set --enable`, saves a policy and turns checks on for exactly that policy in one confirmed step.
+- Check ceilings in Settings, Repositories set how much automatic checks may use, such as run time, output, memory and scratch space, with the earlier limits as defaults. The settings API and `owngit settings set --check-*` change them too.
 
 ### Changed
 
+- Backups can hold up to 1 GiB of OwnGit records, not counting the repositories, so large check, pull request and import histories fit.
 - Imports ask the source for Git protocol v2, so refs that an import does not use, such as pull request refs, no longer count toward the 50,000-ref limit of such a source.
 - Imports accept old commits and tags with a malformed time zone or a missing tag date, and trees with zero-padded folder modes. They refuse commits whose dates OwnGit cannot show.
 - A commit whose time zone offset is 24 hours or more is shown in UTC instead of breaking the page, and a repository whose latest commit cannot be read stays readable.
 - Merge and restore commits that OwnGit writes carry this computer's UTC offset instead of +0000.
 - A dashboard page opened over plain HTTP by the name of a working HTTPS address, from Tailscale sharing or a trusted proxy, moves to that HTTPS address.
-- OwnGit reads Tailscale's status from Tailscale's own service instead of running the `tailscale` command, and uses a Unix socket only when Tailscale's service is the one listening on it.
+- OwnGit reads Tailscale's status from Tailscale's own service instead of running the `tailscale` command.
+- `owngit service install` refuses an `owngit` that another account could replace, for example one in `D:\tools` on Windows. Move `owngit` to a folder only you can change, or install it with the one-line installer.
+- A push that updates a symbolic ref other than `HEAD`, such as a branch made on the server as another name for a branch, is refused with a message to push to the ref it points to.
+- `owngit network set` refuses an address that other computers reach over plain HTTP until you accept plain HTTP with `--accept-insecure-http`, as the dashboard does. Addresses on this computer need nothing.
+- An idle server with many repositories uses much less CPU, and the first dashboard after a restart runs fewer Git processes for each repository's activity.
+- A check that prints more than its output limit is stopped at once and recorded as incomplete.
+- After a restore, `owngit restore` lists everything the backup did not bring back, such as sessions, network settings, tokens, import credentials and share links, and says where to set each up again.
 - `owngit serve` opens no browser and asks nothing in a session that nobody watches.
 - Backup and restore create missing parent folders of their targets.
+- A check job's finish time is the time OwnGit recorded it; the external runner's own time stays on the attempt.
 
 ### Fixed
 
 - A Git client that is locked out after wrong shared passwords gets HTTP 429 instead of 401, so it keeps the password its credential helper saved. An upload that stops sending gets 408 instead of 502.
 - A form larger than 1 MiB gets a page that says nothing was saved, instead of a bare error.
 - An import refuses a repository name that Windows reserves, such as `CON`, before it starts.
+- Restoring or verifying a backup of a SHA-256 repository works.
+- One commit whose date Git prints in a form OwnGit cannot read no longer hides the dashboard's activity or the repository's pages. OwnGit names that commit and shows the rest.
+- Backups, `owngit backup verify` and restores accept check records from an external runner whose clock was behind OwnGit's, instead of refusing the whole state.
+- On macOS, backups to exFAT, FAT16 and FAT32 volumes complete. A repository restore onto a volume that Git cannot use correctly is refused before any work and names the file system, while the state folder restores onto FAT16 and FAT32.
 
 ### Security
 
-- OwnGit opens its state directory, logs, locks and backup folders only through folders that no other account can change, and follows no link that another account could place on the way. The way to the state and to backups must be on a local disk.
-- Text from repository users, such as titles, branch names, commit messages and paths, is shown in its own writing direction, so direction controls in it cannot reorder the text beside it. Every JSON result writes those controls as escapes.
-- A sign-in and an administrator confirmation belong to the password version that OwnGit actually checked, so a password change made at the same moment ends them. A change of the administrator password in Settings is refused when its confirmation is from before another password change.
-- Signing in again replaces the session that the browser held before.
-- The administrator API accepts only the administrator password, for reads as well as changes, and no longer a browser's administrator session.
-
-### Changes for scripts
-
-- JSON from the API, the command line and MCP writes Unicode direction controls as `\uXXXX` escapes; the values are unchanged.
-- API requests and MCP arguments that are not valid UTF-8, or that escape half of a UTF-16 surrogate pair, are refused with `invalid_json` or `invalid_arguments` instead of being stored with replacement characters.
-- The helper credential, check and import owner APIs need the administrator password in the Basic header for reads, as the command line sends it.
-- A source with more refs than an import accepts fails with `too_many_refs`.
-- An interrupted `owngit restore` says that nothing was restored and exits with 130.
+- Medium: on a computer shared with other local accounts, another account could make OwnGit change files or settings, when OwnGit ran as root, used a folder or program that account can change, or reached a Tailscale service that account controls. Affects 1.1.2 and earlier; OwnGit now refuses these unsafe setups and names what to fix, and ordinary Tailscale use is unaffected.
+- Low: signing out or changing a password did not always end every session it should, and the administrator API did not always require the administrator password. Affects 1.1.2 and earlier.
+- Low: check logs and summaries could keep part of a credential that OwnGit hides in check output, when a check printed it. Affects 1.1.2 and earlier; if your checks printed such a credential, consider replacing it.
+- Low: text from repository users, such as pull request titles, branch names and commit messages, could change how the names and labels beside it were shown. Affects 1.1.2 and earlier.
 
 ## [1.1.2] - 2026-09-28
 
