@@ -46,3 +46,25 @@ func TestBackupRunRecords(t *testing.T) {
 		t.Fatalf("finished run: %d bytes, %+v", len(stored.Message), stored)
 	}
 }
+
+// Runs are listed in the order they started, also when they started in the
+// same second, whatever their IDs.
+func TestBackupRunsInTheOrderTheyStarted(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	noErr(t, err)
+	defer store.Close()
+	start := time.Unix(1800000000, 0)
+	for _, id := range []string{strings.Repeat("f", 32), strings.Repeat("0", 32)} {
+		run := BackupRun{ID: id, Kind: BackupRunManual, Destination: "/backups", BackupName: "owngit-backup-" + id[:8], StartedAt: start}
+		noErr(t, store.StartBackupRun(ctx, run))
+		run.Status, run.Verification, run.FinishedAt = BackupSucceeded, BackupVerifyNotRun, start
+		noErr(t, store.FinishBackupRun(ctx, run))
+	}
+	noErr(t, store.ForgetBackup(ctx, strings.Repeat("f", 32)))
+	runs, err := store.BackupRuns(ctx)
+	noErr(t, err)
+	if len(runs) != 2 || runs[0].ID != strings.Repeat("0", 32) || runs[1].BackupName != "" || runs[0].BackupName == "" {
+		t.Fatalf("runs: %+v", runs)
+	}
+}

@@ -144,8 +144,8 @@ func (s *Store) StartBackupRun(ctx context.Context, run BackupRun) error {
 }
 
 // FinishBackupRun records how a running run ended: its status,
-// verification, message (cut to MaxBackupRunMessage bytes), finish time and
-// hold.
+// verification, message (cut to MaxBackupRunMessage bytes), finish time,
+// hold, and its backup name, empty when the run published no backup.
 func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 	var holdMS, holdRepository any
 	if run.HoldKnown {
@@ -154,9 +154,9 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 			holdRepository = run.LongestHoldRepository
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?,backup_name=?
 		WHERE id=? AND status='running'`,
-		run.Status, run.Verification, cutText(run.Message, MaxBackupRunMessage), run.FinishedAt.Unix(), holdMS, holdRepository, run.ID)
+		run.Status, run.Verification, cutText(run.Message, MaxBackupRunMessage), run.FinishedAt.Unix(), holdMS, holdRepository, run.BackupName, run.ID)
 	if err != nil {
 		return err
 	}
@@ -180,10 +180,11 @@ func (s *Store) InterruptBackupRuns(ctx context.Context, message string, now tim
 	return result.RowsAffected()
 }
 
-// BackupRuns returns every recorded run, the newest first.
+// BackupRuns returns every recorded run, the newest first: in the order
+// they were started, which one at a time keeps, whatever the clock said.
 func (s *Store) BackupRuns(ctx context.Context) ([]BackupRun, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,status,destination,backup_name,verification,message,started_at,finished_at,longest_hold_ms,longest_hold_repository
-		FROM backup_runs ORDER BY started_at DESC, id DESC`)
+		FROM backup_runs ORDER BY rowid DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -208,6 +209,13 @@ func (s *Store) BackupRuns(ctx context.Context) ([]BackupRun, error) {
 		runs = append(runs, run)
 	}
 	return runs, rows.Err()
+}
+
+// ForgetBackup records that the backup of the finished run id is gone:
+// OwnGit removed it, or its folder no longer holds it.
+func (s *Store) ForgetBackup(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET backup_name='' WHERE id=? AND status<>'running'`, id)
+	return err
 }
 
 // ForgetBackupRuns removes the records of finished runs.
