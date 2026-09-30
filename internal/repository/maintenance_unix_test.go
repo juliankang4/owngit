@@ -152,12 +152,15 @@ func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
 	waitForPIDs(t, pidFile, 2)
 	assertSameInventory(t, before, inventory(t, fixture.remote))
 
+	// A failed maintenance is logged with Git's error, retried, and leaves the
+	// repository as it was. The retries in each mode run on their own clock,
+	// so the stages below wait for the first matching line, not for a count.
 	setMode("fail")
-	waitFor(t, "failure", func() bool { return len(log.matching("No space left on device")) == 1 })
+	waitFor(t, "failure", func() bool { return len(log.matching("No space left on device")) > 0 })
 	assertSameInventory(t, before, inventory(t, fixture.remote))
 
 	setMode("")
-	waitFor(t, "recovery", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+	waitFor(t, "recovery", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) > 0 })
 	assertSameInventory(t, before, inventory(t, fixture.remote))
 	assertRepositoryUsable(t, fixture)
 }
