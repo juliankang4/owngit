@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -258,5 +259,59 @@ func TestImportRoutesAtAnExpiredAliasAreNotFound(t *testing.T) {
 	response := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{"name": "fresh", "url": "https://example.invalid/fresh.git", "mode": "standalone"}, "admin-password")
 	if body := importAPIBody(t, response); response.StatusCode != http.StatusOK || !strings.Contains(body, `"status":"complete"`) {
 		t.Fatalf("first import at an unused name status=%d body=%s", response.StatusCode, body)
+	}
+}
+
+// The owner routes for the default branch and deletion find a renamed
+// repository at its current address. Its earlier address, while the alias
+// lasts, redirects there and changes nothing; once the alias has expired it
+// is not found.
+func TestOwnerRoutesFollowTheRepositoryAddress(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	_, err := fixture.app.Repositories.Rename(context.Background(), "project", "renamed", time.Now())
+	noErr(t, err)
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	post := func(name, resource string, body map[string]string) (int, string, string) {
+		t.Helper()
+		encoded, err := json.Marshal(body)
+		noErr(t, err)
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/repositories/"+name+"/"+resource, bytes.NewReader(encoded))
+		noErr(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		request.SetBasicAuth("admin", "admin-password")
+		response, err := noRedirect.Do(request)
+		noErr(t, err)
+		location := response.Header.Get("Location")
+		status, code := checkStatus(t, response)
+		return status, code, location
+	}
+	deletion := map[string]string{"mode": "keep_files", "confirm_name": "renamed"}
+	for resource, body := range map[string]map[string]string{"default-branch": {"branch": "feature"}, "delete": deletion} {
+		if status, code, location := post("project", resource, body); status != http.StatusTemporaryRedirect || code != "repository_moved" || location != "/api/v1/repositories/renamed/"+resource {
+			t.Fatalf("%s at the earlier address status=%d code=%q location=%q", resource, status, code, location)
+		}
+	}
+	if head := apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD"); head != "refs/heads/main" || !fixtureRepositoryExists(t, fixture, "project") {
+		t.Fatalf("a redirected request changed the repository: default branch=%q", head)
+	}
+	if status, code, _ := post("renamed", "default-branch", map[string]string{"branch": "feature"}); status != http.StatusOK || code != "" {
+		t.Fatalf("default branch at the current address status=%d code=%q", status, code)
+	}
+	if head := apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD"); head != "refs/heads/feature" {
+		t.Fatalf("default branch=%q", head)
+	}
+
+	noErr(t, fixture.store.Exec(context.Background(), `UPDATE repository_names SET alias_until=? WHERE kind='alias'`, time.Now().Add(-time.Second).Unix()))
+	for resource, body := range map[string]map[string]string{"default-branch": {"branch": "main"}, "delete": deletion} {
+		if status, code, location := post("project", resource, body); status != http.StatusNotFound || code != "repository_not_found" || location != "" {
+			t.Fatalf("%s at the expired address status=%d code=%q location=%q", resource, status, code, location)
+		}
+	}
+	if !fixtureRepositoryExists(t, fixture, "project") {
+		t.Fatal("a request at the expired address deleted the repository")
+	}
+	if status, code, _ := post("renamed", "delete", deletion); status != http.StatusOK || code != "" || fixtureRepositoryExists(t, fixture, "project") {
+		t.Fatalf("deletion at the current address status=%d code=%q", status, code)
 	}
 }

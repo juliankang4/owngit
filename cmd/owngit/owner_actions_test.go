@@ -153,3 +153,44 @@ func TestRepoDefaultBranchAndDeleteCommands(t *testing.T) {
 		t.Fatalf("the repository still exists: %v", err)
 	}
 }
+
+// After a rename, repo default-branch and repo delete work at the current
+// address. At the earlier address they change nothing and say where the
+// repository is now.
+func TestRepoDefaultBranchAndDeleteAfterARename(t *testing.T) {
+	fixture := startImportCLIServer(t)
+	adminPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", adminPath}
+	work := newClone(t, fixture.url+"/git/project.git")
+	runPRGit(t, work, "-c", "user.name=Owner", "-c", "user.email=owner@example.invalid", "commit", "--allow-empty", "-m", "first")
+	runPRGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/trunk")
+	commandJSON(t, func() error { return repoCommand(append([]string{"rename", "project", "renamed"}, remote...)) })
+
+	for _, arguments := range [][]string{
+		{"default-branch", "--repository", "project", "--branch", "trunk"},
+		{"delete", "--repository", "project", "--files", "keep", "--confirm-name", "renamed"},
+	} {
+		err := repoCommand(append(arguments, remote...))
+		if errorCode(err) != "repository_moved" || !strings.Contains(err.Error(), "renamed") {
+			t.Fatalf("%s at the earlier address: %v", arguments[0], err)
+		}
+	}
+	if _, exists, err := fixture.store.Repository(context.Background(), "project"); err != nil || !exists {
+		t.Fatalf("a refused deletion removed the repository: exists=%v err=%v", exists, err)
+	}
+	answer := commandJSON(t, func() error {
+		return repoCommand(append([]string{"default-branch", "--repository", "renamed", "--branch", "trunk"}, remote...))
+	})
+	if answer["default_branch"] != "trunk" {
+		t.Fatalf("repo default-branch printed %v", answer)
+	}
+	answer = commandJSON(t, func() error {
+		return repoCommand(append([]string{"delete", "--repository", "renamed", "--files", "delete", "--confirm-name", "renamed"}, remote...))
+	})
+	if answer["ok"] != true {
+		t.Fatalf("repo delete printed %v", answer)
+	}
+	if _, exists, err := fixture.store.Repository(context.Background(), "project"); err != nil || exists {
+		t.Fatalf("the repository still exists: %v", err)
+	}
+}
