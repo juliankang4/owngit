@@ -174,6 +174,8 @@ A service passes `--headless=true` or `false` from its install, so it does not d
 
 It chooses who runs the service from how you run the command, waits until the service answers, and prints the setup link. If the service stops with an error while it waits, for example because another program uses the port, the command prints that error with the next step.
 
+The service runs only an `owngit` program that no other account on the computer can change, apart from root or the administrators, and the same holds for every folder above it. When the program does not qualify, `owngit service install` stops before it changes anything and names the path to fix. On Windows, an administrator's install registers a protected copy in Program Files instead. A Homebrew install hands the service to Homebrew.
+
 | Command | What it does |
 | --- | --- |
 | `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit, agent or task, where the log is, the state directory and the addresses. |
@@ -193,6 +195,8 @@ Which kind of service you get depends on where you run the command:
 - **Over SSH, or without a graphical session**, OwnGit becomes a system service that runs as your account (`/etc/systemd/system/owngit.service` with `User=` and `Group=`), with the state in your usual state directory. The command says in one line what root will do and runs one `sudo` for it: write the unit, reload systemd, enable and start. If `sudo` is unavailable or does not finish, it prints the whole script for an administrator to paste into a root shell.
 - **As root**, for example in an LXC container or on a cloud server, OwnGit creates a system account `owngit`, keeps the state in `/var/lib/owngit/state` and runs the service as that account. See [Installing as root](#installing-as-root).
 - **When Homebrew installed OwnGit**, the command runs `brew services restart owngit`, so that Homebrew keeps managing the service it upgrades.
+
+The user service and the system service run the `owngit` you ran the command with. If another account could change that file, a folder above it or a link on the way, the command stops and names the path. Move `owngit` to a folder only you or root can change, such as `~/.local/bin`, or use the [one-line installer](#one-line-installer). On a desktop, the program that the icon's sign-in entry starts must pass the same check.
 
 The log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
 
@@ -586,7 +590,7 @@ Windows 11 may put a new icon among the hidden icons (the ^ button). To keep it 
 
 #### The icon on Linux
 
-On a Linux desktop, run `owngit service install` from a terminal on that desktop. It starts the icon in the desktop's panel and writes `~/.config/autostart/owngit-icon.desktop`, so the icon starts again each time you sign in. The icon runs as your account, without `sudo`. For a Homebrew install the entry names Homebrew's `opt/owngit` link, so it keeps working after `brew upgrade`. `owngit service uninstall` removes the entry. Without the service, `owngit tray icon` shows the icon until you quit it.
+On a Linux desktop, run `owngit service install` from a terminal on that desktop. It starts the icon in the desktop's panel and writes `~/.config/autostart/owngit-icon.desktop`, so the icon starts again each time you sign in. The icon runs as your account, without `sudo`. For a Homebrew install the entry names Homebrew's `opt/owngit` link, so it keeps working after `brew upgrade`. If that file already exists and OwnGit did not write it, or cannot read it, the install leaves it as it is, does not start the icon and says so. `owngit service uninstall` removes the entry. Without the service, `owngit tray icon` shows the icon until you quit it.
 
 Some installs have no icon: one without a screen (`--headless`, the default over SSH), and a root install, whose service runs as the `owngit` account.
 

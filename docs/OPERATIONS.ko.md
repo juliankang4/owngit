@@ -174,6 +174,8 @@ OwnGit은 다음 경우를 화면이 없는 컴퓨터로 봅니다.
 
 누가 서비스를 실행할지는 명령을 어떻게 실행했는지에 따라 정해집니다. 명령은 서비스가 응답할 때까지 기다린 뒤 설정 링크를 출력합니다. 기다리는 동안 다른 프로그램이 포트를 쓰는 등의 이유로 서비스가 오류로 멈추면 그 오류와 다음에 할 일을 바로 출력합니다.
 
+서비스는 root나 관리자를 빼면 컴퓨터의 어느 계정도 프로그램 파일과 그 위의 모든 폴더를 바꿀 수 없는 `owngit`만 실행합니다. 이 조건에 맞지 않으면 `owngit service install`은 아무것도 바꾸기 전에 멈추고 고쳐야 할 경로를 알려 줍니다. Windows 관리자 계정의 설치는 이 대신 Program Files에 보호된 복사본을 만들어 등록합니다. Homebrew로 설치했다면 서비스는 Homebrew가 맡습니다.
+
 | 명령 | 하는 일 |
 | --- | --- |
 | `owngit service status` | OwnGit이 실행 중이고 응답하는지, 누가 실행하는지, 유닛, 에이전트 또는 작업, 로그 위치, 상태 디렉터리, 주소를 보여 줍니다. |
@@ -193,6 +195,8 @@ OwnGit은 다음 경우를 화면이 없는 컴퓨터로 봅니다.
 - **SSH로 접속했거나 그래픽 세션이 없으면** 내 계정으로 실행되는 시스템 서비스(`User=`와 `Group=`이 있는 `/etc/systemd/system/owngit.service`)가 되고, 상태는 평소 쓰던 상태 디렉터리에 둡니다. 명령은 root가 할 일을 한 줄로 알려 준 뒤 유닛 쓰기, systemd 다시 읽기, 서비스 켜기와 시작을 `sudo` 한 번으로 처리합니다. `sudo`가 없거나 끝나지 않으면 관리자가 root 셸에 붙여 넣을 수 있도록 스크립트 전체를 출력합니다.
 - **root로** 실행하면(예: LXC 컨테이너나 클라우드 서버) 시스템 계정 `owngit`을 만들고, 상태를 `/var/lib/owngit/state`에 두며, 서비스를 그 계정으로 실행합니다. [root로 설치하기](#root로-설치하기)를 보세요.
 - **Homebrew로 설치했다면** 명령은 `brew services restart owngit`을 실행합니다. 그래서 OwnGit을 업그레이드하는 Homebrew가 계속 서비스를 관리합니다.
+
+사용자 서비스와 시스템 서비스는 명령을 실행할 때 쓴 `owngit`을 실행합니다. 다른 계정이 그 파일이나 그 위 폴더, 경로 중간의 링크를 바꿀 수 있으면 명령은 멈추고 그 경로를 알려 줍니다. `~/.local/bin`처럼 나나 root만 바꿀 수 있는 폴더로 `owngit`을 옮기거나 [한 줄 설치](#한-줄-설치)를 쓰세요. 데스크톱에서는 아이콘의 로그인 항목이 시작하는 프로그램도 같은 확인을 거칩니다.
 
 로그는 systemd 저널에 남습니다. 사용자 서비스는 `journalctl --user -u owngit.service -f`, 시스템 서비스는 `sudo journalctl -u owngit.service -f`로 봅니다.
 
@@ -586,7 +590,7 @@ Windows 11은 새 아이콘을 숨겨진 아이콘(^ 단추) 안에 둘 수 있�
 
 #### Linux의 아이콘
 
-Linux 데스크톱에서는 그 데스크톱의 터미널에서 `owngit service install`을 실행하세요. 데스크톱 패널에 아이콘이 바로 뜨고 `~/.config/autostart/owngit-icon.desktop` 파일이 만들어져서 로그인할 때마다 아이콘이 다시 시작됩니다. 아이콘은 `sudo` 없이 내 계정으로 실행됩니다. Homebrew로 설치했다면 이 파일이 Homebrew의 `opt/owngit` 링크를 가리키므로 `brew upgrade` 뒤에도 그대로 동작합니다. `owngit service uninstall`은 이 파일을 지웁니다. 서비스 없이 쓸 때는 `owngit tray icon`을 실행하면 종료할 때까지 아이콘이 보입니다.
+Linux 데스크톱에서는 그 데스크톱의 터미널에서 `owngit service install`을 실행하세요. 데스크톱 패널에 아이콘이 바로 뜨고 `~/.config/autostart/owngit-icon.desktop` 파일이 만들어져서 로그인할 때마다 아이콘이 다시 시작됩니다. 아이콘은 `sudo` 없이 내 계정으로 실행됩니다. Homebrew로 설치했다면 이 파일이 Homebrew의 `opt/owngit` 링크를 가리키므로 `brew upgrade` 뒤에도 그대로 동작합니다. 이 파일이 이미 있는데 OwnGit이 쓴 파일이 아니거나 OwnGit이 읽을 수 없으면 설치는 파일을 그대로 두고 아이콘도 시작하지 않으며 그렇다고 알려 줍니다. `owngit service uninstall`은 이 파일을 지웁니다. 서비스 없이 쓸 때는 `owngit tray icon`을 실행하면 종료할 때까지 아이콘이 보입니다.
 
 아이콘이 없는 설치도 있습니다. 화면이 없는 설치(`--headless`, SSH에서 설치할 때의 기본값)와, 서비스가 `owngit` 계정으로 실행되는 root 설치입니다.
 
