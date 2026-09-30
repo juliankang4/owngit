@@ -109,7 +109,6 @@ func (app *App) setShareCookie(writer http.ResponseWriter, request *http.Request
 // serveShareGit serves the Git requests of a share link: a clone or fetch
 // of a clone link's repository. Pushes are refused.
 func (app *App) serveShareGit(writer http.ResponseWriter, request *http.Request, id, suffix string) {
-	writer.Header().Set("Referrer-Policy", "no-referrer")
 	settings, err := app.Store.Settings(request.Context())
 	if err != nil {
 		logFailure(request, "settings read", err)
@@ -170,7 +169,6 @@ func (app *App) shareGitLink(request *http.Request, id, user, password string) (
 
 // serveSharePage answers the browser addresses of share links.
 func (app *App) serveSharePage(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set("Referrer-Policy", "no-referrer")
 	if request.URL.Path == sharePrefix {
 		app.openShare(writer, request)
 		return
@@ -232,6 +230,7 @@ func (app *App) openShare(writer http.ResponseWriter, request *http.Request) {
 // the one page whose address a Referer could carry: /share/{id} and the
 // page asked for, never the secret.
 func (app *App) askSharePassword(writer http.ResponseWriter, request *http.Request, link state.ShareLink, secret string) {
+	// The one exception to setSecurityHeaders' no-referrer under /share/.
 	writer.Header().Set("Referrer-Policy", "same-origin")
 	page := webui.SharePasswordPage{Chrome: app.shareChrome(writer, request, ""), SubmitURL: request.URL.RequestURI()}
 	status := http.StatusForbidden

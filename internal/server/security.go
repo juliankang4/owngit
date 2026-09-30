@@ -121,6 +121,7 @@ func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
 // security headers apply either way.
 func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, error), unavailable func(http.ResponseWriter, *http.Request, string, error), next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		setSecurityHeaders(writer, request)
 		info := requestctx.Of(request)
 		allowed, admission := policy.allow(info.Host, info.Peer)
 		if !allowed {
@@ -148,12 +149,23 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, e
 			}
 			return
 		}
-		writer.Header().Set("X-Content-Type-Options", "nosniff")
-		writer.Header().Set("Referrer-Policy", "same-origin")
-		writer.Header().Set("X-Frame-Options", "DENY")
-		writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 		next.ServeHTTP(writer, request)
 	})
+}
+
+// setSecurityHeaders sets the headers every answer carries, including a
+// refusal. Nothing under a share link's address sends a Referer: the
+// browser's address can still hold the link's secret while an answer to it
+// loads its style sheet or icon.
+func setSecurityHeaders(writer http.ResponseWriter, request *http.Request) {
+	referrer := "same-origin"
+	if strings.HasPrefix(request.URL.Path, sharePrefix) {
+		referrer = "no-referrer"
+	}
+	writer.Header().Set("X-Content-Type-Options", "nosniff")
+	writer.Header().Set("Referrer-Policy", referrer)
+	writer.Header().Set("X-Frame-Options", "DENY")
+	writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 }
 
 func refuseHost(writer http.ResponseWriter, request *http.Request) {
@@ -204,6 +216,7 @@ func loopbackPeer(peer string) bool {
 func refuseFunnel(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if _, present := request.Header["Tailscale-Funnel-Request"]; present {
+			setSecurityHeaders(writer, request)
 			if strings.HasPrefix(request.URL.Path, "/api/") {
 				writeAPIError(writer, http.StatusForbidden, "funnel_refused", "OwnGit does not answer requests from the public Internet through Tailscale Funnel.", nil)
 			} else {

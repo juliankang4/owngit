@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -476,5 +477,41 @@ func TestShareLinkSecretStaysOutOfTheLog(t *testing.T) {
 	}
 	if logged := serverLog.String(); !strings.Contains(logged, "GET /share/: share link read") || strings.Contains(logged, secret) {
 		t.Fatalf("log:\n%s", logged)
+	}
+}
+
+// An answer that comes before the share link is looked up, such as a
+// refused Host or a settings read that failed, sends no Referer either:
+// the browser's address still holds the secret. Other pages keep theirs.
+func TestShareAddressSendsNoRefererAlsoWhenRefusedEarly(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	answer := func(target, host string, header http.Header) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodGet, target, nil)
+		if host != "" {
+			request.Host = host
+		}
+		for name, values := range header {
+			request.Header[name] = values
+		}
+		request.RemoteAddr = "127.0.0.1:12345"
+		recorder := httptest.NewRecorder()
+		fixture.app.Handler().ServeHTTP(recorder, request)
+		return recorder
+	}
+	const opening = "http://127.0.0.1/share/synthetic-share-secret"
+	if other := answer("http://127.0.0.1/", "", nil); other.Header().Get("Referrer-Policy") != "same-origin" {
+		t.Fatalf("dashboard policy=%q", other.Header().Get("Referrer-Policy"))
+	}
+	for name, got := range map[string]*httptest.ResponseRecorder{
+		"refused Host":   answer(opening, "unapproved.example.invalid", nil),
+		"Funnel request": answer(opening, "", http.Header{"Tailscale-Funnel-Request": {"?1"}}),
+	} {
+		if got.Code < 400 || got.Header().Get("Referrer-Policy") != "no-referrer" {
+			t.Errorf("%s: status=%d policy=%q", name, got.Code, got.Header().Get("Referrer-Policy"))
+		}
+	}
+	noErr(t, fixture.store.Exec(context.Background(), `DROP TABLE metadata`))
+	if got := answer(opening, "", nil); got.Code != http.StatusServiceUnavailable || got.Header().Get("Referrer-Policy") != "no-referrer" {
+		t.Errorf("settings read failure: status=%d policy=%q", got.Code, got.Header().Get("Referrer-Policy"))
 	}
 }
