@@ -215,6 +215,18 @@ func TestShareCloneLinkFetchesAndRefusesPushes(t *testing.T) {
 	apiRunGit(t, clone, "fetch", "-q", "origin")
 	apiRunGit(t, clone, "config", "user.name", "Share Test")
 	apiRunGit(t, clone, "config", "user.email", "share-test@example.invalid")
+	// A commit that only kept history holds cannot be fetched by its ID.
+	owner := filepath.Join(t.TempDir(), "owner")
+	apiRunGit(t, "", "clone", "-q", strings.Replace(server.URL, "://", "://owngit:shared-password@", 1)+"/git/project.git", owner)
+	apiRunGit(t, owner, "-c", "user.name=Share Test", "-c", "user.email=share-test@example.invalid", "commit", "-q", "--allow-empty", "-m", "kept only")
+	apiRunGit(t, owner, "push", "-q", "origin", "HEAD:refs/heads/gone")
+	goneOID := apiGitOutput(t, owner, "rev-parse", "HEAD")
+	apiRunGit(t, owner, "push", "-q", "origin", ":refs/heads/gone")
+	for _, protocol := range []string{"version=0", "version=2"} {
+		if output, err := gitCombined(clone, "-c", "protocol."+protocol, "fetch", "origin", goneOID); err == nil {
+			t.Fatalf("a kept commit was fetched through a share link with protocol %s:\n%s", protocol, output)
+		}
+	}
 	noErr(t, os.WriteFile(filepath.Join(clone, "new.txt"), []byte("new\n"), 0o600))
 	apiRunGit(t, clone, "add", ".")
 	apiRunGit(t, clone, "commit", "-q", "-m", "not allowed")

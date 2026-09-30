@@ -228,6 +228,10 @@ func (h *Handler) ServeRead(writer http.ResponseWriter, request *http.Request, r
 		http.Error(writer, "this address can only be cloned and fetched; pushes are refused", http.StatusForbidden)
 		return
 	}
+	// Git protocol version 2 fetches any object a client names by its ID,
+	// also one only a hidden ref such as kept history reaches. Version 0
+	// fetches only what the advertised branches and tags reach.
+	request.Header.Del("Git-Protocol")
 	h.serve(writer, request, route)
 }
 
