@@ -73,6 +73,33 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	}
 }
 
+// The check ceilings are set with the --check- options; the ones not named
+// keep their values.
+func TestSettingsCommandSetsTheCheckCeilings(t *testing.T) {
+	fixture := startImportCLIServer(t)
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+	if _, err := captureStdout(func() error {
+		return settingsCommand(append([]string{"set", "--check-time", "72h", "--check-output", "256MB", "--check-queue", "5000",
+			"--check-active", "200", "--check-cpus", "0.5", "--check-memory", "1024GB", "--check-processes", "8192",
+			"--check-scratch", "32GB", "--check-source", "8GB"}, remote...))
+	}); err != nil {
+		t.Fatalf("settings set: %v", err)
+	}
+	want := state.CheckCeilings{
+		TimeoutMS: 72 * 60 * 60 * 1000, OutputLimitBytes: 256 << 20, QueueLimit: 5000, ActiveJobs: 200, ContainerCPUMillis: 500,
+		ContainerMemoryBytes: 1 << 40, ContainerPIDs: 8192, ContainerScratchBytes: 32 << 30, SourceTotalBytes: 8 << 30,
+	}
+	if saved, err := fixture.store.CheckCeilings(context.Background()); err != nil || saved != want {
+		t.Fatalf("saved %+v, %v; want %+v", saved, err, want)
+	}
+	for _, refused := range [][]string{{"--check-queue", "10001"}, {"--check-time", "1.5s"}, {"--check-cpus", "many"}, {"--check-processes", "4k"}} {
+		if err := settingsCommand(append(append([]string{"set"}, refused...), remote...)); err == nil {
+			t.Fatalf("settings set %v was accepted", refused)
+		}
+	}
+}
+
 // The access policies are set by name like every other setting, and the
 // login limits keep the ones not named.
 func TestSettingsCommandSetsTheAccessPolicies(t *testing.T) {

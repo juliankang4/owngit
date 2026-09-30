@@ -365,7 +365,7 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 	// Every numeric control the editor draws states its range, and the numbers
 	// are the backend's.
 	for _, field := range policyRangeFields {
-		bounds, known := state.CheckPolicyBoundsFor(field)
+		bounds, known := state.DefaultCheckCeilings.Bounds(field)
 		if !known {
 			t.Errorf("%s is drawn but publishes no bounds", field)
 			continue
@@ -389,7 +389,7 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 
 	// And the stated bound is the one that actually decides. The queue limit
 	// stands for the group: its maximum is accepted and maximum+1 is not.
-	bounds, known := state.CheckPolicyBoundsFor(state.FieldQueueLimit)
+	bounds, known := state.DefaultCheckCeilings.Bounds(state.FieldQueueLimit)
 	if !known {
 		t.Fatal("the queue limit publishes no range")
 	}
@@ -403,6 +403,11 @@ func TestTheDisplayedRangeIsTheRangeTheBackendEnforces(t *testing.T) {
 	refused := browserForm(t, client, policyURL, pastBound, server.URL)
 	if refused.status != http.StatusUnprocessableEntity {
 		t.Fatalf("one past the stated maximum was accepted: status=%d", refused.status)
+	}
+	// The queue limit's maximum is this computer's check ceiling, so the
+	// refusal says an administrator can raise it.
+	if !strings.Contains(refused.body, browserText(webui.MsgCCFieldCeiling)) {
+		t.Fatal("a value above the ceiling is not refused as above the ceiling")
 	}
 	// The refused screen still shows the range its message refers to.
 	if !strings.Contains(refused.body, "Allowed: "+webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Min)+" to "+webui.LimitText(webui.LangEN, state.FieldQueueLimit, bounds.Max)) {
@@ -1323,7 +1328,7 @@ func TestBrowserPolicyLimitsAreEnteredInReadableUnits(t *testing.T) {
 	if end := strings.Index(block, `class="f cclimit"`); end >= 0 {
 		block = block[:end]
 	}
-	bounds, known := state.CheckPolicyBoundsFor(state.FieldQueueLimit)
+	bounds, known := state.DefaultCheckCeilings.Bounds(state.FieldQueueLimit)
 	if !known {
 		t.Fatal("the queue limit publishes no range")
 	}
