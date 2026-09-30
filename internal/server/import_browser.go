@@ -180,17 +180,13 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 			app.renderImportPage(writer, request, stored, summary, chrome, http.StatusUnprocessableEntity)
 			return
 		}
-		if posted.forURL != "" && posted.forURL != strings.TrimSpace(postValue(request, "url")) {
-			// The connection choices on the form were drawn for the saved
-			// address, not the one submitted: leave them to the service,
-			// which resets them for a new address. A choice made again for
-			// the new address is submitted for it (see owngit.js).
-			options.AllowPlainHTTP, options.Redirects, options.ApprovedRedirectOrigin, options.AllowReservedAddresses = nil, nil, nil, nil
-		}
 		_, err = app.Imports.ConfigureSource(request.Context(), importsync.ConfigureInput{
 			RepositoryID: stored.ID, URL: postValue(request, "url"), Mode: importsync.Mode(postValue(request, "mode")),
 			GitOnlyConsent: postValue(request, "git_only_consent") == "1", AllowPrivateNetwork: postValue(request, "allow_private_network") == "1",
-			Options: options,
+			// The connection choices were drawn for another address (without
+			// scripting; owngit.js clears them when the address is edited),
+			// so only the ones changed in this submission are for the new one.
+			Options: options, RepeatsSaved: posted.forURL != "" && posted.forURL != strings.TrimSpace(postValue(request, "url")),
 		})
 		if importsyncProblemCode(err) == importsync.CodeInvalidSource {
 			chrome.Notices = append(chrome.Notices, importSourceProblem(err))
@@ -332,6 +328,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			page.GitOnlyConsent = postValue(request, "git_only_consent") == "1"
 			page.PrivateNetwork = postValue(request, "allow_private_network") == "1"
 			posted := readPostedImportOptions(request)
+			posted.forAddress(importStatus.Options, page.URL)
 			page.Options = importOptionsForm(importStatus.Options, &posted, chrome.Notices)
 			page.Options.ForURL = posted.forURL
 		}
@@ -553,6 +550,32 @@ func readPostedImportOptions(request *http.Request) postedImportOptions {
 		posted.limits[name] = webui.LimitInput{Amount: postValue(request, name), Unit: postValue(request, name+"_unit")}
 	}
 	return posted
+}
+
+// forAddress binds a refused submission, redrawn for correction, to the
+// address it submitted. Choices that repeat the saved ones for another
+// address are drawn reset, as the service would have applied them, and
+// choices changed in the submission stay, so saving the redrawn form gives
+// the new address exactly what the owner sees.
+func (posted *postedImportOptions) forAddress(saved *importsync.OptionsStatus, address string) {
+	if posted.forURL != "" && posted.forURL != address && saved != nil {
+		change := importsync.OptionsChange{
+			AllowPlainHTTP: &posted.plainHTTP, Redirects: &posted.redirects, ApprovedRedirectOrigin: &posted.origin, AllowReservedAddresses: &posted.reserved,
+		}.WithoutRepeated(state.ImportOptions{
+			AllowPlainHTTP: saved.AllowPlainHTTP, Redirects: saved.Redirects, ApprovedRedirectOrigin: saved.ApprovedRedirectOrigin, AllowReservedAddresses: saved.AllowReservedAddresses,
+		})
+		defaults := state.DefaultImportOptions()
+		if change.AllowPlainHTTP == nil {
+			posted.plainHTTP = defaults.AllowPlainHTTP
+		}
+		if change.Redirects == nil {
+			posted.redirects, posted.origin = defaults.Redirects, defaults.ApprovedRedirectOrigin
+		}
+		if change.AllowReservedAddresses == nil {
+			posted.reserved = defaults.AllowReservedAddresses
+		}
+	}
+	posted.forURL = address
 }
 
 // change turns the form into an options change. The form carries every

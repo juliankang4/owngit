@@ -262,6 +262,11 @@ type ConfigureInput struct {
 	// transport options: consent given for one address never carries over to
 	// another.
 	Options OptionsChange
+	// RepeatsSaved marks Options as a form that sends every transport choice
+	// again, as drawn for the saved address. With a new URL, only the choices
+	// that differ from the saved ones are consent given for it; the repeated
+	// ones are carried from the old address and dropped (see WithoutRepeated).
+	RepeatsSaved bool
 }
 
 // OptionsChange changes some of a source's options. A nil field keeps the
@@ -273,6 +278,30 @@ type OptionsChange struct {
 	ApprovedRedirectOrigin *string
 	AllowReservedAddresses *bool
 	Limits                 map[string]int64
+}
+
+// WithoutRepeated returns the change without the transport choices that
+// repeat saved: a plain HTTP or exceptional destination choice equal to the
+// saved one, and a redirect policy and origin that both equal the saved
+// ones. What remains was chosen in this change.
+func (c OptionsChange) WithoutRepeated(saved state.ImportOptions) OptionsChange {
+	if c.AllowPlainHTTP != nil && *c.AllowPlainHTTP == saved.AllowPlainHTTP {
+		c.AllowPlainHTTP = nil
+	}
+	if c.AllowReservedAddresses != nil && *c.AllowReservedAddresses == saved.AllowReservedAddresses {
+		c.AllowReservedAddresses = nil
+	}
+	redirects, origin := saved.Redirects, saved.ApprovedRedirectOrigin
+	if c.Redirects != nil {
+		redirects = *c.Redirects
+	}
+	if c.ApprovedRedirectOrigin != nil {
+		origin = *c.ApprovedRedirectOrigin
+	}
+	if redirects == saved.Redirects && origin == saved.ApprovedRedirectOrigin {
+		c.Redirects, c.ApprovedRedirectOrigin = nil, nil
+	}
+	return c
 }
 
 // apply returns options with this change made.
@@ -340,13 +369,17 @@ func (s *Service) ConfigureSource(ctx context.Context, input ConfigureInput) (st
 	}
 	return s.configure(ctx, input.RepositoryID, input.Options.replaces, func(current state.ImportSource, exists bool) (state.ImportSourceInput, error) {
 		options := state.DefaultImportOptions()
+		change := input.Options
 		switch {
 		case exists && current.URL == url:
 			options = current.Options
 		case exists:
 			options = current.Options.WithoutTransport()
+			if input.RepeatsSaved {
+				change = change.WithoutRepeated(current.Options)
+			}
 		}
-		options, err := input.Options.apply(options)
+		options, err := change.apply(options)
 		if err != nil {
 			return state.ImportSourceInput{}, err
 		}

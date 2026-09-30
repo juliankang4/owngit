@@ -322,3 +322,78 @@ func TestImportTabExplainsSettingRefusals(t *testing.T) {
 
 func boolRef(value bool) *bool       { return &value }
 func stringRef(value string) *string { return &value }
+
+// renderedOptionsURL is the options_url value of a rendered Import tab form.
+func renderedOptionsURL(t *testing.T, body string) string {
+	t.Helper()
+	const marker = `name="options_url" value="`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatal("the form has no options_url")
+	}
+	rest := body[start+len(marker):]
+	return html.UnescapeString(rest[:strings.Index(rest, `"`)])
+}
+
+// Without scripting, a choice changed together with a new address is consent
+// for it, and a refused change is redrawn for the submitted address with the
+// carried choices reset, so the owner can correct and save it.
+func TestImportTabNoScriptAddressChangeTakesNewChoices(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "noscript-admin")
+	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
+		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: importsync.ModeStandalone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	save := func(address, forURL string, plain bool) browserHTTPResult {
+		values := url.Values{
+			"csrf": {csrf}, "action": {webui.ActionImportConfigure}, "admin_password": {"admin-password"},
+			"url": {address}, "options_url": {forURL}, "mode": {"standalone"}, "redirects": {"refuse"},
+		}
+		if plain {
+			values.Set("allow_plain_http", "1")
+		}
+		return browserForm(t, client, server.URL+"/repositories/project/import", values, server.URL)
+	}
+	stored := func() (string, bool) {
+		source, _, err := fixture.app.Imports.Store.ImportSource(context.Background(), "project")
+		noErr(t, err)
+		return source.URL, source.Options.AllowPlainHTTP
+	}
+
+	// HTTPS to HTTP, choosing plain HTTP in the same submission.
+	first := "http://example.invalid/other/project.git"
+	form := browserGET(t, client, server.URL+"/repositories/project/import?setup=1")
+	if result := save(first, renderedOptionsURL(t, form.body), true); result.status != http.StatusSeeOther {
+		t.Fatalf("HTTP address with its consent: status=%d", result.status)
+	}
+	if address, plain := stored(); address != first || !plain {
+		t.Fatalf("stored %s plain=%v", address, plain)
+	}
+
+	// HTTP to another HTTP address: the plain HTTP choice drawn for the old
+	// address is carried, not given, so the save is refused and redrawn for
+	// the new address with the choice reset. Choosing it there saves.
+	second := "http://example.invalid/third/project.git"
+	form = browserGET(t, client, server.URL+"/repositories/project/import?setup=1")
+	if !strings.Contains(form.body, `name="allow_plain_http" value="1" checked`) {
+		t.Fatal("the saved plain HTTP choice is not drawn")
+	}
+	refused := save(second, renderedOptionsURL(t, form.body), true)
+	if refused.status != http.StatusUnprocessableEntity || renderedOptionsURL(t, refused.body) != second ||
+		strings.Contains(refused.body, `name="allow_plain_http" value="1" checked`) {
+		t.Fatalf("carried consent: status=%d, redrawn for %q", refused.status, renderedOptionsURL(t, refused.body))
+	}
+	if address, _ := stored(); address != first {
+		t.Fatalf("a refused change was stored: %s", address)
+	}
+	if result := save(second, renderedOptionsURL(t, refused.body), true); result.status != http.StatusSeeOther {
+		t.Fatalf("corrected save: status=%d", result.status)
+	}
+	if address, plain := stored(); address != second || !plain {
+		t.Fatalf("stored %s plain=%v", address, plain)
+	}
+}

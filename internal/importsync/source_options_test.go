@@ -94,6 +94,24 @@ func TestChangedURLResetsTransportConsentsAndKeepsLimits(t *testing.T) {
 	if !withConsent.Options.AllowPlainHTTP || withConsent.SourceGeneration != moved.SourceGeneration+1 {
 		t.Fatalf("new URL with consent = %+v", withConsent)
 	}
+	// A form repeats every saved choice: with a new URL, only the ones it
+	// changed count. The redirect policy and origin count together.
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{
+		AllowReservedAddresses: boolPointer(true), Redirects: stringPointer(state.ImportRedirectApproved), ApprovedRedirectOrigin: stringPointer("https://mirror.example"),
+	})
+	noErr(t, err)
+	repeated, err := f.service.ConfigureSource(ctx, ConfigureInput{
+		RepositoryID: "project", URL: "https://example.invalid/fourth/project.git", RepeatsSaved: true,
+		Options: OptionsChange{
+			AllowPlainHTTP: boolPointer(true), AllowReservedAddresses: boolPointer(true),
+			Redirects: stringPointer(state.ImportRedirectApproved), ApprovedRedirectOrigin: stringPointer("https://other.example"),
+		},
+	})
+	noErr(t, err)
+	if repeated.Options.AllowPlainHTTP || repeated.Options.AllowReservedAddresses ||
+		repeated.Options.Redirects != state.ImportRedirectApproved || repeated.Options.ApprovedRedirectOrigin != "https://other.example" {
+		t.Fatalf("repeated form choices = %+v", repeated.Options)
+	}
 }
 
 func TestOptionChangesAreCheckedAndStoredCanonically(t *testing.T) {
