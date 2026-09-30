@@ -1242,6 +1242,44 @@ A rename is also refused while the repository is busy: an import or a check runs
 - Backups keep each repository's name and earlier addresses, and a restore brings them back with the same end times.
 - The Settings tab can rename a repository only when OwnGit can read its Git data. When it cannot, use `owngit repo rename` or the API.
 
+### Share links
+
+A share link lets someone without an account read one repository, such as a recruiter, a contractor or a reviewer. Nothing is shared until an administrator creates a link.
+
+An administrator creates and revokes links under Share links on the repository's Settings tab. Each link has:
+
+- a **name**, which only administrators see, such as the person or company it is for (one line, at most 100 bytes);
+- an **access**: *Browse files and history*, or *Browse, and clone with Git*;
+- an **expiry**: after 1, 7, 30 (the default) or 90 days, or *Until revoked*;
+- an optional **extra password** (8 to 1024 characters) that visitors type before they see anything.
+
+After you create a link, OwnGit shows its address once, such as `https://HOST/share/SECRET`. OwnGit keeps only a SHA-256 fingerprint of the secret, so it cannot show the address again; if it is lost, create a new link and revoke the old one. The list shows each link's name, access, expiry, last use and state (active, expired or revoked), and the start of the address its visitor pages use (`/share/ID`). Revoking stops a link at once. Revoked and expired links stay in the list as a record.
+
+OwnGit warns, without refusing, when a link has no expiry, when it allows cloning (a copy cannot be taken back by revoking the link) and when it has no extra password.
+
+**What a visitor sees.** Opening the address sets a cookie for that link in the browser and moves to `/share/ID`, so the secret leaves the address bar. The visitor sees the repository's overview, files, README, commits of its branches and tags, and raw files, within the browsing limits. A visitor never sees other repositories, the dashboard, activity, pull requests, checks and their logs, kept history, import details, settings or any control that changes something. A commit that only kept history holds is not found. An unknown, expired or revoked link answers *not found*. With an extra password, a wrong password says so, and wrong passwords are counted per address under the [login attempt limits](#login-attempt-limits), apart from sign-in, so they never pause your own sign-in.
+
+**Cloning.** A clone link's page shows its Git address, `https://HOST/share/ID.git`. Git asks for a user name and password:
+
+- without an extra password, the password is the part of the share link after `/share/`, and any user name works;
+- with an extra password, the user name is the part after `/share/`, and the password is the extra password.
+
+Clone and fetch work; a push is refused. A wrong credential gets the same answer as any failed Git sign-in.
+
+**Renames, deletion and backups.** A link names its repository, not its address, so it keeps working after a rename. Deleting the repository deletes its links. Share links are not in backups: after a restore there are none, so create new ones.
+
+**Where the secret can appear.** Only the first request, `/share/SECRET`, carries the secret in its path. OwnGit does not log it and answers with a redirect to `/share/ID`; no later page, link or `Referer` header carries it (share pages send `Referrer-Policy: no-referrer`). A reverse proxy in front of OwnGit may still log that first path, so check its access log settings before sending links through it. For Git, the secret is the password, which Git's credential helper may store like any other password.
+
+On the command line, with the administrator password in `--password-file`:
+
+```sh
+owngit repo share list   --repository NAME
+owngit repo share create --repository NAME --label "Reviewer" [--scope browse|clone] [--days 30 | --until-revoked] [--link-password-file PATH]
+owngit repo share revoke --repository NAME --id ID
+```
+
+Inside a clone of the repository, `--server` and `--repository` come from its `origin` remote. `create` prints the link once, with its secret, in `url`, and for a clone link `clone_url` and `clone_sign_in`; `list` never prints a secret. The extra password is read from an owner-only file ([Password and token files](#password-and-token-files)). The owner API is `GET` and `POST /api/v1/repositories/NAME/share-links` (`label`, `scope`, `expires_in_days` or `until_revoked`, `password`) and `POST /api/v1/repositories/NAME/share-links/ID/revoke`, with the administrator password. The MCP server does not manage share links.
+
 ### Deleting a repository
 
 An administrator deletes a repository with Delete repository, at the end of the repository's tabs. The page asks you to type the repository's name, unless that is turned off (see below), and asks for the administrator password when Settings require it. You choose what happens to the files:
@@ -1249,7 +1287,7 @@ An administrator deletes a repository with Delete repository, at the end of the 
 - **Remove from OwnGit and keep the files** moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder (`ID` is the repository ID, the lowercase name it was created with, and the time is UTC). Its branches, tags and kept history stay there until you remove the folder yourself. Folders under `.owngit-removed` are never listed as repositories and are not in backups.
 - **Delete the files too** deletes the bare repository, including its kept history. Earlier backups still contain it, and the database space its records used is freed but not securely erased.
 
-Either way, deleting removes the repository's pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, and import settings and credentials. Queued check jobs are dropped, and the name is free again.
+Either way, deleting removes the repository's pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, share links, and import settings and credentials. Queued check jobs are dropped, and the name is free again.
 
 Typing the name is on by default. To delete without it, choose Do not ask under Deleting a repository on the Settings Repositories tab, or run `owngit settings set --delete-requires-name off`. The Delete page then shows the repository's name and asks you to check it, and a mistaken deletion no longer needs the name. `--delete-requires-name on` asks for it again. If the saved choice cannot be read, OwnGit deletes nothing and the Delete page says how to set it again.
 
