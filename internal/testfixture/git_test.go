@@ -14,7 +14,8 @@ func TestGitEnvironmentAppendsAfterExistingEntries(t *testing.T) {
 	got := GitEnvironment(env)
 	want := []string{"HOME=/h", "GIT_CONFIG_KEY_0=core.longpaths", "GIT_CONFIG_VALUE_0=true",
 		"GIT_CONFIG_KEY_1=maintenance.auto", "GIT_CONFIG_VALUE_1=false",
-		"GIT_CONFIG_KEY_2=gc.auto", "GIT_CONFIG_VALUE_2=0", "GIT_CONFIG_COUNT=3"}
+		"GIT_CONFIG_KEY_2=gc.auto", "GIT_CONFIG_VALUE_2=0",
+		"GIT_CONFIG_KEY_3=credential.helper", "GIT_CONFIG_VALUE_3=", "GIT_CONFIG_COUNT=4"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("GitEnvironment=%q, want %q", got, want)
 	}
@@ -22,18 +23,25 @@ func TestGitEnvironmentAppendsAfterExistingEntries(t *testing.T) {
 		t.Fatalf("GitEnvironment changed its input: %q", env)
 	}
 	if got := GitEnvironment(nil); !slices.Equal(got, []string{"GIT_CONFIG_KEY_0=maintenance.auto", "GIT_CONFIG_VALUE_0=false",
-		"GIT_CONFIG_KEY_1=gc.auto", "GIT_CONFIG_VALUE_1=0", "GIT_CONFIG_COUNT=2"}) {
+		"GIT_CONFIG_KEY_1=gc.auto", "GIT_CONFIG_VALUE_1=0",
+		"GIT_CONFIG_KEY_2=credential.helper", "GIT_CONFIG_VALUE_2=", "GIT_CONFIG_COUNT=3"}) {
 		t.Fatalf("GitEnvironment(nil)=%q", got)
 	}
 }
 
-// Git itself reads the settings, next to an entry that was already there.
+// Git itself reads the settings, next to an entry that was already there,
+// and the last credential helper it sees is the empty one, whatever helper
+// the user's configuration names.
 func TestGitEnvironmentTurnsOffAutomaticMaintenanceInGit(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not installed")
 	}
-	env := GitEnvironment(append(os.Environ(), "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=test.kept", "GIT_CONFIG_VALUE_0=yes"))
-	for name, want := range map[string]string{"maintenance.auto": "false", "gc.auto": "0", "test.kept": "yes"} {
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[credential]\n\thelper = store\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := GitEnvironment(append(os.Environ(), "GIT_CONFIG_GLOBAL="+global, "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=test.kept", "GIT_CONFIG_VALUE_0=yes"))
+	for name, want := range map[string]string{"maintenance.auto": "false", "gc.auto": "0", "test.kept": "yes", "credential.helper": ""} {
 		command := exec.Command("git", "config", "--get", name)
 		command.Env = env
 		output, err := command.Output()
