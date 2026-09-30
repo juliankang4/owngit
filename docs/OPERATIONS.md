@@ -590,7 +590,7 @@ The choice belongs to this installation host and is not in backups; a restored i
 
 ### OwnGit icon
 
-The OwnGit icon shows in the menu bar on macOS, in the notification area on Windows and in the desktop's panel on Linux; see [The icon on macOS](#the-icon-on-macos), [The icon on Windows](#the-icon-on-windows) and [The icon on Linux](#the-icon-on-linux).
+The OwnGit icon shows in the menu bar on macOS, in the notification area on Windows and in the desktop's panel on Linux; see [The icon on macOS](#the-icon-on-macos), [The icon on Windows](#the-icon-on-windows) and [The icon on Linux](#the-icon-on-linux). On all three it also shows [desktop notifications](#desktop-notifications) about pushes, pull requests, failed checks, imports and backups that did not finish, and new versions.
 
 The icon belongs to the computer that runs OwnGit and to the account that runs it. It shows by default on a computer with a desktop and never on one without, such as a server reached over SSH. When root installs OwnGit on Linux, the service runs as its own `owngit` account, which nobody signs in as at a desktop, so that kind of install has no icon; Settings and `owngit tray` say so. `owngit tray off` hides it on this computer until `owngit tray on` shows it again, also after signing in again or restarting. `owngit tray` (or `owngit tray status`) says whether it shows; `--json` prints `available` (false on an install without an icon), `shown` (false only when hidden), `desktop` (whether this computer has a desktop now), `state_dir`, `access_file` and `problem`, which says why the icon cannot show on this computer, or is empty. The switch "Show the OwnGit icon in the menu bar, notification area or panel" on the General tab of Settings does the same and asks for the administrator password like the other parts of Settings. It changes the icon of the computer that runs OwnGit, not of the computer your browser is on. Hiding the icon never stops OwnGit: Git and the dashboard keep working. The choice is the file `tray-hidden` in the state directory, so it belongs to this computer and is not in backups.
 
@@ -647,6 +647,38 @@ Other bars and scripts can show the same status with two commands, which read th
 - `owngit tray open --json` opens the dashboard after a fresh proof and prints `{"ok": true, "url": ...}`.
 
 Both accept `--state-dir`. When OwnGit does not answer or cannot prove its answer, `tray read` still succeeds and says so in `panel`: `condition` is `unavailable`, or `stopped` when the [checkup](#checkup) finds OwnGit stopped. A command that fails prints `{"ok": false, "error": {"code": ..., "message": ...}}` and exits with an error. Both commands give `tray_unavailable` for an install without an icon. Only `tray open` gives `status_unavailable`, when OwnGit did not prove its answer, and `open_failed`, when the browser could not start or its opener ended with a failure; in both cases no dashboard was opened. The [Omarchy bar widget](../integrations/omarchy/owngit.status/README.md) is built on these two commands.
+
+#### Desktop notifications
+
+The OwnGit icon tells you on this computer's desktop when something happens in OwnGit. Every kind is on by default:
+
+- Pushes, with the branch and the latest commit message. Pushes that arrive within a minute of the first one become one notification, also across repositories: "3 pushes", then "notes 2, household 1" and the latest one.
+- Pull requests opened.
+- Automatic checks that failed.
+- Imports that did not finish.
+- Backups that did not finish.
+- A new OwnGit version, with the command that updates this install. This one needs the [update check](#new-release-notice) to be on.
+
+A notification appears about one to one and a half minutes after the event. OwnGit waits a minute so that nothing recorded a moment late is missed, and the icon picks the event up at its next status read. When more than three of one other kind arrive at once, they become one notification that counts them, such as "4 imports did not finish".
+
+Clicking a notification opens its page in the dashboard: the branch's commits for a push, All activity for pushes to several repositories or a counted notification, the pull request, the repository's Checks tab (or the pull request, for a check that ran on one), the Import tab, Settings for a backup, and the home page for a new version. Before it opens the page, the icon checks again that OwnGit answers at its address, as Open dashboard does.
+
+The notification settings belong to this computer and stay after you sign in again or restart. "Show notifications" turns all of them on or off, and each kind has its own switch, which keeps its choice while all are off. You find them in the icon's panel: on macOS behind the gear button, on Windows under the Notifications button in the This computer part, and on Linux in the Notifications section. On the command line, `owngit tray notifications` prints them (as JSON with `--json`), and a setting followed by `on` or `off` changes one. The settings are `all`, `only_others`, `push`, `pull_request`, `check_failed`, `import_failed`, `backup_failed` and `update`:
+
+```sh
+owngit tray notifications push off
+owngit tray notifications only_others on
+```
+
+"Only what I did not do" (`only_others`) is off by default. When you turn it on, pushes, pull requests and imports that came from this computer are not shown. This computer is the one that runs OwnGit, so, for example, a push from its Git or a pull request opened in its browser counts. A request that reaches OwnGit through a reverse proxy counts as coming from another computer. Pushes and pull requests from other devices then say so: "Pushed from another computer" or "Opened from another computer". This setting does not affect failed checks, backups and new versions. OwnGit remembers where something came from only while it runs, so something you did on this computer just before OwnGit restarted can still show once.
+
+Nothing shows while the icon is hidden, while "Show notifications" is off, or for a kind that is off, and what happened in the meantime is not shown later. When the icon starts for the first time or is shown again, it starts from that moment. A quit icon is different: when it starts again, it shows what happened while it was closed, up to the latest 100 pushes that OwnGit keeps.
+
+The notification settings of the operating system apply as well, such as Do not disturb or notifications turned off for OwnGit:
+
+- **macOS**: notifications appear in Notification Center. macOS asks for permission the first time there is something to show. When OwnGit's notifications are off in System Settings, Notifications, the panel says so and has a button that opens that page.
+- **Windows**: the notifications are notification area balloons, which Windows 11 shows as notifications from "owngit.exe". With Do not disturb on, Windows shows nothing and keeps nothing for later, and Notification center does not keep them after they appear. Windows treats every balloon this way; it is not an OwnGit setting. Windows also does not tell the icon which notification you clicked, so a click opens a page that fits all the notifications shown so far: their common page, All activity when they are all pushes, and otherwise the dashboard home page.
+- **Linux**: the desktop needs a notification service. GNOME and Omarchy have one.
 
 ## Reaching the server from another device
 

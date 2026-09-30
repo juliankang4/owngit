@@ -161,6 +161,8 @@ On a Mac with a desktop the command also opens the OwnGit icon in the menu bar, 
 
 On a Linux desktop the command also shows the OwnGit icon in the panel, and the icon then starts whenever you sign in. Open it for the status, the clone address and the latest pushes. GNOME shows the icon only with its AppIndicator extension. See [The icon on Linux](docs/OPERATIONS.md#the-icon-on-linux).
 
+On all three systems the icon also shows desktop notifications for pushes, new pull requests, failed checks, imports and backups that did not finish, and new OwnGit versions; click one to open its page. See [Desktop notifications](docs/OPERATIONS.md#desktop-notifications).
+
 ### Run in the foreground
 
 To run OwnGit in a terminal instead of as a service:
