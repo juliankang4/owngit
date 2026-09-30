@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"owngit/internal/apiclient"
 	"owngit/internal/auth"
 	"owngit/internal/recovery"
+	"owngit/internal/service"
 	"owngit/internal/state"
 )
 
@@ -185,5 +187,52 @@ func TestInterruptedCodedErrorIsWrittenAndExits130(t *testing.T) {
 	var reported strings.Builder
 	if code := reportError(&reported, err); code != 130 || !strings.Contains(reported.String(), `"code":"interrupted"`) {
 		t.Fatalf("exit=%d reported=%q", code, reported.String())
+	}
+}
+
+// When an elevated Windows command cannot start its copy without
+// administrator rights, a command given --json still prints a coded JSON
+// error, and a text command still gets the plain error; the exit status of
+// a copy that ran is passed on unchanged.
+func TestFailedStartWithoutAdminRightsIsAJSONError(t *testing.T) {
+	previousProbe, previousRun := probeEnvironment, runWithoutAdminRights
+	t.Cleanup(func() { probeEnvironment, runWithoutAdminRights = previousProbe, previousRun })
+	probeEnvironment = func() service.Environment { return service.Environment{Windows: true, Elevated: true} }
+	runWithoutAdminRights = func([]string) (int, error) { return 0, errors.New("synthetic launch failure") }
+	for _, command := range []string{"backup", "restore"} {
+		arguments := []string{command, "--state-dir", filepath.Join(t.TempDir(), "state")}
+		printed, err := captureStdout(func() error { return run(append(arguments, "--json")) })
+		var reported strings.Builder
+		var answer struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if exit := reportError(&reported, err); exit != 1 || printed != "" || json.Unmarshal([]byte(reported.String()), &answer) != nil ||
+			answer.OK || answer.Error.Code != "privilege_drop_failed" || !strings.Contains(answer.Error.Message, "synthetic launch failure") {
+			t.Fatalf("%s --json: printed=%q reported=%q exit=%d err=%v", command, printed, reported.String(), exit, err)
+		}
+		err = run(arguments)
+		var coded interface{ ErrorCode() string }
+		if err == nil || errors.As(err, &coded) {
+			t.Fatalf("%s without --json err=%v", command, err)
+		}
+	}
+	runWithoutAdminRights = func([]string) (int, error) { return 3, nil }
+	var reported strings.Builder
+	if exit := reportError(&reported, run([]string{"restore", "--json"})); exit != 3 || reported.String() != "" {
+		t.Fatalf("copy exit=%d reported=%q", exit, reported.String())
+	}
+}
+
+// A JSON error keeps the context that wraps its coded error, such as the
+// command that runs it as the state's owner.
+func TestJSONErrorKeepsWrappedContext(t *testing.T) {
+	var reported strings.Builder
+	err := fmt.Errorf("%w: sudo -u owngit owngit backup", cliProblem("state_unavailable", "the state belongs to another account"))
+	if !writeStructuredCommandError(&reported, err) || !strings.Contains(reported.String(), "the state belongs to another account: sudo -u owngit owngit backup") {
+		t.Fatalf("reported %q", reported.String())
 	}
 }

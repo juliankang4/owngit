@@ -469,7 +469,9 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 	if !errors.As(err, &coded) {
 		return false
 	}
-	description := pullrequest.ErrorDescription{Code: coded.ErrorCode(), Message: coded.Error()}
+	// The message is the whole error, so context that wraps the coded
+	// error, such as how to run the command as another account, stays.
+	description := pullrequest.ErrorDescription{Code: coded.ErrorCode(), Message: err.Error()}
 	description.Details = coded.ErrorDetails()
 	encoded, _ := bidi.MarshalJSON(pullrequest.ErrorEnvelope{OK: false, Error: description})
 	_, _ = writer.Write(append(encoded, '\n'))

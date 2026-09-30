@@ -335,7 +335,7 @@ func stateCommandWithoutAdminRights(command string, arguments []string) (bool, e
 	}
 	code, err := runWithoutAdminRights(append([]string{command}, arguments...))
 	if err != nil {
-		return true, fmt.Errorf("run owngit without administrator rights: %w", err)
+		return true, jsonFailure(jsonRequested(arguments), "privilege_drop_failed", fmt.Errorf("run owngit without administrator rights: %w", err))
 	}
 	if code != 0 {
 		return true, &checkExit{code: code, err: fmt.Errorf("exit status %d", code)}

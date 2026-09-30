@@ -130,7 +130,7 @@ func run(arguments []string) error {
 			}
 			dropped, err := actAsStateOwner(stateDir)
 			if err != nil {
-				return err
+				return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 			}
 			if dropped {
 				return accountPathHint(runCommand(command, arguments))
