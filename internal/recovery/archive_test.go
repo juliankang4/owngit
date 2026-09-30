@@ -145,34 +145,50 @@ func TestRestoreLimitOfAnOrdinaryFolder(t *testing.T) {
 	}
 }
 
-// A held backup is verified only as itself: when another backup takes its
-// folder's name after it was opened, the verification fails.
+// A held backup is verified only as itself: through the folder that was
+// opened, whatever its name leads to later, and only while its manifest is
+// the one that was opened.
 func TestHeldBackupVerifiesOnlyAsItself(t *testing.T) {
 	root := t.TempDir()
-	for _, dir := range []string{"one", "two"} {
-		noErr(t, os.Mkdir(filepath.Join(root, dir), 0o700))
-	}
-	first := newTwoRepositoryBackup(t, filepath.Join(root, "one"))
-	second := newTwoRepositoryBackup(t, filepath.Join(root, "two"))
-	folder, err := OpenBackupFolder(filepath.Dir(first))
+	backup := newTwoRepositoryBackup(t, root)
+	folder, err := OpenBackupFolder(root)
 	noErr(t, err)
 	defer folder.Close()
-	opened, err := folder.Open(filepath.Base(first))
+	opened, err := folder.Open(filepath.Base(backup))
 	noErr(t, err)
 	defer opened.Close()
-	if result, err := opened.Verify(context.Background(), filepath.Join(root, "rehearsal"), ""); err != nil || !result.Verified {
-		t.Fatalf("the held backup did not verify: %v %+v", err, result)
+	rehearsal := filepath.Join(t.TempDir(), "rehearsal")
+	verifies := func(want bool, there bool) {
+		t.Helper()
+		result, err := opened.Verify(context.Background(), rehearsal, "")
+		if want && (err != nil || !result.Verified) {
+			t.Fatalf("the held backup did not verify: %v %+v", err, result)
+		}
+		if !want && !errors.Is(err, ErrReplaced) {
+			t.Fatalf("verification of a changed manifest: %v", err)
+		}
+		if still, err := opened.StillThere(); err != nil || still != there {
+			t.Fatalf("still there=%v err=%v, want %v", still, err, there)
+		}
 	}
-	if err := os.Rename(first, first+".aside"); err != nil && runtime.GOOS == "windows" {
-		// Windows keeps a held folder from being renamed at all.
-		return
-	} else {
-		noErr(t, err)
-	}
-	noErr(t, os.Rename(second, first))
-	if _, err := opened.Verify(context.Background(), filepath.Join(root, "rehearsal"), ""); !errors.Is(err, ErrReplaced) {
-		t.Fatalf("verification of another backup at the name: %v", err)
-	}
+	verifies(true, true)
+
+	// The name leads nowhere, then to a folder with a broken manifest.
+	aside := backup + ".aside"
+	noErr(t, os.Rename(backup, aside))
+	verifies(true, false)
+	noErr(t, os.Mkdir(backup, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(backup, manifestName), []byte("{"), 0o600))
+	verifies(true, false)
+
+	// The held folder's own manifest changes, then goes.
+	manifest := filepath.Join(aside, manifestName)
+	content, err := os.ReadFile(manifest)
+	noErr(t, err)
+	noErr(t, os.WriteFile(manifest, append(content, '\n'), 0o600))
+	verifies(false, false)
+	noErr(t, os.Remove(manifest))
+	verifies(false, false)
 }
 
 // openedBackup is a backup opened in its folder, closed with the test.

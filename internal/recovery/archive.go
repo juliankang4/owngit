@@ -97,24 +97,12 @@ func openFolder(dir *os.Root, backup, name string) (*os.Root, error) {
 // archiveFile writes the regular file name of dir into archive as the
 // entry entry of the backup, and what it wrote into also.
 func (c *BackupCopy) archiveFile(ctx context.Context, archive *tar.Writer, dir *os.Root, name, entry string, modified time.Time, also io.Writer) error {
-	named, err := dir.Lstat(name)
+	file, opened, err := openRegular(dir, name)
 	if err != nil {
-		return err
-	}
-	if !named.Mode().IsRegular() {
-		return fmt.Errorf("%s in %s is not a regular file", entry, c.name)
-	}
-	file, err := dir.Open(name)
-	if err != nil {
-		return err
+		return fmt.Errorf("%s in %s: %w", entry, c.name, err)
 	}
 	defer file.Close()
-	if opened, err := file.Stat(); err != nil {
-		return err
-	} else if !os.SameFile(named, opened) {
-		return fmt.Errorf("%s in %s changed while it was opened", entry, c.name)
-	}
-	size := named.Size()
+	size := opened.Size()
 	if err := archive.WriteHeader(&tar.Header{Typeflag: tar.TypeReg, Name: path.Join(c.name, entry), Size: size, Mode: 0o600, ModTime: modified, Format: tar.FormatPAX}); err != nil {
 		return err
 	}

@@ -285,12 +285,33 @@ func RestoreLimit(dir string) (string, error) {
 // it was read than the one that was opened.
 var ErrReplaced = errors.New("the folder holds another backup than the one that was opened")
 
-// Verify verifies the backup as Verify does, while it stays held, and only
-// as the backup that was opened: its manifest must have ManifestSHA256,
-// and the manifest's digests bind every bundle to it. A folder that holds
-// another backup by the time it is read fails with ErrReplaced.
+// Verify verifies the backup as Verify does, reading it only through the
+// folder Open held, and only as the backup that was opened: its manifest
+// must still have ManifestSHA256, and the manifest's digests bind every
+// bundle to it. A manifest that changed or can no longer be read fails
+// with ErrReplaced. Whether the folder's name still leads to this folder
+// is for the caller to ask (BackupCopy.StillThere).
 func (c *BackupCopy) Verify(ctx context.Context, temporary, gitPath string) (Verification, error) {
+	input := &backupInput{path: filepath.Join(c.folder.area.Dir(), c.name), root: c.dir, borrowed: true}
+	defer input.Close()
 	operations := defaultRestoreOperations()
-	operations.manifestSHA256 = c.ManifestSHA256
-	return verify(ctx, filepath.Join(c.folder.area.Dir(), c.name), temporary, gitPath, operations)
+	operations.input, operations.manifestSHA256 = input, c.ManifestSHA256
+	return verify(ctx, input.path, temporary, gitPath, operations)
+}
+
+// StillThere reports whether the backup's name in its folder still leads
+// to the very folder Open held, not a link, another folder or nothing.
+func (c *BackupCopy) StillThere() (bool, error) {
+	named, err := c.folder.root.Lstat(c.name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	held, err := c.dir.Stat(".")
+	if err != nil {
+		return false, err
+	}
+	return named.IsDir() && os.SameFile(named, held), nil
 }

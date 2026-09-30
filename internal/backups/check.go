@@ -149,17 +149,23 @@ func (s *Service) StartCheck(ctx context.Context, id string) (Check, error) {
 }
 
 // finishCheck verifies backup, the held backup of run, and records the
-// result. A folder that holds another backup records nothing for run.
+// result only while it is provably that backup: its manifest is still the
+// run's, and its path still leads to it. Otherwise nothing is recorded for
+// run, whatever the path holds now.
 func (s *Service) finishCheck(ctx context.Context, run state.BackupRun, backup *recovery.BackupCopy, check *Check) {
 	status, message, verification := CheckPassed, "", state.BackupVerifyPassed
 	err := s.verifyWith(ctx, func(ctx context.Context, gitPath string) (recovery.Verification, error) {
 		return backup.Verify(ctx, "", gitPath)
 	})
+	there, thereErr := backup.StillThere()
+	const notThere = "The backup's folder no longer holds this backup (it was moved, removed, changed or replaced by another backup), so nothing was recorded for it."
 	switch {
 	case ctx.Err() != nil:
 		status, message, verification = CheckFailed, "OwnGit stopped before the verification finished.", ""
-	case errors.Is(err, recovery.ErrReplaced):
-		status, message, verification = CheckFailed, "The backup folder holds another backup now, so nothing was recorded for this one.", ""
+	case thereErr != nil:
+		status, message, verification = CheckFailed, joinSentences(notThere, thereErr.Error()), ""
+	case errors.Is(err, recovery.ErrReplaced) || !there:
+		status, message, verification = CheckFailed, notThere, ""
 	case err != nil:
 		status, message, verification = CheckFailed, err.Error(), state.BackupVerifyFailed
 	}

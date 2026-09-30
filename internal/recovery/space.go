@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 )
@@ -49,16 +47,17 @@ func mebibytes(size uint64) uint64 {
 // system has less room than they need at least (roomNeeded). The sizes are
 // those of the files now; a bundle that cannot be inspected is left to the
 // restore to report.
-func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error {
+func checkSpace(input *backupInput, dir string, repositories []RepositoryManifest) error {
 	var sizes []uint64
 	for _, item := range repositories {
 		if item.Empty {
 			continue
 		}
-		info, err := os.Lstat(filepath.Join(inputRoot, filepath.FromSlash(item.Bundle)))
-		if err != nil || !info.Mode().IsRegular() {
+		file, info, err := input.openBundle(item)
+		if err != nil {
 			continue
 		}
+		file.Close()
 		sizes = append(sizes, uint64(info.Size()))
 	}
 	return CheckFreeSpace(dir, roomNeeded(sizes))

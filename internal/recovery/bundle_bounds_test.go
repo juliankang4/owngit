@@ -62,11 +62,14 @@ func TestVerifyRefusesAPlaceWithoutRoom(t *testing.T) {
 func TestBundleCopyStopsWhenCancelled(t *testing.T) {
 	inputRoot, stage := t.TempDir(), t.TempDir()
 	noErr(t, os.Mkdir(filepath.Join(inputRoot, "repositories"), 0o700))
+	input, err := openBackupInput(inputRoot)
+	noErr(t, err)
+	defer input.Close()
 	noErr(t, os.WriteFile(filepath.Join(inputRoot, "repositories", "project.bundle"), make([]byte, 1<<20), 0o600))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	item := RepositoryManifest{ID: "project", Bundle: "repositories/project.bundle"}
-	if _, err := copyBundle(ctx, inputRoot, stage, item); !errors.Is(err, context.Canceled) {
+	if _, err := copyBundle(ctx, input, stage, item); !errors.Is(err, context.Canceled) {
 		t.Fatalf("copy error=%v, want cancellation", err)
 	}
 	assertEmpty(t, stage)
@@ -76,7 +79,7 @@ func TestBundleCopyStopsWhenCancelled(t *testing.T) {
 		link := filepath.Join(inputRoot, "repositories", "link.bundle")
 		noErr(t, os.Symlink(filepath.Join(inputRoot, "repositories", "project.bundle"), link))
 		item = RepositoryManifest{ID: "link", Bundle: "repositories/link.bundle"}
-		if _, err := copyBundle(context.Background(), inputRoot, stage, item); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		if _, err := copyBundle(context.Background(), input, stage, item); err == nil || !strings.Contains(err.Error(), "not a regular file") {
 			t.Fatalf("copy of a link: %v", err)
 		}
 		assertEmpty(t, stage)

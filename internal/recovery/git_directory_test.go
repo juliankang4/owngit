@@ -71,7 +71,10 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 
 	repositoryStage := recoveryRepositoryRootAtLength(t, 250, "project")
 	restoreRunner := &recordingRecoveryRunner{delegate: runner}
-	noErr(t, restoreRepository(ctx, restoreRunner, backup, repositoryStage, manifest.Repositories[0]))
+	input, err := openBackupInput(backup)
+	noErr(t, err)
+	defer input.Close()
+	noErr(t, restoreRepository(ctx, restoreRunner, input, repositoryStage, manifest.Repositories[0]))
 	restoredPath := filepath.Join(repositoryStage, "project.git")
 	if len(restoredPath) != 250 {
 		t.Fatalf("restored bare path length=%d want=250", len(restoredPath))

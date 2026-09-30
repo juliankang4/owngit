@@ -578,9 +578,13 @@ type restoreOperations struct {
 	// rehearsal, set by Verify, is told what the backup holds and how each
 	// repository's checks ended.
 	rehearsal *Verification
+	// input, when set, is the backup folder already held, which restore
+	// reads instead of opening its path.
+	input *backupInput
 	// manifestSHA256, when set, is the SHA-256 the manifest must have: the
 	// backup is then that one backup, whose bundles the manifest's digests
-	// bind to it, whatever its folder holds by the time it is read.
+	// bind to it. A manifest that cannot be read or differs fails with
+	// ErrReplaced, since the folder no longer holds that backup.
 	manifestSHA256 string
 }
 
@@ -632,10 +636,15 @@ func absentPath(path string) bool {
 }
 
 func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath string, operations restoreOperations) error {
-	inputRoot, err := checkedInputRoot(input)
-	if err != nil {
-		return err
+	source := operations.input
+	if source == nil {
+		var err error
+		if source, err = openBackupInput(input); err != nil {
+			return err
+		}
+		defer source.Close()
 	}
+	inputRoot := source.path
 	// Both destinations are held until restore returns; see
 	// state.Destination for why their stages are then used by path.
 	stateDestination, err := state.OpenStateDestination(stateDirectory)
@@ -670,12 +679,15 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		return err
 	}
 
-	manifest, digest, err := readManifestDigest(filepath.Join(inputRoot, manifestName))
+	manifest, digest, err := source.readManifest()
+	if operations.manifestSHA256 != "" && (err != nil || digest != operations.manifestSHA256) {
+		if err == nil {
+			err = errors.New("its manifest is another one")
+		}
+		return fmt.Errorf("%s: %w: %v", input, ErrReplaced, err)
+	}
 	if err != nil {
 		return err
-	}
-	if operations.manifestSHA256 != "" && digest != operations.manifestSHA256 {
-		return fmt.Errorf("%s: %w", input, ErrReplaced)
 	}
 	if err := validateManifest(manifest); err != nil {
 		return err
@@ -687,7 +699,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	// A restore that the repository folder has no room for is refused
 	// before anything is created, and says so; it is no defect of the
 	// backup.
-	if err := checkSpace(inputRoot, filepath.Dir(repositoryTarget), manifest.Repositories); err != nil {
+	if err := checkSpace(source, filepath.Dir(repositoryTarget), manifest.Repositories); err != nil {
 		return err
 	}
 
@@ -727,7 +739,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := restoreRepository(ctx, runner, inputRoot, repositoryStage, item)
+		err := restoreRepository(ctx, runner, source, repositoryStage, item)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -970,24 +982,15 @@ func repositoryFailure(id string, err error) error {
 // unless it is the regular file that the path named before the open, not a
 // link; exactly the size it had at the open is read, so a file that grows
 // cannot keep the check going. The copy stops when ctx ends.
-func copyBundle(ctx context.Context, inputRoot, repositoryStage string, item RepositoryManifest) (string, error) {
-	bundlePath := filepath.Join(inputRoot, filepath.FromSlash(item.Bundle))
-	named, err := os.Lstat(bundlePath)
-	if err != nil {
-		return "", fmt.Errorf("inspect bundle: %w", err)
+func copyBundle(ctx context.Context, input *backupInput, repositoryStage string, item RepositoryManifest) (string, error) {
+	source, opened, err := input.openBundle(item)
+	if errors.Is(err, errNotRegular) {
+		return "", errors.New("bundle is not a regular file")
 	}
-	source, err := os.Open(bundlePath)
 	if err != nil {
 		return "", fmt.Errorf("open bundle: %w", err)
 	}
 	defer source.Close()
-	opened, err := source.Stat()
-	if err != nil {
-		return "", fmt.Errorf("inspect bundle: %w", err)
-	}
-	if !named.Mode().IsRegular() || !os.SameFile(named, opened) {
-		return "", errors.New("bundle is not a regular file")
-	}
 	copyPath := filepath.Join(repositoryStage, "."+item.ID+".bundle")
 	target, err := state.CreatePrivateFile(copyPath)
 	if err != nil {
@@ -1081,7 +1084,7 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 // import verification does; a full fsck would also refuse history that
 // OwnGit accepts on push and import, such as a commit with a malformed time
 // zone.
-func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, repositoryStage string, item RepositoryManifest) error {
+func restoreRepository(ctx context.Context, runner commandRunner, input *backupInput, repositoryStage string, item RepositoryManifest) error {
 	repositoryPath := filepath.Join(repositoryStage, item.ID+".git")
 	objectFormat := repository.ObjectFormatSHA1
 	if item.ObjectFormat != "" {
@@ -1090,7 +1093,7 @@ func restoreRepository(ctx context.Context, runner commandRunner, inputRoot, rep
 	var bundlePath string
 	if !item.Empty {
 		var err error
-		if bundlePath, err = copyBundle(ctx, inputRoot, repositoryStage, item); err != nil {
+		if bundlePath, err = copyBundle(ctx, input, repositoryStage, item); err != nil {
 			return err
 		}
 		defer os.Remove(bundlePath)
@@ -1369,35 +1372,19 @@ func manifestFields() []manifestField {
 }
 
 func readManifest(manifestPath string) (Manifest, error) {
-	manifest, _, err := readManifestDigest(manifestPath)
-	return manifest, err
-}
-
-// readManifestDigest reads the manifest at manifestPath and returns the
-// SHA-256 of the whole file with it.
-func readManifestDigest(manifestPath string) (Manifest, string, error) {
 	if err := requireRegularFile(manifestPath); err != nil {
-		return Manifest{}, "", err
+		return Manifest{}, err
 	}
 	file, err := os.Open(manifestPath)
 	if err != nil {
-		return Manifest{}, "", err
+		return Manifest{}, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Manifest{}, "", err
+		return Manifest{}, err
 	}
-	digest := sha256.New()
-	content := io.TeeReader(file, digest)
-	manifest, err := decodeManifest(content, info.Size(), manifestLimit)
-	if err == nil {
-		_, err = io.Copy(io.Discard, content)
-	}
-	if err != nil {
-		return Manifest{}, "", err
-	}
-	return manifest, hex.EncodeToString(digest.Sum(nil)), nil
+	return decodeManifest(file, info.Size(), manifestLimit)
 }
 
 // decodeManifest reads a manifest of size bytes with memory bounded by its

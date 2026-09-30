@@ -6,9 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/recovery"
 	"owngit/internal/state"
@@ -194,54 +194,68 @@ func TestUploadedBackupIsVerifiedAndReplacedOrRemoved(t *testing.T) {
 }
 
 // exchange swaps the folders of two backups by name. It says false when
-// Windows keeps the first from being renamed because OwnGit holds it.
-func exchange(t *testing.T, first, second string) bool {
-	t.Helper()
-	aside := first + ".aside"
-	if err := os.Rename(first, aside); err != nil && runtime.GOOS == "windows" {
-		return false
-	} else {
-		noErr(t, err)
-	}
-	noErr(t, os.Rename(second, first))
-	noErr(t, os.Rename(aside, second))
-	return true
-}
+// A backup verified again is recorded only as itself: when its folder is
+// moved, exchanged with another backup's, replaced by a folder with a
+// broken manifest, or its manifest changes after the check was started,
+// the check fails, says so, and its run keeps the result it had.
+func TestCheckRecordsNothingForABackupNoLongerThere(t *testing.T) {
+	for _, change := range []string{"exchanged", "moved", "broken manifest at the name", "manifest changed"} {
+		t.Run(change, func(t *testing.T) {
+			f := newFixture(t)
+			f.configure(t, ScheduleChange{})
+			first := f.backUpNow(t)
+			if first.Verification != state.BackupVerifyPassed {
+				t.Fatalf("first backup recorded %q", first.Verification)
+			}
+			// The second backup holds another commit, so no bundle of it
+			// passes for one of the first.
+			work := filepath.Join(filepath.Dir(f.store.Dir()), "work")
+			noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("changed"), 0o600))
+			git(t, work, "commit", "-am", "changed")
+			remote, err := f.manager.Path("project")
+			noErr(t, err)
+			git(t, work, "push", remote, "HEAD:refs/heads/main")
+			second := f.backUpNow(t)
 
-// A backup whose folder another backup takes the name of while it is
-// verified again is not recorded as verified by the other backup.
-func TestCheckRecordsNothingForAnExchangedBackup(t *testing.T) {
-	f := newFixture(t)
-	f.configure(t, ScheduleChange{})
-	first := f.backUpNow(t)
-	// The second backup holds another commit, so no bundle of it passes
-	// for one of the first.
-	work := filepath.Join(filepath.Dir(f.store.Dir()), "work")
-	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("changed"), 0o600))
-	git(t, work, "commit", "-am", "changed")
-	remote, err := f.manager.Path("project")
-	noErr(t, err)
-	git(t, work, "push", remote, "HEAD:refs/heads/main")
-	second := f.backUpNow(t)
-	noErr(t, f.store.RecordBackupVerification(context.Background(), first.ID, state.BackupVerifyFailed))
-
-	_, err = f.service.StartCheck(context.Background(), first.ID)
-	noErr(t, err)
-	if !exchange(t, runPath(first), runPath(second)) {
-		f.waitForTask(t)
-		if recorded := f.run(t, first.ID); recorded.Verification != state.BackupVerifyPassed {
-			t.Fatalf("the held backup, which could not be exchanged, was recorded %q", recorded.Verification)
-		}
-		return
-	}
-	f.waitForTask(t)
-	status, err := f.service.Status(context.Background())
-	noErr(t, err)
-	if status.Check.Status != CheckFailed || !strings.Contains(status.Check.Message, "another backup") {
-		t.Fatalf("check of an exchanged backup: %+v", status.Check)
-	}
-	if recorded := f.run(t, first.ID); recorded.Verification != state.BackupVerifyFailed {
-		t.Fatalf("the exchanged backup was recorded %q", recorded.Verification)
+			// The check reads the clock once it holds the backup and
+			// before it verifies it: the change is made then.
+			path, aside := runPath(first), runPath(first)+".aside"
+			changed := false
+			f.service.Now = func() time.Time {
+				if !changed {
+					changed = true
+					switch change {
+					case "exchanged":
+						noErr(t, os.Rename(path, aside))
+						noErr(t, os.Rename(runPath(second), path))
+						noErr(t, os.Rename(aside, runPath(second)))
+					case "moved":
+						noErr(t, os.Rename(path, aside))
+					case "broken manifest at the name":
+						noErr(t, os.Rename(path, aside))
+						noErr(t, os.Mkdir(path, 0o700))
+						noErr(t, os.WriteFile(filepath.Join(path, "manifest.json"), []byte("{"), 0o600))
+					case "manifest changed":
+						manifest := filepath.Join(path, "manifest.json")
+						content, err := os.ReadFile(manifest)
+						noErr(t, err)
+						noErr(t, os.WriteFile(manifest, append(content, '\n'), 0o600))
+					}
+				}
+				return f.clock.Now()
+			}
+			_, err = f.service.StartCheck(context.Background(), first.ID)
+			noErr(t, err)
+			f.waitForTask(t)
+			status, err := f.service.Status(context.Background())
+			noErr(t, err)
+			if status.Check.Status != CheckFailed || !strings.Contains(status.Check.Message, "no longer holds this backup") {
+				t.Fatalf("check of a backup no longer there: %+v", status.Check)
+			}
+			if recorded := f.run(t, first.ID); recorded.Verification != state.BackupVerifyPassed {
+				t.Fatalf("the backup no longer there was recorded %q", recorded.Verification)
+			}
+		})
 	}
 }
 
