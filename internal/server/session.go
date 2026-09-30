@@ -527,6 +527,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgCCSavedEnabled)}
 	case "checks_enabled":
 		return []webui.Notice{webui.Success(webui.MsgCCEnabled)}
+	case "check_policy_saved_turned_on":
+		return []webui.Notice{webui.Success(webui.MsgCCSavedTurnedOn)}
 	case "checks_disabled":
 		return []webui.Notice{webui.Success(webui.MsgCCDisabled)}
 	case "check_job_cancelled":

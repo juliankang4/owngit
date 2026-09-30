@@ -126,6 +126,25 @@ func networkName(network string) MessageCode {
 		return MsgCCNetworkNone
 	case ContainerNetworkBridge:
 		return MsgCCNetworkBridge
+	case ContainerNetworkNamed:
+		return MsgCCNetworkNamed
+	default:
+		return MsgEvidenceUnknownState
+	}
+}
+
+// containerLimitLabel names a resource limit the policy may accept as not
+// enforced.
+func containerLimitLabel(limit string) MessageCode {
+	switch limit {
+	case "memory":
+		return MsgCCMemory
+	case "swap":
+		return MsgCCSwap
+	case "cpu":
+		return MsgCCCPU
+	case "pids":
+		return MsgCCPIDs
 	default:
 		return MsgEvidenceUnknownState
 	}

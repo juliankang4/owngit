@@ -29,6 +29,12 @@ const (
 	PolicyFieldContainerPIDs         = "container_pids"
 	PolicyFieldContainerScratchBytes = "container_scratch_bytes"
 
+	PolicyFieldContainerAllowTags          = "container_allow_tags"
+	PolicyFieldContainerPullMissing        = "container_pull_missing"
+	PolicyFieldContainerMissingEnforcement = "container_missing_enforcement"
+	PolicyFieldContainerImageVolumes       = "container_image_volumes"
+	PolicyFieldContainerWritableRoot       = "container_writable_root"
+
 	PolicyFieldSourceMaxEntries    = "source_max_entries"
 	PolicyFieldSourceMaxFileBytes  = "source_max_file_bytes"
 	PolicyFieldSourceMaxTotalBytes = "source_max_total_bytes"
@@ -40,12 +46,14 @@ const (
 
 // Backend rule names.
 const (
-	PolicyRuleRange         = "range"
-	PolicyRuleRequired      = "required"
-	PolicyRuleUnknown       = "unknown"
-	PolicyRuleFormat        = "format"
-	PolicyRuleNotApplicable = "not_applicable"
-	PolicyRuleDuplicate     = "duplicate"
+	PolicyRuleRange           = "range"
+	PolicyRuleRequired        = "required"
+	PolicyRuleUnknown         = "unknown"
+	PolicyRuleFormat          = "format"
+	PolicyRuleNotApplicable   = "not_applicable"
+	PolicyRuleDuplicate       = "duplicate"
+	PolicyRuleForbidden       = "forbidden"
+	PolicyRuleNeedsRepository = "needs_repository"
 )
 
 // policyFormFields maps a backend field to the control that carries it.
@@ -71,6 +79,12 @@ var policyFormFields = map[string]string{
 	PolicyFieldContainerMemoryBytes:  "container_memory_bytes",
 	PolicyFieldContainerPIDs:         "container_pids",
 	PolicyFieldContainerScratchBytes: "container_scratch_bytes",
+
+	PolicyFieldContainerAllowTags:          "container_allow_tags",
+	PolicyFieldContainerPullMissing:        "container_pull_missing",
+	PolicyFieldContainerMissingEnforcement: "container_missing_enforcement",
+	PolicyFieldContainerImageVolumes:       "container_image_volumes",
+	PolicyFieldContainerWritableRoot:       "container_writable_root",
 
 	PolicyFieldSourceMaxEntries:    "source_max_entries",
 	PolicyFieldSourceMaxFileBytes:  "source_max_file_bytes",
@@ -129,6 +143,13 @@ func policyRuleMessage(field, rule string) MessageCode {
 		return MsgCCFieldNotApplicable
 	case PolicyRuleDuplicate:
 		return MsgCCFieldDuplicate
+	case PolicyRuleForbidden:
+		if field == PolicyFieldContainerNetwork {
+			return MsgCCNetworkHost
+		}
+		return MsgCCFieldForbidden
+	case PolicyRuleNeedsRepository:
+		return MsgCCPullNeedsName
 	case PolicyRuleRange:
 		if field == PolicyFieldSourceMaxTotalBytes {
 			// This field's floor moves with the file limit above it, so the

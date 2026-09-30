@@ -212,7 +212,6 @@
   <div class="card ccflow">
     <form class="form form--wide ccform" method="post" action="{{$p.SubmitURL}}">
       <input type="hidden" name="csrf" value="{{$csrf}}">
-      <input type="hidden" name="action" value="{{$act}}">
 
       <section class="ccstep" aria-labelledby="cc-step-where">
         <h2 class="ccstep__h" id="cc-step-where"><span class="ccstep__n" aria-hidden="true">1</span><span class="visually-hidden">{{stepNumber $lang 1}}: </span>{{bi $lang "cc.step.where"}}</h2>
@@ -257,21 +256,44 @@
             {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_image"}}
             <p class="f__help">{{bi $lang "cc.policy.container.image_help"}}</p>
           </div>
+          <label class="check"{{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_allow_tags"}}>
+            <input type="checkbox" name="container_allow_tags" value="1"{{if $f.ContainerAllowTags}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.container.allow_tags"}}</span>
+            <span class="check__d">{{bi $lang "cc.policy.container.allow_tags_warn"}}</span>
+          </label>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_allow_tags"}}
+          <label class="check"{{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_pull_missing"}}>
+            <input type="checkbox" name="container_pull_missing" value="1"{{if $f.ContainerPullMissing}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.container.pull_missing"}}</span>
+            <span class="check__d">{{bi $lang "cc.policy.container.pull_missing_warn"}}{{with $f.DownloadRegistry}} {{biF $lang "cc.policy.container.pull_missing_from" .}}{{end}}</span>
+          </label>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_pull_missing"}}
           <div class="f">
             <span class="f__label" id="cc-network-label">{{bi $lang "cc.policy.container.network"}}</span>
             <div class="ccradios" role="radiogroup" aria-labelledby="cc-network-label"
                 {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_network"}}>
               <label class="check">
-                <input type="radio" name="container_network" value="{{noneNetwork}}"{{if not $f.NetworkIsBridge}} checked{{end}}>
+                <input type="radio" name="container_network" value="{{noneNetwork}}"{{if $f.NetworkIsNone}} checked{{end}}>
                 <span class="check__t">{{bi $lang "cc.policy.container.network_none"}}</span>
               </label>
               <label class="check">
                 <input type="radio" name="container_network" value="{{bridgeNetwork}}"{{if $f.NetworkIsBridge}} checked{{end}}>
                 <span class="check__t">{{bi $lang "cc.policy.container.network_bridge"}}</span>
               </label>
+              <label class="check">
+                <input type="radio" name="container_network" value="{{namedNetwork}}"{{if $f.NetworkIsNamed}} checked{{end}}>
+                <span class="check__t">{{bi $lang "cc.policy.container.network_named"}}</span>
+              </label>
+            </div>
+            <div class="f">
+              <label for="cc-network-name">{{bi $lang "cc.policy.container.network_name"}}</label>
+              <input id="cc-network-name" name="container_network_name" type="text" class="mono" autocomplete="off"
+                     spellcheck="false" value="{{$f.ContainerNetworkName}}">
             </div>
             {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_network"}}
             <p class="f__help">{{bi $lang "cc.policy.container.network_help"}}</p>
+            <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.policy.container.network_warn"}}</span></p>
+            <p class="f__help">{{bi $lang "cc.policy.container.network_no_host"}}</p>
           </div>
         </div>
 
@@ -365,14 +387,76 @@
               <p class="f__help">{{bi $lang "cc.policy.container.no_disk_quota"}}</p>
               <p class="f__help">{{bi $lang "cc.policy.container.trust"}}</p>
             </fieldset>
+
+            <fieldset class="fset ccmode ccmode--container">
+              <legend>{{bi $lang "cc.policy.container.options"}}</legend>
+              <p class="f__help ccmode__only">{{bi $lang "cc.policy.container_only"}}</p>
+              <label class="check"{{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_image_volumes"}}>
+                <input type="checkbox" name="container_image_volumes" value="1"{{if $f.ContainerImageVolumes}} checked{{end}}>
+                <span class="check__t">{{bi $lang "cc.policy.container.image_volumes"}}</span>
+                <span class="check__d">{{bi $lang "cc.policy.container.image_volumes_warn"}}</span>
+              </label>
+              {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_image_volumes"}}
+              <label class="check"{{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_writable_root"}}>
+                <input type="checkbox" name="container_writable_root" value="1"{{if $f.ContainerWritableRoot}} checked{{end}}>
+                <span class="check__t">{{bi $lang "cc.policy.container.writable_root"}}</span>
+                <span class="check__d">{{bi $lang "cc.policy.container.writable_root_warn"}}</span>
+              </label>
+              {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_writable_root"}}
+              <p class="f__help">{{bi $lang "cc.policy.container.command_user"}}</p>
+              <div class="f" role="group" aria-labelledby="cc-missing-label"
+                  {{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_missing_enforcement"}}>
+                <span class="f__label" id="cc-missing-label">{{bi $lang "cc.policy.container.missing_limits"}}</span>
+                <p class="f__help">{{bi $lang "cc.policy.container.missing_limits_help"}}</p>
+                <div class="ccradios">
+                  {{range containerLimitNames}}
+                  <label class="check">
+                    <input type="checkbox" name="container_missing_enforcement" value="{{.}}"{{if $f.AcceptsMissing .}} checked{{end}}>
+                    <span class="check__t">{{bi $lang (containerLimitLabel .)}}</span>
+                  </label>
+                  {{end}}
+                </div>
+                {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_missing_enforcement"}}
+                <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.policy.container.missing_limits_warn"}}</span></p>
+              </div>
+            </fieldset>
           </div>
         </details>
 
+        {{with $p.Review}}
+        <div class="ccreview" id="cc-review" role="region" aria-labelledby="cc-review-h" tabindex="-1">
+          <h3 class="ccmode__h" id="cc-review-h">{{bi $lang "cc.review.title"}}</h3>
+          <input type="hidden" name="review_digest" value="{{.Digest}}">
+          <input type="hidden" name="base_version" value="{{.BaseVersion}}">
+          <input type="hidden" name="base_digest" value="{{.BaseDigest}}">
+          {{if .Changes}}
+          <p>{{bi $lang "cc.review.intro"}}</p>
+          <div class="ccreview__wrap">
+          <table class="ccreview__t">
+            <thead><tr><th scope="col">{{bi $lang "cc.review.setting"}}</th><th scope="col">{{bi $lang "cc.review.before"}}</th><th scope="col">{{bi $lang "cc.review.after"}}</th></tr></thead>
+            <tbody>
+            {{range .Changes}}
+            <tr><th scope="row">{{bi $lang .Label}}</th><td>{{biValue $lang .Before}}</td><td>{{biValue $lang .After}}</td></tr>
+            {{end}}
+            </tbody>
+          </table>
+          </div>
+          {{else}}
+          <p>{{bi $lang "cc.review.no_changes"}}</p>
+          {{end}}
+          <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.review.warn"}}</span></p>
+        </div>
+        {{end}}
         {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $fn "Scope" $act "ID" "cc-save-password"}}
         <div class="actions">
-          <button type="submit" class="btn btn--primary">{{bi $lang "cc.policy.save"}}</button>
+          <button type="submit" class="btn{{if not $p.Review}} btn--primary{{end}}" name="action" value="{{$act}}">{{bi $lang "cc.policy.save"}}</button>
+          {{if $p.Review}}
+          <button type="submit" class="btn btn--primary" name="action" value="{{saveAndEnableAction}}" formaction="{{$p.SubmitURL}}#cc-review">{{bi $lang "cc.review.confirm"}}</button>
+          {{else}}
+          <button type="submit" class="btn" name="action" value="{{reviewSaveEnableAction}}" formaction="{{$p.SubmitURL}}#cc-review" formnovalidate>{{bi $lang "cc.policy.save_enable"}}</button>
+          {{end}}
         </div>
-        <p class="f__help">{{bi $lang "cc.policy.save_help"}}</p>
+        <p class="f__help">{{bi $lang "cc.policy.save_help"}} {{bi $lang "cc.policy.save_enable_help"}}</p>
       </section>
     </form>
 

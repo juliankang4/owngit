@@ -157,6 +157,28 @@ const (
 	MsgCCNoDiskQuota     MessageCode = "cc.policy.container.no_disk_quota"
 	MsgCCContainerTrust  MessageCode = "cc.policy.container.trust"
 
+	// Container options. Each is off until the owner chooses it, and each
+	// carries the warning of what choosing it allows.
+	MsgCCAllowTags         MessageCode = "cc.policy.container.allow_tags"
+	MsgCCAllowTagsWarn     MessageCode = "cc.policy.container.allow_tags_warn"
+	MsgCCPullMissing       MessageCode = "cc.policy.container.pull_missing"
+	MsgCCPullMissingWarn   MessageCode = "cc.policy.container.pull_missing_warn"
+	MsgCCPullMissingFrom   MessageCode = "cc.policy.container.pull_missing_from"
+	MsgCCNetworkNamed      MessageCode = "cc.policy.container.network_named"
+	MsgCCNetworkName       MessageCode = "cc.policy.container.network_name"
+	MsgCCNetworkWarn       MessageCode = "cc.policy.container.network_warn"
+	MsgCCNetworkNoHost     MessageCode = "cc.policy.container.network_no_host"
+	MsgCCContainerOptions  MessageCode = "cc.policy.container.options"
+	MsgCCImageVolumes      MessageCode = "cc.policy.container.image_volumes"
+	MsgCCImageVolumesWarn  MessageCode = "cc.policy.container.image_volumes_warn"
+	MsgCCWritableRoot      MessageCode = "cc.policy.container.writable_root"
+	MsgCCWritableRootWarn  MessageCode = "cc.policy.container.writable_root_warn"
+	MsgCCMissingLimits     MessageCode = "cc.policy.container.missing_limits"
+	MsgCCMissingLimitsHelp MessageCode = "cc.policy.container.missing_limits_help"
+	MsgCCMissingLimitsWarn MessageCode = "cc.policy.container.missing_limits_warn"
+	MsgCCSwap              MessageCode = "cc.policy.container.swap"
+	MsgCCCommandUser       MessageCode = "cc.policy.container.command_user"
+
 	// Units and amounts. An amount carries %s for the number.
 	MsgCCUnitWord      MessageCode = "cc.unit.word"
 	MsgCCUnitSeconds   MessageCode = "cc.unit.seconds"
@@ -191,6 +213,24 @@ const (
 	MsgCCDisableHelp   MessageCode = "cc.consent.disable_help"
 	MsgCCEnableBlocked MessageCode = "cc.consent.blocked"
 	MsgCCEnableLegacy  MessageCode = "cc.consent.blocked_legacy"
+
+	// Save and enable, and its review.
+	MsgCCSaveEnable      MessageCode = "cc.policy.save_enable"
+	MsgCCSaveEnableHelp  MessageCode = "cc.policy.save_enable_help"
+	MsgCCReviewTitle     MessageCode = "cc.review.title"
+	MsgCCReviewIntro     MessageCode = "cc.review.intro"
+	MsgCCReviewNoChanges MessageCode = "cc.review.no_changes"
+	MsgCCReviewWarn      MessageCode = "cc.review.warn"
+	MsgCCReviewSetting   MessageCode = "cc.review.setting"
+	MsgCCReviewBefore    MessageCode = "cc.review.before"
+	MsgCCReviewAfter     MessageCode = "cc.review.after"
+	MsgCCReviewConfirm   MessageCode = "cc.review.confirm"
+	MsgCCReviewChanged   MessageCode = "cc.review.changed"
+	MsgCCValueOn         MessageCode = "cc.value.on"
+	MsgCCValueOff        MessageCode = "cc.value.off"
+	MsgCCValueNone       MessageCode = "cc.value.none"
+	MsgCCValueNotSaved   MessageCode = "cc.value.not_saved"
+	MsgCCValueNotUsed    MessageCode = "cc.value.not_used"
 )
 
 // Job list and job detail.
@@ -329,6 +369,10 @@ const (
 	MsgCCExecutorInvalid    MessageCode = "cc.result.invalid_executor"
 	MsgCCImageInvalid       MessageCode = "cc.result.invalid_image"
 	MsgCCNetworkInvalid     MessageCode = "cc.result.invalid_network"
+	MsgCCNetworkHost        MessageCode = "cc.result.network_host"
+	MsgCCPullNeedsName      MessageCode = "cc.result.pull_needs_name"
+	MsgCCFieldForbidden     MessageCode = "cc.result.field_forbidden"
+	MsgCCSavedTurnedOn      MessageCode = "cc.result.saved_turned_on"
 
 	MsgRTIssued       MessageCode = "runner.result.issued"
 	MsgRTRevokedDone  MessageCode = "runner.result.revoked"
@@ -611,15 +655,61 @@ var configuredCheckCatalog = map[MessageCode]message{
 		ko: "Docker 컨테이너에서 실행할 때만 사용합니다.",
 	},
 	MsgCCContainerHelp: {
-		en: "OwnGit never downloads an image. Pull it on this computer first.",
-		ko: "OwnGit은 이미지를 내려받지 않습니다. 먼저 이 컴퓨터에 받아 두세요.",
+		en: "OwnGit downloads an image only when you allow it below. Otherwise pull it on this computer first.",
+		ko: "아래에서 허용한 경우에만 OwnGit이 이미지를 내려받습니다. 그렇지 않으면 먼저 이 컴퓨터에 받아 두세요.",
 	},
 	MsgCCContainerLimits: {en: "Container resources", ko: "컨테이너 자원"},
 	MsgCCImage:           {en: "Docker image", ko: "Docker 이미지"},
 	MsgCCImageHelp: {
-		en: "Enter the image's fixed digest so it cannot change later: sha256: followed by 64 hex characters, or a name followed by @sha256: and 64 hex characters.",
-		ko: "나중에 바뀌지 않도록 이미지의 고정 다이제스트를 입력하세요. sha256: 뒤에 16진수 64자리, 또는 이름 뒤에 @sha256:과 16진수 64자리를 붙인 형식입니다.",
+		en: "Enter the image's fixed digest so it cannot change later: sha256: followed by 64 hex characters, or a name followed by @sha256: and 64 hex characters. With tags allowed, a name such as registry.example/checks:1 works too.",
+		ko: "나중에 바뀌지 않도록 이미지의 고정 다이제스트를 입력하세요. sha256: 뒤에 16진수 64자리, 또는 이름 뒤에 @sha256:과 16진수 64자리를 붙인 형식입니다. 태그를 허용하면 registry.example/checks:1 같은 이름도 쓸 수 있습니다.",
 	},
+	MsgCCAllowTags: {en: "Allow image tags", ko: "이미지 태그 허용"},
+	MsgCCAllowTagsWarn: {
+		en: "This tag can point to different code next time. Each job runs the image the tag names when the job starts, and records that image.",
+		ko: "이 태그는 다음번에 다른 코드를 가리킬 수 있습니다. 작업마다 시작할 때 태그가 가리키는 이미지로 실행하고, 그 이미지를 기록합니다.",
+	},
+	MsgCCPullMissing: {en: "Download missing images", ko: "없는 이미지 내려받기"},
+	MsgCCPullMissingWarn: {
+		en: "OwnGit will download this image from its registry when this computer does not have it. No saved registry login is used, so only images the registry serves to anyone can be downloaded.",
+		ko: "이 컴퓨터에 이미지가 없으면 OwnGit이 레지스트리에서 내려받습니다. 저장된 레지스트리 로그인은 쓰지 않으므로 누구에게나 제공되는 이미지만 받을 수 있습니다.",
+	},
+	MsgCCPullMissingFrom: {en: "For this image, the registry is %s.", ko: "이 이미지의 레지스트리는 %s입니다."},
+	MsgCCNetworkNamed:    {en: "Use a Docker network I created", ko: "직접 만든 Docker 네트워크 사용"},
+	MsgCCNetworkName:     {en: "Network name", ko: "네트워크 이름"},
+	MsgCCNetworkWarn: {
+		en: "Checks can reach every service on the chosen network. Docker's bridge does not keep checks away from your private network.",
+		ko: "체크는 선택한 네트워크의 모든 서비스에 접근할 수 있습니다. Docker 브리지는 체크를 내부 네트워크와 분리하지 않습니다.",
+	},
+	MsgCCNetworkNoHost: {
+		en: "The host network is never used, because checks could then reach services on this computer, including OwnGit.",
+		ko: "호스트 네트워크는 쓰지 않습니다. 체크가 OwnGit을 포함해 이 컴퓨터의 서비스에 접근할 수 있게 되기 때문입니다.",
+	},
+	MsgCCContainerOptions: {en: "Container compatibility", ko: "컨테이너 호환 설정"},
+	MsgCCImageVolumes:     {en: "Give image volumes temporary space", ko: "이미지 볼륨에 임시 공간 주기"},
+	MsgCCImageVolumesWarn: {
+		en: "Paths the image declares as volumes are writable during a check and are discarded afterwards. Each gets the temporary space limit. Without this, such images are refused.",
+		ko: "이미지가 볼륨으로 선언한 경로를 체크하는 동안 쓸 수 있고, 끝나면 버립니다. 경로마다 임시 공간 한도가 적용됩니다. 이 설정이 없으면 이런 이미지는 거부됩니다.",
+	},
+	MsgCCWritableRoot: {en: "Let commands change the container's files", ko: "명령이 컨테이너 파일을 바꿀 수 있게 하기"},
+	MsgCCWritableRootWarn: {
+		en: "Commands can change files inside the container. The changes are discarded with the container.",
+		ko: "명령이 컨테이너 안의 파일을 바꿀 수 있습니다. 바뀐 내용은 컨테이너와 함께 버려집니다.",
+	},
+	MsgCCCommandUser: {
+		en: "Commands run as OwnGit's own user, never as root, so they can change only the files that user may change. Files they write in the workspace belong to that user, which lets OwnGit remove the workspace after the check.",
+		ko: "명령은 root가 아닌 OwnGit 자신의 사용자로 실행되므로 그 사용자가 바꿀 수 있는 파일만 바꿀 수 있습니다. 작업 공간에 쓴 파일도 그 사용자 소유라서 체크가 끝나면 OwnGit이 작업 공간을 지울 수 있습니다.",
+	},
+	MsgCCMissingLimits: {en: "Limits this computer's Docker may not enforce", ko: "이 컴퓨터의 Docker가 적용하지 못할 수 있는 한도"},
+	MsgCCMissingLimitsHelp: {
+		en: "Checks do not run when Docker cannot enforce a limit, unless you accept that limit here. The check result names each limit that was not enforced.",
+		ko: "Docker가 한도를 적용할 수 없으면 체크를 실행하지 않습니다. 여기서 허용한 한도만 예외입니다. 적용되지 않은 한도는 체크 결과에 적힙니다.",
+	},
+	MsgCCMissingLimitsWarn: {
+		en: "A check can use more of an accepted resource than its limit on this computer.",
+		ko: "허용한 자원은 체크가 이 컴퓨터에서 한도보다 많이 쓸 수 있습니다.",
+	},
+	MsgCCSwap:          {en: "Swap", ko: "스왑"},
 	MsgCCRuntimeName:   {en: "Runtime", ko: "런타임"},
 	MsgCCNetwork:       {en: "Network", ko: "네트워크"},
 	MsgCCNetworkNone:   {en: "No network access", ko: "네트워크 사용 안 함"},
@@ -671,7 +761,35 @@ var configuredCheckCatalog = map[MessageCode]message{
 		en: "Saving does not turn checks on. Saving changed settings turns checks off until you turn them on again in step 5.",
 		ko: "저장한다고 체크가 켜지지는 않습니다. 설정을 바꿔 저장하면 5단계에서 다시 켤 때까지 체크가 꺼집니다.",
 	},
-	MsgCCEnable: {en: "Turn checks on", ko: "체크 켜기"},
+	MsgCCSaveEnable: {en: "Save and turn checks on", ko: "저장하고 체크 켜기"},
+	MsgCCSaveEnableHelp: {
+		en: "Save and turn checks on shows exactly what will change before anything is saved.",
+		ko: "저장하고 체크 켜기를 누르면 저장하기 전에 무엇이 바뀌는지 먼저 보여 줍니다.",
+	},
+	MsgCCReviewTitle: {en: "Review before saving", ko: "저장 전 확인"},
+	MsgCCReviewIntro: {
+		en: "Confirming saves these changes and turns checks on for exactly these settings.",
+		ko: "확인하면 아래 변경을 저장하고 바로 이 설정으로 체크를 켭니다.",
+	},
+	MsgCCReviewNoChanges: {
+		en: "The settings stay as saved. Confirming turns checks on for them.",
+		ko: "설정은 저장된 그대로입니다. 확인하면 이 설정으로 체크를 켭니다.",
+	},
+	MsgCCReviewWarn:    {en: "These changed commands may run immediately.", ko: "바뀐 설정으로 명령이 바로 실행될 수 있습니다."},
+	MsgCCReviewSetting: {en: "Setting", ko: "설정"},
+	MsgCCReviewBefore:  {en: "Saved now", ko: "현재 저장값"},
+	MsgCCReviewAfter:   {en: "After saving", ko: "저장 후"},
+	MsgCCReviewConfirm: {en: "Confirm, save and turn checks on", ko: "확인하고 저장한 뒤 체크 켜기"},
+	MsgCCReviewChanged: {
+		en: "The settings on this page changed after the review. Check the changes again.",
+		ko: "확인한 뒤에 이 화면의 설정이 바뀌었습니다. 변경 내용을 다시 확인하세요.",
+	},
+	MsgCCValueOn:       {en: "On", ko: "켜짐"},
+	MsgCCValueOff:      {en: "Off", ko: "꺼짐"},
+	MsgCCValueNone:     {en: "None", ko: "없음"},
+	MsgCCValueNotSaved: {en: "Not saved", ko: "저장 안 됨"},
+	MsgCCValueNotUsed:  {en: "Not used in this mode", ko: "이 방식에서는 사용 안 함"},
+	MsgCCEnable:        {en: "Turn checks on", ko: "체크 켜기"},
 	MsgCCEnableHelp: {
 		en: "Checks run only with the settings saved above. Changing them later turns checks off again.",
 		ko: "위에 저장한 설정 그대로만 실행합니다. 나중에 설정을 바꾸면 체크가 다시 꺼집니다.",
@@ -937,10 +1055,26 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCEventsInvalid:   {en: "Choose at least one event.", ko: "실행 시점을 하나 이상 선택하세요."},
 	MsgCCExecutorInvalid: {en: "Choose where checks run.", ko: "체크를 실행할 위치를 선택하세요."},
 	MsgCCImageInvalid: {
-		en: "Enter an immutable image reference with a sha256 digest.",
-		ko: "sha256 다이제스트가 포함된, 변하지 않는 이미지 참조를 입력하세요.",
+		en: "Enter an immutable image reference with a sha256 digest, or allow image tags.",
+		ko: "sha256 다이제스트가 포함된, 변하지 않는 이미지 참조를 입력하거나 이미지 태그를 허용하세요.",
 	},
-	MsgCCNetworkInvalid: {en: "Choose a network option.", ko: "네트워크 옵션을 선택하세요."},
+	MsgCCNetworkInvalid: {
+		en: "Choose a network option. A network name uses letters, digits, periods, underscores and hyphens.",
+		ko: "네트워크 옵션을 선택하세요. 네트워크 이름에는 영문자, 숫자, 마침표, 밑줄, 하이픈만 쓸 수 있습니다.",
+	},
+	MsgCCNetworkHost: {
+		en: "The host network is never used for checks. Choose another network.",
+		ko: "체크에는 호스트 네트워크를 쓰지 않습니다. 다른 네트워크를 고르세요.",
+	},
+	MsgCCPullNeedsName: {
+		en: "Downloading needs an image name, not a bare sha256 image ID.",
+		ko: "내려받으려면 sha256 이미지 ID만이 아니라 이미지 이름이 필요합니다.",
+	},
+	MsgCCFieldForbidden: {en: "This value is never accepted.", ko: "이 값은 받아들이지 않습니다."},
+	MsgCCSavedTurnedOn: {
+		en: "Settings saved, and checks are on for them.",
+		ko: "설정을 저장하고 이 설정으로 체크를 켰습니다.",
+	},
 
 	MsgCCFieldRange: {
 		en: "This value is outside the accepted range shown with this field.",

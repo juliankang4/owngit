@@ -1,6 +1,9 @@
 package webui
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Configured-check screens.
 //
@@ -22,6 +25,15 @@ const (
 	// ActionSaveCheckPolicy stores the policy without enabling execution.
 	// Fields: csrf, action, admin_password, and the policy fields.
 	ActionSaveCheckPolicy = "save_policy"
+	// ActionReviewSaveAndEnable shows what saving the submitted policy and
+	// turning checks on would change, without changing anything. Same fields
+	// as saving; the administrator password is asked on the next step.
+	ActionReviewSaveAndEnable = "review_save_enable"
+	// ActionSaveAndEnable saves the reviewed policy and turns checks on for
+	// exactly it. Fields: those of saving, plus review_digest (the reviewed
+	// policy) and base_version and base_digest (the stored policy the review
+	// compared against).
+	ActionSaveAndEnable = "save_and_enable"
 	// ActionEnableChecks binds consent to the saved policy.
 	// Fields: csrf, action, admin_password.
 	ActionEnableChecks = "enable_checks"
@@ -55,11 +67,16 @@ const (
 	CheckEventPullRequest = "pull_request"
 )
 
-// Container network modes.
+// Container network choices. Named means a Docker network the owner created,
+// whose name is in its own field.
 const (
 	ContainerNetworkNone   = "none"
 	ContainerNetworkBridge = "bridge"
+	ContainerNetworkNamed  = "named"
 )
+
+// Resource limits a policy may accept as not enforced, in the order drawn.
+var ContainerLimitNames = []string{"memory", "swap", "cpu", "pids"}
 
 // Job states. They mirror the durable record. Queued, claimed, and started are
 // unfinished; the rest are final. None of them is a pass except JobPassed, and
@@ -126,6 +143,10 @@ type ConfiguredChecksPage struct {
 	// JobsUnavailable is true when the job records could not be read. The
 	// section says so instead of rendering an empty list that reads as "none".
 	JobsUnavailable bool
+
+	// Review, when present, is the change Save and enable would make, shown
+	// for confirmation before anything is saved.
+	Review *CheckPolicyReview
 
 	// LeftoverContainers are the container cleanup records of finished jobs
 	// (CheckContainerRow), and LeftoverUnavailable is true when they could
@@ -224,7 +245,37 @@ type CheckContainerView struct {
 	MemoryBytes  int64
 	PIDs         int64
 	ScratchBytes int64
+
+	AllowTags          bool
+	PullMissing        bool
+	MissingEnforcement []string
+	ImageVolumes       bool
+	WritableRoot       bool
 }
+
+// CheckPolicyReview is what Save and enable would do, shown before it does it.
+type CheckPolicyReview struct {
+	// Changes lists each setting that differs from the stored policy. Empty
+	// means the settings stay as saved and only checks are turned on.
+	Changes []PolicyChange
+	// Digest identifies the reviewed policy. BaseVersion and BaseDigest name
+	// the stored policy the changes were computed against; zero and empty
+	// mean none was stored.
+	Digest      string
+	BaseVersion int64
+	BaseDigest  string
+}
+
+// PolicyChange is one changed setting, with its value before and after in
+// both languages.
+type PolicyChange struct {
+	Label  MessageCode
+	Before BiValue
+	After  BiValue
+}
+
+// BiValue is one value written in both languages.
+type BiValue struct{ EN, KO string }
 
 // FieldRange is the accepted range of one numeric field, as the backend
 // published it.
@@ -270,8 +321,29 @@ type CheckPolicyForm struct {
 	// a unit. See PolicyLimitFields for the list.
 	Limits map[string]LimitInput
 
-	ContainerImage   string
-	ContainerNetwork string
+	ContainerImage string
+	// ContainerNetwork is none, bridge or named; ContainerNetworkName is the
+	// name when it is named.
+	ContainerNetwork     string
+	ContainerNetworkName string
+
+	ContainerAllowTags    bool
+	ContainerPullMissing  bool
+	ContainerImageVolumes bool
+	ContainerWritableRoot bool
+	// ContainerMissing lists the resource limits accepted as not enforced.
+	ContainerMissing []string
+	// DownloadRegistry names where a download of the entered image connects,
+	// for the warning beside that option. Empty means no image is entered.
+	DownloadRegistry string
+}
+
+// NetworkIsNamed reports whether a named Docker network is chosen.
+func (f CheckPolicyForm) NetworkIsNamed() bool { return f.ContainerNetwork == ContainerNetworkNamed }
+
+// AcceptsMissing reports whether limit is accepted as not enforced.
+func (f CheckPolicyForm) AcceptsMissing(limit string) bool {
+	return slices.Contains(f.ContainerMissing, limit)
 }
 
 // Limit is one numeric field as the form shows it. A field the map does not
@@ -294,6 +366,13 @@ func (f CheckPolicyForm) IsExternalRunner() bool {
 }
 
 // NetworkIsBridge reports the selected container network.
+//
+// NetworkIsNone is true only for an explicit none, so a named network does
+// not also check the none radio.
+func (f CheckPolicyForm) NetworkIsNone() bool {
+	return f.ContainerNetwork != ContainerNetworkBridge && f.ContainerNetwork != ContainerNetworkNamed
+}
+
 func (f CheckPolicyForm) NetworkIsBridge() bool { return f.ContainerNetwork == ContainerNetworkBridge }
 
 // Check file states on the default branch.

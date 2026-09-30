@@ -90,15 +90,28 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 	// unrelated form happened to post, which for those forms is nothing at all
 	// and would silently blank every saved setting on screen.
 	var form *webui.CheckPolicyForm
-	if action == webui.ActionSaveCheckPolicy {
+	switch action {
+	case webui.ActionSaveCheckPolicy, webui.ActionReviewSaveAndEnable, webui.ActionSaveAndEnable:
 		submitted := submittedPolicyForm(request)
 		form = &submitted
+	}
+	// The review changes nothing, so it asks for no password; confirming
+	// the reviewed change does.
+	if action == webui.ActionReviewSaveAndEnable {
+		app.reviewSaveAndEnable(writer, request, stored, summary, chrome, *form, nil, http.StatusOK)
+		return
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		pending := action
-		if action == webui.ActionForgetCheckContainer {
+		switch action {
+		case webui.ActionForgetCheckContainer:
 			pending = forgetContainerScope(postValue(request, "job_id"))
+		case webui.ActionSaveAndEnable:
+			// The review stays on screen, so the owner confirms it again
+			// with the password rather than starting over.
+			app.reviewSaveAndEnable(writer, request, stored, summary, chrome, *form, []webui.Notice{notice}, status)
+			return
 		}
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: pending, form: form, notices: []webui.Notice{notice},
@@ -109,6 +122,8 @@ func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http
 	switch action {
 	case webui.ActionSaveCheckPolicy:
 		app.saveCheckPolicy(writer, request, stored, summary, chrome, *form)
+	case webui.ActionSaveAndEnable:
+		app.saveAndEnableCheckPolicy(writer, request, stored, summary, chrome, *form)
 	case webui.ActionEnableChecks, webui.ActionDisableChecks:
 		app.changeCheckConsent(writer, request, stored, summary, chrome, action)
 	case webui.ActionCancelCheckJob, webui.ActionRerunCheckJob:
@@ -128,6 +143,9 @@ type configuredChecksState struct {
 	action  string
 	form    *webui.CheckPolicyForm
 	notices []webui.Notice
+	// review, when set, is the policy Save and enable would store. The
+	// change is shown against the stored policy read for the same render.
+	review *state.CheckPolicy
 }
 
 func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, form webui.CheckPolicyForm) {
@@ -157,6 +175,79 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	// A saved policy is a durable change, so the result is a redirect: a
 	// reload re-reads it instead of re-submitting the form.
 	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+}
+
+// reviewSaveAndEnable shows what saving the submitted policy and turning
+// checks on would change. Nothing is saved. A policy the store would refuse
+// is shown with its refusals instead, like an ordinary save.
+func (app *App) reviewSaveAndEnable(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, form webui.CheckPolicyForm, notices []webui.Notice, status int) {
+	candidate, refusals, refusalStatus := candidateFromForm(request, stored.ID, form)
+	if refusals != nil {
+		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+			action: webui.ActionSaveCheckPolicy, form: &form, notices: refusals,
+		}, refusalStatus)
+		return
+	}
+	app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+		action: webui.ActionSaveCheckPolicy, form: &form, notices: notices, review: &candidate,
+	}, status)
+}
+
+// candidateFromForm validates the submitted form as the store would and
+// returns the policy saving it would store, or the refusals to show.
+func candidateFromForm(request *http.Request, repositoryID string, form webui.CheckPolicyForm) (state.CheckPolicy, []webui.Notice, int) {
+	input, notices := policyInputFrom(repositoryID, form)
+	if len(notices) != 0 {
+		return state.CheckPolicy{}, notices, http.StatusUnprocessableEntity
+	}
+	candidate, err := state.CandidateCheckPolicy(input)
+	if err != nil {
+		return state.CheckPolicy{}, policySaveNotices(err), policySaveStatus(request, err)
+	}
+	return candidate, nil, 0
+}
+
+// saveAndEnableCheckPolicy saves the reviewed policy and turns checks on for
+// exactly it. The submitted form must still be the reviewed policy, and the
+// stored policy must still be the one the review compared against; either
+// change shows the review again instead of saving.
+func (app *App) saveAndEnableCheckPolicy(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, form webui.CheckPolicyForm) {
+	candidate, refusals, refusalStatus := candidateFromForm(request, stored.ID, form)
+	if refusals != nil {
+		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+			action: webui.ActionSaveCheckPolicy, form: &form, notices: refusals,
+		}, refusalStatus)
+		return
+	}
+	if candidate.Digest != postValue(request, "review_digest") {
+		app.reviewSaveAndEnable(writer, request, stored, summary, chrome, form, []webui.Notice{webui.Error("", webui.MsgCCReviewChanged)}, http.StatusConflict)
+		return
+	}
+	base := state.ExpectedCheckPolicy{Digest: postValue(request, "base_digest")}
+	version, err := strconv.ParseInt(postValue(request, "base_version"), 10, 64)
+	if err != nil {
+		app.reviewSaveAndEnable(writer, request, stored, summary, chrome, form, []webui.Notice{webui.Error("", webui.MsgCCReviewChanged)}, http.StatusConflict)
+		return
+	}
+	base.Version = version
+	input, _ := policyInputFrom(stored.ID, form)
+	if _, err := app.Store.SaveCheckPolicyAndGrantConsent(request.Context(), input, &base, app.now()); err != nil {
+		switch {
+		case errors.Is(err, state.ErrCheckPolicyStale):
+			app.reviewSaveAndEnable(writer, request, stored, summary, chrome, form, []webui.Notice{webui.Error("", webui.MsgCCPolicyStale)}, http.StatusConflict)
+		case errors.Is(err, state.ErrInvalidCheckPolicy):
+			app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+				action: webui.ActionSaveCheckPolicy, form: &form, notices: policySaveNotices(err),
+			}, http.StatusConflict)
+		default:
+			app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
+				action: webui.ActionSaveCheckPolicy, form: &form, notices: []webui.Notice{webui.Error("", webui.MsgCCFailed)},
+			}, unavailable(request, "configured check policy save and enable", err))
+		}
+		return
+	}
+	app.wakeChecks(stored.ID)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_policy_saved_turned_on", http.StatusSeeOther)
 }
 
 func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -369,6 +460,15 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	// the next submission.
 	page.Form.Ranges = policyFieldRanges()
 	page.Form.Defaults = policyFieldDefaults()
+	if page.Form.ContainerImage != "" {
+		page.Form.DownloadRegistry = state.ContainerImageRegistry(page.Form.ContainerImage)
+	}
+	if result.review != nil {
+		page.Review = &webui.CheckPolicyReview{
+			Changes: webui.PolicyChanges(page.Policy, browserCheckPolicy(*result.review, true)),
+			Digest:  result.review.Digest, BaseVersion: policy.Version, BaseDigest: policy.Digest,
+		}
+	}
 
 	if opened := request.URL.Query().Get("job"); opened != "" {
 		page.Detail = app.browserCheckJobDetail(request, stored, opened, self)
@@ -631,6 +731,12 @@ func browserCheckPolicy(policy state.CheckPolicy, exists bool) webui.CheckPolicy
 		MemoryBytes:  policy.Execution.ContainerMemoryBytes,
 		PIDs:         policy.Execution.ContainerPIDs,
 		ScratchBytes: policy.Execution.ContainerScratchBytes,
+
+		AllowTags:          policy.Execution.ContainerAllowTags,
+		PullMissing:        policy.Execution.ContainerPullMissing,
+		MissingEnforcement: policy.Execution.ContainerMissingEnforcement,
+		ImageVolumes:       policy.Execution.ContainerImageVolumes,
+		WritableRoot:       policy.Execution.ContainerWritableRoot,
 	}
 	return view
 }
@@ -769,31 +875,6 @@ var suggestedPolicyLimits = map[string]int64{
 	state.FieldMaxLeaseMS:          60 * 1000,
 }
 
-// storedPolicyLimits reads every numeric field of a stored policy by its
-// backend name.
-func storedPolicyLimits(policy webui.CheckPolicyView) map[string]int64 {
-	return map[string]int64{
-		state.FieldMaxTimeoutMS:        policy.MaxTimeoutMS,
-		state.FieldMaxOutputLimitBytes: policy.MaxOutputLimitBytes,
-		state.FieldQueueLimit:          int64(policy.QueueLimit),
-		state.FieldMaxActiveJobs:       int64(policy.MaxActiveJobs),
-		state.FieldMaxLeaseMS:          policy.MaxLeaseMS,
-
-		state.FieldSourceMaxEntries:    int64(policy.Source.MaxEntries),
-		state.FieldSourceMaxFileBytes:  policy.Source.MaxFileBytes,
-		state.FieldSourceMaxTotalBytes: policy.Source.MaxTotalBytes,
-		state.FieldSourceMaxPathDepth:  int64(policy.Source.MaxPathDepth),
-		state.FieldSourceMaxPathBytes:  int64(policy.Source.MaxPathBytes),
-		state.FieldSourceMaxNameBytes:  int64(policy.Source.MaxNameBytes),
-		state.FieldSourceMetadataLimit: policy.Source.MetadataLimit,
-
-		state.FieldContainerCPUMillis:    policy.Container.CPUMillis,
-		state.FieldContainerMemoryBytes:  policy.Container.MemoryBytes,
-		state.FieldContainerPIDs:         policy.Container.PIDs,
-		state.FieldContainerScratchBytes: policy.Container.ScratchBytes,
-	}
-}
-
 // policyFormFrom fills the form from the stored policy, so a field the owner
 // does not touch resubmits its saved value. Each value is written in the
 // largest unit that holds it exactly, so resubmitting it unchanged stores the
@@ -809,16 +890,26 @@ func policyFormFrom(policy webui.CheckPolicyView) webui.CheckPolicyForm {
 		PushSelected: true, PullRequestSelected: true,
 	}
 	if policy.Saved {
-		values = storedPolicyLimits(policy)
+		values = policy.LimitValues()
 		form = webui.CheckPolicyForm{
 			Executor:            policy.Executor,
 			PushSelected:        policy.AllowsPush(),
 			PullRequestSelected: policy.AllowsPullRequest(),
 			ContainerImage:      policy.Container.Image,
 			ContainerNetwork:    policy.Container.Network,
+
+			ContainerAllowTags:    policy.Container.AllowTags,
+			ContainerPullMissing:  policy.Container.PullMissing,
+			ContainerImageVolumes: policy.Container.ImageVolumes,
+			ContainerWritableRoot: policy.Container.WritableRoot,
+			ContainerMissing:      policy.Container.MissingEnforcement,
 		}
-		if form.ContainerNetwork == "" {
+		switch form.ContainerNetwork {
+		case "":
 			form.ContainerNetwork = webui.ContainerNetworkNone
+		case webui.ContainerNetworkNone, webui.ContainerNetworkBridge:
+		default:
+			form.ContainerNetwork, form.ContainerNetworkName = webui.ContainerNetworkNamed, policy.Container.Network
 		}
 	}
 	form.Limits = make(map[string]webui.LimitInput, len(policyRangeFields))
@@ -830,12 +921,19 @@ func policyFormFrom(policy webui.CheckPolicyView) webui.CheckPolicyForm {
 
 func submittedPolicyForm(request *http.Request) webui.CheckPolicyForm {
 	form := webui.CheckPolicyForm{
-		Executor:            postValue(request, "executor"),
-		PushSelected:        formChecked(postValue(request, "event_push")),
-		PullRequestSelected: formChecked(postValue(request, "event_pull_request")),
-		ContainerImage:      strings.TrimSpace(postValue(request, "container_image")),
-		ContainerNetwork:    postValue(request, "container_network"),
-		Limits:              make(map[string]webui.LimitInput, len(policyRangeFields)),
+		Executor:             postValue(request, "executor"),
+		PushSelected:         formChecked(postValue(request, "event_push")),
+		PullRequestSelected:  formChecked(postValue(request, "event_pull_request")),
+		ContainerImage:       strings.TrimSpace(postValue(request, "container_image")),
+		ContainerNetwork:     postValue(request, "container_network"),
+		ContainerNetworkName: strings.TrimSpace(postValue(request, "container_network_name")),
+		Limits:               make(map[string]webui.LimitInput, len(policyRangeFields)),
+
+		ContainerAllowTags:    formChecked(postValue(request, "container_allow_tags")),
+		ContainerPullMissing:  formChecked(postValue(request, "container_pull_missing")),
+		ContainerImageVolumes: formChecked(postValue(request, "container_image_volumes")),
+		ContainerWritableRoot: formChecked(postValue(request, "container_writable_root")),
+		ContainerMissing:      request.PostForm["container_missing_enforcement"],
 	}
 	for _, limit := range webui.PolicyLimitFields() {
 		input := webui.LimitInput{
@@ -932,6 +1030,19 @@ func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.Che
 		}
 		input.Execution.ContainerImage = form.ContainerImage
 		input.Execution.ContainerNetwork = form.ContainerNetwork
+		if form.ContainerNetwork == webui.ContainerNetworkNamed {
+			// An empty name would read as no choice, which the backend
+			// takes as no network at all, so it is refused here.
+			if form.ContainerNetworkName == "" {
+				notices = append(notices, webui.Error(webui.PolicyFieldContainerNetwork, webui.MsgCCNetworkInvalid))
+			}
+			input.Execution.ContainerNetwork = form.ContainerNetworkName
+		}
+		input.Execution.ContainerAllowTags = form.ContainerAllowTags
+		input.Execution.ContainerPullMissing = form.ContainerPullMissing
+		input.Execution.ContainerImageVolumes = form.ContainerImageVolumes
+		input.Execution.ContainerWritableRoot = form.ContainerWritableRoot
+		input.Execution.ContainerMissingEnforcement = form.ContainerMissing
 		input.Execution.ContainerCPUMillis = value(state.FieldContainerCPUMillis)
 		input.Execution.ContainerMemoryBytes = value(state.FieldContainerMemoryBytes)
 		input.Execution.ContainerPIDs = value(state.FieldContainerPIDs)
