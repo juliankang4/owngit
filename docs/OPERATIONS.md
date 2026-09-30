@@ -657,11 +657,11 @@ The OwnGit icon tells you on this computer's desktop when something happens in O
 - Automatic checks that failed.
 - Imports that did not finish.
 - Backups that did not finish.
-- A new OwnGit version, with the command that updates this install. This one needs the [update check](#new-release-notice) to be on.
+- A new OwnGit version. When this install has an update command, the notification includes it; otherwise it says that the dashboard explains how to update. This one needs the [update check](#new-release-notice) to be on.
 
-A notification appears about one to one and a half minutes after the event. OwnGit waits a minute so that nothing recorded a moment late is missed, and the icon picks the event up at its next status read. When more than three of one other kind arrive at once, they become one notification that counts them, such as "4 imports did not finish".
+A notification about something that happened appears about one to one and a half minutes later. OwnGit waits a minute so that nothing recorded a moment late is missed, and the icon picks the event up at its next status read. A new version does not wait that minute: it shows at the icon's next status read after OwnGit finds the release. When more than three of one other kind arrive at once, they become one notification that counts them, such as "4 imports did not finish".
 
-Clicking a notification opens its page in the dashboard: the branch's commits for a push, All activity for pushes to several repositories or a counted notification, the pull request, the repository's Checks tab (or the pull request, for a check that ran on one), the Import tab, Settings for a backup, and the home page for a new version. Before it opens the page, the icon checks again that OwnGit answers at its address, as Open dashboard does.
+Clicking a notification opens its page in the dashboard: the branch's commits for a push (the repository for a deleted branch or tag), All activity for pushes to several repositories or a counted notification, the pull request, the repository's Checks tab (or the pull request, for a check that ran on one), the Import tab, Settings for a backup, and the home page for a new version. Before it opens the page, the icon checks again that OwnGit answers at its address, as Open dashboard does.
 
 The notification settings belong to this computer and stay after you sign in again or restart. "Show notifications" turns all of them on or off, and each kind has its own switch, which keeps its choice while all are off. You find them in the icon's panel: on macOS behind the gear button, on Windows under the Notifications button in the This computer part, and on Linux in the Notifications section. On the command line, `owngit tray notifications` prints them (as JSON with `--json`), and a setting followed by `on` or `off` changes one. The settings are `all`, `only_others`, `push`, `pull_request`, `check_failed`, `import_failed`, `backup_failed` and `update`:
 
