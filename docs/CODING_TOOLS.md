@@ -599,6 +599,16 @@ Read tools change nothing:
 | `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when a branch moved away from them |
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
+| `backup_status` | No command; a summary of `backup status`, described below |
+
+`backup_status` tells the tool whether the server has recent backups, for example before a risky change. It uses general access like the repository tools and returns a summary:
+
+- `schedule`: `not_configured`, `off` or `on`.
+- `last_run`: the last backup that ended, with `kind` (`scheduled` or `manual`), `status` (`succeeded`, `failed` or `interrupted`), `verification` (`passed`, `failed` or `not_run`) and `finished_at`, or null.
+- `last_verified_at`: when the newest backup that passed verification and is still kept finished, or null.
+- `next_run`: when the next scheduled backup is due, or null.
+
+The summary names no folder, repository or error message. The administrator reads those with `owngit backup status`; see [Backups](OPERATIONS.md#checking-backups).
 
 Write tools and their effects:
 

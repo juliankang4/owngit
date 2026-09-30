@@ -308,6 +308,16 @@ tool_timeout_sec = 1800
 | `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 브랜치가 움직였을 때 `stale`로 답합니다. |
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
+| `backup_status` | 해당 명령 없음. `backup status`의 요약이며 아래에서 설명합니다 |
+
+`backup_status`는 위험한 변경을 하기 전처럼 서버에 최근 백업이 있는지 알고 싶을 때 씁니다. 저장소 도구처럼 일반 접근을 쓰며 다음 요약을 돌려줍니다.
+
+- `schedule`: `not_configured`, `off`, `on` 중 하나
+- `last_run`: 마지막으로 끝난 백업. `kind`(`scheduled` 또는 `manual`), `status`(`succeeded`, `failed`, `interrupted`), `verification`(`passed`, `failed`, `not_run`), `finished_at`이 들어 있습니다. 없으면 null입니다.
+- `last_verified_at`: 검사를 통과했고 아직 남아 있는 가장 새 백업이 끝난 시각. 없으면 null입니다.
+- `next_run`: 다음 예약 백업 시각. 없으면 null입니다.
+
+요약에는 폴더, 저장소, 오류 메시지가 나오지 않습니다. 관리자는 `owngit backup status`로 이 내용을 봅니다. [백업 상태 확인하기](OPERATIONS.ko.md#백업-상태-확인하기)를 참고하세요.
 
 쓰기 도구와 그 효과는 다음과 같습니다.
 
