@@ -277,9 +277,25 @@ type CheckObservation struct {
 // is idempotent; a real change increments the generation and clears local
 // consent, so an old confirmation cannot silently authorize new limits.
 func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now time.Time) (CheckPolicy, error) {
-	if now.IsZero() {
-		return CheckPolicy{}, fmt.Errorf("%w: missing time", ErrInvalidCheckPolicy)
-	}
+	return s.writeCheckPolicy(ctx, input, nil, false, now)
+}
+
+// SaveCheckPolicyAndGrantConsent stores the policy and turns checks on for
+// exactly that policy, in one transaction. Consent names the digest of the
+// submitted facts, so it can never land on a policy someone else stored.
+//
+// base, when given, is the stored policy the caller showed the change
+// against; Version 0 with an empty digest means no policy existed. Any other
+// stored policy refuses with ErrCheckPolicyStale and nothing is written, so
+// the change the owner reviewed is the change that is made.
+func (s *Store) SaveCheckPolicyAndGrantConsent(ctx context.Context, input CheckPolicyInput, base *ExpectedCheckPolicy, now time.Time) (CheckPolicy, error) {
+	return s.writeCheckPolicy(ctx, input, base, true, now)
+}
+
+// CandidateCheckPolicy validates input and returns the policy that saving it
+// would store, without writing anything. Its digest is what a later save of
+// the same input stores.
+func CandidateCheckPolicy(input CheckPolicyInput) (CheckPolicy, error) {
 	allowed, err := normalizeCheckEvents(input.AllowedEvents)
 	if err != nil {
 		return CheckPolicy{}, err
@@ -298,6 +314,24 @@ func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now 
 	if err := validateCheckPolicyInput(input, allowed); err != nil {
 		return CheckPolicy{}, err
 	}
+	candidate := CheckPolicy{
+		RepositoryID: input.RepositoryID, Executor: input.Executor, AllowedEvents: allowed,
+		MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
+		QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
+		Execution: input.Execution,
+	}
+	candidate.Digest = checkPolicyDigest(candidate)
+	return candidate, nil
+}
+
+func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, base *ExpectedCheckPolicy, enable bool, now time.Time) (CheckPolicy, error) {
+	if now.IsZero() {
+		return CheckPolicy{}, fmt.Errorf("%w: missing time", ErrInvalidCheckPolicy)
+	}
+	candidate, err := CandidateCheckPolicy(input)
+	if err != nil {
+		return CheckPolicy{}, err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return CheckPolicy{}, err
@@ -307,20 +341,13 @@ func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now 
 	if err != nil {
 		return CheckPolicy{}, err
 	}
-	candidate := CheckPolicy{
-		RepositoryID: input.RepositoryID, Executor: input.Executor, AllowedEvents: allowed,
-		MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
-		QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
-		Execution: input.Execution,
+	if base != nil && (base.Version != existing.Version || base.Digest != existing.Digest) {
+		return CheckPolicy{}, ErrCheckPolicyStale
 	}
-	candidate.Digest = checkPolicyDigest(candidate)
-	if exists && existing.Digest == candidate.Digest {
-		if err := tx.Commit(); err != nil {
-			return CheckPolicy{}, err
-		}
-		return existing, nil
-	}
-	if !exists {
+	stored := existing
+	switch {
+	case exists && existing.Digest == candidate.Digest:
+	case !exists:
 		candidate.Version = 1
 		candidate.AuthorityEpoch, err = RandomID()
 		if err != nil {
@@ -337,12 +364,13 @@ func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now 
 			queue_limit,max_active_jobs,max_lease_ms,execution_json,consent_version,consent_digest,consent_active,runner_generation,
 			authority_epoch,created_at,updated_at
 		) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'',0,0,?,?,?)`,
-			candidate.RepositoryID, candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(allowed),
+			candidate.RepositoryID, candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(candidate.AllowedEvents),
 			candidate.MaxTimeoutMS, candidate.MaxOutputLimitBytes, candidate.QueueLimit, candidate.MaxActiveJobs, candidate.MaxLeaseMS,
 			executionJSON, candidate.AuthorityEpoch, candidate.CreatedAt.Unix(), candidate.UpdatedAt.Unix()); err != nil {
 			return CheckPolicy{}, err
 		}
-	} else {
+		stored = candidate
+	default:
 		candidate.Version = existing.Version + 1
 		candidate.AuthorityEpoch = existing.AuthorityEpoch
 		candidate.ConsentVersion = existing.ConsentVersion
@@ -358,7 +386,7 @@ func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now 
 			policy_version=?,policy_digest=?,executor=?,allowed_events=?,max_timeout_ms=?,max_output_limit_bytes=?,
 			queue_limit=?,max_active_jobs=?,max_lease_ms=?,execution_json=?,consent_active=0,updated_at=?
 			WHERE repository_id=?`,
-			candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(allowed),
+			candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(candidate.AllowedEvents),
 			candidate.MaxTimeoutMS, candidate.MaxOutputLimitBytes, candidate.QueueLimit, candidate.MaxActiveJobs, candidate.MaxLeaseMS,
 			executionJSON, candidate.UpdatedAt.Unix(), candidate.RepositoryID); err != nil {
 			return CheckPolicy{}, err
@@ -366,11 +394,18 @@ func (s *Store) SetCheckPolicy(ctx context.Context, input CheckPolicyInput, now 
 		if _, err := interruptStalePendingCheckJobsTx(ctx, tx, candidate, now); err != nil {
 			return CheckPolicy{}, err
 		}
+		stored = candidate
+	}
+	if enable {
+		stored, err = grantCheckConsentTx(ctx, tx, input.RepositoryID, &ExpectedCheckPolicy{Version: stored.Version, Digest: candidate.Digest}, now)
+		if err != nil {
+			return CheckPolicy{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return CheckPolicy{}, err
 	}
-	return candidate, nil
+	return stored, nil
 }
 
 // CheckPolicy reads the operator policy of one repository.
@@ -493,6 +528,17 @@ func (s *Store) grantCheckConsent(ctx context.Context, repositoryID string, expe
 		return CheckPolicy{}, err
 	}
 	defer tx.Rollback()
+	policy, err := grantCheckConsentTx(ctx, tx, repositoryID, expected, now)
+	if err != nil {
+		return CheckPolicy{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return CheckPolicy{}, err
+	}
+	return policy, nil
+}
+
+func grantCheckConsentTx(ctx context.Context, tx *sql.Tx, repositoryID string, expected *ExpectedCheckPolicy, now time.Time) (CheckPolicy, error) {
 	policy, exists, err := readCheckPolicyTx(ctx, tx, repositoryID)
 	if err != nil {
 		return CheckPolicy{}, err
@@ -510,9 +556,6 @@ func (s *Store) grantCheckConsent(ctx context.Context, repositoryID string, expe
 		return CheckPolicy{}, fmt.Errorf("%w: the policy must be reconfigured with current execution settings", ErrInvalidCheckPolicy)
 	}
 	if policy.ConsentActive && policy.ConsentDigest == policy.Digest && policy.ConsentVersion > 0 {
-		if err := tx.Commit(); err != nil {
-			return CheckPolicy{}, err
-		}
 		return policy, nil
 	}
 	policy.ConsentVersion++
@@ -534,9 +577,6 @@ func (s *Store) grantCheckConsent(ctx context.Context, repositoryID string, expe
 	}
 	if affected != 1 {
 		return CheckPolicy{}, ErrCheckPolicyStale
-	}
-	if err := tx.Commit(); err != nil {
-		return CheckPolicy{}, err
 	}
 	return policy, nil
 }
