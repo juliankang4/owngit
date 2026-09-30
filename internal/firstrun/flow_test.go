@@ -225,7 +225,7 @@ func TestNetworkListenAsksForThePlainHTTPAcknowledgement(t *testing.T) {
 	for _, want := range []string{
 		"+- [!] 암호화되지 않는 연결 ", "5/6", "[x] OwnGit이 이 연결을 암호화하지 않는다는 점을 확인해 주세요.", "--listen", "127.0.0.1:7654",
 		"[x] y 또는 n을 입력하세요.", "일반 HTTP, 암호화 안 됨", "[ok] 이 컴퓨터에서 Tailscale이 실행 중입니다.",
-		"\nowngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --state-dir '/tmp/owngit state'\n",
+		"\nowngit network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --accept-insecure-http --state-dir '/tmp/owngit state'\n",
 		"백그라운드 서비스의 옵션",
 	} {
 		if !strings.Contains(out, want) {

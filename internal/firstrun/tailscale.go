@@ -89,15 +89,17 @@ func readTailscale(ctx context.Context, command tailscale.Command, timeout time.
 // tailscaleCommand is the command that saves network settings for the
 // Tailscale address, so every later start, a background service included,
 // serves OwnGit there. The listen address makes OwnGit accept the Tailscale
-// IP address and the base URL its MagicDNS name, when there is one. It is
-// printed for the owner to copy; OwnGit never runs it and saves nothing.
+// IP address and the base URL its MagicDNS name, when there is one.
+// --accept-insecure-http records the plain HTTP acknowledgement that
+// "network set" needs for an address other devices reach. It is printed for
+// the owner to copy; OwnGit never runs it and saves nothing.
 func tailscaleCommand(command string, found Tailscale, port, stateDir string) string {
 	address := net.JoinHostPort(found.IPv4, port)
 	host := found.Name
 	if host == "" {
 		host = found.IPv4
 	}
-	return networkSetCommand(command, stateDir, "--listen", address, "--base-url", "http://"+net.JoinHostPort(host, port))
+	return networkSetCommand(command, stateDir, "--listen", address, "--base-url", "http://"+net.JoinHostPort(host, port), "--accept-insecure-http")
 }
 
 // localOnlyCommand is the command that saves a listen address only this

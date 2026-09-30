@@ -83,7 +83,7 @@ var phrases = map[string]phrase{
 	"dev_missing":  {"Tailscale was not found on this computer.", "이 컴퓨터에서 Tailscale을 찾지 못했습니다."},
 	"dev_addr":     {"Tailscale address", "Tailscale 주소"},
 	"dev_name":     {"MagicDNS name", "MagicDNS 이름"},
-	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설정을 마친 뒤 OwnGit을 다시 시작하세요. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
+	"dev_how":      {"To use OwnGit from your other Tailscale devices, save these network settings with the command below, then restart OwnGit after setup. Its --accept-insecure-http option records that you accept plain HTTP for an address other devices reach. You can change them later in Settings, under Network.", "다른 Tailscale 기기에서 OwnGit을 쓰려면 아래 명령으로 네트워크 설정을 저장하고, 설정을 마친 뒤 OwnGit을 다시 시작하세요. 명령의 --accept-insecure-http 옵션은 다른 기기가 접속하는 주소에서 일반 HTTP를 받아들인다는 확인을 기록합니다. 나중에 설정 화면의 \"네트워크\"에서 바꿀 수도 있습니다."},
 	"dev_enc":      {"Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection.", "Tailscale이 기기 사이의 연결을 암호화하지만, OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다."},
 	"dev_docs":     {`See "Reaching the server from another device" in the OwnGit docs.`, `OwnGit 문서의 "다른 기기에서 서버에 접속하기"를 보세요.`},
 	"dev_cmd":      {"Command that saves the settings (one line, copy all of it):", "설정을 저장하는 명령 (한 줄 전체를 복사하세요):"},

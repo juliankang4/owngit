@@ -439,3 +439,30 @@ func TestNetworkSetAsksOnceToAcceptPlainHTTP(t *testing.T) {
 		t.Fatalf("after the acknowledgement: %v", err)
 	}
 }
+
+// The command first-run setup prints for Tailscale devices works as printed
+// after a setup that listened only on this computer, and records the plain
+// HTTP acknowledgement.
+func TestTheTailscaleCommandSetupPrintsIsAccepted(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, err := state.Open(context.Background(), stateDir)
+	noErr(t, err)
+	noErr(t, store.CompleteSetup(context.Background(), filepath.Join(t.TempDir(), "repositories"), "open", "", "synthetic-admin-hash", false))
+	noErr(t, store.Close())
+	// The words internal/firstrun prints (see its flow test), without the
+	// program name.
+	printed := strings.Fields("network set --listen 100.64.0.7:7654 --base-url http://my-mac.tail0000.ts.net:7654 --accept-insecure-http")
+	if _, err := captureStdout(func() error { return run(append(printed, "--state-dir", stateDir)) }); err != nil {
+		t.Fatalf("the printed command was refused: %v", err)
+	}
+	store, err = state.Open(context.Background(), stateDir)
+	noErr(t, err)
+	defer store.Close()
+	network, err := store.NetworkSettings(context.Background())
+	noErr(t, err)
+	settings, err := store.Settings(context.Background())
+	noErr(t, err)
+	if network.Listen != "100.64.0.7:7654" || !settings.InsecureHTTPAccepted {
+		t.Fatalf("saved %+v accepted=%v", network, settings.InsecureHTTPAccepted)
+	}
+}
