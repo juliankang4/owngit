@@ -47,9 +47,9 @@ func (app *App) handleCodingTools(writer http.ResponseWriter, request *http.Requ
 	page.ClaudeCommand = "claude mcp add --scope user owngit -- " + page.MCPCommand
 	page.CodexCommand = "codex mcp add owngit -- " + page.MCPCommand
 
-	names := make(map[string]string, len(repositories))
+	byID := make(map[string]state.Repository, len(repositories))
 	for _, stored := range repositories {
-		names[stored.ID] = stored.Name
+		byID[stored.ID] = stored
 	}
 	status := http.StatusOK
 	ctx := request.Context()
@@ -58,7 +58,7 @@ func (app *App) handleCodingTools(writer http.ResponseWriter, request *http.Requ
 	} else {
 		page.TasksTruncated = more
 		for index, summary := range app.browserTaskSummaries(ctx, views) {
-			page.Tasks = append(page.Tasks, webui.RecentTask{RepositoryName: names[views[index].task.RepositoryID], Task: summary})
+			page.Tasks = append(page.Tasks, webui.RecentTask{RepositoryName: byID[views[index].task.RepositoryID].Name, Task: summary})
 		}
 	}
 	// The decision is the one every administrator page makes (see
@@ -70,7 +70,7 @@ func (app *App) handleCodingTools(writer http.ResponseWriter, request *http.Requ
 		} else {
 			for _, credential := range credentials {
 				page.Credentials = append(page.Credentials, webui.RepositoryHelperCredential{
-					RepositoryName: names[credential.RepositoryID], ManageURL: baseHelperCredentialsURL(credential.RepositoryID),
+					RepositoryName: byID[credential.RepositoryID].Name, ManageURL: baseHelperCredentialsURL(byID[credential.RepositoryID].Address),
 					Credential: browserHelperCredential(credential),
 				})
 			}
@@ -128,9 +128,15 @@ func (app *App) handleAllHelperCredentialsAPI(writer http.ResponseWriter, reques
 		writeAPIError(writer, unavailable(request, "helper credential list read", err), "state_unavailable", "Helper credentials could not be read.", nil)
 		return
 	}
+	addresses := make(map[string]string, len(repositories))
+	for _, stored := range repositories {
+		addresses[stored.ID] = stored.Address
+	}
 	response := checkapi.CredentialListResponse{OK: true, Credentials: make([]*checkapi.Credential, 0, len(credentials))}
 	for _, credential := range credentials {
-		response.Credentials = append(response.Credentials, credentialJSON(credential))
+		item := credentialJSON(credential)
+		item.RepositoryAddress = addresses[credential.RepositoryID]
+		response.Credentials = append(response.Credentials, item)
 	}
 	writeAPIJSON(writer, http.StatusOK, response)
 }

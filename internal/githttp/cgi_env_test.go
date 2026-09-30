@@ -25,7 +25,7 @@ func newCGITestHandler(t *testing.T) *Handler {
 // request's own connection. Forwarded headers from any peer change nothing.
 func TestCGIEnvironmentUsesTheConnectionOnly(t *testing.T) {
 	handler := newCGITestHandler(t)
-	route := route{repositoryID: "demo", pathInfo: "/demo.git/info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
+	route := route{repositoryID: "demo", suffix: "info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
 	cases := []struct {
 		name, host, remote string
 		tls                bool
@@ -75,7 +75,7 @@ func TestCGIEnvironmentUsesTheConnectionOnly(t *testing.T) {
 // client address, while the raw peer decides whether the proxy is trusted.
 func TestCGIEnvironmentFollowsATrustedProxy(t *testing.T) {
 	handler := newCGITestHandler(t)
-	route := route{repositoryID: "demo", pathInfo: "/demo.git/info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
+	route := route{repositoryID: "demo", suffix: "info/refs", service: "git-upload-pack", query: "service=git-upload-pack"}
 	resolver := requestctx.Resolver{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("192.0.2.10/32")}}
 	for _, test := range []struct {
 		name, remote string

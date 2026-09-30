@@ -672,9 +672,10 @@ type ActivityDayGroup struct {
 
 // ActivityEntry is one commit in an activity list.
 type ActivityEntry struct {
-	RepositoryID   string
-	RepositoryName string
-	RepositoryURL  string
+	RepositoryID      string
+	RepositoryName    string
+	RepositoryAddress string
+	RepositoryURL     string
 	// Ref is the branch or ref this commit was observed on.
 	Ref string
 	// RefRetained marks a ref that no longer exists but whose history is
@@ -826,7 +827,10 @@ func (p RepositoryPage) chrome() Chrome { return p.Chrome }
 
 // RepositoryHeader identifies the repository on every tab.
 type RepositoryHeader struct {
+	// ID names the repository in storage and records; Address is where it
+	// answers, which links use.
 	ID          string
+	Address     string
 	Name        string
 	Description string
 	URL         string

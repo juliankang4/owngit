@@ -225,13 +225,16 @@ type Configuration struct {
 }
 
 type Credential struct {
-	ID           string     `json:"id"`
-	RepositoryID string     `json:"repository_id"`
-	Label        string     `json:"label"`
-	CreationID   string     `json:"creation_id,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	RevokedAt    *time.Time `json:"revoked_at,omitempty"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
+	ID           string `json:"id"`
+	RepositoryID string `json:"repository_id"`
+	// RepositoryAddress is where the credential's repository answers now,
+	// given by the list across repositories.
+	RepositoryAddress string     `json:"repository_address,omitempty"`
+	Label             string     `json:"label"`
+	CreationID        string     `json:"creation_id,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	RevokedAt         *time.Time `json:"revoked_at,omitempty"`
+	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
 }
 
 type CreateTaskInput struct {
@@ -264,6 +267,9 @@ type ConfigurationResponse struct {
 type CredentialResponse struct {
 	OK         bool        `json:"ok"`
 	Credential *Credential `json:"credential,omitempty"`
+	// RepositoryAddress is where the credential's repository answers now:
+	// its current name, or its ID.
+	RepositoryAddress string `json:"repository_address,omitempty"`
 	// Token is returned only when the credential is created. The server keeps
 	// only its hash, so a retransmit returns the credential without a token.
 	Token string `json:"token,omitempty"`
@@ -392,7 +398,10 @@ type RunnerCredential struct {
 type RunnerCredentialResponse struct {
 	OK         bool              `json:"ok"`
 	Credential *RunnerCredential `json:"credential,omitempty"`
-	Token      string            `json:"token,omitempty"`
+	// RepositoryAddress is where the credential's repository answers now:
+	// its current name, or its ID.
+	RepositoryAddress string `json:"repository_address,omitempty"`
+	Token             string `json:"token,omitempty"`
 }
 
 type RunnerCredentialListResponse struct {

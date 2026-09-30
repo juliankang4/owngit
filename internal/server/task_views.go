@@ -28,9 +28,11 @@ const (
 	taskViewAPIPath = "/api/v1/tasks"
 )
 
-// taskView is one listed task with its latest attempt, when it has one.
+// taskView is one listed task with its latest attempt, when it has one,
+// and the current address of the task's repository.
 type taskView struct {
 	task      state.Task
+	address   string
 	latest    state.CheckAttempt
 	hasLatest bool
 }
@@ -38,8 +40,8 @@ type taskView struct {
 // repositoryTaskViews lists a repository's tasks, those with the newest
 // registered attempt first. The stored sequence stays the authority and is
 // never replaced with a list index.
-func (app *App) repositoryTaskViews(ctx context.Context, repositoryID string) ([]taskView, error) {
-	tasks, err := app.Store.Tasks(ctx, repositoryID)
+func (app *App) repositoryTaskViews(ctx context.Context, stored state.Repository) ([]taskView, error) {
+	tasks, err := app.Store.Tasks(ctx, stored.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +54,7 @@ func (app *App) repositoryTaskViews(ctx context.Context, repositoryID string) ([
 		}
 		return tasks[left].ID > tasks[right].ID
 	})
-	return app.withLatestAttempts(ctx, tasks)
+	return app.withLatestAttempts(ctx, tasks, map[string]string{stored.ID: stored.Address})
 }
 
 // recentTaskViews lists the tasks of repositories with the newest change
@@ -62,14 +64,16 @@ func (app *App) repositoryTaskViews(ctx context.Context, repositoryID string) ([
 // changed, whichever is later. Both are the server's own times.
 func (app *App) recentTaskViews(ctx context.Context, repositories []state.Repository) ([]taskView, bool, error) {
 	var tasks []state.Task
+	addresses := make(map[string]string, len(repositories))
 	for _, stored := range repositories {
+		addresses[stored.ID] = stored.Address
 		listed, err := app.Store.Tasks(ctx, stored.ID)
 		if err != nil {
 			return nil, false, err
 		}
 		tasks = append(tasks, listed...)
 	}
-	views, err := app.withLatestAttempts(ctx, tasks)
+	views, err := app.withLatestAttempts(ctx, tasks, addresses)
 	if err != nil {
 		return nil, false, err
 	}
@@ -97,15 +101,15 @@ func (app *App) recentTaskViews(ctx context.Context, repositories []state.Reposi
 }
 
 // withLatestAttempts reads the latest attempt of each task, one read per
-// listed task.
-func (app *App) withLatestAttempts(ctx context.Context, tasks []state.Task) ([]taskView, error) {
+// listed task. addresses maps each repository ID to its current address.
+func (app *App) withLatestAttempts(ctx context.Context, tasks []state.Task, addresses map[string]string) ([]taskView, error) {
 	views := make([]taskView, 0, len(tasks))
 	for _, task := range tasks {
 		latest, exists, err := app.Store.LatestCheckAttemptForTask(ctx, task.RepositoryID, task.ID)
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, taskView{task: task, latest: latest, hasLatest: exists})
+		views = append(views, taskView{task: task, address: addresses[task.RepositoryID], latest: latest, hasLatest: exists})
 	}
 	return views, nil
 }
@@ -114,7 +118,9 @@ func (app *App) withLatestAttempts(ctx context.Context, tasks []state.Task) ([]t
 // check helper's task and attempt records use.
 type taskViewJSON struct {
 	*checkapi.Task
-	LatestAttempt *checkapi.Attempt `json:"latest_attempt"`
+	// RepositoryAddress is where the task's repository answers now.
+	RepositoryAddress string            `json:"repository_address"`
+	LatestAttempt     *checkapi.Attempt `json:"latest_attempt"`
 }
 
 type taskViewListResponse struct {
@@ -135,7 +141,7 @@ type taskDetailResponse struct {
 func (app *App) taskViewsJSON(request *http.Request, views []taskView) []taskViewJSON {
 	items := make([]taskViewJSON, 0, len(views))
 	for _, view := range views {
-		item := taskViewJSON{Task: taskJSON(view.task)}
+		item := taskViewJSON{Task: taskJSON(view.task), RepositoryAddress: view.address}
 		if view.hasLatest {
 			item.LatestAttempt = app.attemptJSON(request, view.latest)
 		}
@@ -177,16 +183,22 @@ func (app *App) handleTaskViewAPI(writer http.ResponseWriter, request *http.Requ
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
 		return
 	}
-	repositoryID := parts[0]
-	if _, exists, err := app.visibleRepository(request, repositoryID); err != nil {
+	// The repository name was resolved with every repository path (see
+	// resolveRepositoryAddress), and authorizeAPI answered one that reaches
+	// no current repository.
+	address, _ := repositoryAddressOf(request)
+	repositoryID := address.id
+	stored, exists, err := app.visibleRepository(request, repositoryID)
+	if err != nil {
 		writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 		return
-	} else if !exists {
+	}
+	if !exists {
 		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
 		return
 	}
 	if len(parts) == 1 {
-		views, err := app.repositoryTaskViews(ctx, repositoryID)
+		views, err := app.repositoryTaskViews(ctx, stored)
 		if err != nil {
 			writeAPIError(writer, unavailable(request, "task list read", err), "state_unavailable", "Task records could not be read.", nil)
 			return

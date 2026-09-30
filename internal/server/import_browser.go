@@ -268,7 +268,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(request, "import change", err))
 		return
 	}
-	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.ID)+"/import?notice="+notice, status)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.Address)+"/import?notice="+notice, status)
 }
 
 func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, status int) {

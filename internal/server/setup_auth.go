@@ -288,11 +288,15 @@ func (app *App) keepRepositoryContext(request *http.Request, page *webui.AuthPag
 		return
 	}
 	parts := strings.Split(strings.TrimPrefix(target.Path, "/repositories/"), "/")
-	id := parts[0]
-	if id == "" || id == "new" || id == "new-import" {
+	name := parts[0]
+	if name == "" || name == "new" || name == "new-import" {
 		return
 	}
-	stored, exists, err := app.Store.Repository(request.Context(), id)
+	address, found, err := app.Store.ResolveRepositoryName(request.Context(), name, app.now())
+	if err != nil || !found || address.Current != name {
+		return
+	}
+	stored, exists, err := app.Store.Repository(request.Context(), address.RepositoryID)
 	if err != nil || !exists {
 		return
 	}

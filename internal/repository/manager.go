@@ -138,9 +138,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	lock := m.Locks.For(id)
 	lock.Lock()
 	defer lock.Unlock()
-	if _, exists, err := m.Store.Repository(ctx, id); err != nil {
+	if taken, err := m.Store.RepositoryNameInUse(ctx, id, time.Now()); err != nil {
 		return state.Repository{}, err
-	} else if exists {
+	} else if taken {
 		return state.Repository{}, ErrNameTaken
 	}
 	// Results cached for an earlier repository with this name, which an
@@ -194,7 +194,7 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, fmt.Errorf("publish repository directory: %w", err)
 	}
 	created = true
-	repository := state.Repository{ID: id, Name: name, Description: strings.TrimSpace(description), CreatedAt: time.Now()}
+	repository := state.Repository{ID: id, Name: name, Address: id, Description: strings.TrimSpace(description), CreatedAt: time.Now()}
 	if err := m.Store.AddRepository(ctx, repository); err != nil {
 		return state.Repository{}, fmt.Errorf("record repository (the new bare repository remains at %s for owner recovery): %w", finalPath, err)
 	}

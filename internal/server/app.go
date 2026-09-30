@@ -330,21 +330,6 @@ func peekFormAction(request *http.Request) string {
 	return values.Get("action")
 }
 
-// repositoryIDInPath returns the repository ID that a Git, page or API path
-// names, or "". It does not check that the repository exists.
-func repositoryIDInPath(path string) string {
-	for _, prefix := range []string{"/git/", "/repositories/", "/api/v1/repositories/"} {
-		if rest, ok := strings.CutPrefix(path, prefix); ok {
-			id, _, _ := strings.Cut(rest, "/")
-			if prefix == "/git/" {
-				id = strings.TrimSuffix(id, ".git")
-			}
-			return id
-		}
-	}
-	return ""
-}
-
 // failedReader repeats a body read error for the handler.
 type failedReader struct{ err error }
 
@@ -356,15 +341,17 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.handleHealth(writer, request)
 		return
 	}
-	// A request for a repository postpones its maintenance, from the start
-	// until the end of the request.
-	if id := repositoryIDInPath(request.URL.Path); id != "" {
-		app.Repositories.NoteRepositoryUse(id)
-		defer app.Repositories.NoteRepositoryUse(id)
-	}
+	// The Git handler resolves its own repository address.
 	if strings.HasPrefix(request.URL.Path, "/git/") {
 		app.GitHTTP.ServeHTTP(writer, request)
 		return
+	}
+	// A request for a repository postpones its maintenance, from the start
+	// until the end of the request.
+	request = app.resolveRepositoryAddress(request)
+	if address, _ := repositoryAddressOf(request); address.id != "" {
+		app.Repositories.NoteRepositoryUse(address.id)
+		defer app.Repositories.NoteRepositoryUse(address.id)
 	}
 
 	pageTimeout, pageReserve := app.pageTimeout()

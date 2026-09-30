@@ -301,7 +301,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	if !ok {
 		return
 	}
-	id := parts[0]
+	id, ok := app.answerRepositoryAddressPage(writer, request)
+	if !ok {
+		return
+	}
 	stored, exists, err := app.Store.Repository(request.Context(), id)
 	if err != nil {
 		// A record that could not be read says nothing about whether the
@@ -412,6 +415,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	}
 	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "default-branch" && request.Method == http.MethodPost {
 		app.handleSetDefaultBranch(writer, request, stored, summary, chrome, session)
+		return
+	}
+	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "rename" && request.Method == http.MethodPost {
+		app.handleRenameRepository(writer, request, stored, summary, chrome, session)
 		return
 	}
 	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "history" && request.Method == http.MethodPost {
@@ -551,13 +558,13 @@ func administratorRepositoryScreen(segment string) bool {
 }
 
 func (app *App) baseRepositoryPage(request *http.Request, chrome webui.Chrome, stored state.Repository, summary repository.Summary) webui.RepositoryPage {
-	base := "/repositories/" + url.PathEscape(stored.ID)
-	clone := app.cloneURL(request, stored.ID)
+	base := "/repositories/" + url.PathEscape(stored.Address)
+	clone := app.cloneURL(request, stored.Address)
 	page := webui.RepositoryPage{
 		Chrome:      chrome,
-		Repo:        webui.RepositoryHeader{ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base, CloneURL: clone, Empty: summary.Empty},
+		Repo:        webui.RepositoryHeader{ID: stored.ID, Address: stored.Address, Name: stored.Name, Description: stored.Description, URL: base, CloneURL: clone, Empty: summary.Empty},
 		OverviewURL: base, CodeURL: base + "/code", CommitsURL: base + "/commits",
-		RestoreURL:      restoreURL(stored.ID, summary.DefaultOID, summary.DefaultBranch, ""),
+		RestoreURL:      restoreURL(stored.Address, summary.DefaultOID, summary.DefaultBranch, ""),
 		PullRequestsURL: base + "/pull-requests",
 		TasksURL:        base + "/tasks",
 		ImportsURL:      base + "/import",
@@ -703,7 +710,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 				commits = commits[:overviewRecentCommits]
 			}
 			for _, commit := range commits {
-				page.Overview.Recent = append(page.Overview.Recent, app.commitSummary(page.Repo.ID, selectedRef, commit))
+				page.Overview.Recent = append(page.Overview.Recent, app.commitSummary(page.Repo.Address, selectedRef, commit))
 			}
 			// An unreadable tip leaves the latest commit unknown, not its
 			// parent.
@@ -717,7 +724,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		if err != nil {
 			return err
 		}
-		page.Overview.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, "", entries)
+		page.Overview.Readme = app.folderReadme(request, page.Repo, selectedRef, "", entries)
 	}
 	app.fillOverviewEvidence(request, page, summary)
 
@@ -737,8 +744,8 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		full := "refs/heads/" + branch.Name
 		line := webui.RefLine{Name: branch.Name, Kind: "branch", IsDefault: branch.Name == summary.DefaultBranch, URL: withRef(page.Repo.URL, full)}
 		if commit, ok := branchTips[branch.Name]; ok {
-			line.Tip = app.commitSummary(page.Repo.ID, full, commit)
-			line.RestoreURL = restoreURL(page.Repo.ID, commit.OID, branch.Name, "")
+			line.Tip = app.commitSummary(page.Repo.Address, full, commit)
+			line.RestoreURL = restoreURL(page.Repo.Address, commit.OID, branch.Name, "")
 		}
 		branches = append(branches, line)
 	}
@@ -746,8 +753,8 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		full := "refs/tags/" + tag.Name
 		line := webui.RefLine{Name: tag.Name, Kind: "tag", URL: withRef(page.Repo.URL, full), Annotated: tag.Type == "tag"}
 		if commit, ok := tagTips[tag.Name]; ok {
-			line.Tip = app.commitSummary(page.Repo.ID, full, commit)
-			line.RestoreURL = restoreURL(page.Repo.ID, commit.OID, summary.DefaultBranch, "")
+			line.Tip = app.commitSummary(page.Repo.Address, full, commit)
+			line.RestoreURL = restoreURL(page.Repo.Address, commit.OID, summary.DefaultBranch, "")
 		}
 		tags = append(tags, line)
 	}
@@ -759,9 +766,9 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	for _, ref := range retained {
 		line := webui.RefLine{Name: shortOID(ref.OID), Kind: ref.Kind, Retained: true}
 		if ref.CommitOID != "" {
-			line.Tip = app.commitSummary(page.Repo.ID, "", ref.Commit)
+			line.Tip = app.commitSummary(page.Repo.Address, "", ref.Commit)
 			line.URL = line.Tip.URL
-			line.RestoreURL = restoreURL(page.Repo.ID, ref.CommitOID, recoveredTarget(ref.OID, summary.Branches), "")
+			line.RestoreURL = restoreURL(page.Repo.Address, ref.CommitOID, recoveredTarget(ref.OID, summary.Branches), "")
 		}
 		retainedLines = append(retainedLines, line)
 	}
@@ -897,7 +904,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	commitOID := page.Ref.Revision
 	lookup, err := app.Repositories.PathAt(request.Context(), page.Repo.ID, commitOID, requestedPath)
 	if errors.Is(err, repository.ErrNotFound) {
-		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
+		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo.Address, selectedRef, requestedPath)}
 		return nil
 	}
 	if err != nil {
@@ -923,8 +930,8 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		}
 		file := &webui.FileView{
 			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
-			RawURL:     rawURL(page.Repo.ID, selectedRef, requestedPath),
-			RestoreURL: restoreURL(page.Repo.ID, commitOID, target, requestedPath),
+			RawURL:     rawURL(page.Repo.Address, selectedRef, requestedPath),
+			RestoreURL: restoreURL(page.Repo.Address, commitOID, target, requestedPath),
 		}
 		if lookup.File.Size >= 0 {
 			file.Size = lookup.File.Size
@@ -936,20 +943,20 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		if !binary && markdown.IsDocument(requestedPath) {
 			file.Document = true
 			file.ShowSource = request.URL.Query().Get("view") == "source"
-			file.PreviewURL = codeURL(page.Repo.ID, selectedRef, requestedPath)
+			file.PreviewURL = codeURL(page.Repo.Address, selectedRef, requestedPath)
 			file.SourceURL = file.PreviewURL + "&view=source"
 			// A cut-off document would render a broken ending, so only a
 			// whole file is rendered. The source view is always offered.
 			if blob.Truncated {
 				file.NotRendered = webui.MsgCodeNotShown
 			} else if !file.ShowSource {
-				file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.ID, selectedRef, parent, blob.Content)
+				file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.Address, selectedRef, parent, blob.Content)
 			}
 		}
-		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.ID, selectedRef, lookup.Entries)}
+		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo.Address, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.Address, selectedRef, lookup.Entries)}
 		// The drawer lists the file's folder, so "up" leaves that folder.
 		if parent != "" {
-			view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(parent))
+			view.UpURL = codeURL(page.Repo.Address, selectedRef, path.Dir(parent))
 		}
 		file.RawTooLarge = file.Size > limits.RawBytes
 		// A picture loads through the raw endpoint, so it is shown only
@@ -960,17 +967,17 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		page.Code = view
 		return nil
 	}
-	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo.ID, selectedRef, requestedPath)}
+	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo.Address, selectedRef, requestedPath)}
 	if requestedPath != "" {
-		view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(requestedPath))
+		view.UpURL = codeURL(page.Repo.Address, selectedRef, path.Dir(requestedPath))
 	}
-	view.Entries = treeViewEntries(page.Repo.ID, selectedRef, lookup.Entries)
-	view.Readme = app.folderReadme(request, page.Repo.ID, selectedRef, requestedPath, lookup.Entries)
+	view.Entries = treeViewEntries(page.Repo.Address, selectedRef, lookup.Entries)
+	view.Readme = app.folderReadme(request, page.Repo, selectedRef, requestedPath, lookup.Entries)
 	page.Code = view
 	// The whole branch or tag downloads from its top folder, where no folder
 	// or file could be taken for what the archive holds.
 	if requestedPath == "" {
-		page.Downloads = archiveLinks(page.Repo.ID, selectedRef)
+		page.Downloads = archiveLinks(page.Repo.Address, selectedRef)
 	}
 	return nil
 }
@@ -992,7 +999,7 @@ func (app *App) noteUnreadableCommits(request *http.Request, page *webui.Reposit
 		}
 		if !slices.ContainsFunc(page.Chrome.Notices, named) {
 			page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{
-				Kind: webui.NoticeWarning, Code: webui.MsgCommitUnreadable, Detail: shortOID(oid), Link: commitURL(page.Repo.ID, ref, oid, ""),
+				Kind: webui.NoticeWarning, Code: webui.MsgCommitUnreadable, Detail: shortOID(oid), Link: commitURL(page.Repo.Address, ref, oid, ""),
 			})
 		}
 	}
@@ -1020,7 +1027,7 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		}
 		page.Commits.Unreadable = err != nil
 		for _, commit := range commits {
-			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.ID, selectedRef, commit))
+			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.Address, selectedRef, commit))
 		}
 		return nil
 	}
@@ -1081,25 +1088,25 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		target = strings.TrimPrefix(selectedRef, "refs/heads/")
 	}
 	view := webui.CommitDetail{
-		Commit: app.commitSummary(page.Repo.ID, selectedRef, commit), Body: commit.Body,
+		Commit: app.commitSummary(page.Repo.Address, selectedRef, commit), Body: commit.Body,
 		CommitterName: commit.CommitterName, CommitterDate: commit.CommittedAt,
 		SelectedPath: requestedPath,
-		RestoreURL:   restoreURL(page.Repo.ID, commit.OID, target, requestedPath),
+		RestoreURL:   restoreURL(page.Repo.Address, commit.OID, target, requestedPath),
 	}
 	if requestedPath != "" {
-		view.AllFilesURL = commitURL(page.Repo.ID, selectedRef, openedOID, "")
+		view.AllFilesURL = commitURL(page.Repo.Address, selectedRef, openedOID, "")
 	}
 	for _, parentOID := range commit.Parents {
-		view.Parents = append(view.Parents, webui.CommitSummary{OID: parentOID, ShortOID: shortOID(parentOID), URL: commitURL(page.Repo.ID, selectedRef, parentOID, "")})
+		view.Parents = append(view.Parents, webui.CommitSummary{OID: parentOID, ShortOID: shortOID(parentOID), URL: commitURL(page.Repo.Address, selectedRef, parentOID, "")})
 	}
-	page.Downloads = archiveLinks(page.Repo.ID, commit.OID)
+	page.Downloads = archiveLinks(page.Repo.Address, commit.OID)
 	if len(commit.Parents) > 1 {
 		view.Unavailable = true
 		view.UnavailableReason = webui.MsgCommitDiffMerge
 		page.Commits.Detail = &view
 		return nil
 	}
-	fileURL := func(filePath string) string { return commitURL(page.Repo.ID, selectedRef, openedOID, filePath) }
+	fileURL := func(filePath string) string { return commitURL(page.Repo.Address, selectedRef, openedOID, filePath) }
 	limits, err := app.Store.BrowseLimits(request.Context())
 	if err != nil {
 		return err
@@ -1267,7 +1274,7 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 	summary := snapshot.Summary
 	result := webui.RepositorySummary{
 		ID: stored.ID, Name: stored.Name, Description: stored.Description,
-		URL: "/repositories/" + url.PathEscape(stored.ID), CloneURL: app.cloneURL(request, stored.ID),
+		URL: "/repositories/" + url.PathEscape(stored.Address), CloneURL: app.cloneURL(request, stored.Address),
 		CreatedAt: stored.CreatedAt, Empty: summary.Empty, DefaultBranch: summary.DefaultBranch,
 		// An empty repository has no branch at all yet, which is its normal
 		// first state rather than a default branch that went missing.
@@ -1276,7 +1283,7 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 	}
 	switch {
 	case snapshot.HeadFound:
-		result.Head = app.commitSummary(stored.ID, "refs/heads/"+summary.DefaultBranch, snapshot.Head)
+		result.Head = app.commitSummary(stored.Address, "refs/heads/"+summary.DefaultBranch, snapshot.Head)
 	case snapshot.HeadErr != nil:
 		result.HeadUnreadable = true
 		logFailure(request, "latest commit read", fmt.Errorf("repository %q: %w", stored.ID, snapshot.HeadErr))
@@ -1284,10 +1291,10 @@ func (app *App) repositorySummary(request *http.Request, stored state.Repository
 	return result
 }
 
-func (app *App) commitSummary(repositoryID, ref string, commit repository.Commit) webui.CommitSummary {
+func (app *App) commitSummary(address, ref string, commit repository.Commit) webui.CommitSummary {
 	return webui.CommitSummary{
 		OID: commit.OID, ShortOID: shortOID(commit.OID), Subject: commit.Subject,
-		AuthorName: commit.AuthorName, AuthorDate: commit.AuthoredAt, URL: commitURL(repositoryID, ref, commit.OID, ""),
+		AuthorName: commit.AuthorName, AuthorDate: commit.AuthoredAt, URL: commitURL(address, ref, commit.OID, ""),
 	}
 }
 
@@ -1496,9 +1503,9 @@ func (app *App) activityEntries(stored state.Repository, records []repository.Ac
 			}
 		}
 		entries = append(entries, webui.ActivityEntry{
-			RepositoryID: stored.ID, RepositoryName: stored.Name, RepositoryURL: "/repositories/" + url.PathEscape(stored.ID),
+			RepositoryID: stored.ID, RepositoryName: stored.Name, RepositoryAddress: stored.Address, RepositoryURL: "/repositories/" + url.PathEscape(stored.Address),
 			Ref: ref, RefRetained: record.Retained,
-			Commit: webui.CommitSummary{OID: record.OID, ShortOID: shortOID(record.OID), Subject: record.Subject, AuthorName: record.AuthorName, AuthorDate: record.AuthoredAt, URL: commitURL(stored.ID, linkRef, record.OID, "")},
+			Commit: webui.CommitSummary{OID: record.OID, ShortOID: shortOID(record.OID), Subject: record.Subject, AuthorName: record.AuthorName, AuthorDate: record.AuthoredAt, URL: commitURL(stored.Address, linkRef, record.OID, "")},
 		})
 	}
 	return entries
@@ -1575,15 +1582,15 @@ func withRef(base, ref string) string {
 	return base + "?ref=" + url.QueryEscape(ref)
 }
 
-func codeURL(repositoryID, ref, filePath string) string {
+func codeURL(address, ref, filePath string) string {
 	values := url.Values{"ref": []string{ref}}
 	if filePath != "" && filePath != "." {
 		values.Set("path", filePath)
 	}
-	return "/repositories/" + url.PathEscape(repositoryID) + "/code?" + values.Encode()
+	return "/repositories/" + url.PathEscape(address) + "/code?" + values.Encode()
 }
 
-func commitURL(repositoryID, ref, oid, filePath string) string {
+func commitURL(address, ref, oid, filePath string) string {
 	values := make(url.Values)
 	if ref != "" {
 		values.Set("ref", ref)
@@ -1591,14 +1598,14 @@ func commitURL(repositoryID, ref, oid, filePath string) string {
 	if filePath != "" {
 		values.Set("path", filePath)
 	}
-	result := "/repositories/" + url.PathEscape(repositoryID) + "/commits/" + url.PathEscape(oid)
+	result := "/repositories/" + url.PathEscape(address) + "/commits/" + url.PathEscape(oid)
 	if len(values) != 0 {
 		result += "?" + values.Encode()
 	}
 	return result
 }
 
-func treeViewEntries(repositoryID, ref string, entries []repository.TreeEntry) []webui.TreeEntry {
+func treeViewEntries(address, ref string, entries []repository.TreeEntry) []webui.TreeEntry {
 	views := make([]webui.TreeEntry, 0, len(entries))
 	for _, entry := range entries {
 		kind := "file"
@@ -1610,7 +1617,7 @@ func treeViewEntries(repositoryID, ref string, entries []repository.TreeEntry) [
 		case entry.Mode == "120000":
 			kind = "symlink"
 		}
-		views = append(views, webui.TreeEntry{Name: entry.Name, Path: entry.Path, URL: codeURL(repositoryID, ref, entry.Path), Kind: kind, Size: entry.Size})
+		views = append(views, webui.TreeEntry{Name: entry.Name, Path: entry.Path, URL: codeURL(address, ref, entry.Path), Kind: kind, Size: entry.Size})
 	}
 	sort.SliceStable(views, func(left, right int) bool {
 		leftDir := views[left].Kind == "dir"
@@ -1623,15 +1630,15 @@ func treeViewEntries(repositoryID, ref string, entries []repository.TreeEntry) [
 	return views
 }
 
-func codeCrumbs(repositoryID, ref, filePath string) []webui.Crumb {
-	crumbs := []webui.Crumb{{Name: repositoryID, URL: codeURL(repositoryID, ref, ""), Current: filePath == ""}}
+func codeCrumbs(address, ref, filePath string) []webui.Crumb {
+	crumbs := []webui.Crumb{{Name: address, URL: codeURL(address, ref, ""), Current: filePath == ""}}
 	if filePath == "" {
 		return crumbs
 	}
 	parts := strings.Split(filePath, "/")
 	for index, part := range parts {
 		currentPath := strings.Join(parts[:index+1], "/")
-		crumbs = append(crumbs, webui.Crumb{Name: part, URL: codeURL(repositoryID, ref, currentPath), Current: index == len(parts)-1})
+		crumbs = append(crumbs, webui.Crumb{Name: part, URL: codeURL(address, ref, currentPath), Current: index == len(parts)-1})
 	}
 	return crumbs
 }

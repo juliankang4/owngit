@@ -126,8 +126,11 @@ func helperCredentialCreate(arguments []string) error {
 	if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
 		return fail(cliProblem("invalid_response", "The server did not return a helper credential."))
 	}
-	if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != creationID {
-		return fail(cliProblem("mismatched_response", "The server returned a credential for another repository or creation identity."))
+	if err := credentialRepositoryMatches(admin.repository, response.Credential.RepositoryID, response.RepositoryAddress); err != nil {
+		return fail(err)
+	}
+	if response.Credential.CreationID != creationID {
+		return fail(cliProblem("mismatched_response", "The server returned a credential for another creation identity."))
 	}
 	if response.Token == "" {
 		return preservedOutputError(issuance.replayed(response.Credential.ID, response.Credential.RevokedAt != nil), reserved.preserve())
@@ -393,4 +396,17 @@ func printHelperCredentialUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit helper-credential <create|list|revoke> [options]")
 	fmt.Fprintln(writer, "Credential management requires the current administrator password. The token is delivered only through --output and stored only as a hash.")
 	fmt.Fprintln(writer, "list without --repository lists the credentials of every repository.")
+}
+
+// credentialRepositoryMatches checks that a credential the server issued
+// belongs to the repository the command named: by its ID, or by the address
+// the server says the repository answers at now.
+func credentialRepositoryMatches(named, repositoryID, address string) error {
+	if named == repositoryID || named == address {
+		return nil
+	}
+	if address != "" {
+		return cliProblem("mismatched_response", "The server returned a credential for another repository. That repository answers at "+address+".")
+	}
+	return cliProblem("mismatched_response", "The server returned a credential for another repository.")
 }

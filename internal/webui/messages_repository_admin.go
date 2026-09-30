@@ -85,6 +85,17 @@ const (
 	MsgRepoBusyInUse               MessageCode = "repoadmin.busy.in_use"
 	MsgRepoBusyPreparing           MessageCode = "repoadmin.busy.preparing"
 	MsgRepoBusyBackup              MessageCode = "repoadmin.busy.backup"
+	MsgRepoRenameTitle             MessageCode = "repoadmin.rename.title"
+	MsgRepoRenameHelp              MessageCode = "repoadmin.rename.help"
+	MsgRepoRenameAddress           MessageCode = "repoadmin.rename.address"
+	MsgRepoRenameLabel             MessageCode = "repoadmin.rename.label"
+	MsgRepoRenameAliasNote         MessageCode = "repoadmin.rename.alias_note"
+	MsgRepoRenameAliases           MessageCode = "repoadmin.rename.aliases"
+	MsgRepoRenameAliasUntil        MessageCode = "repoadmin.rename.alias_until"
+	MsgRepoRenameSubmit            MessageCode = "repoadmin.rename.submit"
+	MsgRepoRenamed                 MessageCode = "repoadmin.rename.done"
+	MsgRepoRenameTaken             MessageCode = "repoadmin.rename.taken"
+	MsgRepoRenameFailed            MessageCode = "repoadmin.rename.failed"
 	MsgRepoAdminPagesTitle         MessageCode = "repoadmin.pages.title"
 	MsgRepoAdminChecksLine         MessageCode = "repoadmin.pages.checks"
 	MsgRepoAdminRunnersLine        MessageCode = "repoadmin.pages.runners"
@@ -279,6 +290,33 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoBusyBackup: {
 		en: "A backup is reading this repository. Try again when the backup finishes.",
 		ko: "백업이 이 저장소를 읽고 있습니다. 백업이 끝난 뒤 다시 시도하세요.",
+	},
+	MsgRepoRenameTitle: {en: "Name and address", ko: "이름과 주소"},
+	MsgRepoRenameHelp: {
+		en: "A new name also changes the address of the repository's pages and its clone address. Files, history, pull requests and checks stay as they are.",
+		ko: "이름을 바꾸면 저장소 화면 주소와 클론 주소도 바뀝니다. 파일, 기록, 풀 리퀘스트, 체크는 그대로 남습니다.",
+	},
+	MsgRepoRenameAddress: {en: "Address now:", ko: "지금 주소:"},
+	MsgRepoRenameLabel:   {en: "New name", ko: "새 이름"},
+	MsgRepoRenameAliasNote: {
+		en: "For 90 days the old address sends pages, the API and Git to the new one, so existing clones keep fetching and pushing. After that the old address stops working and another repository can take the name. Point clones at the new address with git remote set-url before then.",
+		ko: "90일 동안은 예전 주소로 들어온 화면, API, Git 요청을 새 주소로 보내므로 기존 클론에서 계속 가져오고 푸시할 수 있습니다. 그 뒤로는 예전 주소가 더 이상 동작하지 않고 다른 저장소가 그 이름을 쓸 수 있습니다. 그 전에 git remote set-url로 클론의 주소를 새 주소로 바꾸세요.",
+	},
+	MsgRepoRenameAliases: {en: "Earlier addresses that still lead here", ko: "아직 이곳으로 안내하는 예전 주소"},
+	// Value: the time the alias stops leading here.
+	MsgRepoRenameAliasUntil: {en: "until %s", ko: "%s까지"},
+	MsgRepoRenameSubmit:     {en: "Rename", ko: "이름 바꾸기"},
+	MsgRepoRenamed: {
+		en: "Renamed. The old address leads here for 90 days.",
+		ko: "이름을 바꿨습니다. 예전 주소는 90일 동안 이곳으로 안내합니다.",
+	},
+	MsgRepoRenameTaken: {
+		en: "Another repository uses this name, as its name, its ID, or an earlier name that still leads to it. Choose another name.",
+		ko: "다른 저장소가 이 이름을 쓰고 있습니다. 그 저장소의 이름이나 ID이거나, 아직 그 저장소로 안내하는 예전 이름입니다. 다른 이름을 입력하세요.",
+	},
+	MsgRepoRenameFailed: {
+		en: "The repository could not be renamed. Nothing was changed.",
+		ko: "저장소 이름을 바꾸지 못했습니다. 바뀐 것은 없습니다.",
 	},
 	MsgRepoAdminPagesTitle: {en: "Other administrator pages", ko: "다른 관리자 화면"},
 	MsgRepoAdminChecksLine: {

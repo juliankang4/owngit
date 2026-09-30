@@ -31,7 +31,7 @@ func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.
 		}
 	} else {
 		for _, view := range views {
-			page.Items = append(page.Items, app.pullRequestRow(stored.ID, view))
+			page.Items = append(page.Items, app.pullRequestRow(stored.Address, view))
 		}
 	}
 	app.render(writer, request, status, page)
@@ -51,18 +51,18 @@ func (app *App) pullRequestsPage(request *http.Request, stored state.Repository,
 	return page
 }
 
-func (app *App) pullRequestRow(repositoryID string, view *pullrequest.View) webui.PullRequestRow {
+func (app *App) pullRequestRow(address string, view *pullrequest.View) webui.PullRequestRow {
 	if view == nil {
 		return webui.PullRequestRow{}
 	}
 	return webui.PullRequestRow{
 		Number:    view.Number,
 		Title:     view.Title,
-		URL:       pullRequestURL(repositoryID, view.Number),
+		URL:       pullRequestURL(address, view.Number),
 		State:     view.State,
 		Source:    browserRevision(view.Source),
 		Target:    browserRevision(view.Target),
-		Checks:    browserCheckEvidence(repositoryID, view.Checks),
+		Checks:    browserCheckEvidence(address, view.Checks),
 		Review:    browserReviewEvidence(view.Review, view.Source, view.Target),
 		CreatedAt: view.CreatedAt,
 		UpdatedAt: view.UpdatedAt,
@@ -172,7 +172,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	if err != nil {
 		notice, status := browserPullRequestProblem(request, "pull request creation", err, "")
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
-			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
+			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.Address, existing.Number))
 		}
 		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input,
 			[]webui.Notice{notice}, status)
@@ -180,7 +180,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	}
 	app.trayOrigins.note(request, originKey(state.NotifyPullRequest, pullRequestID(stored.ID, created.Number)))
 	writer.Header().Set("Cache-Control", "no-store")
-	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
 }
 
 func (app *App) handlePullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
@@ -286,7 +286,7 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 	if err != nil {
 		problemNotice, status := browserPullRequestProblem(request, "pull request "+strings.ReplaceAll(action, "_", " "), err, action)
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
-			problemNotice = problemNotice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.ID, existing.Number))
+			problemNotice = problemNotice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.Address, existing.Number))
 		}
 		var blockers []webui.MergeBlocker
 		if action == "merge" {
@@ -296,7 +296,7 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
-	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
 }
 
 func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, answer *pullrequest.Mergeability, status int) {
@@ -319,7 +319,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	}
 
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
-	self := pullRequestURL(stored.ID, view.Number)
+	self := pullRequestURL(stored.Address, view.Number)
 	page := webui.PullRequestPage{
 		Chrome:    chrome,
 		Repo:      basePage.Repo,
@@ -329,7 +329,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		State:     view.State,
 		Source:    browserRevision(view.Source),
 		Target:    browserRevision(view.Target),
-		Checks:    browserCheckEvidence(stored.ID, view.Checks),
+		Checks:    browserCheckEvidence(stored.Address, view.Checks),
 		Review:    browserReviewEvidence(view.Review, view.Source, view.Target),
 		Merge:     browserMergeAvailability(view.MergeEligibility),
 		SelfURL:   self,
@@ -343,7 +343,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		Edit:    webui.PullRequestEditForm{Revision: view.EditRevision, Title: view.Title},
 	}
 	if view.Body != nil {
-		page.Description = app.pullRequestText(request.Context(), stored.ID, view.Target.Branch, *view.Body)
+		page.Description = app.pullRequestText(request.Context(), stored.Address, view.Target.Branch, *view.Body)
 		page.Edit.Body = *view.Body
 	}
 	if view.EditedAt != nil {
@@ -353,7 +353,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		page.ReviewNotes = append(page.ReviewNotes, webui.ReviewNoteView{
 			Decision: note.Decision, ReviewerLabel: note.ReviewerLabel,
 			ShortSourceOID: shortOID(note.SourceOID), ShortTargetOID: shortOID(note.TargetOID),
-			Current: note.Current, Note: app.pullRequestText(request.Context(), stored.ID, view.Target.Branch, note.Note),
+			Current: note.Current, Note: app.pullRequestText(request.Context(), stored.Address, view.Target.Branch, note.Note),
 			SubmittedAt: note.SubmittedAt,
 		})
 	}
@@ -468,13 +468,13 @@ func pullRequestNotices(key string, view *pullrequest.View) []webui.Notice {
 // picture in the repository is dropped, and one elsewhere becomes a link that
 // the page never loads. Relative links open files on the target branch. Text
 // that cannot be rendered now is shown as written.
-func (app *App) pullRequestText(ctx context.Context, repositoryID, targetBranch, text string) webui.PullRequestText {
+func (app *App) pullRequestText(ctx context.Context, address, targetBranch, text string) webui.PullRequestText {
 	result := webui.PullRequestText{Text: text}
 	if text == "" {
 		return result
 	}
 	rendered, err := markdown.Render(ctx, []byte(text), markdown.Links{
-		File: "/repositories/" + url.PathEscape(repositoryID) + "/code?ref=" + url.QueryEscape(targetBranch) + "&path=",
+		File: "/repositories/" + url.PathEscape(address) + "/code?ref=" + url.QueryEscape(targetBranch) + "&path=",
 	})
 	if err != nil {
 		result.NotRendered = markdownNotShown(err)
@@ -510,7 +510,7 @@ func browserRevision(revision pullrequest.Revision) webui.RevisionState {
 	}
 }
 
-func browserCheckEvidence(repositoryID string, checks pullrequest.Checks) webui.CheckEvidence {
+func browserCheckEvidence(address string, checks pullrequest.Checks) webui.CheckEvidence {
 	evidence := webui.CheckEvidence{
 		Status:               checks.Status,
 		Configured:           checks.Configured,
@@ -543,7 +543,7 @@ func browserCheckEvidence(repositoryID string, checks pullrequest.Checks) webui.
 	}
 	evidence.CredentialProvenance = browserProvenance(checks.JobID, checks.CredentialID, checks.ExecutionScope)
 	if checks.TaskID != "" {
-		evidence.AttemptURL = tasksURL(repositoryID, checks.TaskID)
+		evidence.AttemptURL = tasksURL(address, checks.TaskID)
 	}
 	return evidence
 }
@@ -743,12 +743,12 @@ func repositoryTabs(page webui.RepositoryPage, active webui.RepoTab) webui.RepoT
 	}
 }
 
-func pullRequestURL(repositoryID string, number int64) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/pull-requests/" + strconv.FormatInt(number, 10)
+func pullRequestURL(address string, number int64) string {
+	return "/repositories/" + url.PathEscape(address) + "/pull-requests/" + strconv.FormatInt(number, 10)
 }
 
-func tasksURL(repositoryID, taskID string) string {
-	base := "/repositories/" + url.PathEscape(repositoryID) + "/tasks"
+func tasksURL(address, taskID string) string {
+	base := "/repositories/" + url.PathEscape(address) + "/tasks"
 	if taskID == "" {
 		return base
 	}

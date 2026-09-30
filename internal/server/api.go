@@ -63,10 +63,15 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		app.handleAllHelperCredentialsAPI(writer, request)
 		return
 	}
-	if id, ok := repositoryAPIRoute(request.URL.Path); ok {
-		app.handleRepositoryAPI(writer, request, settings, id)
+	if name, ok := repositoryAPIRoute(request.URL.Path); ok {
+		app.handleRepositoryAPI(writer, request, settings, name != "")
 		return
 	}
+	// The routes below use the ID the path's repository name reaches. The
+	// authorization of each route answers a name that reaches no current
+	// repository (see answerRepositoryAddressAPI).
+	address, _ := repositoryAddressOf(request)
+	repositoryID = address.id
 	if repositoryRoute {
 		switch resource {
 		case "runner":
@@ -90,6 +95,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		case "settings":
 			app.handleRepositorySettingsAPI(writer, request, repositoryID, remainder)
 			return
+		case "rename":
+			app.handleRenameRepositoryAPI(writer, request, repositoryID, remainder)
+			return
 		case "archive":
 			app.handleArchiveAPI(writer, request, settings, repositoryID, remainder)
 			return
@@ -105,7 +113,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		return
 	}
 
-	repositoryID, number, operation, ok := parsePullRequestAPIRoute(request.URL.Path)
+	_, number, operation, ok := parsePullRequestAPIRoute(request.URL.Path)
 	if !ok {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
 		return
@@ -275,7 +283,7 @@ var generalAccessActor = state.Actor{Kind: state.ActorAccess}
 
 func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings) bool {
 	if settings.AccessMode == "open" {
-		return true
+		return answerRepositoryAddressAPI(writer, request, false)
 	}
 	_, password, ok := request.BasicAuth()
 	if !ok {
@@ -284,7 +292,7 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 		return false
 	}
 	_, ok = app.checkAPIPassword(writer, request, "general", password)
-	return ok
+	return ok && answerRepositoryAddressAPI(writer, request, false)
 }
 
 // checkAPIPassword verifies an API request's password of kind ("general" or

@@ -32,6 +32,7 @@ const (
 	removedCookieMaxAge  = 2 * time.Minute
 	removedNotice        = "repository_removed"
 	defaultBranchNotice  = "default_branch_saved"
+	renamedNotice        = "repository_renamed"
 	removedFolderName    = ".owngit-removed"
 	maximumRemovedCookie = 3000
 )
@@ -67,12 +68,12 @@ func busyNotice(err error) (webui.MessageCode, bool) {
 	return "", false
 }
 
-func repositorySettingsURL(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/settings"
+func repositorySettingsURL(address string) string {
+	return "/repositories/" + url.PathEscape(address) + "/settings"
 }
 
-func repositoryDeleteURL(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/delete"
+func repositoryDeleteURL(address string) string {
+	return "/repositories/" + url.PathEscape(address) + "/delete"
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
 }
 
 // setDefaultBranch makes branch, an existing branch, the default branch of
@@ -154,7 +155,14 @@ func hasBranch(summary repository.Summary, name string) bool {
 }
 
 func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, status int) {
-	app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, selected, nil, nil, status)
+	app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, selected, nil, nil, nil, status)
+}
+
+// renameForm is what the rename form sent, shown again with its notices
+// after a refused rename.
+type renameForm struct {
+	name    string
+	notices []webui.Notice
 }
 
 // historyForm is what the kept history and protection form sent, shown
@@ -175,18 +183,20 @@ type namespacesForm struct {
 // renderRepositorySettingsPage renders the Settings tab. The kept history
 // and protection form shows history when it was refused, and otherwise the
 // saved choices; a saved row that cannot be read shows the defaults and
-// says so. The extra ref namespaces form does the same with namespaces.
-func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, history *historyForm, namespaces *namespacesForm, status int) {
+// says so. The extra ref namespaces form does the same with namespaces,
+// and the rename form shows a refused name.
+func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, history *historyForm, namespaces *namespacesForm, rename *renameForm, status int) {
 	base := app.baseRepositoryPage(request, chrome, stored, summary)
-	self := repositorySettingsURL(stored.ID)
+	self := repositorySettingsURL(stored.Address)
 	page := webui.RepositorySettingsPage{
 		Chrome: chrome, Repo: base.Repo, Tabs: repositoryTabs(base, webui.RepoTabSettings),
 		SelfURL: self, DefaultBranchURL: self + "/default-branch", HistoryURL: self + "/history", NamespacesURL: self + "/ref-namespaces",
+		RenameURL: self + "/rename", Address: stored.Address,
 		DefaultBranch:        summary.DefaultBranch,
 		DefaultBranchMissing: summary.DefaultOID == "" && len(summary.Branches) > 0,
-		ConfiguredChecksURL:  configuredChecksURL(stored.ID),
-		RunnerTokensURL:      runnerTokensURL(stored.ID),
-		HelperCredentialsURL: baseHelperCredentialsURL(stored.ID),
+		ConfiguredChecksURL:  configuredChecksURL(stored.Address),
+		RunnerTokensURL:      runnerTokensURL(stored.Address),
+		HelperCredentialsURL: baseHelperCredentialsURL(stored.Address),
 		ImportURL:            base.ImportsURL,
 		DeleteURL:            base.DeleteURL,
 	}
@@ -198,6 +208,17 @@ func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request
 	if err != nil {
 		app.answerUnavailable(writer, request, "repository settings read", err)
 		return
+	}
+	aliases, err := app.Store.RepositoryAliases(request.Context(), stored.ID, app.now())
+	if err != nil {
+		app.answerUnavailable(writer, request, "repository alias read", err)
+		return
+	}
+	for _, alias := range aliases {
+		page.Aliases = append(page.Aliases, webui.RepositoryAlias{Name: alias.Name, Until: *alias.AliasUntil})
+	}
+	if rename != nil {
+		page.RenameName, page.RenameNotices = rename.name, rename.notices
 	}
 	page.KeptHistory, page.ProtectDefaultBranch = string(saved.KeptHistory), saved.ProtectDefaultBranch
 	if history != nil {
@@ -259,7 +280,7 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 			form.kept = state.KeptHistoryDefault
 		}
 		form.notices = append(form.notices, notice)
-		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", form, nil, status)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", form, nil, nil, status)
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		refuse(adminPasswordNotice(request, err, "admin_password"))
@@ -289,7 +310,47 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 	case protectOff:
 		notice = "history_saved_protect_off"
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+}
+
+// handleRenameRepository renames the repository and opens its Settings tab
+// at the new address. The earlier address leads there for 90 days.
+func (app *App) handleRenameRepository(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, session state.Session) {
+	writer.Header().Set("Cache-Control", "no-store")
+	if !app.parseForm(writer, request) {
+		return
+	}
+	if !constantEqual(session.CSRF, postValue(request, "csrf")) {
+		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+		return
+	}
+	form := &renameForm{name: postValue(request, "name")}
+	refuse := func(notice webui.Notice, status int) {
+		form.notices = append(form.notices, notice)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", nil, nil, form, status)
+	}
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
+		refuse(adminPasswordNotice(request, err, "admin_password"))
+		return
+	}
+	renamed, err := app.renameRepository(request, stored.ID, form.name)
+	switch {
+	case err == nil:
+		app.noticeRedirect(writer, request, repositorySettingsURL(renamed.Address)+"?notice="+renamedNotice, http.StatusSeeOther)
+	case errors.Is(err, repository.ErrReservedName):
+		refuse(webui.Error("name", webui.MsgRepoNameReserved), http.StatusUnprocessableEntity)
+	case errors.Is(err, repository.ErrInvalidName):
+		refuse(webui.Error("name", webui.MsgRepoNameInvalid), http.StatusUnprocessableEntity)
+	case errors.Is(err, repository.ErrNameTaken):
+		refuse(webui.Error("name", webui.MsgRepoRenameTaken), http.StatusConflict)
+	case errors.Is(err, repository.ErrRepositoryBusy):
+		code, _ := busyNotice(err)
+		refuse(webui.Error("", code), http.StatusConflict)
+	case errors.Is(err, repository.ErrRepositoryNotFound):
+		app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.Address)
+	default:
+		refuse(webui.Error("", webui.MsgRepoRenameFailed), unavailable(request, "repository rename", err))
+	}
 }
 
 // handleSaveNamespaces saves the repository's extra ref namespaces, one per
@@ -307,7 +368,7 @@ func (app *App) handleSaveNamespaces(writer http.ResponseWriter, request *http.R
 	form := &namespacesForm{text: postValue(request, "extra_ref_prefixes")}
 	refuse := func(notice webui.Notice, status int) {
 		form.notices = append(form.notices, notice)
-		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", nil, form, status)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", nil, form, nil, status)
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		refuse(adminPasswordNotice(request, err, "admin_password"))
@@ -332,7 +393,7 @@ func (app *App) handleSaveNamespaces(writer http.ResponseWriter, request *http.R
 	if len(prefixes) > 0 {
 		notice = "namespaces_saved_unkept"
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
 }
 
 // ---------------------------------------------------------------------------
@@ -476,8 +537,8 @@ func (app *App) renderRepositoryDelete(writer http.ResponseWriter, request *http
 	base := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page := webui.RepositoryDeletePage{
 		Chrome: chrome, Repo: base.Repo, Tabs: repositoryTabs(base, webui.RepoTabDelete),
-		SelfURL: repositoryDeleteURL(stored.ID), SubmitURL: repositoryDeleteURL(stored.ID),
-		Mode: mode, Name: name, CancelURL: repositorySettingsURL(stored.ID),
+		SelfURL: repositoryDeleteURL(stored.Address), SubmitURL: repositoryDeleteURL(stored.Address),
+		Mode: mode, Name: name, CancelURL: repositorySettingsURL(stored.Address),
 	}
 	// The page is administrator only, and the administrator already sees the
 	// storage path in the toolbar, so naming the folder adds nothing new.

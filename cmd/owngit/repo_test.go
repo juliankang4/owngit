@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"owngit/internal/auth"
@@ -129,4 +130,42 @@ func TestRepoCommandsCreateListAndShowRepositories(t *testing.T) {
 	if got := commandErrorCode(err); got != "invalid_arguments" {
 		t.Fatalf("create without name error=%v code=%q", err, got)
 	}
+}
+
+// repo rename renames with the administrator password and prints the
+// repository; the old name then answers with where the repository went.
+func TestRepoRenameMovesTheRepositoryAndTheOldNameSaysWhere(t *testing.T) {
+	serverURL, passwordFile := startRepositoryCLIServer(t, "shared-password")
+	remote := []string{"--server", serverURL, "--accept-insecure-http", "--password-file", passwordFile}
+	adminFile := filepath.Join(t.TempDir(), "admin-password")
+	noErr(t, os.WriteFile(adminFile, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(adminFile, false))
+	admin := []string{"--server", serverURL, "--accept-insecure-http", "--password-file", adminFile}
+	var created struct{}
+	runRepoCommandJSON(t, append([]string{"create", "--name", "tools"}, remote...), &created)
+
+	if got := commandErrorCode(repoCommand(append([]string{"rename", "tools", "Kit"}, remote...))); got != "invalid_admin_credentials" {
+		t.Fatalf("rename with the shared password code=%q", got)
+	}
+	if got := commandErrorCode(repoCommand(append([]string{"rename", "tools"}, admin...))); got != "invalid_arguments" {
+		t.Fatalf("rename without a new name code=%q", got)
+	}
+	var renamed struct {
+		OK         bool `json:"ok"`
+		Repository struct {
+			repositoryCLIItem
+			Address string `json:"address"`
+		} `json:"repository"`
+	}
+	runRepoCommandJSON(t, append([]string{"rename", "tools", "Kit"}, admin...), &renamed)
+	if !renamed.OK || renamed.Repository.ID != "tools" || renamed.Repository.Name != "Kit" || renamed.Repository.Address != "kit" ||
+		renamed.Repository.CloneURL != serverURL+"/git/kit.git" {
+		t.Fatalf("renamed=%+v", renamed)
+	}
+	err := repoCommand(append([]string{"show", "--repository", "tools"}, remote...))
+	if got := commandErrorCode(err); got != "repository_moved" || !strings.Contains(err.Error(), "kit") {
+		t.Fatalf("show at the old name error=%v code=%q", err, got)
+	}
+	var shown struct{}
+	runRepoCommandJSON(t, append([]string{"show", "--repository", "kit"}, remote...), &shown)
 }

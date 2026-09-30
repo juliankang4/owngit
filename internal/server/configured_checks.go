@@ -261,7 +261,7 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 			}
 			return
 		}
-		response := checkapi.RunnerCredentialResponse{OK: true, Credential: runnerCredentialJSON(credential)}
+		response := checkapi.RunnerCredentialResponse{OK: true, Credential: runnerCredentialJSON(credential), RepositoryAddress: repositoryAddressCurrent(request)}
 		if created {
 			response.Token = token
 		}
@@ -523,6 +523,9 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 	if errors.Is(err, state.ErrRunnerCredentialOtherRepository) {
 		// Only the holder of a live token reaches this answer, and it names
 		// no repository.
+		if !answerRepositoryAddressAPI(writer, request, true) {
+			return state.RunnerCredential{}, false
+		}
 		writeAPIError(writer, http.StatusForbidden, "runner_credential_repository_mismatch", "This runner token belongs to another repository.", nil)
 		return state.RunnerCredential{}, false
 	}
@@ -534,7 +537,7 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 		writeAPIError(writer, http.StatusUnauthorized, "invalid_runner_credential", "The runner token is unknown or revoked.", nil)
 		return state.RunnerCredential{}, false
 	}
-	return credential, true
+	return credential, answerRepositoryAddressAPI(writer, request, true)
 }
 
 // jobJSON describes a job. checks are its captured commands when the answer

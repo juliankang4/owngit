@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,7 +17,7 @@ import (
 func repoCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printRepoUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "repo requires list, show, create, settings, default-branch, delete, kept-history, or restore.")
+		return cliProblem("invalid_arguments", "repo requires list, show, create, rename, settings, default-branch, delete, kept-history, or restore.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printRepoUsage(os.Stdout)
@@ -29,6 +30,8 @@ func repoCommand(arguments []string) error {
 		return repoShow(arguments[1:])
 	case "create":
 		return repoCreate(arguments[1:])
+	case "rename":
+		return repoRename(arguments[1:])
 	case "settings":
 		return repoSettings(arguments[1:])
 	case "default-branch":
@@ -86,6 +89,34 @@ func repoCreate(arguments []string) error {
 		return err
 	}
 	return writeResult(createRepository(context.Background(), target, repositoryInput{Name: *name, Description: *description}))
+}
+
+// repoRename renames a repository through the owner API, with the
+// administrator password, and prints the renamed repository as JSON. The
+// repository then answers at the new name, and the old one leads there for
+// 90 days.
+func repoRename(arguments []string) error {
+	flags := newCommandFlagSet("repo rename")
+	remote := addImportFlags(flags)
+	operands, err := parseFlagsAndOperands(flags, arguments)
+	if err != nil {
+		if errors.Is(err, errUsageShown) {
+			return err
+		}
+		return cliProblem("invalid_arguments", err.Error())
+	}
+	if len(operands) != 2 || operands[0] == "" || operands[1] == "" {
+		return cliProblem("invalid_arguments", "repo rename takes the repository's current name and its new name.")
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	content, err := client.Do(context.Background(), http.MethodPost, "/api/v1/repositories/"+url.PathEscape(operands[0])+"/rename", map[string]string{"name": operands[1]})
+	if err != nil {
+		return err
+	}
+	return writeJSON(content)
 }
 
 // repoSettings reads and changes a repository's kept history choice and
@@ -246,8 +277,9 @@ func (admin *repoAdminFlags) client(command string, inferRepository bool) (*apic
 }
 
 func printRepoUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|settings|default-branch|delete|kept-history|restore> [options]")
-	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON. There is no rename.")
+	fmt.Fprintln(writer, "Usage: owngit repo <list|show|create|rename|settings|default-branch|delete|kept-history|restore> [options]")
+	fmt.Fprintln(writer, "Lists, shows, and creates repositories with general access and prints JSON.")
+	fmt.Fprintln(writer, "repo rename NAME NEW-NAME --server URL --password-file PATH renames a repository with the administrator password. The old name leads to the new one for 90 days.")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server (and --repository for show, settings and default-branch) default to its origin remote.")
 	fmt.Fprintln(writer, "repo settings shows and changes one repository's kept history, default branch protection and extra ref namespaces; see owngit repo settings --help.")
 	fmt.Fprintln(writer, "repo default-branch --branch NAME makes an existing branch the default branch, with the administrator password.")

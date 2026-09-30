@@ -729,3 +729,23 @@ func runCredentialCreate(t *testing.T, answer func(http.ResponseWriter, checkapi
 	})
 	return result
 }
+
+// A renamed repository keeps its ID, so a credential issued at its current
+// address names another ID. The server's answer says the repository answers
+// at the address the command named, and that is accepted; an answer for
+// another address is refused with the address it names.
+func TestCredentialCreateAcceptsTheRepositoryAtItsCurrentAddress(t *testing.T) {
+	answer := func(address string) func(http.ResponseWriter, checkapi.CreateCredentialInput, string) {
+		return func(writer http.ResponseWriter, input checkapi.CreateCredentialInput, _ string) {
+			_, _ = io.WriteString(writer, `{"ok":true,"token":"secret","repository_address":"`+address+`","credential":{"id":"0123456789abcdef0123456789abcdef","repository_id":"first-name","creation_id":"`+input.CreationID+`"}}`)
+		}
+	}
+	if create := runCredentialCreate(t, answer("project")); create.err != nil {
+		t.Fatalf("credential at the current address: %v", create.err)
+	}
+	create := runCredentialCreate(t, answer("elsewhere"))
+	var problem *apiclient.Error
+	if !errors.As(create.err, &problem) || problem.Code != "mismatched_response" || !strings.Contains(problem.Message, "elsewhere") {
+		t.Fatalf("credential for another address error=%v", create.err)
+	}
+}

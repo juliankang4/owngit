@@ -300,7 +300,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 				continue
 			}
 			item := webui.NavRepository{
-				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.ID), CountKnown: false,
+				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.Address), CountKnown: false,
 			}
 			item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
 			nav.Repositories = append(nav.Repositories, item)
@@ -543,6 +543,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgCCContainerForgotten)}
 	case "runner_token_revoked":
 		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
+	case "repository_renamed":
+		return []webui.Notice{webui.Success(webui.MsgRepoRenamed)}
 	case "default_branch_saved":
 		return []webui.Notice{webui.Success(webui.MsgRepoDefaultBranchSaved)}
 	case "namespaces_saved":

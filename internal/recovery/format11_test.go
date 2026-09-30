@@ -90,6 +90,19 @@ func TestFormat11RecordsSurviveBackupAndRestore(t *testing.T) {
 			t.Fatalf("%s changed through the backup:\n%+v\n%+v", name, pair[0], pair[1])
 		}
 	}
+	// The restored names answer as they did: the current name, and the old
+	// one until its alias ends.
+	for _, check := range []struct {
+		name    string
+		at      int64
+		current string
+	}{{"renamed", 1800000001, "renamed"}, {"project", 1800000001, "renamed"}, {"project", 1807776000, ""}} {
+		address, found, err := restored.ResolveRepositoryName(ctx, check.name, time.Unix(check.at, 0))
+		noErr(t, err)
+		if found != (check.current != "") || (found && (address.RepositoryID != "project" || address.Current != check.current)) {
+			t.Fatalf("restored %q at %d reached %+v found=%v", check.name, check.at, address, found)
+		}
+	}
 	if got := after.ImportSources[0]; !got.OverwriteDiverged || got.FollowUpstreamDeletions || !reflect.DeepEqual(got.ExtraRefPrefixes, []string{"refs/changes/"}) || got.AllowPrivateNetwork {
 		t.Fatalf("restored import source=%+v", got)
 	}

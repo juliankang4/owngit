@@ -409,7 +409,7 @@ func (app *App) createHelperCredential(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	response := checkapi.CredentialResponse{OK: true, Credential: credentialJSON(credential)}
+	response := checkapi.CredentialResponse{OK: true, Credential: credentialJSON(credential), RepositoryAddress: repositoryAddressCurrent(request)}
 	if created {
 		response.Token = token
 	}
@@ -440,6 +440,9 @@ func (app *App) authorizeHelper(writer http.ResponseWriter, request *http.Reques
 		writeAPIError(writer, http.StatusUnauthorized, "invalid_helper_credential", "The helper credential is unknown or revoked.", nil)
 		return state.HelperCredential{}, false
 	}
+	if !answerRepositoryAddressAPI(writer, request, true) {
+		return state.HelperCredential{}, false
+	}
 	if credential.RepositoryID != repositoryID {
 		writeAPIError(writer, http.StatusForbidden, "helper_credential_scope", "The helper credential belongs to another repository.", nil)
 		return state.HelperCredential{}, false
@@ -468,7 +471,7 @@ func (app *App) adminAPIProof(writer http.ResponseWriter, request *http.Request)
 		return adminPasswordProof{}, false
 	}
 	version, ok := app.checkAPIPassword(writer, request, "admin", password)
-	return adminPasswordProof{password: password, version: version}, ok
+	return adminPasswordProof{password: password, version: version}, ok && answerRepositoryAddressAPI(writer, request, false)
 }
 
 func attemptFromRegistration(registration checkapi.AttemptRegistration, repositoryID, taskID, credentialID string, now time.Time) (state.CheckAttempt, *pullrequest.Problem) {

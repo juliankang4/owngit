@@ -6,6 +6,8 @@ package webui
 // that session and send anyone else to the administrator login, which returns
 // to the screen afterwards.
 
+import "time"
+
 const (
 	RepoTabSettings RepoTab = "settings"
 	RepoTabDelete   RepoTab = "delete"
@@ -63,6 +65,15 @@ type RepositorySettingsPage struct {
 	Namespaces           string
 	NamespacesUnreadable bool
 	NamespacesNotices    []Notice
+	// RenameURL is the POST target that renames the repository. Address is
+	// where the repository answers now, and Aliases are its earlier
+	// addresses that still lead here. RenameName and RenameNotices are what
+	// a refused rename sent, shown again in its form.
+	RenameURL     string
+	Address       string
+	Aliases       []RepositoryAlias
+	RenameName    string
+	RenameNotices []Notice
 	// The repository's other administrator screens, each with one line of
 	// explanation on the page. An empty URL renders no entry.
 	ConfiguredChecksURL  string
@@ -70,6 +81,13 @@ type RepositorySettingsPage struct {
 	HelperCredentialsURL string
 	ImportURL            string
 	DeleteURL            string
+}
+
+// RepositoryAlias is an earlier address of a renamed repository that leads
+// to it until Until.
+type RepositoryAlias struct {
+	Name  string
+	Until time.Time
 }
 
 func (RepositorySettingsPage) page() string     { return "repository-settings" }

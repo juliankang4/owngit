@@ -21,7 +21,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 	// administrator only and send anyone else to the login, which returns
 	// to the linked page afterwards.
 	page.HelperURL = basePage.Repo.URL + "/helper-credentials"
-	page.ConfiguredChecksURL = configuredChecksURL(stored.ID)
+	page.ConfiguredChecksURL = configuredChecksURL(stored.Address)
 
 	configuration, configured, err := app.Store.LatestCheckConfiguration(request.Context(), stored.ID)
 	if err != nil {
@@ -50,7 +50,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 				answerUnavailable("task attempt read", err)
 				return
 			}
-			detail := &webui.TaskDetail{Task: browserTaskSummary(task), AttemptsTruncated: more}
+			detail := &webui.TaskDetail{Task: browserTaskSummary(stored.Address, task), AttemptsTruncated: more}
 			for _, attempt := range attempts {
 				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(request.Context(), attempt))
 			}
@@ -61,7 +61,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		page.NotFound = true
 	}
 
-	views, err := app.repositoryTaskViews(request.Context(), stored.ID)
+	views, err := app.repositoryTaskViews(request.Context(), stored)
 	if err != nil {
 		answerUnavailable("task list read", err)
 		return
@@ -79,7 +79,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 func (app *App) browserTaskSummaries(ctx context.Context, views []taskView) []webui.TaskSummary {
 	summaries := make([]webui.TaskSummary, 0, len(views))
 	for _, view := range views {
-		summary := browserTaskSummary(view.task)
+		summary := browserTaskSummary(view.address, view.task)
 		if view.hasLatest {
 			summary.Latest = app.browserAttemptRecord(ctx, view.latest)
 		}
@@ -101,13 +101,13 @@ func browserCheckConfiguration(configuration state.CheckConfiguration, configure
 	return view
 }
 
-func browserTaskSummary(task state.Task) webui.TaskSummary {
+func browserTaskSummary(address string, task state.Task) webui.TaskSummary {
 	return webui.TaskSummary{
 		ID:               task.ID,
 		ShortID:          shortOpaqueID(task.ID),
 		Title:            task.Title,
 		Status:           task.Status,
-		URL:              tasksURL(task.RepositoryID, task.ID),
+		URL:              tasksURL(address, task.ID),
 		CyclesUsed:       task.CorrectionCyclesUsed,
 		CyclesLeft:       task.CorrectionCyclesRemaining(),
 		CycleLimit:       state.CorrectionCycleLimit,

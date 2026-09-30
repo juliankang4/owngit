@@ -18,14 +18,16 @@ type PushEvent struct {
 	// PushesAfter fill it; RecordPush ignores it.
 	Sequence     int64
 	RepositoryID string
-	// RepositoryName is the repository's display name. RecentPushes fills
-	// it; RecordPush ignores it.
-	RepositoryName string
-	Ref            string
-	OldOID, NewOID string
-	RefsUpdated    int
-	Actor          Actor
-	PushedAt       time.Time
+	// RepositoryName is the repository's display name, and
+	// RepositoryAddress where it answers. RecentPushes fills them;
+	// RecordPush ignores them.
+	RepositoryName    string
+	RepositoryAddress string
+	Ref               string
+	OldOID, NewOID    string
+	RefsUpdated       int
+	Actor             Actor
+	PushedAt          time.Time
 }
 
 // PushEventsKept is how many push events OwnGit keeps: RecordPush removes
@@ -70,14 +72,14 @@ func (s *Store) RecordPush(ctx context.Context, event PushEvent) (int64, error) 
 
 // RecentPushes returns up to limit push events, the newest first.
 func (s *Store) RecentPushes(ctx context.Context, limit int) ([]PushEvent, error) {
-	return s.pushEvents(ctx, `SELECT p.sequence, p.repository_id, r.name, p.ref_name, p.old_oid, p.new_oid, p.refs_updated, p.actor, p.pushed_at
+	return s.pushEvents(ctx, `SELECT p.sequence, p.repository_id, r.name, p.ref_name, p.old_oid, p.new_oid, p.refs_updated, p.actor, p.pushed_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = p.repository_id AND n.kind = 'current'), p.repository_id)
 		FROM push_events p JOIN repositories r ON r.id = p.repository_id ORDER BY p.sequence DESC LIMIT ?`, limit)
 }
 
 // PushesAfter returns the push events after sequence, the oldest first.
 // There are at most PushEventsKept.
 func (s *Store) PushesAfter(ctx context.Context, sequence int64) ([]PushEvent, error) {
-	return s.pushEvents(ctx, `SELECT p.sequence, p.repository_id, r.name, p.ref_name, p.old_oid, p.new_oid, p.refs_updated, p.actor, p.pushed_at
+	return s.pushEvents(ctx, `SELECT p.sequence, p.repository_id, r.name, p.ref_name, p.old_oid, p.new_oid, p.refs_updated, p.actor, p.pushed_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = p.repository_id AND n.kind = 'current'), p.repository_id)
 		FROM push_events p JOIN repositories r ON r.id = p.repository_id WHERE p.sequence > ? ORDER BY p.sequence`, sequence)
 }
 
@@ -101,7 +103,7 @@ func (s *Store) pushEvents(ctx context.Context, query string, argument any) ([]P
 		var event PushEvent
 		var actor string
 		var pushedAt int64
-		if err := rows.Scan(&event.Sequence, &event.RepositoryID, &event.RepositoryName, &event.Ref, &event.OldOID, &event.NewOID, &event.RefsUpdated, &actor, &pushedAt); err != nil {
+		if err := rows.Scan(&event.Sequence, &event.RepositoryID, &event.RepositoryName, &event.Ref, &event.OldOID, &event.NewOID, &event.RefsUpdated, &actor, &pushedAt, &event.RepositoryAddress); err != nil {
 			return nil, err
 		}
 		if event.Actor, err = decodeActor(actor); err != nil {

@@ -401,17 +401,17 @@ func (app *App) pushNotification(request *http.Request, feed trayFeedRequest, gr
 		notification.Body = strings.Join(parts, ", ") + ". " + text(webui.MsgNotifyLatest, latestLine)
 		notification.Path = "/activity"
 		if len(repositories) == 1 {
-			notification.Path = repositoryPath(latest.RepositoryID) + "/commits?ref=" + url.QueryEscape(name)
+			notification.Path = repositoryPath(latest.RepositoryAddress) + "/commits?ref=" + url.QueryEscape(name)
 		}
 		return notification
 	}
 	push := latest
-	notification.Path = repositoryPath(push.RepositoryID) + "/commits?ref=" + url.QueryEscape(name)
+	notification.Path = repositoryPath(push.RepositoryAddress) + "/commits?ref=" + url.QueryEscape(name)
 	branch := strings.HasPrefix(push.Ref, "refs/heads/")
 	switch {
 	case push.NewOID == "":
 		notification.Title = text(webui.MsgNotifyRefDeleted, name, push.RepositoryName)
-		notification.Path = repositoryPath(push.RepositoryID)
+		notification.Path = repositoryPath(push.RepositoryAddress)
 	case push.OldOID == "" && branch:
 		notification.Title = text(webui.MsgNotifyNewBranch, name, push.RepositoryName)
 		notification.Body = subject
@@ -470,8 +470,8 @@ func shortRefName(ref string) string {
 	return ref
 }
 
-func repositoryPath(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID)
+func repositoryPath(address string) string {
+	return "/repositories/" + url.PathEscape(address)
 }
 
 // recordNotifications words the records of one kind that the icon shows,
@@ -497,21 +497,21 @@ func (app *App) recordNotifications(feed trayFeedRequest, kind string, records [
 		case state.NotifyPullRequest:
 			notification.Title = text(webui.MsgNotifyPullRequest, record.Number, record.RepositoryName)
 			notification.Body = record.Title
-			notification.Path = repositoryPath(record.RepositoryID) + "/pull-requests/" + strconv.Itoa(record.Number)
+			notification.Path = repositoryPath(record.RepositoryAddress) + "/pull-requests/" + strconv.Itoa(record.Number)
 			if feed.onlyOthers {
 				notification.Subtitle = text(webui.MsgNotifyOpenedElsewhere)
 			}
 		case state.NotifyCheckFailed:
 			notification.Title = text(webui.MsgNotifyCheckFailed, record.RepositoryName)
 			notification.Subtitle = shortRefName(record.Branch)
-			notification.Path = repositoryPath(record.RepositoryID) + "/tasks"
+			notification.Path = repositoryPath(record.RepositoryAddress) + "/tasks"
 			if record.Number > 0 {
 				notification.Subtitle = text(webui.MsgNotifyForPullRequest, record.Number)
-				notification.Path = repositoryPath(record.RepositoryID) + "/pull-requests/" + strconv.Itoa(record.Number)
+				notification.Path = repositoryPath(record.RepositoryAddress) + "/pull-requests/" + strconv.Itoa(record.Number)
 			}
 		case state.NotifyImportFailed:
 			notification.Title = text(webui.MsgNotifyImportFailed, record.RepositoryName)
-			notification.Path = repositoryPath(record.RepositoryID) + "/import"
+			notification.Path = repositoryPath(record.RepositoryAddress) + "/import"
 		case state.NotifyBackupFailed:
 			notification.Title = text(webui.MsgNotifyBackupFailed)
 			notification.Path = "/settings"

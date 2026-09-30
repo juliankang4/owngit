@@ -41,8 +41,8 @@ const (
 	maximumBrowserLogBytes = 64 << 10
 )
 
-func configuredChecksURL(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/configured-checks"
+func configuredChecksURL(address string) string {
+	return "/repositories/" + url.PathEscape(address) + "/configured-checks"
 }
 
 // configuredCheckJobURL is the GET address of one opened job, built from the
@@ -55,8 +55,8 @@ func configuredCheckJobURL(selfURL, jobID string) string {
 	return selfURL + "?job=" + url.QueryEscape(jobID)
 }
 
-func runnerTokensURL(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/runner-tokens"
+func runnerTokensURL(address string) string {
+	return "/repositories/" + url.PathEscape(address) + "/runner-tokens"
 }
 
 // handleConfiguredChecks serves the execution policy screen and its forms.
@@ -156,7 +156,7 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	}
 	// A saved policy is a durable change, so the result is a redirect: a
 	// reload re-reads it instead of re-submitting the form.
-	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
 }
 
 func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -204,7 +204,7 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 	if action == webui.ActionDisableChecks {
 		notice = "checks_disabled"
 	}
-	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
 }
 
 func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -274,7 +274,7 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 	if follow != "" && opened != "" {
 		opened = follow
 	}
-	self := configuredChecksURL(stored.ID)
+	self := configuredChecksURL(stored.Address)
 	target := self + "?notice=" + notice
 	if opened != "" {
 		target = configuredCheckJobURL(self, opened) + "&notice=" + notice
@@ -334,7 +334,7 @@ func (app *App) forgetCheckContainer(writer http.ResponseWriter, request *http.R
 
 func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, result configuredChecksState, status int) {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
-	self := configuredChecksURL(stored.ID)
+	self := configuredChecksURL(stored.Address)
 	page := webui.ConfiguredChecksPage{
 		Chrome:          chrome,
 		Repo:            basePage.Repo,
@@ -342,7 +342,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		SelfURL:         self,
 		SubmitURL:       self,
 		TasksURL:        basePage.TasksURL,
-		RunnerTokensURL: runnerTokensURL(stored.ID),
+		RunnerTokensURL: runnerTokensURL(stored.Address),
 		Runtime:         browserRuntimeView(app.checkRuntimeStatus()),
 		PendingAction:   result.action,
 	}
@@ -371,7 +371,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	page.Form.Defaults = policyFieldDefaults()
 
 	if opened := request.URL.Query().Get("job"); opened != "" {
-		page.Detail = app.browserCheckJobDetail(request, stored.ID, opened, self)
+		page.Detail = app.browserCheckJobDetail(request, stored, opened, self)
 		// An opened job is a screen of its own, so its address is the one a
 		// language link has to keep. SelfURL is this page's own GET address and
 		// is what those links are built from; leaving it at the policy address
@@ -416,7 +416,7 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		page.JobsTruncated = true
 	}
 	for _, job := range jobs {
-		page.Jobs = append(page.Jobs, browserCheckJobRow(job, self))
+		page.Jobs = append(page.Jobs, browserCheckJobRow(stored.Address, job, self))
 	}
 	app.render(writer, request, status, page)
 }
@@ -481,13 +481,13 @@ func (app *App) browserCheckFile(request *http.Request, repositoryID string, sum
 // first one's wording. The same applies below the job: a job that names an
 // attempt has a run registered, so a failed attempt read is reported as
 // unreadable rather than as "nothing ran".
-func (app *App) browserCheckJobDetail(request *http.Request, repositoryID, jobID, selfURL string) *webui.CheckJobDetail {
+func (app *App) browserCheckJobDetail(request *http.Request, stored state.Repository, jobID, selfURL string) *webui.CheckJobDetail {
 	detail := &webui.CheckJobDetail{SubmitURL: configuredCheckJobURL(selfURL, jobID), BackURL: selfURL}
 	if !validAttemptID(jobID) {
 		detail.NotFound = true
 		return detail
 	}
-	job, exists, err := app.Store.CheckJob(request.Context(), repositoryID, jobID)
+	job, exists, err := app.Store.CheckJob(request.Context(), stored.ID, jobID)
 	if err != nil {
 		detail.Unreadable = true
 		return detail
@@ -496,11 +496,11 @@ func (app *App) browserCheckJobDetail(request *http.Request, repositoryID, jobID
 		detail.NotFound = true
 		return detail
 	}
-	detail.Job = browserCheckJobRow(job, selfURL)
+	detail.Job = browserCheckJobRow(stored.Address, job, selfURL)
 
 	// The commands are the job's captured configuration. Failing to read them
 	// does not mean the job defined none.
-	configuration, found, err := app.Store.CheckConfiguration(request.Context(), repositoryID, job.ConfigurationVersion)
+	configuration, found, err := app.Store.CheckConfiguration(request.Context(), stored.ID, job.ConfigurationVersion)
 	switch {
 	case err != nil:
 		detail.ChecksUnreadable = true
@@ -519,7 +519,7 @@ func (app *App) browserCheckJobDetail(request *http.Request, repositoryID, jobID
 	}
 	// From here the job names an attempt, so "no run registered" is false
 	// whatever the read returns.
-	attempt, found, err := app.Store.CheckAttemptByID(request.Context(), repositoryID, job.AttemptID)
+	attempt, found, err := app.Store.CheckAttemptByID(request.Context(), stored.ID, job.AttemptID)
 	if err != nil {
 		detail.AttemptUnreadable = true
 		return detail
@@ -635,7 +635,7 @@ func browserCheckPolicy(policy state.CheckPolicy, exists bool) webui.CheckPolicy
 	return view
 }
 
-func browserCheckJobRow(job state.CheckJob, selfURL string) webui.CheckJobRow {
+func browserCheckJobRow(address string, job state.CheckJob, selfURL string) webui.CheckJobRow {
 	row := webui.CheckJobRow{
 		ID:                   job.ID,
 		ShortID:              shortOpaqueID(job.ID),
@@ -657,10 +657,10 @@ func browserCheckJobRow(job state.CheckJob, selfURL string) webui.CheckJobRow {
 		AdmittedAt:           job.AdmittedAt,
 	}
 	if job.PullRequestNumber > 0 {
-		row.PullRequestURL = pullRequestURL(job.RepositoryID, job.PullRequestNumber)
+		row.PullRequestURL = pullRequestURL(address, job.PullRequestNumber)
 	}
 	if job.TaskID != "" {
-		row.TaskURL = tasksURL(job.RepositoryID, job.TaskID)
+		row.TaskURL = tasksURL(address, job.TaskID)
 	}
 	if job.StartedAt != nil {
 		row.StartedAt = *job.StartedAt
@@ -1084,7 +1084,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		app.wakeChecks(stored.ID)
-		app.noticeRedirect(writer, request, runnerTokensURL(stored.ID)+"?notice=runner_token_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, runnerTokensURL(stored.Address)+"?notice=runner_token_revoked", http.StatusSeeOther)
 	default:
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
 			[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, http.StatusBadRequest)
@@ -1128,16 +1128,16 @@ func (app *App) renderRunnerTokens(writer http.ResponseWriter, request *http.Req
 
 func (app *App) runnerTokensPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, listed runnerTokenList) webui.RunnerCredentialsPage {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
-	self := runnerTokensURL(stored.ID)
+	self := runnerTokensURL(stored.Address)
 	page := webui.RunnerCredentialsPage{
 		Chrome:              chrome,
 		Repo:                basePage.Repo,
 		Tabs:                repositoryTabs(basePage, webui.RepoTabChecks),
 		SelfURL:             self,
 		SubmitURL:           self,
-		ConfiguredChecksURL: configuredChecksURL(stored.ID),
+		ConfiguredChecksURL: configuredChecksURL(stored.Address),
 		PolicyMissing:       !listed.policyExists,
-		Commands:            runnerCommands(app.serverOrigin(request), stored.ID),
+		Commands:            runnerCommands(app.serverOrigin(request), stored.Address),
 	}
 	// A fresh creation identity per rendered form. A resubmitted form carries
 	// the identity it was rendered with, so the backend can recognise the
@@ -1177,19 +1177,19 @@ func browserRunnerCredential(credential state.RunnerCredential) webui.RunnerCred
 // They carry a server address and a repository name and nothing else. The
 // token lives in a file the runner reads, and no password appears here: a
 // value on a command line reaches the process list and the shell history.
-func runnerCommands(baseURL, repositoryID string) []string {
+func runnerCommands(baseURL, address string) []string {
 	return []string{
 		"owngit runner-credential issue \\",
 		"  --server " + baseURL + " \\",
-		"  --repository " + repositoryID + " \\",
+		"  --repository " + address + " \\",
 		"  --password-file ./admin-password \\",
 		"  --label build-host \\",
 		"  --token-file ./runner-token",
 		"",
 		"owngit runner \\",
 		"  --server " + baseURL + " \\",
-		"  --repository " + repositoryID + " \\",
+		"  --repository " + address + " \\",
 		"  --token-file ./runner-token \\",
-		"  --workspace-root /srv/owngit-runner/" + repositoryID,
+		"  --workspace-root /srv/owngit-runner/" + address,
 	}
 }

@@ -8,6 +8,7 @@ import (
 
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 const (
@@ -19,8 +20,11 @@ const (
 
 // repositoryAPIItem describes one repository in the repository API.
 type repositoryAPIItem struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Address is where the repository answers: its current name, or its ID
+	// when it was never renamed.
+	Address     string    `json:"address"`
 	Description string    `json:"description"`
 	CreatedAt   time.Time `json:"created_at"`
 	CloneURL    string    `json:"clone_url"`
@@ -33,6 +37,15 @@ type repositoryAPIItem struct {
 	// saved extra namespaces cannot be read, which refuses every push.
 	PushRefNamespaces      []string `json:"push_ref_namespaces,omitempty"`
 	PushRefNamespacesError string   `json:"push_ref_namespaces_error,omitempty"`
+	// Aliases are the earlier addresses that still redirect to Address,
+	// shown by a single repository read.
+	Aliases []repositoryAliasItem `json:"aliases,omitempty"`
+}
+
+// repositoryAliasItem is an earlier address of a renamed repository.
+type repositoryAliasItem struct {
+	Name  string    `json:"name"`
+	Until time.Time `json:"until"`
 }
 
 type repositoryListResponse struct {
@@ -78,16 +91,17 @@ func (app *App) visibleRepository(request *http.Request, id string) (state.Repos
 
 // handleRepositoryAPI lists, shows, and creates repositories with the same
 // general-access authorization as the other general-access API routes.
-func (app *App) handleRepositoryAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings, id string) {
+func (app *App) handleRepositoryAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings, one bool) {
 	if !app.authorizeAPI(writer, request, settings) {
 		return
 	}
-	if id != "" {
+	if one {
 		if request.Method != http.MethodGet {
 			writeAPIMethodError(writer, http.MethodGet)
 			return
 		}
-		app.showRepositoryAPI(writer, request, id)
+		address, _ := repositoryAddressOf(request)
+		app.showRepositoryAPI(writer, request, address.id)
 		return
 	}
 	switch request.Method {
@@ -127,6 +141,14 @@ func (app *App) showRepositoryAPI(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	item := app.repositoryAPIItem(request, stored)
+	aliases, err := app.Store.RepositoryAliases(request.Context(), stored.ID, app.now())
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "repository alias read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
+		return
+	}
+	for _, alias := range aliases {
+		item.Aliases = append(item.Aliases, repositoryAliasItem{Name: alias.Name, Until: alias.AliasUntil.UTC()})
+	}
 	// A repository that is being prepared or held by another Git operation
 	// is still described; only its default branch is left out.
 	if snapshot, err := app.Repositories.RefSnapshotWithin(request.Context(), stored.ID, repositoryListWait); err == nil && !snapshot.Stale {
@@ -183,7 +205,60 @@ func (app *App) repositoryAPIItem(request *http.Request, stored state.Repository
 	return repositoryAPIItem{
 		// The store keeps whole seconds, so a new repository reports the same
 		// time as later reads of it.
-		ID: stored.ID, Name: stored.Name, Description: stored.Description, CreatedAt: stored.CreatedAt.UTC().Truncate(time.Second),
-		CloneURL: app.cloneURL(request, stored.ID),
+		ID: stored.ID, Name: stored.Name, Address: stored.Address, Description: stored.Description, CreatedAt: stored.CreatedAt.UTC().Truncate(time.Second),
+		CloneURL: app.cloneURL(request, stored.Address),
 	}
+}
+
+type renameRepositoryInput struct {
+	Name string `json:"name"`
+}
+
+// handleRenameRepositoryAPI answers POST /api/v1/repositories/{name}/rename
+// with the administrator password. The repository then answers at the new
+// name, and its earlier address redirects there for 90 days.
+func (app *App) handleRenameRepositoryAPI(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {
+	if remainder != "" {
+		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+		return
+	}
+	if request.Method != http.MethodPost {
+		writeAPIMethodError(writer, http.MethodPost)
+		return
+	}
+	if !app.authorizeAdminAPI(writer, request) {
+		return
+	}
+	var input renameRepositoryInput
+	if !decodeAPIJSON(writer, request, &input) {
+		return
+	}
+	renamed, err := app.renameRepository(request, repositoryID, input.Name)
+	if err != nil {
+		switch {
+		case errors.Is(err, repository.ErrRepositoryNotFound):
+			writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
+		case errors.Is(err, repository.ErrReservedName):
+			writeAPIError(writer, http.StatusUnprocessableEntity, "reserved_repository_name", "The repository name is reserved for a form page. Choose another name.", nil)
+		case errors.Is(err, repository.ErrInvalidName):
+			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_repository_name", "Use 1 to 100 letters, numbers, dots, underscores, or hyphens, starting with a letter or number. The name cannot end in .git or be a Windows device name such as CON.", nil)
+		case errors.Is(err, repository.ErrNameTaken):
+			writeAPIError(writer, http.StatusConflict, "repository_name_taken", "Another repository uses this name, as its name, its ID or an earlier name that still redirects to it.", nil)
+		case errors.Is(err, repository.ErrRepositoryBusy):
+			code, _ := busyNotice(err)
+			writeAPIError(writer, http.StatusConflict, "repository_busy", "The repository was not renamed. "+webui.Text(webui.LangEN, code), nil)
+		default:
+			writeAPIError(writer, unavailable(request, "repository rename", err), "repository_rename_failed", "The repository could not be renamed.", nil)
+		}
+		return
+	}
+	writeAPIJSON(writer, http.StatusOK, repositoryResponse{OK: true, Repository: app.repositoryAPIItem(request, renamed)})
+}
+
+// renameRepository renames repository id for the dashboard and the API. A
+// background activity count holds the repository's read lock for as long as
+// its history walk takes, so counting pauses for the rename.
+func (app *App) renameRepository(request *http.Request, id, name string) (state.Repository, error) {
+	defer app.activity.pause(id, true)()
+	return app.Repositories.Rename(request.Context(), id, name, app.now())
 }

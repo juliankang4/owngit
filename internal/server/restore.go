@@ -93,7 +93,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 	}
 	result, err := app.Repositories.ApplyRestore(request.Context(), stored.ID, selection)
 	if err == nil {
-		location := commitURL(stored.ID, "refs/heads/"+selection.Target, result.CommitOID, "")
+		location := commitURL(stored.Address, "refs/heads/"+selection.Target, result.CommitOID, "")
 		separator := "?"
 		if strings.Contains(location, "?") {
 			separator = "&"
@@ -163,14 +163,14 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 	if previewErr == nil {
 		branch = preview
 	}
-	base := "/repositories/" + url.PathEscape(stored.ID)
+	base := "/repositories/" + url.PathEscape(stored.Address)
 	page := webui.RestorePage{
 		Chrome: chrome,
 		Repo: webui.RepositoryHeader{
-			ID: stored.ID, Name: stored.Name, Description: stored.Description, URL: base,
-			CloneURL: app.cloneURL(request, stored.ID), Empty: summary.Empty,
+			ID: stored.ID, Address: stored.Address, Name: stored.Name, Description: stored.Description, URL: base,
+			CloneURL: app.cloneURL(request, stored.Address), Empty: summary.Empty,
 		},
-		Source: app.commitSummary(stored.ID, "", sourceCommit), TargetBranch: selection.Target,
+		Source: app.commitSummary(stored.Address, "", sourceCommit), TargetBranch: selection.Target,
 		CreatesBranch: branch.CreatesBranch, Mode: selection.Mode, Previewed: previewed && previewErr == nil,
 		PreviewURL: base + "/restore/preview", ApplyURL: base + "/restore", CancelURL: base,
 		// No section is current: restoring is reached from several of them.
@@ -272,7 +272,7 @@ func restoreTarget(requested string, summary repository.Summary) string {
 	return "main"
 }
 
-func restoreURL(repositoryID, sourceOID, target, filePath string) string {
+func restoreURL(address, sourceOID, target, filePath string) string {
 	if sourceOID == "" || target == "" {
 		return ""
 	}
@@ -281,7 +281,7 @@ func restoreURL(repositoryID, sourceOID, target, filePath string) string {
 		values.Set("mode", repository.RestoreFiles)
 		values.Add("path", filePath)
 	}
-	return "/repositories/" + url.PathEscape(repositoryID) + "/restore?" + values.Encode()
+	return "/repositories/" + url.PathEscape(address) + "/restore?" + values.Encode()
 }
 
 // restoreMessage is the message for err, a failed step: a refusal's own

@@ -76,14 +76,16 @@ type activityDayJSON struct {
 // activityEntryJSON is one listed commit. AuthorName and AuthorDate are what
 // the commit itself records; OwnGit does not verify who made it.
 type activityEntryJSON struct {
-	Repository     string    `json:"repository"`
-	RepositoryName string    `json:"repository_name"`
-	Ref            string    `json:"ref"`
-	RefRetained    bool      `json:"ref_retained"`
-	OID            string    `json:"oid"`
-	Subject        string    `json:"subject"`
-	AuthorName     string    `json:"author_name"`
-	AuthorDate     time.Time `json:"author_date"`
+	Repository     string `json:"repository"`
+	RepositoryName string `json:"repository_name"`
+	// RepositoryAddress is where the repository answers now.
+	RepositoryAddress string    `json:"repository_address"`
+	Ref               string    `json:"ref"`
+	RefRetained       bool      `json:"ref_retained"`
+	OID               string    `json:"oid"`
+	Subject           string    `json:"subject"`
+	AuthorName        string    `json:"author_name"`
+	AuthorDate        time.Time `json:"author_date"`
 }
 
 type activityResponse struct {
@@ -178,7 +180,7 @@ func (app *App) handleActivityAPI(writer http.ResponseWriter, request *http.Requ
 	}
 	for _, entry := range listing.entries {
 		response.Entries = append(response.Entries, activityEntryJSON{
-			Repository: entry.RepositoryID, RepositoryName: entry.RepositoryName, Ref: entry.Ref, RefRetained: entry.RefRetained,
+			Repository: entry.RepositoryID, RepositoryName: entry.RepositoryName, RepositoryAddress: entry.RepositoryAddress, Ref: entry.Ref, RefRetained: entry.RefRetained,
 			OID: entry.Commit.OID, Subject: entry.Commit.Subject, AuthorName: entry.Commit.AuthorName, AuthorDate: entry.Commit.AuthorDate,
 		})
 	}

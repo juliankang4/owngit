@@ -695,7 +695,7 @@ func (server *mcpServer) repositoryTarget(requested string) (connection, error) 
 		return connection{}, cliProblem("invalid_arguments", "No repository was fixed when this MCP server started, so repository is required.")
 	}
 	if err := repository.ValidateID(requested); err != nil {
-		return connection{}, cliProblem("invalid_arguments", "repository must be a repository ID: lowercase letters, numbers, dots, underscores, or hyphens.")
+		return connection{}, cliProblem("invalid_arguments", "repository must be a repository address: lowercase letters, numbers, dots, underscores, or hyphens.")
 	}
 	target.repository = requested
 	return target, nil

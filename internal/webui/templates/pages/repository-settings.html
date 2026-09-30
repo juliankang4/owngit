@@ -11,6 +11,38 @@
   <p>{{bi $lang "repoadmin.settings.intro"}}</p>
 </div>
 
+{{/* The name and address. A rename is reversible, so it asks only for the
+     new name and the administrator confirmation every change asks for. */}}
+{{$rn := $p.RenameNotices}}
+<section class="setblock" aria-labelledby="rset-rename-h">
+  <h3 id="rset-rename-h" class="setblock__h">{{bi $lang "repoadmin.rename.title"}}</h3>
+  <p class="setblock__d">{{bi $lang "repoadmin.rename.help"}}</p>
+  <p class="rset__now">{{bi $lang "repoadmin.rename.address"}} <span class="mono" dir="auto">{{$p.Address}}</span></p>
+  {{if $p.Aliases}}
+  <p class="rset__now">{{bi $lang "repoadmin.rename.aliases"}}</p>
+  <ul class="rset__aliases">
+    {{range $p.Aliases}}<li><span class="mono" dir="auto">{{.Name}}</span> {{biUntil $lang "repoadmin.rename.alias_until" $.Chrome.Now .Until}}</li>{{end}}
+  </ul>
+  {{end}}
+  {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $rn "Scope" "rset-rename" "Field" "" "Focus" 0}}
+  <form class="form" method="post" action="{{$p.RenameURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="lang" value="{{$lang}}">
+    <div class="f">
+      <label for="rset-name">{{bi $lang "repoadmin.rename.label"}}</label>
+      <input id="rset-name" name="name" type="text" required maxlength="100" autocomplete="off" spellcheck="false" autocapitalize="off"
+             value="{{$p.RenameName}}" aria-describedby="rset-name-help"
+             {{template "fieldInvalid" dict "Notices" $rn "Scope" "rset-rename" "Field" "name"}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $rn "Scope" "rset-rename" "Field" "name"}}
+      <p class="f__help" id="rset-name-help">{{bi $lang "repoadmin.rename.alias_note"}}</p>
+    </div>
+    {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $rn "Scope" "rset-rename" "ID" "rset-rename-password"}}
+    <div class="actions">
+      <button type="submit" class="btn btn--primary">{{bi $lang "repoadmin.rename.submit"}}</button>
+    </div>
+  </form>
+</section>
+
 <section class="setblock" aria-labelledby="rset-default-h">
   <h3 id="rset-default-h" class="setblock__h">{{icon "branch"}}{{bi $lang "repoadmin.default_branch.title"}}</h3>
   <p class="setblock__d">{{bi $lang "repoadmin.default_branch.help"}}</p>

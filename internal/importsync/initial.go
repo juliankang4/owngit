@@ -113,13 +113,13 @@ func ownerRecoveryProblem(finalPath string, cause error) *Problem {
 	return newProblem(CodeUnresolved, ownerRecoveryMessage(finalPath), cause)
 }
 
-// destinationTaken reports whether a repository row, an unfinished deletion
-// of the same name, or a final directory already exists. It does not create,
-// rename, or remove anything.
+// destinationTaken reports whether a repository has the ID or has it as its
+// name or alias, an unfinished deletion of the same name exists, or a final
+// directory already exists. It does not create, rename, or remove anything.
 func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bool, error) {
-	if _, exists, err := s.Store.Repository(ctx, repositoryID); err != nil {
+	if taken, err := s.Store.RepositoryNameInUse(ctx, repositoryID, time.Now()); err != nil {
 		return false, runStateReadProblem("repository could not be read", err)
-	} else if exists {
+	} else if taken {
 		return true, nil
 	}
 	if _, pending, err := s.Store.RepositoryDeletion(ctx, repositoryID); err != nil {

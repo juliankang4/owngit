@@ -75,8 +75,12 @@ type Session struct {
 const MaximumRepositoryDescriptionBytes = 500
 
 type Repository struct {
-	ID          string
-	Name        string
+	ID   string
+	Name string
+	// Address is where the repository answers: its current name, or its ID
+	// when it was never renamed. Links use it; storage and records use ID.
+	// It is read from repository_names and not written through this field.
+	Address     string
 	Description string
 	CreatedAt   time.Time
 	// AttemptSequence is the repository-wide counter that issues check attempt
@@ -2427,50 +2431,72 @@ func (s *Store) ClearAttempts(ctx context.Context, kind, address string) error {
 }
 
 // AddRepository records a repository. It refuses an ID whose earlier deletion
-// is unfinished, so no path can claim a name before that deletion completes.
+// is unfinished, so no path can claim a name before that deletion completes,
+// and an ID that is another repository's current name or unexpired alias.
+// An expired alias left for the ID is removed in the same transaction.
 func (s *Store) AddRepository(ctx context.Context, repository Repository) error {
-	result, err := s.db.ExecContext(ctx, `INSERT INTO repositories(id,name,description,created_at) SELECT ?,?,?,?
-		WHERE NOT EXISTS(SELECT 1 FROM metadata WHERE key=?)`,
-		repository.ID, repository.Name, repository.Description, repository.CreatedAt.Unix(), repositoryDeletionKey(repository.ID))
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if affected, err := result.RowsAffected(); err != nil {
+	defer tx.Rollback()
+	var pending int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM metadata WHERE key=?`, repositoryDeletionKey(repository.ID)).Scan(&pending); err != nil {
 		return err
-	} else if affected == 0 {
+	}
+	if pending > 0 {
 		return ErrRepositoryDeletionPending
 	}
-	return nil
+	if err := takeRepositoryName(ctx, tx, "", repository.ID, time.Now()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO repositories(id,name,description,created_at) VALUES(?,?,?,?)`,
+		repository.ID, repository.Name, repository.Description, repository.CreatedAt.Unix()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-func (s *Store) Repository(ctx context.Context, id string) (Repository, bool, error) {
+// repositoryColumns reads a repository with its address.
+const repositoryColumns = `SELECT r.id,r.name,COALESCE(c.name,r.id),r.description,r.created_at FROM repositories r
+	LEFT JOIN repository_names c ON c.repository_id=r.id AND c.kind='current'`
+
+func scanRepository(row interface{ Scan(...any) error }) (Repository, error) {
 	var repository Repository
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,description,created_at FROM repositories WHERE id=?`, id).Scan(&repository.ID, &repository.Name, &repository.Description, &created)
+	err := row.Scan(&repository.ID, &repository.Name, &repository.Address, &repository.Description, &created)
+	repository.CreatedAt = time.Unix(created, 0)
+	return repository, err
+}
+
+// Repository reads the repository with ID id.
+func (s *Store) Repository(ctx context.Context, id string) (Repository, bool, error) {
+	return readRepository(ctx, s.db, id)
+}
+
+func readRepository(ctx context.Context, queryer queryRower, id string) (Repository, bool, error) {
+	repository, err := scanRepository(queryer.QueryRowContext(ctx, repositoryColumns+` WHERE r.id=?`, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Repository{}, false, nil
 	}
 	if err != nil {
 		return Repository{}, false, err
 	}
-	repository.CreatedAt = time.Unix(created, 0)
 	return repository, true, nil
 }
 
 func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,created_at FROM repositories ORDER BY lower(name),name`)
+	rows, err := s.db.QueryContext(ctx, repositoryColumns+` ORDER BY lower(r.name),r.name`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var repositories []Repository
 	for rows.Next() {
-		var repository Repository
-		var created int64
-		if err := rows.Scan(&repository.ID, &repository.Name, &repository.Description, &created); err != nil {
+		repository, err := scanRepository(rows)
+		if err != nil {
 			return nil, err
 		}
-		repository.CreatedAt = time.Unix(created, 0)
 		repositories = append(repositories, repository)
 	}
 	return repositories, rows.Err()

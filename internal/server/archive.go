@@ -30,16 +30,16 @@ type archiveTarget struct {
 
 // archiveURL is the browser address that downloads ref of a repository in
 // format.
-func archiveURL(repositoryID, ref, format string) string {
+func archiveURL(address, ref, format string) string {
 	values := url.Values{"ref": []string{ref}, "format": []string{format}}
-	return "/repositories/" + url.PathEscape(repositoryID) + "/archive?" + values.Encode()
+	return "/repositories/" + url.PathEscape(address) + "/archive?" + values.Encode()
 }
 
 // archiveLinks offers ref as ZIP and tar.gz.
-func archiveLinks(repositoryID, ref string) []webui.ArchiveLink {
+func archiveLinks(address, ref string) []webui.ArchiveLink {
 	return []webui.ArchiveLink{
-		{Label: "ZIP", URL: archiveURL(repositoryID, ref, githttp.ArchiveZip)},
-		{Label: "tar.gz", URL: archiveURL(repositoryID, ref, githttp.ArchiveTarGz)},
+		{Label: "ZIP", URL: archiveURL(address, ref, githttp.ArchiveZip)},
+		{Label: "tar.gz", URL: archiveURL(address, ref, githttp.ArchiveTarGz)},
 	}
 }
 

@@ -229,8 +229,11 @@ func runnerCredentialCommand(arguments []string) error {
 		if err := json.Unmarshal(content, &response); err != nil || response.Credential == nil {
 			return fail(cliProblem("invalid_response", "The server did not return a runner credential."))
 		}
-		if response.Credential.RepositoryID != admin.repository || response.Credential.CreationID != issuance.creationID {
-			return fail(cliProblem("mismatched_response", "The server returned a runner credential for another repository or creation identity."))
+		if err := credentialRepositoryMatches(admin.repository, response.Credential.RepositoryID, response.RepositoryAddress); err != nil {
+			return fail(err)
+		}
+		if response.Credential.CreationID != issuance.creationID {
+			return fail(cliProblem("mismatched_response", "The server returned a runner credential for another creation identity."))
 		}
 		if response.Token == "" {
 			return preservedOutputError(issuance.replayed(response.Credential.ID, response.Credential.RevokedAt != nil), reserved.preserve())

@@ -555,6 +555,23 @@ func (s *Store) DeleteImportSource(ctx context.Context, repositoryID string) err
 // repository exists or an import may still need recovery.
 var ErrImportNotForgettable = errors.New("import state is still needed")
 
+// importClaimsRepositoryID reports whether an import for repositoryID is
+// running or unresolved, or holds unpublished work that may still become
+// the repository with that ID.
+func importClaimsRepositoryID(ctx context.Context, queryer queryRower, repositoryID string) (bool, error) {
+	var claims int
+	err := queryer.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM import_runs WHERE repository_id=? AND status IN (?,?,?,?,?,?)) +
+		(SELECT COUNT(*) FROM import_publication_intents WHERE repository_id=? AND status IN (?,?,?)) +
+		(SELECT COUNT(*) FROM import_initial_destinations WHERE repository_id=? AND state<>?) +
+		(SELECT COUNT(*) FROM import_stagings WHERE repository_id=? AND state<>?)`,
+		repositoryID, ImportRunPreparing, ImportRunFetching, ImportRunIndexing, ImportRunInspecting, ImportRunPublishing, ImportRunUnresolved,
+		repositoryID, ImportIntentPlanning, ImportIntentApplied, ImportIntentUnresolved,
+		repositoryID, ImportInitialReleased,
+		repositoryID, ImportStagingReleased).Scan(&claims)
+	return claims > 0, err
+}
+
 // ForgetUnpublishedImport removes the source binding of a repository that was
 // never created: its source, credential file, observations, and schedule. A
 // failed first import then leaves no secret behind, and neither a retry nor a
@@ -573,21 +590,13 @@ func (s *Store) ForgetUnpublishedImport(ctx context.Context, repositoryID string
 		return err
 	}
 	defer tx.Rollback()
-	var blockers int
-	if err := tx.QueryRowContext(ctx, `SELECT
-		(SELECT COUNT(*) FROM repositories WHERE id=?) +
-		(SELECT COUNT(*) FROM import_runs WHERE repository_id=? AND status IN (?,?,?,?,?,?)) +
-		(SELECT COUNT(*) FROM import_publication_intents WHERE repository_id=? AND status IN (?,?,?)) +
-		(SELECT COUNT(*) FROM import_initial_destinations WHERE repository_id=? AND state<>?) +
-		(SELECT COUNT(*) FROM import_stagings WHERE repository_id=? AND state<>?)`,
-		repositoryID,
-		repositoryID, ImportRunPreparing, ImportRunFetching, ImportRunIndexing, ImportRunInspecting, ImportRunPublishing, ImportRunUnresolved,
-		repositoryID, ImportIntentPlanning, ImportIntentApplied, ImportIntentUnresolved,
-		repositoryID, ImportInitialReleased,
-		repositoryID, ImportStagingReleased).Scan(&blockers); err != nil {
+	var repositories int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM repositories WHERE id=?`, repositoryID).Scan(&repositories); err != nil {
 		return err
 	}
-	if blockers > 0 {
+	if claimed, err := importClaimsRepositoryID(ctx, tx, repositoryID); err != nil {
+		return err
+	} else if claimed || repositories > 0 {
 		return ErrImportNotForgettable
 	}
 	// Invalidate captured credentials before touching the private file, as

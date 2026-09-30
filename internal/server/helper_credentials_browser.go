@@ -95,7 +95,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, unavailable(request, "helper credential revoke", err))
 			return
 		}
-		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.ID)+"?notice=helper_credential_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.Address)+"?notice=helper_credential_revoked", http.StatusSeeOther)
 	default:
 		app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID, "",
 			[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, http.StatusBadRequest)
@@ -121,7 +121,7 @@ func (app *App) renderHelperCredentials(writer http.ResponseWriter, request *htt
 
 func (app *App) helperCredentialsPage(request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, credentials []state.HelperCredential) webui.HelperCredentialsPage {
 	basePage := app.baseRepositoryPage(request, chrome, stored, summary)
-	self := baseHelperCredentialsURL(stored.ID)
+	self := baseHelperCredentialsURL(stored.Address)
 	page := webui.HelperCredentialsPage{
 		Chrome:    chrome,
 		Repo:      basePage.Repo,
@@ -169,6 +169,6 @@ func validBrowserCredentialLabel(label string) bool {
 	return label != "" && len(label) <= 100 && utf8.ValidString(label) && !strings.ContainsAny(label, "\x00\r\n")
 }
 
-func baseHelperCredentialsURL(repositoryID string) string {
-	return "/repositories/" + url.PathEscape(repositoryID) + "/helper-credentials"
+func baseHelperCredentialsURL(address string) string {
+	return "/repositories/" + url.PathEscape(address) + "/helper-credentials"
 }

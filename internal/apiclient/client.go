@@ -41,7 +41,12 @@ const (
 // errRequestTimeout ends a request that took longer than its time limit.
 var errRequestTimeout = errors.New("the server did not answer in time")
 
-var errRedirectRefused = errors.New("redirect refused")
+// redirectRefused reports a redirect that says nothing more, such as one
+// from a proxy. An OwnGit redirect carries an error object, such as
+// repository_moved, which is reported as it is.
+func redirectRefused() *Error {
+	return &Error{Code: "redirect_refused", Message: "The OwnGit API returned a redirect. Credentials were not sent to the redirect target."}
+}
 
 // connectionFailed reports a request that got no usable response. The message
 // names the transport cause, such as a refused connection or a TLS failure.
@@ -191,8 +196,10 @@ func newClient(server *url.URL) *Client {
 	return &Client{
 		server: server,
 		httpClient: &http.Client{
-			Transport:     sharedTransport,
-			CheckRedirect: func(*http.Request, []*http.Request) error { return errRedirectRefused },
+			Transport: sharedTransport,
+			// A redirect is never followed, so credentials never reach its
+			// target. Do reads the redirect's own answer instead.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
 	}
 }
@@ -334,9 +341,6 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 	}
 	response, done, err := client.send(request)
 	if err != nil {
-		if errors.Is(err, errRedirectRefused) {
-			return nil, &Error{Code: "redirect_refused", Message: "The OwnGit API returned a redirect. Credentials were not sent to the redirect target.", Cause: err}
-		}
 		return nil, connectionFailed(err)
 	}
 	defer done()
@@ -353,12 +357,19 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		return nil, responseError(response, &Error{Code: "response_too_large", Message: "The OwnGit API response exceeds the supported size."})
 	}
 	mediaType, _, mediaErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	redirect := response.StatusCode >= 300 && response.StatusCode < 400
 	if mediaErr != nil || mediaType != "application/json" {
+		if redirect {
+			return nil, responseError(response, redirectRefused())
+		}
 		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API returned a non-JSON response."})
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var envelope pullrequest.ErrorEnvelope
 		if err := json.Unmarshal(content, &envelope); err != nil || envelope.OK || envelope.Error.Code == "" || envelope.Error.Message == "" {
+			if redirect {
+				return nil, responseError(response, redirectRefused())
+			}
 			return nil, responseError(response, &Error{Code: "invalid_response", Message: fmt.Sprintf("The OwnGit API returned HTTP %d without a valid error object.", response.StatusCode)})
 		}
 		return nil, responseError(response, &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, Details: envelope.Error.Details, Status: response.StatusCode})

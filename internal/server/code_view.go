@@ -24,9 +24,9 @@ import (
 
 // rawURL is the address that downloads one file at ref. Relative images in a
 // rendered document load through it too.
-func rawURL(repositoryID, ref, filePath string) string {
+func rawURL(address, ref, filePath string) string {
 	values := url.Values{"ref": []string{ref}, "path": []string{filePath}}
-	return "/repositories/" + url.PathEscape(repositoryID) + "/raw?" + values.Encode()
+	return "/repositories/" + url.PathEscape(address) + "/raw?" + values.Encode()
 }
 
 // renderMarkdown renders a repository document found in dir at ref. Links to
@@ -34,10 +34,10 @@ func rawURL(repositoryID, ref, filePath string) string {
 // load through the raw endpoint. When the document is not rendered, the
 // returned code says why: it is too large or too complex, every render slot
 // stayed busy, or this server cannot run its render helper.
-func (app *App) renderMarkdown(ctx context.Context, repositoryID, ref, dir string, source []byte) (template.HTML, webui.MessageCode) {
+func (app *App) renderMarkdown(ctx context.Context, address, ref, dir string, source []byte) (template.HTML, webui.MessageCode) {
 	// The document is rendered in a child process, so its links are given as
 	// address prefixes; each is completed with a query-escaped path.
-	base := "/repositories/" + url.PathEscape(repositoryID)
+	base := "/repositories/" + url.PathEscape(address)
 	ref = url.QueryEscape(ref)
 	rendered, err := markdown.Render(ctx, source, markdown.Links{
 		Dir:  dir,
@@ -69,7 +69,7 @@ func markdownNotShown(err error) webui.MessageCode {
 // folderReadme renders the README of a folder listing, if it has one that is
 // a Markdown file. A README that cannot be read or rendered is still named,
 // with the reason and a link to open it.
-func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir string, entries []repository.TreeEntry) *webui.ReadmeView {
+func (app *App) folderReadme(request *http.Request, repo webui.RepositoryHeader, ref, dir string, entries []repository.TreeEntry) *webui.ReadmeView {
 	var found *repository.TreeEntry
 	for index := range entries {
 		entry := &entries[index]
@@ -84,12 +84,12 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	if found == nil {
 		return nil
 	}
-	view := &webui.ReadmeView{Path: found.Path, URL: codeURL(repositoryID, ref, found.Path), Note: webui.MsgReadmeNotShown}
+	view := &webui.ReadmeView{Path: found.Path, URL: codeURL(repo.Address, ref, found.Path), Note: webui.MsgReadmeNotShown}
 	if found.Size > markdown.MaxSource {
 		return view
 	}
 	// The listing already names the README's object, so it is read directly.
-	blob, err := app.Repositories.BlobAt(request.Context(), repositoryID, *found, markdown.MaxSource)
+	blob, err := app.Repositories.BlobAt(request.Context(), repo.ID, *found, markdown.MaxSource)
 	if err != nil {
 		logFailure(request, "README read", err)
 		view.Note = webui.MsgReadmeUnreadable
@@ -101,7 +101,7 @@ func (app *App) folderReadme(request *http.Request, repositoryID, ref, dir strin
 	if blob.Truncated {
 		return view
 	}
-	rendered, reason := app.renderMarkdown(request.Context(), repositoryID, ref, dir, blob.Content)
+	rendered, reason := app.renderMarkdown(request.Context(), repo.Address, ref, dir, blob.Content)
 	switch reason {
 	case "":
 		view.Rendered, view.Note = rendered, ""

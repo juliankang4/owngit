@@ -190,6 +190,30 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.Error(writer, "unsupported Content-Encoding; send gzip or an uncompressed body", http.StatusUnsupportedMediaType)
 		return
 	}
+	// The path names the repository by its address. An alias redirects: Git
+	// follows the redirect of its first request, uses the new address for
+	// the rest, and shows the user the address it was redirected to.
+	address, found, err := h.Repositories.Store.ResolveRepositoryName(request.Context(), route.repositoryID, time.Now())
+	switch {
+	case err != nil:
+		logCause(request.Context(), fmt.Sprintf("Git %s request for repository %q failed: the repository address could not be read", requestKind(route, request.Method), route.repositoryID), err)
+		http.Error(writer, "repository storage is unavailable", http.StatusServiceUnavailable)
+		return
+	case !found:
+		http.NotFound(writer, request)
+		return
+	case address.Current != route.repositoryID:
+		location := "/git/" + address.Current + ".git/" + route.suffix
+		if route.query != "" {
+			location += "?" + route.query
+		}
+		http.Redirect(writer, request, location, http.StatusTemporaryRedirect)
+		return
+	}
+	route.repositoryID = address.RepositoryID
+	// A request for a repository postpones its maintenance until it ends.
+	h.Repositories.NoteRepositoryUse(route.repositoryID)
+	defer h.Repositories.NoteRepositoryUse(route.repositoryID)
 	repositoryPath, _, exists, err := h.Repositories.ExistingPath(request.Context(), route.repositoryID)
 	if errors.Is(err, repository.ErrRepositoryPreparing) {
 		writer.Header().Set("Retry-After", "30")
@@ -750,10 +774,13 @@ func (h *Handler) Wait(ctx context.Context) error {
 }
 
 type route struct {
+	// repositoryID is the repository address the path names until
+	// ServeHTTP resolves it to the repository's ID.
 	repositoryID string
-	pathInfo     string
-	service      string
-	query        string
+	// suffix is the path after the repository, such as info/refs.
+	suffix  string
+	service string
+	query   string
 }
 
 func parseRoute(request *http.Request) (route, bool) {
@@ -781,13 +808,13 @@ func parseRoute(request *http.Request) (route, bool) {
 		if service != "git-upload-pack" && service != "git-receive-pack" {
 			return route{}, false
 		}
-		return route{repositoryID: id, pathInfo: "/" + id + ".git/info/refs", service: service, query: "service=" + service}, true
+		return route{repositoryID: id, suffix: suffix, service: service, query: "service=" + service}, true
 	case request.Method == http.MethodPost && (suffix == "git-upload-pack" || suffix == "git-receive-pack"):
 		mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 		if err != nil || len(parameters) != 0 || mediaType != "application/x-"+suffix+"-request" || request.URL.RawQuery != "" {
 			return route{}, false
 		}
-		return route{repositoryID: id, pathInfo: "/" + id + ".git/" + suffix, service: suffix}, true
+		return route{repositoryID: id, suffix: suffix, service: suffix}, true
 	default:
 		return route{}, false
 	}
@@ -815,7 +842,7 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 		"GIT_PROJECT_ROOT=" + h.Repositories.RepositoryRoot(),
 		"GIT_HTTP_EXPORT_ALL=1",
 		"REQUEST_METHOD=" + request.Method,
-		"PATH_INFO=" + route.pathInfo,
+		"PATH_INFO=/" + route.repositoryID + ".git/" + route.suffix,
 		"QUERY_STRING=" + route.query,
 		"CONTENT_TYPE=" + request.Header.Get("Content-Type"),
 		"REMOTE_ADDR=" + info.ClientAddress,

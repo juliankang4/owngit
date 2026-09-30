@@ -2,21 +2,22 @@ package server
 
 import "testing"
 
-func TestRepositoryIDInPathNamesTheRepositoryOfARequest(t *testing.T) {
-	for path, want := range map[string]string{
-		"/git/sample.git/info/refs":              "sample",
-		"/git/sample.git/git-upload-pack":        "sample",
-		"/repositories/sample":                   "sample",
-		"/repositories/sample/tree/main/docs":    "sample",
-		"/api/v1/repositories/sample/pulls":      "sample",
-		"/api/v1/repositories/sample/import/run": "sample",
-		"/":                                      "",
-		"/activity":                              "",
-		"/settings":                              "",
-		"/assets/app.css":                        "",
+func TestRepositoryNameInPathNamesTheRepositoryOfARequest(t *testing.T) {
+	for path, want := range map[string][3]string{
+		"/repositories/sample":                   {"/repositories/", "sample", ""},
+		"/repositories/sample/":                  {"/repositories/", "sample", "/"},
+		"/repositories/sample/tree/main/docs":    {"/repositories/", "sample", "/tree/main/docs"},
+		"/api/v1/repositories/sample/pulls":      {"/api/v1/repositories/", "sample", "/pulls"},
+		"/api/v1/repositories/sample/import/run": {"/api/v1/repositories/", "sample", "/import/run"},
+		"/api/v1/repositories":                   {},
+		"/":                                      {},
+		"/activity":                              {},
+		"/settings":                              {},
+		"/assets/app.css":                        {},
 	} {
-		if got := repositoryIDInPath(path); got != want {
-			t.Errorf("repositoryIDInPath(%q) = %q, want %q", path, got, want)
+		prefix, name, rest := repositoryNameInPath(path)
+		if got := [3]string{prefix, name, rest}; got != want {
+			t.Errorf("repositoryNameInPath(%q) = %q, want %q", path, got, want)
 		}
 	}
 }

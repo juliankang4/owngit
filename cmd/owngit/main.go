@@ -1400,6 +1400,7 @@ var commandOperands = map[string]string{
 	"import schedule":    "<name>",
 	"import credentials": "<name>",
 	"import resolve":     "<name>",
+	"repo rename":        "<name> <new-name>",
 	"upgrade-backup":     "[on|off]",
 	"tray":               "[on|off|status|icon|read|open|notifications [SETTING on|off]]",
 }
