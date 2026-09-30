@@ -575,7 +575,7 @@ The Network tab and the OwnGit icon have their own commands, which run on the in
 
 ### Dashboard-only and command-line-only tasks
 
-Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, and `uninstall` (all listed below); most `import` commands, except `import status` and `import configure`, which take `--json`; and `owngit backup --output` and `owngit restore`, which work on a stopped OwnGit.
+Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, `uninstall` (all listed below), and `owngit backup --output` and `owngit restore`, which work on a stopped OwnGit.
 
 A few tasks are on one side only, on purpose:
 
@@ -1497,6 +1497,7 @@ owngit import resolve PROJECT
 - `import status` lists the last and active runs, the source's connection choices, changed limits and refresh choices, every imported ref that does not match the source, and the refs the refresh choices [would change now](#checking-what-the-choices-would-change). With `--json` it prints the status as JSON, including every limit in force.
 - `import cancel` can stop a run only until its result is published; for a first import, that is the moment the repository appears. If the first import fails or is cancelled, OwnGit removes the source and credentials stored for that name (at its next start if it crashed), and a retry uses only what you supply.
 - A schedule interval is between 60 seconds and 7 days (`invalid_schedule` otherwise), and scheduled refreshes run only while `owngit serve` runs.
+- Every import command takes `--json` and then prints the server's answer as JSON instead of text, with the same exit status. `import status --json` prints the status itself; the other commands print the whole answer, such as `run` and `status` for `import add` and `import refresh`, or `enabled` and `interval_seconds` for `import schedule`. When the status after a saved change cannot be read, the answer has `status_error` instead of the warning the text prints. With `--json` an error is printed as JSON with `"ok": false` and a `code`.
 
 ### Source connections
 

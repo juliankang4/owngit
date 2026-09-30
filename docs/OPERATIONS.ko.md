@@ -575,7 +575,7 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
 
 ### 대시보드나 명령줄 한쪽에만 있는 작업
 
-설정 화면과 저장소 페이지에서 소유자가 하는 일은 모두 명령으로도 할 수 있습니다. 이 명령은 대부분 JSON을 출력하며 일부는 `--json`을 붙였을 때만 출력합니다. 텍스트로만 출력하는 명령은 아래에 나오는 설치 호스트 복구 명령, 프로세스를 실행하거나 제어하는 명령, `uninstall`입니다. `--json`을 받는 `import status`와 `import configure`를 뺀 나머지 `import` 명령, 멈춰 있는 OwnGit에 쓰는 `owngit backup --output`과 `owngit restore`도 아직 텍스트로만 출력합니다.
+설정 화면과 저장소 페이지에서 소유자가 하는 일은 모두 명령으로도 할 수 있습니다. 이 명령은 대부분 JSON을 출력하며 일부는 `--json`을 붙였을 때만 출력합니다. 텍스트로만 출력하는 명령은 아래에 나오는 설치 호스트 복구 명령, 프로세스를 실행하거나 제어하는 명령, `uninstall`입니다. 멈춰 있는 OwnGit에 쓰는 `owngit backup --output`과 `owngit restore`도 아직 텍스트로만 출력합니다.
 
 다음 일만 일부러 한쪽에만 둡니다.
 
@@ -1497,6 +1497,7 @@ owngit import resolve PROJECT
 - `import status`는 마지막 실행과 진행 중인 실행, 원본의 연결 설정, 바꾼 한도, 새로고침 설정, 원본과 일치하지 않는 가져온 ref를 보여 줍니다. 새로고침 설정이 [지금 바꿀 ref](#바뀔-ref-미리-보기)도 함께 나옵니다. `--json`을 붙이면 적용 중인 모든 한도를 포함해 JSON으로 출력합니다.
 - `import cancel`은 결과가 게시되기 전까지만 실행을 멈출 수 있습니다. 첫 가져오기라면 저장소가 나타나는 순간이 그 경계입니다. 첫 가져오기가 실패하거나 취소되면 OwnGit은 그 이름으로 저장했던 원본과 인증 정보를 지우고(멈췄다면 다음 시작 때), 다시 시도할 때는 새로 넘긴 것만 씁니다.
 - 예약 간격은 60초에서 7일 사이이며(그 밖은 `invalid_schedule`), 예약 새로고침은 `owngit serve`가 실행 중일 때만 동작합니다.
+- 모든 가져오기 명령은 `--json`을 받습니다. 붙이면 텍스트 대신 서버의 응답을 JSON으로 출력하고, 종료 코드는 같습니다. `import status --json`은 상태 자체를 출력하고, 나머지 명령은 응답 전체를 출력합니다. 예를 들어 `import add`와 `import refresh`는 `run`과 `status`를, `import schedule`은 `enabled`와 `interval_seconds`를 담습니다. 변경은 저장했지만 그 뒤 상태를 읽지 못했다면 텍스트의 경고 대신 응답에 `status_error`가 들어갑니다. `--json`을 붙이면 오류도 `"ok": false`와 `code`가 있는 JSON으로 출력합니다.
 
 ### 원본 연결
 
