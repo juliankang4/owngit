@@ -230,7 +230,7 @@ sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --s
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again, and to reach OwnGit from other devices run `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host ADDRESS` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay until you remove them. Later installs keep using the restored state.
+As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again, and to reach OwnGit from other devices run `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host ADDRESS --accept-insecure-http` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay until you remove them. Later installs keep using the restored state.
 
 ### On Windows
 
@@ -540,7 +540,7 @@ The question lists each change, showing a password only as entered, and offers S
 
 ### Settings on the command line
 
-`owngit settings` makes every change of the General, Access, Repositories and Storage & recovery tabs, except the display choices of your browser. It works through the administrator API, so each command needs `--server` and a `--password-file` holding the administrator password, and it prints its answer as JSON:
+`owngit settings` makes every change of the General, Access, Repositories and Storage & recovery tabs, except the display choices of your browser and the OwnGit icon. It works through the administrator API, so each command needs `--server` and a `--password-file` holding the administrator password, and it prints its answer as JSON:
 
 - `owngit settings show` prints the saved settings (listed below), the access mode (`access_mode`, `open` or `password`), how often the dashboard asks for the administrator password (`admin_confirmation`) and the new-release check (`update_check`). `update_check_forced_off` is true when the server was started with `--no-update-check`.
 - `owngit settings set` changes only the settings its options name, such as `--session 7d` or `--update-check off`.
@@ -549,8 +549,11 @@ The question lists each change, showing a password only as entered, and offers S
 - `owngit settings confirmation --choice CHOICE` sets how often the dashboard asks for the administrator password: `every`, `30m`, `1h`, `8h`, `1d`, `7d`, `30d` or `never` (Do not ask). `never` also needs `--acknowledge-no-ask`, which accepts the same warning as Settings.
 
 ```sh
-owngit settings set --server http://127.0.0.1:7654 --password-file /path/to/admin-password --update-check off
+owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
+  --password-file /path/to/admin-password --update-check off
 ```
+
+`--accept-insecure-http` accepts plain HTTP, which is not encrypted, for that one command. Leave it out when the server address starts with `https://`.
 
 A new password never goes on the command line. `settings access` reads it from the file given with `--access-password-file`, and `settings admin-password` from `--new-password-file`; each must be an owner-only file ([Password and token files](#password-and-token-files)). Without that option, the command asks for the password twice at a prompt that does not show what you type, which works only in a terminal. OwnGit refuses the same passwords as Settings, such as one that is too short or one that equals the other password. A new shared password signs out everyone signed in with the old one. A new administrator password ends every browser's administrator confirmation. Commands that read the old one from a password file stop working until you put the new one there.
 
@@ -575,7 +578,7 @@ The Network tab and the OwnGit icon have their own commands, which run on the in
 Every owner task in Settings and on a repository's pages also has a command that prints JSON. A few tasks are on one side only, on purpose:
 
 - Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)).
-- Dashboard only: accepting the plain HTTP warning, because it concerns the browser's own connection. A command gives its own consent each time with `--accept-insecure-http`.
+- Dashboard only: accepting the plain HTTP warning that a browser shows, because it concerns that browser's own connection. A client command such as `settings` or `repo` accepts plain HTTP for itself each time with `--accept-insecure-http`. `owngit network set --accept-insecure-http` records the same acceptance as the dashboard, once, when it saves an address other computers reach ([Network settings](#network-settings)).
 - Running programs: `owngit serve` runs OwnGit, `owngit service` installs and controls it as a service, `owngit runner` runs automatic checks, and `owngit mcp` serves a coding tool. They have no dashboard form because they start or control a process.
 - Records from coding tools: check tasks, correction rounds and attempts (`owngit check task new`, `check cycle reserve`, `check run`) are evidence that a coding tool records ([Coding tools](CODING_TOOLS.md)). The dashboard shows them but does not create them.
 
@@ -767,11 +770,12 @@ owngit approve-host gitbox.internal
 To keep an address across restarts, save it. The server uses the saved values whenever it starts without options, as a service does. Run these on the installation host; they work whether or not the server runs, and a change applies at the next start:
 
 ```sh
-owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal --accept-insecure-http
 owngit network show
 ```
 
 - `--listen` is `host:port`; an empty host, `0.0.0.0` or `::` listens on every interface.
+- A listen address that other computers reach, such as `0.0.0.0:7654`, serves them plain HTTP, which is not encrypted. Until plain HTTP is accepted on this installation, `set` refuses such an address and saves nothing. Add `--accept-insecure-http` once to accept it; the acceptance is recorded, as when you accept it during setup or on the Network tab, and is not asked again. An `https` base URL does not change this, because OwnGit itself still serves plain HTTP. A loopback address such as `127.0.0.1:7654` never needs it.
 - `--base-url` is the `http` or `https` origin other devices use, without a path. OwnGit accepts its host name and shows it in clone addresses; without it, clone addresses use the address the browser connected to.
 - `--allowed-host` and `--remove-allowed-host` change the list that `owngit approve-host` also adds to.
 - `--trusted-proxy` and `--remove-trusted-proxy` change the reverse proxies whose forwarded headers OwnGit believes, each an IP address or CIDR range (see [Behind a reverse proxy](#behind-a-reverse-proxy)).
@@ -784,7 +788,7 @@ owngit network show
 A service definition that passes `--listen`, `--base-url`, `--allowed-host` or `--trusted-proxy` (the `ProgramArguments` of a LaunchAgent, the `ExecStart` of a unit) overrides the saved values at every start, so leave them out. The units that `owngit service install` writes never pass them. The Homebrew service runs `owngit serve --no-open` without any of them, so it uses the saved values. To reach it from other devices:
 
 ```sh
-owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --accept-insecure-http
 brew services restart owngit
 ```
 
@@ -889,7 +893,7 @@ When sharing is on at another port, the replacement also moves it, and OwnGit fi
 Over NetBird, Headscale with the Tailscale client, or plain WireGuard, let OwnGit listen on this computer's address in that network, use the name other devices use as the base URL, and restart:
 
 ```sh
-owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654
+owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654 --accept-insecure-http
 ```
 
 OwnGit accepts the base URL's name and the listen address as Hosts; add other names with `--allowed-host NAME`. NetBird gives each device a name such as `gitbox.netbird.selfhosted`, and Headscale a name under the `base_domain` of its MagicDNS settings. Plain WireGuard gives none, so use the address or your own DNS.
@@ -1202,7 +1206,7 @@ This command brings back only branches and tags; kept history, pull requests and
 `owngit repo delete` deletes a repository as the Delete page does, with the administrator password:
 
 ```sh
-owngit repo delete --server http://HOST:7654 --password-file /path/to/admin-password \
+owngit repo delete --server http://HOST:7654 --accept-insecure-http --password-file /path/to/admin-password \
   --repository NAME --files keep --confirm-name NAME
 ```
 
@@ -1234,7 +1238,7 @@ When the dashboard cannot be opened, or OwnGit is stopped, release the record on
 owngit forget-check-container --job JOB --confirm-container-removed
 ```
 
-`JOB` is the job identifier from the list or the server log; add `--state-dir` for a non-default state directory. `--json` prints the forgotten record as JSON: `job`, `repository`, `container_name`, `container_id`, `daemon_id`, and `docker_unavailable` when Docker could not be checked. The command refuses the same records as the page, and a job without a record.
+`JOB` is the job identifier from the list or the server log; add `--state-dir` for a non-default state directory. `--json` prints the forgotten record as JSON: `job`, `repository`, `container_name`, `container_id` when Docker assigned one, `daemon_id`, and `docker_unavailable` when Docker could not be checked. The command refuses the same records as the page, and a job without a record.
 
 #### If OwnGit stops during a deletion
 

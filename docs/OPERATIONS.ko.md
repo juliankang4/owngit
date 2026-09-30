@@ -230,7 +230,7 @@ sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --s
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않습니다. 다시 로그인하고, 다른 기기에서 접속하려면 `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host 주소`와 `sudo owngit service restart`를 실행하세요. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 직접 지우기 전까지 남습니다. 이후에 다시 설치해도 복원한 상태를 계속 씁니다.
+다른 복원과 마찬가지로 로그인 세션, 신뢰한 호스트, 네트워크 설정은 옮겨지지 않습니다. 다시 로그인하고, 다른 기기에서 접속하려면 `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host 주소 --accept-insecure-http`와 `sudo owngit service restart`를 실행하세요. root의 옛 상태, 백업, 쓰지 않는 `/var/lib/owngit/state`는 직접 지우기 전까지 남습니다. 이후에 다시 설치해도 복원한 상태를 계속 씁니다.
 
 ### Windows에서
 
@@ -540,7 +540,7 @@ pct exec 105 -- /usr/local/bin/owngit service status
 
 ### 명령줄에서 설정 바꾸기
 
-일반, 접근 권한, 저장소, 보관과 복구 탭에서 바꾸는 설정은 브라우저 화면 설정을 빼고 모두 `owngit settings`로도 바꿀 수 있습니다. 이 명령은 관리자 API를 쓰므로 명령마다 `--server`와 관리자 비밀번호가 든 `--password-file`이 필요하고 결과는 JSON으로 출력합니다.
+일반, 접근 권한, 저장소, 보관과 복구 탭에서 바꾸는 설정은 브라우저 화면 설정과 OwnGit 아이콘을 빼고 모두 `owngit settings`로도 바꿀 수 있습니다. 이 명령은 관리자 API를 쓰므로 명령마다 `--server`와 관리자 비밀번호가 든 `--password-file`이 필요하고 결과는 JSON으로 출력합니다.
 
 - `owngit settings show`는 아래에 나열한 저장된 설정과 함께 접근 방식(`access_mode`, `open` 또는 `password`), 대시보드가 관리자 비밀번호를 묻는 주기(`admin_confirmation`), 새 릴리스 확인(`update_check`)을 출력합니다. 서버를 `--no-update-check`로 시작했다면 `update_check_forced_off`가 true입니다.
 - `owngit settings set`은 `--session 7d`나 `--update-check off`처럼 옵션으로 지정한 설정만 바꿉니다.
@@ -549,8 +549,11 @@ pct exec 105 -- /usr/local/bin/owngit service status
 - `owngit settings confirmation --choice CHOICE`는 대시보드가 관리자 비밀번호를 얼마나 자주 물을지 정합니다. `every`, `30m`, `1h`, `8h`, `1d`, `7d`, `30d`, `never`(묻지 않기) 중에서 고릅니다. `never`를 고를 때는 설정 화면과 같은 경고에 동의한다는 뜻으로 `--acknowledge-no-ask`도 붙여야 합니다.
 
 ```sh
-owngit settings set --server http://127.0.0.1:7654 --password-file /path/to/admin-password --update-check off
+owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
+  --password-file /path/to/admin-password --update-check off
 ```
+
+`--accept-insecure-http`는 그 명령 한 번에 한해 암호화되지 않은 일반 HTTP를 받아들인다는 뜻입니다. 서버 주소가 `https://`로 시작하면 빼세요.
 
 새 비밀번호는 명령줄 값으로 받지 않습니다. `settings access`는 `--access-password-file`로, `settings admin-password`는 `--new-password-file`로 넘긴 파일에서 읽으며 이 파일은 본인만 읽을 수 있어야 합니다([비밀번호 파일과 토큰 파일](#비밀번호-파일과-토큰-파일) 참고). 옵션을 빼면 입력한 내용이 화면에 보이지 않는 프롬프트에서 비밀번호를 두 번 묻습니다. 이렇게 묻는 것은 터미널에서 실행할 때뿐입니다. 너무 짧은 비밀번호나 다른 쪽 비밀번호와 같은 비밀번호처럼 설정 화면이 거부하는 비밀번호는 명령도 거부합니다. 공용 비밀번호를 바꾸면 이전 비밀번호로 로그인한 사람은 모두 로그아웃됩니다. 관리자 비밀번호를 바꾸면 모든 브라우저의 관리자 확인이 끝납니다. 이전 비밀번호를 파일에서 읽던 명령은 그 파일에 새 비밀번호를 넣을 때까지 실패합니다.
 
@@ -575,7 +578,7 @@ owngit settings set --server http://127.0.0.1:7654 --password-file /path/to/admi
 설정 화면과 저장소 페이지에서 소유자가 하는 일은 모두 JSON을 출력하는 명령으로도 할 수 있습니다. 다음 일만 일부러 한쪽에만 둡니다.
 
 - 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고).
-- 대시보드에만 있음: 평문 HTTP 경고에 동의하는 일입니다. 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. 명령은 실행할 때마다 `--accept-insecure-http`로 따로 동의합니다.
+- 대시보드에만 있음: 브라우저에 나오는 일반 HTTP 경고에 동의하는 일입니다. 그 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. `settings`나 `repo` 같은 클라이언트 명령은 실행할 때마다 `--accept-insecure-http`로 그 명령이 쓰는 일반 HTTP에 따로 동의합니다. `owngit network set --accept-insecure-http`는 다른 컴퓨터가 접속하는 주소를 저장할 때 대시보드와 같은 동의를 한 번 기록합니다([네트워크 설정](#네트워크-설정) 참고).
 - 실행되는 프로그램: `owngit serve`는 OwnGit을 실행하고, `owngit service`는 서비스로 설치하고 제어하며, `owngit runner`는 자동 체크를 실행하고, `owngit mcp`는 코딩 도구에 MCP 서버를 제공합니다. 프로세스를 시작하거나 제어하는 명령이라 대시보드 양식이 없습니다.
 - 코딩 도구의 기록: 작업(task), 수정 라운드, 시도(`owngit check task new`, `check cycle reserve`, `check run`)는 코딩 도구가 남기는 증거입니다([코딩 도구](CODING_TOOLS.ko.md) 참고). 대시보드는 이 기록을 보여 주기만 하고 만들지는 않습니다.
 
@@ -767,11 +770,12 @@ owngit approve-host gitbox.internal
 다시 시작해도 주소를 유지하려면 저장하세요. 서비스처럼 옵션 없이 시작한 서버는 시작할 때마다 저장된 값을 씁니다. 다음 명령은 설치 호스트에서 실행합니다. 서버가 실행 중이든 아니든 동작하며 바꾼 값은 다음 시작부터 적용됩니다.
 
 ```sh
-owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --allowed-host gitbox.internal --accept-insecure-http
 owngit network show
 ```
 
 - `--listen`은 `host:port` 형식입니다. host를 비우거나 `0.0.0.0`, `::`로 쓰면 모든 인터페이스에서 연결을 받습니다.
+- `0.0.0.0:7654`처럼 다른 컴퓨터가 접속하는 주소에서는 암호화되지 않은 일반 HTTP로 응답합니다. 이 설치에서 일반 HTTP에 아직 동의하지 않았다면 `set`은 그런 주소를 거부하고 아무것도 저장하지 않습니다. `--accept-insecure-http`를 한 번 붙이면 동의한 것으로 기록되며 설정 과정이나 네트워크 탭에서 동의했을 때와 같이 다시 묻지 않습니다. OwnGit 자체는 여전히 일반 HTTP로 응답하므로 기본 URL이 `https`여도 마찬가지입니다. `127.0.0.1:7654` 같은 루프백 주소에는 필요 없습니다.
 - `--base-url`은 다른 기기가 쓰는 경로 없는 `http` 또는 `https` origin입니다. OwnGit은 그 호스트 이름을 받아들이고 clone 주소에 표시합니다. 없으면 clone 주소는 브라우저가 접속한 주소를 따릅니다.
 - `--allowed-host`와 `--remove-allowed-host`는 `owngit approve-host`도 추가하는 목록을 바꿉니다.
 - `--trusted-proxy`와 `--remove-trusted-proxy`는 OwnGit이 전달 헤더를 믿는 리버스 프록시 목록을 바꿉니다. 각각 IP 주소나 CIDR 범위를 씁니다([리버스 프록시 뒤에서 운영하기](#리버스-프록시-뒤에서-운영하기) 참고).
@@ -784,7 +788,7 @@ owngit network show
 서비스 정의(LaunchAgent의 `ProgramArguments`, 유닛의 `ExecStart`)에서 `--listen`, `--base-url`, `--allowed-host`, `--trusted-proxy`를 넘기면 시작할 때마다 저장된 값보다 옵션이 우선하므로 빼 두세요. `owngit service install`이 쓰는 유닛은 이 옵션을 넘기지 않습니다. Homebrew 서비스는 이 옵션 없이 `owngit serve --no-open`만 실행하므로 저장된 값을 씁니다. 다른 기기에서 접속하려면 다음과 같이 합니다.
 
 ```sh
-owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654
+owngit network set --listen 0.0.0.0:7654 --base-url http://gitbox.internal:7654 --accept-insecure-http
 brew services restart owngit
 ```
 
@@ -889,7 +893,7 @@ OwnGit은 확인한 내용만 바꿉니다. 확인한 뒤에 Tailscale이 제공
 NetBird, Tailscale 클라이언트와 함께 쓰는 Headscale, 일반 WireGuard에서는 그 네트워크에서 이 컴퓨터가 쓰는 주소로 연결을 받게 하고 다른 기기가 쓰는 이름을 기본 URL로 저장한 뒤 다시 시작하세요.
 
 ```sh
-owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654
+owngit network set --listen 100.64.0.7:7654 --base-url http://gitbox.netbird.selfhosted:7654 --accept-insecure-http
 ```
 
 OwnGit은 기본 URL의 이름과 연결 주소를 Host로 받아들이며 다른 이름은 `--allowed-host 이름`으로 추가합니다. NetBird는 각 기기에 `gitbox.netbird.selfhosted` 같은 이름을, Headscale은 MagicDNS 설정의 `base_domain` 아래 이름을 붙입니다. 일반 WireGuard에는 이름이 없으니 주소나 직접 운영하는 DNS를 쓰세요.
@@ -1202,7 +1206,7 @@ git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push
 `owngit repo delete`는 삭제 페이지와 같은 방식으로 저장소를 삭제하며 관리자 비밀번호가 필요합니다.
 
 ```sh
-owngit repo delete --server http://HOST:7654 --password-file /path/to/admin-password \
+owngit repo delete --server http://HOST:7654 --accept-insecure-http --password-file /path/to/admin-password \
   --repository NAME --files keep --confirm-name NAME
 ```
 
@@ -1234,7 +1238,7 @@ OwnGit은 컨테이너를 지우지 않고 기록만 지웁니다. OwnGit이 지
 owngit forget-check-container --job JOB --confirm-container-removed
 ```
 
-`JOB`은 목록이나 서버 로그에 나온 작업 식별자입니다. 기본 위치가 아닌 상태 디렉터리를 쓴다면 `--state-dir`을 붙입니다. `--json`을 붙이면 지운 기록을 JSON으로 출력합니다. 필드는 `job`, `repository`, `container_name`, `container_id`, `daemon_id`이며 Docker를 확인하지 못했다면 `docker_unavailable`도 나옵니다. 이 명령은 화면과 같은 기록을 거부하고 기록이 없는 작업도 거부합니다.
+`JOB`은 목록이나 서버 로그에 나온 작업 식별자입니다. 기본 위치가 아닌 상태 디렉터리를 쓴다면 `--state-dir`을 붙입니다. `--json`을 붙이면 지운 기록을 JSON으로 출력합니다. 필드는 `job`, `repository`, `container_name`, Docker가 ID를 정했을 때의 `container_id`, `daemon_id`이며 Docker를 확인하지 못했다면 `docker_unavailable`도 나옵니다. 이 명령은 화면과 같은 기록을 거부하고 기록이 없는 작업도 거부합니다.
 
 #### 삭제 도중 OwnGit이 멈추면
 
