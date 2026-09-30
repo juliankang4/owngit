@@ -5,14 +5,20 @@ import (
 	"strings"
 )
 
-// gitClientSettings turn off Git's automatic maintenance. Without them a
-// commit, fetch, merge, rebase or am can start "git maintenance run --auto"
-// in the background. Its repack removes empty object directories while the
-// next command writes an object there, which fails with "unable to create
-// temporary file", and the detached process can outlive the test.
+// gitClientSettings turn off Git's automatic maintenance and the machine's
+// credential helpers. Without the first two a commit, fetch, merge, rebase or
+// am can start "git maintenance run --auto" in the background. Its repack
+// removes empty object directories while the next command writes an object
+// there, which fails with "unable to create temporary file", and the detached
+// process can outlive the test. Without the empty credential.helper, a clone
+// with a password in its URL asks the system helper to store it; on macOS
+// osxkeychain then waits for a keychain prompt that nobody answers in a
+// session without a desktop, and the test hangs. Tests that need a helper set
+// their own after this empty entry.
 var gitClientSettings = [][2]string{
 	{"maintenance.auto", "false"},
 	{"gc.auto", "0"},
+	{"credential.helper", ""},
 }
 
 // GitEnvironment returns env with Git's automatic maintenance turned off, for
