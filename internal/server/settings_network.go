@@ -213,7 +213,7 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 	// Listening beyond this computer serves other devices over plain HTTP,
 	// which needs the same acknowledgement as setup until it was given once.
 	acknowledge := false
-	if host, _, err := net.SplitHostPort(form.Listen); err == nil && !IsLoopbackHost(host) && !settings.InsecureHTTPAccepted {
+	if PlainHTTPAcknowledgementNeeded(form.Listen, settings.InsecureHTTPAccepted) {
 		if !formChecked(postValue(request, "insecure_ack")) {
 			notices = append(notices, webui.Error("insecure_ack", webui.MsgSetupInsecureNeed))
 		}

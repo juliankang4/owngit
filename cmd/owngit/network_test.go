@@ -82,7 +82,7 @@ func TestNetworkSetShowAndReset(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	// set works before the first start and creates the state, like
 	// approve-host.
-	output, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7720")
+	output, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7720", "--accept-insecure-http")
 	noErr(t, err)
 	if !strings.Contains(output, "apply at the next start") || !strings.Contains(output, "plain HTTP") || !strings.Contains(output, "--base-url or --allowed-host") {
 		t.Fatalf("set output: %q", output)
@@ -295,7 +295,7 @@ func TestServeAppliesSavedNetworkSettings(t *testing.T) {
 	}
 
 	// A saved address that cannot be used names the recovery, which works.
-	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--listen", "192.0.2.1:"+strconv.Itoa(7729))
+	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--listen", "192.0.2.1:"+strconv.Itoa(7729), "--accept-insecure-http")
 	noErr(t, err)
 	err = serveWithContext(context.Background(), []string{"--state-dir", stateDir, "--no-open"}, func(string) error { return nil }, func(string, ...any) {})
 	if err == nil || !strings.Contains(err.Error(), "owngit network reset") {
@@ -397,5 +397,45 @@ func TestServeWaitsForAMomentaryLockProbeAndClearsAStaleRecord(t *testing.T) {
 	instance.stop()
 	if report.Server != "running" || report.Running == nil || report.Running.PID != os.Getpid() || report.Running.Listen != "127.0.0.1:0" {
 		t.Fatalf("report=%+v running=%+v", report, report.Running)
+	}
+}
+
+// A listen address beyond this computer is saved only after the owner
+// accepted plain HTTP, once, as in Settings; nothing is saved before that.
+func TestNetworkSetAsksOnceToAcceptPlainHTTP(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	saved := func() (state.NetworkSettings, bool) {
+		t.Helper()
+		store, err := state.Open(context.Background(), stateDir)
+		noErr(t, err)
+		defer store.Close()
+		network, err := store.NetworkSettings(context.Background())
+		noErr(t, err)
+		settings, err := store.Settings(context.Background())
+		noErr(t, err)
+		return network, settings.InsecureHTTPAccepted
+	}
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "127.0.0.1:7721"); err != nil {
+		t.Fatalf("a loopback address: %v", err)
+	}
+	if network, accepted := saved(); network.Listen != "127.0.0.1:7721" || accepted {
+		t.Fatalf("loopback saved %+v accepted=%v", network, accepted)
+	}
+	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7720", "--base-url", "http://gitbox.internal:7720")
+	if err == nil || !strings.Contains(err.Error(), "--accept-insecure-http") {
+		t.Fatalf("an address beyond this computer without the acknowledgement: %v", err)
+	}
+	if network, accepted := saved(); network.Listen != "127.0.0.1:7721" || network.BaseURL != "" || accepted {
+		t.Fatalf("a refused change saved %+v accepted=%v", network, accepted)
+	}
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7720", "--accept-insecure-http"); err != nil {
+		t.Fatalf("with the acknowledgement: %v", err)
+	}
+	if network, accepted := saved(); network.Listen != "0.0.0.0:7720" || !accepted {
+		t.Fatalf("saved %+v accepted=%v", network, accepted)
+	}
+	// Once accepted, it is not asked again.
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "192.0.2.1:7722"); err != nil {
+		t.Fatalf("after the acknowledgement: %v", err)
 	}
 }

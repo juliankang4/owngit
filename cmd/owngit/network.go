@@ -349,6 +349,7 @@ func networkSet(arguments []string) error {
 	flags.Var(&removeHosts, "remove-allowed-host", "stop allowing this Host `name` (repeatable)")
 	flags.Var(&addProxies, "trusted-proxy", "trust forwarded headers from this reverse proxy `address` or CIDR range (repeatable)")
 	flags.Var(&removeProxies, "remove-trusted-proxy", "stop trusting this proxy `address` or CIDR range (repeatable)")
+	acceptPlain := flags.Bool("accept-insecure-http", false, "accept that other computers reach OwnGit over plain HTTP, which is not encrypted; needed once for a listen address beyond this computer")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -407,6 +408,25 @@ func networkSet(arguments []string) error {
 	if update.Settings, err = store.NetworkSettings(ctx); err != nil {
 		return err
 	}
+	if set["listen"] {
+		update.Settings.Listen = *listen
+	}
+	if set["base-url"] {
+		update.Settings.BaseURL = *baseURL
+	}
+	// A listen address beyond this computer serves other computers over
+	// plain HTTP, which the owner accepts once, as in Settings, before
+	// anything is saved.
+	settings, err := store.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	if server.PlainHTTPAcknowledgementNeeded(update.Settings.Listen, settings.InsecureHTTPAccepted) {
+		if !*acceptPlain {
+			return fmt.Errorf("listening on %s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or listen on a loopback address", update.Settings.Listen)
+		}
+		update.AcknowledgeInsecureHTTP = true
+	}
 	savedProxies, err := store.TrustedProxies(ctx)
 	if err != nil {
 		return err
@@ -415,12 +435,6 @@ func networkSet(arguments []string) error {
 		if !slices.Contains(savedProxies, proxy) {
 			fmt.Printf("%s was not a trusted proxy.\n", proxy)
 		}
-	}
-	if set["listen"] {
-		update.Settings.Listen = *listen
-	}
-	if set["base-url"] {
-		update.Settings.BaseURL = *baseURL
 	}
 	stored, err := store.TrustedHosts(ctx)
 	if err != nil {

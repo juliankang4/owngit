@@ -880,7 +880,7 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 		t.Errorf("a firewall line for a server on this computer only:\n%s", out.String())
 	}
 	_, port, _ := strings.Cut(address, ":")
-	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:"+port)
+	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:"+port, "--accept-insecure-http")
 	noErr(t, err)
 	out.Reset()
 	noErr(t, host.status())

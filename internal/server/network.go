@@ -83,6 +83,16 @@ func IsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// PlainHTTPAcknowledgementNeeded reports whether saving listen, the listen
+// address OwnGit will use, needs the owner's acknowledgement that other
+// computers reach OwnGit over plain HTTP: the address reaches beyond this
+// computer and the acknowledgement was not given before (accepted). The
+// Network group of Settings and owngit network set both apply it.
+func PlainHTTPAcknowledgementNeeded(listen string, accepted bool) bool {
+	host, _, err := net.SplitHostPort(listen)
+	return err == nil && !IsLoopbackHost(host) && !accepted
+}
+
 // Hosts returns every Host name the policy accepts, sorted.
 func (policy *HostPolicy) Hosts() []string {
 	policy.mu.RLock()

@@ -192,7 +192,7 @@ func TestSetupLinkShowsTheLinkOnlyOnATerminal(t *testing.T) {
 // browser on this computer could open.
 func TestSetupBasesForEveryAddressListener(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
-	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7950", "--base-url", "http://gitbox.test:7950")
+	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7950", "--base-url", "http://gitbox.test:7950", "--accept-insecure-http")
 	noErr(t, err)
 	store, err := state.Open(context.Background(), stateDir)
 	noErr(t, err)
