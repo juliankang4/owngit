@@ -3,6 +3,7 @@ package importsync
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -725,5 +726,96 @@ func TestPreviewIsUnknownWhenStorageCannotBeRead(t *testing.T) {
 	noErr(t, err)
 	if !status.RefreshEffectsUnknown || len(status.RefreshEffects) != 0 {
 		t.Fatalf("status = %+v", status)
+	}
+}
+
+// A refresh that writes the branch HEAD names and deletes another ref
+// holds its own HEAD lock for the deletions, rather than relying on Git to
+// lock HEAD. The reviewer's sequence: HEAD is moved away just before the
+// transaction starts, back to the written branch while it is prepared,
+// then onto the ref being deleted after the last recheck. Every move is
+// refused, or none of them lets the branch HEAD resolves to be deleted.
+func TestHEADStaysLockedWhenARefreshAlsoWritesItsBranch(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+	path := f.destinationPath()
+	dev := f.destinationRefs()["refs/heads/dev"]
+	f.git(path, "update-ref", "refs/heads/mine", dev)
+	next := f.commit("two", "two\n")
+	f.git(f.source, "branch", "-D", "dev")
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+	armed, attempted := filepath.Join(f.root, "armed"), filepath.Join(f.root, "attempted")
+	wrapper := filepath.Join(f.root, "git-head-window")
+	script := fmt.Sprintf(`#!/bin/sh
+git=%[1]s
+case "$*" in
+  *"update-ref --no-deref --stdin")
+    if [ ! -f %[5]s ]; then
+      : > %[5]s
+      "$git" --git-dir %[2]s symbolic-ref HEAD refs/heads/mine >/dev/null 2>&1
+    fi
+    ;;
+  *"symbolic-ref --quiet --no-recurse refs/heads/main"|*"symbolic-ref --quiet --no-recurse refs/heads/mine")
+    if [ -f %[3]s ] && [ ! -f %[4]s ]; then
+      output=$("$git" "$@")
+      status=$?
+      "$git" --git-dir %[2]s symbolic-ref HEAD refs/heads/dev >/dev/null 2>&1
+      printf '%%s\n' "$?" > %[4]s
+      if [ -n "$output" ]; then printf '%%s\n' "$output"; fi
+      exit "$status"
+    fi
+    ;;
+esac
+exec "$git" "$@"
+`, quote(f.gitPath), quote(path), quote(armed), quote(attempted), quote(filepath.Join(f.root, "moved-away")))
+	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
+	f.manager.Git.GitPath = wrapper
+	f.service.whileRefsPrepared = func() {
+		f.service.whileRefsPrepared = nil
+		_, _ = exec.Command(f.gitPath, "--git-dir", path, "symbolic-ref", "HEAD", "refs/heads/main").CombinedOutput()
+		noErr(t, os.WriteFile(armed, []byte("armed\n"), 0o600))
+	}
+	_, err := f.refresh()
+	f.manager.Git.GitPath = f.gitPath
+	if f.destinationRefs()["refs/heads/dev"] != "" && f.gitMaybe(path, "symbolic-ref", "HEAD") == "refs/heads/dev" {
+		return // HEAD reached dev and dev was kept.
+	}
+	if f.gitMaybe(path, "rev-parse", "--verify", "HEAD") == "" {
+		t.Fatalf("HEAD = %s no longer resolves, refresh err = %v", f.gitMaybe(path, "symbolic-ref", "HEAD"), err)
+	}
+	noErr(t, err)
+	if refs := f.destinationRefs(); refs["refs/heads/dev"] != "" || refs["refs/heads/main"] != next || f.gitMaybe(path, "symbolic-ref", "HEAD") != "refs/heads/main" {
+		t.Fatalf("refs = %v, HEAD = %s", refs, f.gitMaybe(path, "symbolic-ref", "HEAD"))
+	}
+}
+
+// When a refresh writes the branch HEAD names and deletes another ref, the
+// write runs in a second transaction. If it fails after the deletion was
+// committed, the publication is partial and reported unresolved, never as
+// a success.
+func TestFailureBetweenTheTwoTransactionsIsUnresolved(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+	main := f.destinationRefs()["refs/heads/main"]
+	f.commit("two", "two\n")
+	f.git(f.source, "branch", "-D", "dev")
+	transactions := 0
+	f.service.whileRefsPrepared = func() {
+		transactions++
+		if transactions == 2 {
+			noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
+		}
+	}
+	run, err := f.refresh()
+	if err == nil || run.Status != state.ImportRunUnresolved || transactions != 2 {
+		t.Fatalf("run = %s after %d transactions, err = %v", run.Status, transactions, err)
+	}
+	if refs := f.destinationRefs(); refs["refs/heads/dev"] != "" || refs["refs/heads/main"] != main {
+		t.Fatalf("refs = %v", refs)
 	}
 }

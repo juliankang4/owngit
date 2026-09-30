@@ -674,7 +674,7 @@ func (s *Service) publishRepositoryLocked(ctx context.Context, run *runState, re
 // and commits portable bookkeeping atomically. A failed command is never proof
 // that no write occurred.
 func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, intent state.ImportIntent, now time.Time) error {
-	var commands []string
+	var commands []refCommand
 	transactionRefs := map[string]string{}
 	for _, ref := range sortedKeys(plan.desired) {
 		if ref == state.ImportHeadRef {
@@ -688,16 +688,16 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		transactionRefs[ref] = expected
 		switch {
 		case expected == "":
-			commands = append(commands, "create "+ref+" "+desired)
+			commands = append(commands, refCommand{ref, "create " + ref + " " + desired})
 		case desired == "":
-			commands = append(commands, "delete "+ref+" "+expected)
+			commands = append(commands, refCommand{ref, "delete " + ref + " " + expected})
 		default:
-			commands = append(commands, "update "+ref+" "+desired+" "+expected)
+			commands = append(commands, refCommand{ref, "update " + ref + " " + desired + " " + expected})
 		}
 	}
 	for _, ref := range sortedKeys(plan.retained) {
 		if _, planned := transactionRefs[ref]; !planned && plan.expected[ref] == plan.desired[ref] {
-			commands = append(commands, "verify "+ref+" "+plan.expected[ref])
+			commands = append(commands, refCommand{ref, "verify " + ref + " " + plan.expected[ref]})
 			transactionRefs[ref] = plan.expected[ref]
 		}
 	}
@@ -732,36 +732,27 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		} else if err := s.authorityCurrent(ctx, run); err != nil {
 			commandErr = err
 			finalizationBlocked = true
-		} else if chain, err := s.lockHEADChainForDeletions(ctx, run, repositoryPath, plan, transactionRefs); err != nil {
+		} else if chain, err := s.lockHEADChainForDeletions(ctx, run, repositoryPath, plan); err != nil {
 			commandErr = err
 			finalizationBlocked = true
 		} else {
-			// The callback reads run, plan and the held credential authority
-			// guard. The runner joins it for one grace interval; if it is still
-			// running after that, wait here so nothing below runs, and no guard
-			// is released, while the callback can still observe them. Every
-			// blocking step in the callback takes preparedCtx, so this wait is
-			// bounded by the transaction deadline.
-			callbackDone := make(chan struct{})
-			_, err := s.Repositories.Git.RunPreparedUpdateContext(ctx, repositoryPath, commands,
-				run.limits.commandLimits(run.limits.PublishTimeout), func(preparedCtx context.Context) error {
-					defer close(callbackDone)
-					if s.whileRefsPrepared != nil {
-						s.whileRefsPrepared()
-					}
-					if err := s.validatePreparedRefKinds(preparedCtx, repositoryPath, plan, transactionRefs); err != nil {
-						return err
-					}
-					if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan, transactionRefs, chain); err != nil {
-						return err
-					}
-					return s.authorityCurrent(preparedCtx, run)
-				})
-			if errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
-				<-callbackDone
-			}
+			// With deletions, the refs HEAD resolves to are written in a second
+			// transaction, after the first has deleted refs and released the
+			// HEAD chain locks (see lockHEADChainForDeletions).
+			// Once the first has written, like the HEAD write below, the
+			// second finishes the publication: a cancellation or deadline
+			// comes too late for it, and only a changed authority stops it.
+			// A failure of the second leaves a partial publication, which
+			// the readback reports as unresolved.
+			first, second := splitHEADBranchWrites(commands, chain.branches)
+			err := s.runRefTransaction(ctx, run, repositoryPath, plan, first, chain, s.authorityCurrent)
 			if releaseErr := chain.release(); releaseErr != nil && err == nil {
 				err = newProblem(CodePublishFailed, "the HEAD chain lock could not be released after the ref transaction", releaseErr)
+			}
+			if err == nil && len(second) > 0 {
+				secondCtx, cancelSecond := context.WithTimeout(context.WithoutCancel(ctx), run.limits.PublishTimeout)
+				err = s.runRefTransaction(secondCtx, run, repositoryPath, plan, second, nil, s.authorityUnchanged)
+				cancelSecond()
 			}
 			if err == nil && s.afterPreparedRefResult != nil {
 				err = s.afterPreparedRefResult()
@@ -1109,6 +1100,68 @@ func (s *Service) validatePreparedRefKinds(ctx context.Context, repositoryPath s
 	return nil
 }
 
+// refCommand is one git update-ref --stdin command and the ref it names.
+type refCommand struct {
+	ref     string
+	command string
+}
+
+// splitHEADBranchWrites moves the commands that write a ref HEAD resolves
+// to out of the first transaction: it holds HEAD.lock, and Git locks HEAD
+// itself to log a write of the branch HEAD names, so the two would collide.
+// The second transaction deletes nothing, since a ref HEAD resolves to is
+// never a deletion candidate.
+func splitHEADBranchWrites(commands []refCommand, branches []string) (first, second []refCommand) {
+	for _, command := range commands {
+		if slices.Contains(branches, command.ref) {
+			second = append(second, command)
+		} else {
+			first = append(first, command)
+		}
+	}
+	return first, second
+}
+
+// runRefTransaction applies commands in one prepared transaction and checks,
+// while they are prepared, that each ref is as planned and the run still
+// has authority, and with chain that HEAD resolves to no ref being deleted.
+func (s *Service) runRefTransaction(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, commands []refCommand, chain *headChainLock,
+	authority func(context.Context, *runState) error) error {
+	lines := make([]string, len(commands))
+	refs := make(map[string]string, len(commands))
+	for index, command := range commands {
+		lines[index] = command.command
+		refs[command.ref] = plan.expected[command.ref]
+	}
+	// The callback reads run, plan and the held credential authority guard.
+	// The runner joins it for one grace interval; if it is still running
+	// after that, wait here so nothing below runs, and no guard is released,
+	// while the callback can still observe them. Every blocking step in the
+	// callback takes preparedCtx, so this wait is bounded by the transaction
+	// deadline.
+	callbackDone := make(chan struct{})
+	_, err := s.Repositories.Git.RunPreparedUpdateContext(ctx, repositoryPath, lines,
+		run.limits.commandLimits(run.limits.PublishTimeout), func(preparedCtx context.Context) error {
+			defer close(callbackDone)
+			if s.whileRefsPrepared != nil {
+				s.whileRefsPrepared()
+			}
+			if err := s.validatePreparedRefKinds(preparedCtx, repositoryPath, plan, refs); err != nil {
+				return err
+			}
+			if chain != nil {
+				if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan); err != nil {
+					return err
+				}
+			}
+			return authority(preparedCtx, run)
+		})
+	if errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
+		<-callbackDone
+	}
+	return err
+}
+
 // planDeletes reports whether the plan deletes a destination ref.
 func planDeletes(plan *publicationPlan) bool {
 	for ref, desired := range plan.desired {
@@ -1120,22 +1173,24 @@ func planDeletes(plan *publicationPlan) bool {
 }
 
 // headChainLock holds HEAD and the loose symbolic refs of its chain while a
-// transaction that deletes refs is prepared and committed. headByGit means
-// HEAD itself was left to Git: the transaction writes the branch HEAD names,
-// and Git then locks HEAD for its reflog, so a second lock would collide.
+// transaction that deletes refs is prepared and committed. branches are the
+// refs HEAD resolves to, its immediate target through the end of its chain.
 type headChainLock struct {
-	locks     []*headLock
-	headByGit bool
+	locks    []*headLock
+	branches []string
 }
 
 // lockHEADChainForDeletions keeps any Git process from moving HEAD, or a
 // symbolic ref it resolves through, onto a ref this transaction deletes:
 // OwnGit's own HEAD writers already wait for the repository lock this
 // publication holds, and these lock files make other Git writers fail
-// until the transaction ends. A transaction without deletions takes none.
+// until the deleting transaction ends. The locks are always OwnGit's own,
+// never left to Git, so the protection does not depend on whether Git
+// locks HEAD for a write; writes to chain.branches go to a later
+// transaction (splitHEADBranchWrites). A plan without deletions takes none.
 // It runs right before the ref transaction, after the test hook
 // beforeRefTransaction, which may change the destination first.
-func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, transactionRefs map[string]string) (*headChainLock, error) {
+func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan) (*headChainLock, error) {
 	if s.beforeRefTransaction != nil {
 		s.beforeRefTransaction()
 	}
@@ -1156,12 +1211,6 @@ func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, 
 		if identity.kind != headSymbolic && name != "HEAD" {
 			return chain, nil
 		}
-		if name == "HEAD" && identity.kind == headSymbolic && plan.desired[identity.target] != plan.expected[identity.target] {
-			if _, written := transactionRefs[identity.target]; written {
-				chain.headByGit = true
-				return chain, nil
-			}
-		}
 		lock, err := s.acquireRefFileLock(ctx, run, repositoryPath, name, identity)
 		if err != nil {
 			_ = chain.release()
@@ -1171,6 +1220,7 @@ func (s *Service) lockHEADChainForDeletions(ctx context.Context, run *runState, 
 		if identity.kind != headSymbolic {
 			return chain, nil
 		}
+		chain.branches = append(chain.branches, identity.target)
 		name = identity.target
 	}
 	_ = chain.release()
@@ -1193,21 +1243,14 @@ func (chain *headChainLock) release() error {
 // validatePreparedHEADKeepsDeletions reads HEAD and its chain again while
 // the deletions are prepared and HEAD cannot move (lockHEADChainForDeletions):
 // a HEAD moved since planning onto a ref being deleted, directly or through
-// its chain, stops the transaction. Where HEAD was left to Git's own lock,
-// HEAD must still name a ref this transaction writes, or that lock is not
-// held and the transaction stops too.
-func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan, transactionRefs map[string]string, chain *headChainLock) error {
+// its chain, stops the transaction.
+func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan) error {
 	if !planDeletes(plan) {
 		return nil
 	}
 	target, _, err := s.Repositories.ReadHead(ctx, repositoryPath)
 	if err != nil {
 		return newProblem(CodeRepositoryMissing, "destination HEAD could not be read", err)
-	}
-	if chain.headByGit {
-		if _, written := transactionRefs[target]; target == "" || !written {
-			return newProblem(CodeDestinationChanged, "destination HEAD moved while refs were deleted", nil)
-		}
 	}
 	if target == "" {
 		return nil
