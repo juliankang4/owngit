@@ -1253,7 +1253,7 @@ owngit import resolve PROJECT
 - `--basic-file` replaces `--token-file` for a Basic credential (username and password on separate lines). `--ca-file` stores a source certificate authority, up to 1 MiB. `import credentials` changes only what you pass; `--clear` removes credential and CA. Output shows the credential type and whether one is stored, never the secret.
 - `--allow-private-network` permits a source on a private LAN, CGNAT, tailnet or loopback address. `--git-only-consent` accepts a repository with Git LFS pointers ([Git LFS](#git-lfs)).
 - `import add` and `import configure` take the source's [connection choices and limits](#connection-choices-and-limits). `import configure` changes only the options you pass and keeps the address, mode and consents.
-- `import add` creates the repository and refuses an existing name with `repository_taken`; `import refresh` updates from the stored source. Both wait for the whole run, which takes at most the source's run time plus about 2 minutes (about 62 minutes by default). They exit 0 on success, 3 when the run kept local refs that differ from the source (listed in the output), 130 when it was cancelled, and 1 otherwise.
+- `import add` creates the repository and refuses an existing name with `repository_taken`; `import refresh` updates from the stored source. Both wait for the whole run. The server stops a run at the source's run time (1 hour by default) and answers within about a minute after that. The command's own request limit is fixed at 24 hours and 2 minutes, the longest allowed run time plus margins, whatever the source's settings. They exit 0 on success, 3 when the run kept local refs that differ from the source (listed in the output), 130 when it was cancelled, and 1 otherwise.
 - `import status` lists the last and active runs, the source's connection choices and changed limits, and every branch or tag that does not match the source. With `--json` it prints the status as JSON, including every limit in force.
 - `import cancel` can stop a run only until its result is published; for a first import, that is the moment the repository appears. If the first import fails or is cancelled, OwnGit removes the source and credentials stored for that name (at its next start if it crashed), and a retry uses only what you supply.
 - A schedule interval is between 60 seconds and 7 days (`invalid_schedule` otherwise), and scheduled refreshes run only while `owngit serve` runs.
@@ -1274,7 +1274,7 @@ The host of every redirect target is checked the same way. A custom CA adds to t
 
 ### Connection choices and limits
 
-Each import source has its own connection choices and limits. The defaults suit most sources, and every choice that loosens a protection is off until you turn it on for that one source. Change them in the collapsed **Connection and limits** group of the new-import form or the Import tab, with `owngit import configure`, or through the API. A change applies from the next run.
+Each import source has its own connection choices and limits. The defaults suit most sources, and every choice that loosens a protection is off until you turn it on for that one source. Change them in the collapsed **Connection and limits** group of the new-import form or the Import tab, with `owngit import configure`, or through the API. A change applies from the next run. Changing a connection choice (not a limit) also cancels a run in progress that has not published yet, which ends as `superseded`.
 
 | Choice in the browser | Default | Command line | API field |
 |---|---|---|---|
@@ -1324,7 +1324,13 @@ The API takes sizes in bytes, times in seconds and counts as numbers. `owngit im
 
 #### When the source address changes
 
-Connection choices belong to one address. When a source's address changes, OwnGit turns plain HTTP and the exceptional destination off, sets Redirects back to Refuse redirects, and drops the approved origin. On the Import tab the page clears them as soon as you edit the address and says so; enter the new address first, then choose again whatever it needs. Through the API, a new URL resets these choices unless the same request sets them. Limits and private network consent stay.
+Connection choices belong to one address. When a source's address changes, OwnGit turns plain HTTP and the exceptional destination off, sets Redirects back to Refuse redirects, and drops the approved origin. Limits and private network consent stay.
+
+On the Import tab, the page clears these choices as soon as you edit the address and says so. Enter the new address first, then choose again whatever it needs.
+
+In a browser without JavaScript the page cannot clear them, so OwnGit sorts them out when you save. A choice you changed in the same save as the new address counts as consent for that address. A choice left as it was for the old address is dropped. If the save is refused, for example because a new `http://` address needs plain HTTP, the form comes back for the new address with those carried choices unchecked. Check the ones it needs and save again.
+
+Through the API, a new URL resets these choices unless the same request sets them.
 
 #### When a setting stops a run
 
