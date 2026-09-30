@@ -75,6 +75,7 @@ const (
 	MsgMaintenanceWindowSame  MessageCode = "maintenance.window_same"
 
 	MsgCleanupTitle       MessageCode = "cleanup.title"
+	MsgCleanupChange      MessageCode = "cleanup.change"
 	MsgCleanupScope       MessageCode = "cleanup.scope"
 	MsgCleanupEnabled     MessageCode = "cleanup.enabled"
 	MsgCleanupEnabledHelp MessageCode = "cleanup.enabled_help"
@@ -250,6 +251,7 @@ var gitStorageCatalog = map[MessageCode]message{
 		en: "Removes Git objects that no branch, tag or other ref reaches, such as leftovers of rewritten pushes that were not kept. It runs once a night in the maintenance window while maintenance is on, and rewrites each repository's packs.",
 		ko: "어떤 브랜치, 태그, 다른 ref로도 닿지 않는 Git 객체를 지웁니다. 예를 들어 덮어쓴 푸시에서 보관하지 않은 나머지입니다. 유지 관리가 켜져 있으면 매일 유지 관리 시간대에 한 번 돌며, 저장소마다 팩을 다시 씁니다.",
 	},
+	MsgCleanupChange:      {en: "Change cleanup", ko: "정리 설정 바꾸기"},
 	MsgCleanupEnabled:     {en: "Cleanup", ko: "정리"},
 	MsgCleanupEnabledHelp: {en: "The default is Off, which removes nothing.", ko: "기본값은 끔이며, 끄면 아무것도 지우지 않습니다."},
 	MsgCleanupOn:          {en: "On", ko: "켬"},

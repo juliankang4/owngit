@@ -1029,7 +1029,7 @@
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_cleanup">
     <details class="grp__more" data-group-details{{if or (hasError $gn) $bad (eq $c.Enabled "on")}} open{{end}}>
-      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "maintenance.change"}}</summary>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "cleanup.change"}}</summary>
       {{template "setChoice" dict "Lang" $lang "Page" $p "Group" "cleanup" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "cleanup-enabled" "Field" "cleanup_enabled" "Saved" $c.Enabled "Menu" cleanupMenu "Label" (code "cleanup.enabled") "Help" (code "cleanup.enabled_help")}}
       {{template "setCount" dict "Lang" $lang "Page" $p "Group" "cleanup" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "cleanup-grace" "Field" "cleanup_grace" "Saved" $c.GraceDays "Label" (code "cleanup.grace") "Help" (code "cleanup.grace_help")}}
       <p class="wn" data-show-if="cleanup_enabled=on">{{icon "warning"}}<span>{{bi $lang "cleanup.warning"}}</span></p>
