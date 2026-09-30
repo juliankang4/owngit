@@ -230,7 +230,7 @@ sudo runuser -u owngit -- owngit restore --input /var/lib/owngit-root-backup --s
 sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 ```
 
-As with every restore, sessions, trusted hosts and network settings are not carried over. Sign in again, and to reach OwnGit from other devices run `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host ADDRESS --accept-insecure-http` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay until you remove them. Later installs keep using the restored state.
+As with every restore, what a backup does not carry starts at its default ([After a restore](#after-a-restore)), including sessions, allowed Hosts and network settings. Sign in again, and to reach OwnGit from other devices run `sudo owngit network set --listen 0.0.0.0:7654 --allowed-host ADDRESS --accept-insecure-http` and `sudo owngit service restart`. Root's old state, the backup and the unused `/var/lib/owngit/state` stay until you remove them. Later installs keep using the restored state.
 
 ### On Windows
 
@@ -2209,7 +2209,7 @@ Restore checks every bundle, ref, object and record before it publishes the new 
 - Restore copies each bundle into the new repository folder as it checks it, and restores from that copy. Before it starts, the disk of the repository folder needs room for all bundles and the largest one once more; otherwise restore stops and says how much it needs.
 - Ctrl+C stops a restore, which then removes what it made, says that nothing was restored and exits with status 130. If both folders are already in place, it completes instead.
 - Git file names are kept exactly, so a name Git accepts but Windows does not, such as one with a backslash, may not check out there.
-- With `--json` a finished restore prints `ok`, `state_dir`, `repository_root`, the `verification` result when `--verify` was given, and `notes` with what it did not restore and the server-wide settings that start at their defaults. A refusal is a JSON error with a `code` and the same exit status: `backup_not_verified` (with the verification as `details`), `restore_failed`, or `interrupted` after Ctrl+C (status 130).
+- With `--json` a finished restore prints `ok`, `state_dir`, `repository_root`, the `verification` result when `--verify` was given, and `notes`, one sentence for each thing it did not restore and one for the server-wide settings that start at their defaults, each saying how to set it up again. Without `--json` the same notes follow the result, one per line. A refusal is a JSON error with a `code` and the same exit status: `backup_not_verified` (with the verification as `details`), `restore_failed`, or `interrupted` after Ctrl+C (status 130).
 
 ### Restore steps in the dashboard
 
@@ -2250,10 +2250,16 @@ When OwnGit refuses an upload before the browser has sent the whole file, for ex
 
 ### After a restore
 
-Start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records. Then set up again what a backup does not carry:
+Start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records. Then set up again what a backup does not carry. `owngit restore` lists each of these when it finishes, with where to set it again:
 
-- Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again in Settings or with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
-- Raw logs are absent, and unsettled import publications are closed without being applied.
+- Sessions and setup links: sign in again.
+- Network settings (listen address, base URL, allowed Hosts, trusted proxies, the public share address and Tailscale Serve): set them again under Settings or with `owngit network set` and `owngit tailscale on`.
+- Helper credentials and runner tokens: the old tokens are refused. Create new ones on each repository's Helper credentials and Runner tokens pages, or with `owngit helper-credential create` and `owngit runner-credential issue`.
+- Consent to run automatic checks: turn checks on again on each repository's Automatic checks tab or with `owngit check-policy enable`. Unfinished jobs are marked `interrupted`.
+- Import credentials, each source's connection choices and limits, and import schedules: store the credentials again and turn on what a source needs on its Import tab, or with `owngit import credentials`, `owngit import configure` and `owngit import schedule`.
+- Share links: create new ones.
+- Scheduled backups: set them up again under Settings or with `owngit backup schedule set`.
+- Raw check logs and the recent pushes list are absent, and unsettled import publications are closed without being applied.
 - An import that follows upstream deletions deletes a ref only after a refresh has seen it again ([After a sign-in change or a restore](#after-a-sign-in-change-or-a-restore)).
 - Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, check ceilings, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
 
