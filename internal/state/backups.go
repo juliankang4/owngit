@@ -251,3 +251,21 @@ func cutText(text string, limit int) string {
 	}
 	return text[:cut]
 }
+
+// RecordBackupVerification records the result of verifying the backup of
+// the finished run id again: passed or failed.
+func (s *Store) RecordBackupVerification(ctx context.Context, id, verification string) error {
+	if verification != BackupVerifyPassed && verification != BackupVerifyFailed {
+		return fmt.Errorf("invalid verification result %q", verification)
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET verification=? WHERE id=? AND status<>'running' AND backup_name<>''`, verification, id)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return fmt.Errorf("backup run %s has no finished backup", id)
+	}
+	return nil
+}

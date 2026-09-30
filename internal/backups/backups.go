@@ -81,6 +81,18 @@ type Service struct {
 	// work counts the scheduler and the running backup.
 	work sync.WaitGroup
 	wake chan struct{}
+	// task is the verification or upload that runs, or "" (check.go).
+	task  string
+	check *Check
+	// upload is the uploaded backup (upload.go), and uploadTimer removes
+	// it when its time is up.
+	upload      *Upload
+	uploadTimer *time.Timer
+	// inUse counts the downloads of each run's backup; -1 marks one that
+	// is being removed.
+	inUse map[string]int
+	// limit is what the last test of the backup folder found.
+	limit *RestoreLimit
 }
 
 func (s *Service) now() time.Time {
@@ -104,9 +116,15 @@ func (s *Service) Start(ctx context.Context) error {
 	} else if count > 0 {
 		s.logf("a backup that OwnGit was making when it stopped is recorded as interrupted")
 	}
+	if err := s.removeUploads(); err != nil {
+		return fmt.Errorf("remove the uploaded backup left from before: %w", err)
+	}
 	s.open(ctx)
 	s.work.Add(1)
 	go s.schedule()
+	if schedule, configured, err := s.Store.BackupSchedule(ctx); err == nil && configured {
+		go s.noteRestoreLimit(schedule.Destination)
+	}
 	return nil
 }
 
@@ -124,6 +142,9 @@ func (s *Service) Stop(ctx context.Context) error {
 	s.mu.Lock()
 	if s.stop != nil {
 		s.stop()
+	}
+	if s.uploadTimer != nil {
+		s.uploadTimer.Stop()
 	}
 	s.mu.Unlock()
 	done := make(chan struct{})
@@ -180,7 +201,7 @@ func (s *Service) tick() time.Duration {
 	if wait := next.Sub(s.now()); wait > 0 {
 		return min(wait, recheck)
 	}
-	if _, err := s.start(state.BackupRunScheduled); err != nil && !errors.Is(err, state.ErrBackupRunning) && s.ctx.Err() == nil {
+	if _, err := s.start(state.BackupRunScheduled); err != nil && !errors.Is(err, state.ErrBackupRunning) && !errors.Is(err, ErrBusy) && s.ctx.Err() == nil {
 		s.logf("a scheduled backup did not start: %v", err)
 	}
 	return recheck
@@ -208,8 +229,9 @@ func (s *Service) nextRun(ctx context.Context) (time.Time, error) {
 }
 
 // StartNow starts a backup into the configured folder and returns its run
-// at once. It fails with state.ErrBackupRunning while another one runs and
-// with ErrNotConfigured before a folder is set.
+// at once. It fails with state.ErrBackupRunning while another one runs,
+// with ErrBusy while OwnGit verifies or receives a backup, and with
+// ErrNotConfigured before a folder is set.
 func (s *Service) StartNow() (state.BackupRun, error) {
 	return s.start(state.BackupRunManual)
 }
@@ -219,6 +241,9 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 	defer s.mu.Unlock()
 	if s.ctx == nil || s.ctx.Err() != nil {
 		return state.BackupRun{}, errors.New("OwnGit is stopping, so it starts no backup")
+	}
+	if s.task != "" {
+		return state.BackupRun{}, ErrBusy
 	}
 	schedule, configured, err := s.Store.BackupSchedule(s.ctx)
 	if err != nil {
@@ -301,6 +326,9 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		} else {
 			run.Message += " Also, " + strings.Join(problems, "; ")
 		}
+	}
+	if run.BackupName != "" {
+		s.noteRestoreLimit(run.Destination)
 	}
 	run.FinishedAt = s.now()
 	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
@@ -504,8 +532,14 @@ func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) 
 			backup.Close()
 			continue
 		}
+		if !s.claimRemoval(record.ID) {
+			backup.Close()
+			problems = append(problems, fmt.Sprintf("the older backup %s was being downloaded, so it was left in place until the next backup", record.BackupName))
+			continue
+		}
 		err = backup.Remove()
 		backup.Close()
+		s.releaseRemoval(record.ID)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("could not remove the older backup %s: %v", record.BackupName, err))
 			continue

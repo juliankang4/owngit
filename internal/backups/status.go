@@ -58,13 +58,19 @@ type RunView struct {
 // due (a time already past means as soon as the running backup ends). It
 // reads nothing in the backup folder, so a slow or unavailable folder
 // never holds it up; each backup and its removal of older ones record what
-// they found there.
+// they found there. Check, Upload and RestoreLimit are what this OwnGit
+// found since it started: the last verification an owner asked for, the
+// uploaded backup, and whether a restore could write into a folder on the
+// disk of the backup folder.
 type Status struct {
-	Schedule     ScheduleView `json:"schedule"`
-	Running      *RunView     `json:"running"`
-	LastRun      *RunView     `json:"last_run"`
-	LastVerified *RunView     `json:"last_verified"`
-	NextRun      *time.Time   `json:"next_run"`
+	Schedule     ScheduleView  `json:"schedule"`
+	Running      *RunView      `json:"running"`
+	LastRun      *RunView      `json:"last_run"`
+	LastVerified *RunView      `json:"last_verified"`
+	NextRun      *time.Time    `json:"next_run"`
+	Check        *Check        `json:"check"`
+	Upload       *Upload       `json:"upload"`
+	RestoreLimit *RestoreLimit `json:"restore_limit,omitempty"`
 }
 
 // ViewSchedule describes a schedule; configured is false when none was
@@ -131,6 +137,19 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	if !next.IsZero() {
 		status.NextRun = &next
+	}
+	s.mu.Lock()
+	if s.check != nil {
+		check := *s.check
+		status.Check = &check
+	}
+	if s.upload != nil {
+		upload := *s.upload
+		status.Upload = &upload
+	}
+	s.mu.Unlock()
+	if configured {
+		status.RestoreLimit = s.restoreLimit(schedule.Destination)
 	}
 	return status, nil
 }

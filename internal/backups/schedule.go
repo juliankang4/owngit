@@ -78,5 +78,8 @@ func (s *Service) ChangeSchedule(ctx context.Context, change ScheduleChange) (be
 		return before, configured, after, err
 	}
 	s.Wake()
+	if change.Destination != nil {
+		s.noteRestoreLimit(after.Destination)
+	}
 	return before, configured, after, nil
 }
