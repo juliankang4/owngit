@@ -13,7 +13,7 @@ This reference holds the maintainers' rules and procedures for OwnGit: how the p
   - pull requests: `pullrequest`, `apiclient`;
   - checks: `checkapi` (wire contract), `checkworkflow` (`.owngit/checks.json`), `checkexec`, `checksource`, `checkrun`, `checkrunner`;
   - imports: `importgit`, `importfetch`, `importsync`;
-  - recovery: `recovery` (offline backup and restore);
+  - recovery: `recovery` (backup and restore), `backups` (scheduled backups and back up now while OwnGit serves);
   - `version`: the single application version literal.
 - `tools/release`: the release tool (see [Releases](#releases)).
 - `packaging/`: templates for archives, native prototypes, and package-manager files. See [packaging/README.md](../packaging/README.md).
