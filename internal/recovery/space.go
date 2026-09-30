@@ -61,15 +61,7 @@ func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error 
 		}
 		sizes = append(sizes, uint64(info.Size()))
 	}
-	needed := roomNeeded(sizes)
-	free, known, err := diskFreeSpace(dir)
-	if err != nil {
-		return fmt.Errorf("read the free space in %s: %w", dir, err)
-	}
-	if known && free < needed {
-		return &SpaceError{Dir: dir, Needed: needed, Free: free}
-	}
-	return nil
+	return CheckFreeSpace(dir, roomNeeded(sizes))
 }
 
 // roomNeeded is the room that restoring bundles of these sizes needs at
@@ -115,4 +107,17 @@ func diskFull(err error) bool {
 		}
 	}
 	return false
+}
+
+// CheckFreeSpace refuses when the file system of dir has less than needed
+// bytes free. A system that does not tell its free space is not refused.
+func CheckFreeSpace(dir string, needed uint64) error {
+	free, known, err := diskFreeSpace(dir)
+	if err != nil {
+		return fmt.Errorf("read the free space in %s: %w", dir, err)
+	}
+	if known && free < needed {
+		return &SpaceError{Dir: dir, Needed: needed, Free: free}
+	}
+	return nil
 }

@@ -181,7 +181,7 @@ func requireExclusiveRename(dir string) error {
 	}
 	_ = os.Remove(probe)
 	if exclusiveRenameUnsupported(err) {
-		return fmt.Errorf("%s is on a file system (%s) that cannot rename a folder without replacing, which a restore needs; restore to a folder on another disk", dir, fileSystemName(dir))
+		return &RenameLimitError{Dir: dir, FileSystem: fileSystemName(dir)}
 	}
 	return err
 }

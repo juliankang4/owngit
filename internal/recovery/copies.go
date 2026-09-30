@@ -255,3 +255,26 @@ func (f *BackupFolder) CheckRoom(needed uint64) error {
 	}
 	return nil
 }
+
+// RenameLimitError refuses a folder that a restore would write into: its
+// file system cannot rename a folder without replacing what is there.
+type RenameLimitError struct {
+	Dir        string
+	FileSystem string
+}
+
+func (e *RenameLimitError) Error() string {
+	return fmt.Sprintf("%s is on a file system (%s) that cannot rename a folder without replacing, which a restore needs; restore to a folder on another disk", e.Dir, e.FileSystem)
+}
+
+// RestoreLimit names the file system of dir when a restore could not write
+// into a folder there (RenameLimitError), and is "" when it could. It
+// renames a new empty folder in dir once to find out.
+func RestoreLimit(dir string) (string, error) {
+	err := requireExclusiveRename(dir)
+	var limit *RenameLimitError
+	if errors.As(err, &limit) {
+		return limit.FileSystem, nil
+	}
+	return "", err
+}
