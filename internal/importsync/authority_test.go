@@ -217,6 +217,10 @@ func TestCredentialFailureStopsRunWhenDurableCancellationFails(t *testing.T) {
 			f.commit("new source tip", "changed\n")
 			started, done, run, runErr := f.gatedRefresh(t)
 			<-started
+			active, exists, err := f.store.ActiveImportRun(ctx, "project")
+			if err != nil || !exists {
+				t.Fatalf("the gated refresh is not active: exists=%v err=%v", exists, err)
+			}
 			released := false
 			defer func() {
 				if !released {
@@ -232,7 +236,9 @@ func TestCredentialFailureStopsRunWhenDurableCancellationFails(t *testing.T) {
 				t.Fatal("credential mutation unexpectedly succeeded")
 			}
 			if testCase.cancelFails {
-				persisted, exists, err := f.store.ActiveImportRun(ctx, "project")
+				// The failed change still stops the run in memory, so the run
+				// may already have ended: its record is read whatever its status.
+				persisted, exists, err := f.store.ImportRun(ctx, active.ID)
 				if err != nil || !exists || persisted.CancelRequestedAt != nil {
 					t.Fatalf("cancel persistence failure was not preserved: exists=%v cancel=%v err=%v", exists, persisted.CancelRequestedAt, err)
 				}
