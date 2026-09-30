@@ -43,6 +43,10 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		app.handleSettingsAPI(writer, request)
 		return
 	}
+	if request.URL.Path == "/api/v1/backups" || strings.HasPrefix(request.URL.Path, "/api/v1/backups/") {
+		app.handleBackupsAPI(writer, request, settings)
+		return
+	}
 	if id, ok := repositoryAPIRoute(request.URL.Path); ok {
 		app.handleRepositoryAPI(writer, request, settings, id)
 		return

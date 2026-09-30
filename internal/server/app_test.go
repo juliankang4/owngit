@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/backups"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
 	"owngit/internal/importfetch"
@@ -300,6 +301,9 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 		Live: app.Network,
 	}
 	gitHandler.Authorize = app.AuthorizeGit
+	app.Backups = &backups.Service{Store: store, Repositories: manager}
+	noErr(t, app.Backups.Start(context.Background()))
+	t.Cleanup(func() { noErr(t, app.Backups.Stop(context.Background())) })
 	// Background activity counting ends before the store and directories go.
 	t.Cleanup(app.StopBackground)
 	// The runtime lease keeps its root marker open. Windows cannot remove

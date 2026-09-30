@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"owngit/internal/auth"
+	"owngit/internal/backups"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
 	"owngit/internal/pullrequest"
@@ -51,6 +52,9 @@ func startRepositoryCLIServer(t *testing.T, sharedPassword string) (serverURL, p
 		Network: server.NewLiveNetwork(server.LiveNetworkConfig{Hosts: hosts}),
 	}
 	gitHandler.Authorize = application.AuthorizeGit
+	application.Backups = &backups.Service{Store: store, Repositories: manager}
+	noErr(t, application.Backups.Start(ctx))
+	t.Cleanup(func() { noErr(t, application.Backups.Stop(context.Background())) })
 	httpServer := httptest.NewServer(application.Handler())
 	t.Cleanup(httpServer.Close)
 	t.Cleanup(application.StopBackground)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 
 	"owngit/internal/apiclient"
 	"owngit/internal/checkexec"
@@ -358,6 +359,21 @@ func (server *mcpServer) buildTools() []mcpTool {
 		},
 	}
 	tools = append(tools, server.restoreTools()...)
+	tools = append(tools, mcpTool{
+		Name: "backup_status",
+		Description: "Show whether OwnGit backs up this server, like owngit backup status: schedule (state not_configured, off or on, destination, interval, keep, verify), " +
+			"running (the backup in progress, or null), last_run (the last backup that ended: status succeeded, failed or interrupted, verification passed, failed or not_run, message, " +
+			"longest_hold_ms, how long Git writes to one repository waited for it), last_verified (the newest backup that passed a rehearsed restore and is still there, or null) and next_run. " +
+			"Check it before a risky change to know whether a recent verified backup exists. Read only.",
+		InputSchema: server.schema(false, nil, nil),
+		Annotations: readOnly,
+		call: func(ctx context.Context, raw json.RawMessage) ([]byte, error) {
+			if err := decodeArguments(raw, &struct{}{}); err != nil {
+				return nil, err
+			}
+			return server.general.client().Do(ctx, http.MethodGet, "/api/v1/backups", nil)
+		},
+	})
 	if server.checks != nil {
 		tools = append(tools,
 			mcpTool{

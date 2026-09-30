@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/backups"
 	"owngit/internal/bootstrap"
 	"owngit/internal/checkrun"
 	"owngit/internal/firstrun"
@@ -107,9 +108,10 @@ func run(arguments []string) error {
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
 		command, arguments = arguments[0], arguments[1:]
 	}
-	// backup verify reads only the backup it is given, so it runs as the
-	// account that starts it, like any command without a state.
-	readsNoState := command == "backup" && len(arguments) != 0 && arguments[0] == "verify"
+	// backup verify reads only the backup it is given, and the backup
+	// commands of a running server talk to it, so they run as the account
+	// that starts them, like any command without a state.
+	readsNoState := command == "backup" && len(arguments) != 0 && (arguments[0] == "verify" || backupOwnerCommands[arguments[0]] != nil)
 	if serviceStateCommands[command] && !helpRequested(arguments) && !readsNoState {
 		if handled, err := stateCommandWithoutAdminRights(command, arguments); handled {
 			return err
@@ -581,6 +583,19 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if settings.Initialized {
 		importRuntime.start()
 	}
+	// Backups use the store and the repositories, so they stop, and a
+	// running one records itself as interrupted, before either closes.
+	backupService := &backups.Service{Store: store, Repositories: repositories, Logf: logf}
+	if err := backupService.Start(ctx); err != nil {
+		return err
+	}
+	defer func() {
+		stopContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := backupService.Stop(stopContext); err != nil {
+			logf("backup shutdown: %v", err)
+		}
+	}()
 	// Apart from imports, which reach only the source hosts an owner
 	// configures, the new-release check is OwnGit's only outbound
 	// connection. It waits
@@ -612,7 +627,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			Live: live,
 		},
 		GitVersion: strings.TrimSpace(string(versionResult.Stdout)), HTTPBackendFound: true, Version: version.Version,
-		WakeChecks: checkCoordinator.Wake, Imports: imports, RunningRecordLive: runningLive,
+		WakeChecks: checkCoordinator.Wake, Imports: imports, Backups: backupService, RunningRecordLive: runningLive,
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
 		Releases:         releases,
 		UpdateCommand:    dashboardUpdateCommand(*asService),
@@ -1029,10 +1044,13 @@ func backupState(arguments []string) error {
 	if len(arguments) != 0 && arguments[0] == "verify" {
 		return verifyBackup(arguments[1:])
 	}
+	if len(arguments) != 0 && backupOwnerCommands[arguments[0]] != nil {
+		return backupOwnerCommands[arguments[0]](arguments[1:])
+	}
 	flags := flag.NewFlagSet("backup", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
-	output := flags.String("output", "", "new backup directory")
+	output := flags.String("output", "", "new backup directory; OwnGit must be stopped (while it runs, use owngit backup now)")
 	gitPath := flags.String("git", "", "Git executable path")
 	if err := parseFlags(flags, arguments); err != nil {
 		return err
@@ -1350,6 +1368,7 @@ func isHelpArgument(argument string) bool {
 // them, keyed by flag set name, for the usage line.
 var commandOperands = map[string]string{
 	"approve-host":       "<host>",
+	"backup":             "[now|status|runs|schedule|verify]",
 	"backup verify":      "<backup>",
 	"import add":         "<name> <url>",
 	"import refresh":     "<name>",

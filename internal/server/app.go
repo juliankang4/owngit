@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/backups"
 	"owngit/internal/checkrun"
 	"owngit/internal/githttp"
 	"owngit/internal/importsync"
@@ -54,9 +55,11 @@ type App struct {
 	Repositories *repository.Manager
 	PullRequests *pullrequest.Service
 	Imports      *importsync.Service
-	GitHTTP      *githttp.Handler
-	Renderer     *webui.Renderer
-	Hosts        *HostPolicy
+	// Backups makes scheduled backups and backups asked for now.
+	Backups  *backups.Service
+	GitHTTP  *githttp.Handler
+	Renderer *webui.Renderer
+	Hosts    *HostPolicy
 	// Network holds the base URL, trusted proxies and accepted Host names
 	// the running server uses now, which Tailscale sharing can change
 	// without a restart. It derives each request's scheme, Host and client

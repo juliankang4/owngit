@@ -691,7 +691,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"pass","command":"exit 0"}]}`)
 	session := startMCPSession(t, mcpOptions{server: serverURL, repository: "project", credentialFile: credentialFile, acceptInsecureHTTP: true, workdir: work})
 	names, _ := session.toolNames()
-	if got := strings.Join(names, " "); got != "check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
+	if got := strings.Join(names, " "); got != "backup_status check_config_show check_cycle_list check_cycle_reserve check_log check_run check_status check_task_create check_task_list "+
 		"pull_request_close pull_request_create pull_request_diff pull_request_edit pull_request_list pull_request_merge pull_request_mergeability pull_request_reopen pull_request_review "+
 		"pull_request_review_request pull_request_review_skip pull_request_show repository_kept_history repository_list repository_restore_apply repository_restore_preview repository_show" {
 		t.Fatalf("tools: %s", got)
@@ -952,7 +952,7 @@ func TestMCPBinaryRoundTrip(t *testing.T) {
 		t.Fatalf("initialize: %s", response.Result)
 	}
 	session.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
-	if names, _ := session.toolNames(); len(names) != 25 {
+	if names, _ := session.toolNames(); len(names) != 26 {
 		t.Fatalf("tools: %v", names)
 	}
 	if text, isError := session.call("pull_request_list", nil); isError || text != `{"ok":true,"pull_requests":[]}` {
