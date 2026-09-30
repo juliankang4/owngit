@@ -76,7 +76,7 @@ func networkInfo(report NetworkReport) webui.NetworkInfo {
 			Proxies:           strings.Join(report.Saved.TrustedProxies, "\n"),
 			PublicShareListen: report.Saved.PublicShareListen, PublicShareURL: report.Saved.PublicShareURL,
 		},
-		PublicShareWarnings: PublicShareWarnings(report.Saved.PublicShareListen, report.Saved.TrustedProxies),
+		PublicShareWarnings: PublicShareWarnings(report.Saved.PublicShareListen, report.Saved.PublicShareURL, report.Saved.TrustedProxies),
 	}
 	info.Saved = info.Form
 	next := report.NextStart
@@ -234,10 +234,10 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 			proxies = append(proxies, text)
 		}
 	}
-	// Listening beyond this computer serves other devices over plain HTTP,
+	// An address other devices reach over plain HTTP,
 	// which needs the same acknowledgement as setup until it was given once.
 	acknowledge := false
-	if PlainHTTPAcknowledgementNeeded(form.Listen, settings.InsecureHTTPAccepted) {
+	if PlainHTTPAcknowledgementNeeded(state.NetworkSettings{Listen: form.Listen, PublicShareListen: form.PublicShareListen, PublicShareURL: publicURL}, settings.InsecureHTTPAccepted) {
 		if !formChecked(postValue(request, "insecure_ack")) {
 			notices = append(notices, webui.Error("insecure_ack", webui.MsgSetupInsecureNeed))
 		}

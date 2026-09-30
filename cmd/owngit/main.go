@@ -767,11 +767,13 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	application.OnHostAccepted = live.Publish
 	servers := []*http.Server{httpServer}
 	if publicListener != nil {
-		application.PublicShareURL = network.PublicShareURL
+		application.PublicShareURL, application.PublicShareAddress = network.PublicShareURL, publicListener.Addr().String()
 		publicServer := &http.Server{
 			Handler: application.PublicShareHandler(), ReadHeaderTimeout: httpServer.ReadHeaderTimeout,
 			ReadTimeout: httpServer.ReadTimeout, WriteTimeout: httpServer.WriteTimeout,
 			IdleTimeout: httpServer.IdleTimeout, MaxHeaderBytes: httpServer.MaxHeaderBytes,
+			// "OPTIONS *" reaches the allowlist too, which answers not found.
+			DisableGeneralOptionsHandler: true,
 		}
 		servers = append(servers, publicServer)
 		go func() {

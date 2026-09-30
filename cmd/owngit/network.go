@@ -479,9 +479,9 @@ func networkSet(arguments []string) error {
 	if err != nil {
 		return unavailable(err)
 	}
-	if server.PlainHTTPAcknowledgementNeeded(update.Settings.Listen, settings.InsecureHTTPAccepted) {
+	if server.PlainHTTPAcknowledgementNeeded(update.Settings, settings.InsecureHTTPAccepted) {
 		if !*acceptPlain {
-			return jsonFailure(*asJSON, "acknowledgement_required", fmt.Errorf("listening on %s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or listen on a loopback address", update.Settings.Listen))
+			return jsonFailure(*asJSON, "acknowledgement_required", fmt.Errorf("%s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or use a loopback listen address and an https address", server.PlainHTTPAddress(update.Settings)))
 		}
 		update.AcknowledgeInsecureHTTP = true
 	}
@@ -536,7 +536,7 @@ func networkSet(arguments []string) error {
 		return unavailable(err)
 	}
 	if public {
-		for _, code := range server.PublicShareWarnings(update.Settings.PublicShareListen, proxies) {
+		for _, code := range server.PublicShareWarnings(update.Settings.PublicShareListen, update.Settings.PublicShareURL, proxies) {
 			warnings = append(warnings, webui.Text(webui.LangEN, code))
 		}
 	}

@@ -69,6 +69,9 @@ type App struct {
 	// address this server started with (PublicShareHandler), or "" when it
 	// is off.
 	PublicShareURL string
+	// PublicShareAddress is the address the public share address listens
+	// on, host:port, or "" when it is off.
+	PublicShareAddress string
 	// Tailscale shares this OwnGit on the tailnet with Tailscale Serve.
 	// Whether Tailscale is installed is what its Find reports.
 	Tailscale               *Tailscale

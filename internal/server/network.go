@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"owngit/internal/requestctx"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -90,14 +91,18 @@ func ValidatePublicShare(listen, publicURL, privateListen string) (string, error
 
 // PublicShareWarnings are what a saved public share address means for the
 // owner, said by Settings and by "owngit network set": that the Internet
-// reaches it, that a listen address beyond this computer is reached
+// reaches it, that a plain http: URL sends links and passwords
+// unencrypted, that a listen address beyond this computer is reached
 // directly, and that visitors look like one address while no proxy is
 // trusted. None is said while it is off.
-func PublicShareWarnings(listen string, trustedProxies []string) []webui.MessageCode {
+func PublicShareWarnings(listen, publicURL string, trustedProxies []string) []webui.MessageCode {
 	if listen == "" {
 		return nil
 	}
 	warnings := []webui.MessageCode{webui.MsgPublicShareWarnOn}
+	if strings.HasPrefix(publicURL, "http:") {
+		warnings = append(warnings, webui.MsgPublicShareWarnPlainHTTP)
+	}
 	if host, _, err := net.SplitHostPort(listen); err == nil && !IsLoopbackHost(host) {
 		warnings = append(warnings, webui.MsgPublicShareWarnDirect)
 	}
@@ -129,14 +134,29 @@ func IsLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// PlainHTTPAcknowledgementNeeded reports whether saving listen, the listen
-// address OwnGit will use, needs the owner's acknowledgement that other
-// computers reach OwnGit over plain HTTP: the address reaches beyond this
-// computer and the acknowledgement was not given before (accepted). The
-// Network group of Settings and owngit network set both apply it.
-func PlainHTTPAcknowledgementNeeded(listen string, accepted bool) bool {
-	host, _, err := net.SplitHostPort(listen)
-	return err == nil && !IsLoopbackHost(host) && !accepted
+// PlainHTTPAddress returns the first address in saved network settings that
+// other computers reach over plain HTTP, or "" when there is none: a listen
+// address beyond this computer, OwnGit's own or the public share address's,
+// or a public share URL that starts with http:.
+func PlainHTTPAddress(settings state.NetworkSettings) string {
+	for _, listen := range []string{settings.Listen, settings.PublicShareListen} {
+		if host, _, err := net.SplitHostPort(listen); err == nil && !IsLoopbackHost(host) {
+			return listen
+		}
+	}
+	if strings.HasPrefix(settings.PublicShareURL, "http:") {
+		return settings.PublicShareURL
+	}
+	return ""
+}
+
+// PlainHTTPAcknowledgementNeeded reports whether saving settings needs the
+// owner's acknowledgement that other computers reach OwnGit over plain
+// HTTP: an address does (PlainHTTPAddress) and the acknowledgement was not
+// given before (accepted). The Network group of Settings and owngit network
+// set both apply it.
+func PlainHTTPAcknowledgementNeeded(settings state.NetworkSettings, accepted bool) bool {
+	return PlainHTTPAddress(settings) != "" && !accepted
 }
 
 // Hosts returns every Host name the policy accepts, sorted.

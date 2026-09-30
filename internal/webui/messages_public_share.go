@@ -4,22 +4,23 @@ package webui
 // share links only, set in the Network settings.
 
 const (
-	MsgPublicShareTitle        MessageCode = "settings.public_share.title"
-	MsgPublicShareIntro        MessageCode = "settings.public_share.intro"
-	MsgPublicShareListen       MessageCode = "settings.public_share.listen"
-	MsgPublicShareListenHelp   MessageCode = "settings.public_share.listen_help"
-	MsgPublicShareURL          MessageCode = "settings.public_share.url"
-	MsgPublicShareURLHelp      MessageCode = "settings.public_share.url_help"
-	MsgPublicShareOff          MessageCode = "settings.public_share.off"
-	MsgPublicShareNow          MessageCode = "settings.public_share.now"
-	MsgPublicShareNowOff       MessageCode = "settings.public_share.now_off"
-	MsgPublicShareFailed       MessageCode = "settings.public_share.failed"
-	MsgPublicShareInvalid      MessageCode = "settings.public_share.invalid"
-	MsgPublicShareWarnOn       MessageCode = "settings.public_share.warn_on"
-	MsgPublicShareWarnDirect   MessageCode = "settings.public_share.warn_direct"
-	MsgPublicShareWarnProxy    MessageCode = "settings.public_share.warn_proxy"
-	MsgShareCreatedPublic      MessageCode = "share.created.public_link"
-	MsgShareCreatedPublicClone MessageCode = "share.created.public_clone"
+	MsgPublicShareTitle         MessageCode = "settings.public_share.title"
+	MsgPublicShareIntro         MessageCode = "settings.public_share.intro"
+	MsgPublicShareListen        MessageCode = "settings.public_share.listen"
+	MsgPublicShareListenHelp    MessageCode = "settings.public_share.listen_help"
+	MsgPublicShareURL           MessageCode = "settings.public_share.url"
+	MsgPublicShareURLHelp       MessageCode = "settings.public_share.url_help"
+	MsgPublicShareOff           MessageCode = "settings.public_share.off"
+	MsgPublicShareNow           MessageCode = "settings.public_share.now"
+	MsgPublicShareNowOff        MessageCode = "settings.public_share.now_off"
+	MsgPublicShareFailed        MessageCode = "settings.public_share.failed"
+	MsgPublicShareInvalid       MessageCode = "settings.public_share.invalid"
+	MsgPublicShareWarnOn        MessageCode = "settings.public_share.warn_on"
+	MsgPublicShareWarnDirect    MessageCode = "settings.public_share.warn_direct"
+	MsgPublicShareWarnPlainHTTP MessageCode = "settings.public_share.warn_plain_http"
+	MsgPublicShareWarnProxy     MessageCode = "settings.public_share.warn_proxy"
+	MsgShareCreatedPublic       MessageCode = "share.created.public_link"
+	MsgShareCreatedPublicClone  MessageCode = "share.created.public_clone"
 )
 
 var publicShareCatalog = map[MessageCode]message{
@@ -59,6 +60,10 @@ var publicShareCatalog = map[MessageCode]message{
 	MsgPublicShareWarnDirect: {
 		en: "The listen address reaches beyond this computer, so anyone on that network reaches the public address directly, over plain HTTP and without the tunnel or proxy.",
 		ko: "수신 주소가 이 컴퓨터 밖으로 열려 있어, 그 네트워크의 누구나 터널이나 프록시를 거치지 않고 암호화되지 않은 HTTP로 공개 주소에 바로 접속할 수 있습니다.",
+	},
+	MsgPublicShareWarnPlainHTTP: {
+		en: "The public URL uses plain HTTP. Share links, extra passwords and repository content then cross the Internet unencrypted, so anyone on the way can read a link and use it. Use an https address unless you accept that.",
+		ko: "공개 URL이 일반 HTTP를 씁니다. 그러면 공유 링크, 추가 비밀번호, 저장소 내용이 암호화되지 않은 채 인터넷을 지나므로 중간에 있는 누구나 링크를 읽고 쓸 수 있습니다. 이를 받아들이는 경우가 아니면 https 주소를 쓰세요.",
 	},
 	MsgPublicShareWarnProxy: {
 		en: "No reverse proxy is trusted. Add the address the tunnel or proxy connects from (127.0.0.1 for Tailscale Funnel) as a trusted proxy. Otherwise every visitor counts as that one address for wrong passwords, and the share cookie is not limited to HTTPS.",

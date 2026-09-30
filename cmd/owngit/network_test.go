@@ -572,7 +572,16 @@ func TestServeOpensThePublicShareAddress(t *testing.T) {
 		}
 	}
 	public := freeLoopbackAddress(t)
-	output, err := runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "https://share.example.test")
+	// A plain http: public URL needs the plain HTTP acknowledgement.
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "http://share.example.test"); err == nil || !strings.Contains(err.Error(), "--accept-insecure-http") {
+		t.Fatalf("an http public URL without the acknowledgement: %v", err)
+	}
+	output, err := runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "http://share.example.test", "--accept-insecure-http")
+	noErr(t, err)
+	if !strings.Contains(output, "The public URL uses plain HTTP") {
+		t.Fatalf("set output: %q", output)
+	}
+	output, err = runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "https://share.example.test")
 	noErr(t, err)
 	if !strings.Contains(output, "Anyone on the Internet can reach the public address") || !strings.Contains(output, "No reverse proxy is trusted") {
 		t.Fatalf("set output: %q", output)
@@ -595,6 +604,17 @@ func TestServeOpensThePublicShareAddress(t *testing.T) {
 			instance.stop()
 			t.Fatalf("%s status=%d, want %d", path, response.StatusCode, want)
 		}
+	}
+	// "OPTIONS *" is not found there like any other request.
+	connection, err := net.Dial("tcp", public)
+	noErr(t, err)
+	_, err = connection.Write([]byte("OPTIONS * HTTP/1.1\r\nHost: share.example.test\r\nConnection: close\r\n\r\n"))
+	noErr(t, err)
+	answer, err := io.ReadAll(connection)
+	connection.Close()
+	if err != nil || !strings.HasPrefix(string(answer), "HTTP/1.1 404") || !strings.HasSuffix(string(answer), "404 page not found\n") {
+		instance.stop()
+		t.Fatalf("OPTIONS * answered %q (%v)", answer, err)
 	}
 	text, err := runNetwork(t, "show", "--state-dir", stateDir)
 	noErr(t, err)

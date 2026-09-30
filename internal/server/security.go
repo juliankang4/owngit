@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 
@@ -237,6 +238,9 @@ func sameOrigin(request *http.Request, value string) bool {
 	origin, err := url.Parse(value)
 	if err != nil || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return false
+	}
+	if origins, public := publicShareOrigins(request); public {
+		return slices.ContainsFunc(origins, func(public string) bool { return sameOriginURL(value, public) })
 	}
 	info := requestctx.Of(request)
 	return origin.Scheme == info.Scheme && strings.EqualFold(origin.Host, info.Host)
