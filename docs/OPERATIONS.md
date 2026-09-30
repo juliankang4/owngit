@@ -575,7 +575,7 @@ The Network tab and the OwnGit icon have their own commands, which run on the in
 
 ### Dashboard-only and command-line-only tasks
 
-Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, `uninstall` (all listed below), and `owngit backup --output` and `owngit restore`, which work on a stopped OwnGit.
+Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, and `uninstall` (all listed below).
 
 A few tasks are on one side only, on purpose:
 
@@ -2125,6 +2125,8 @@ owngit backup \
   --output /path/to/new-backup
 ```
 
+With `--json` it prints `ok`, the `backup` folder and a `note` about what the SHA-256 hashes show, and a refusal is a JSON error with a `code`, such as `offline_required` while OwnGit runs, `state_missing`, `setup_incomplete` or `backup_failed`.
+
 ### What a backup holds
 
 A backup holds a manifest and one Git bundle per nonempty repository. Together they carry:
@@ -2160,6 +2162,7 @@ Restore checks every bundle, ref, object and record before it publishes the new 
 - Restore copies each bundle into the new repository folder as it checks it, and restores from that copy. Before it starts, the disk of the repository folder needs room for all bundles and the largest one once more; otherwise restore stops and says how much it needs.
 - Ctrl+C stops a restore, which then removes what it made, says that nothing was restored and exits with status 130. If both folders are already in place, it completes instead.
 - Git file names are kept exactly, so a name Git accepts but Windows does not, such as one with a backslash, may not check out there.
+- With `--json` a finished restore prints `ok`, `state_dir`, `repository_root`, the `verification` result when `--verify` was given, and `notes` with what it did not restore and the server-wide settings that start at their defaults. A refusal is a JSON error with a `code` and the same exit status: `backup_not_verified` (with the verification as `details`), `restore_failed`, or `interrupted` after Ctrl+C (status 130).
 
 ### Restore steps in the dashboard
 
