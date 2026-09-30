@@ -598,10 +598,19 @@ func TestServeOpensThePublicShareAddress(t *testing.T) {
 	}
 	text, err := runNetwork(t, "show", "--state-dir", stateDir)
 	noErr(t, err)
+	// Turning it off while OwnGit runs waits for the next start, and the
+	// answer says so.
+	changed, err := runNetwork(t, "set", "--state-dir", stateDir, "--public-share-off", "--json")
+	noErr(t, err)
 	instance.stop()
 	if !strings.Contains(text, "Public share address: listening on "+public) {
 		t.Fatalf("show text: %q", text)
 	}
+	if !strings.Contains(changed, `"applies_at_next_start": true`) || !strings.Contains(changed, `"restart_needed": true`) {
+		t.Fatalf("set --json while running: %s", changed)
+	}
+	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "https://share.example.test")
+	noErr(t, err)
 
 	// A public address that cannot listen leaves OwnGit's own address.
 	taken, err := net.Listen("tcp", public)
