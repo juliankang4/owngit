@@ -175,12 +175,12 @@ func TestCheckPolicyRepositoriesListsOnlyRepositoriesWithAPolicy(t *testing.T) {
 func TestImmutableContainerImageAcceptsIDsAndDigestsButRejectsTags(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	for _, image := range []string{"sha256:" + digest, "example.invalid/checks@sha256:" + digest} {
-		if !validImmutableContainerImage(image) {
+		if !ImmutableContainerImage(image) {
 			t.Fatalf("immutable image %q was rejected", image)
 		}
 	}
 	for _, image := range []string{"checks:latest", "checks@sha256:short", "sha256:" + strings.Repeat("A", 64)} {
-		if validImmutableContainerImage(image) {
+		if ImmutableContainerImage(image) {
 			t.Fatalf("mutable or malformed image %q was accepted", image)
 		}
 	}

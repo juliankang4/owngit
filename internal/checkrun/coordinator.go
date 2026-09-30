@@ -484,11 +484,12 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	}
 
 	var protection string
+	var container preparedContainer
 	switch job.Executor {
 	case state.CheckExecutorHost:
 		protection = state.ProtectionHost
 	case state.CheckExecutorContainer:
-		if err := coordinator.containerPreflight(jobContext, job, workspace); err != nil {
+		if container, err = coordinator.containerPreflight(jobContext, job, workspace); err != nil {
 			_ = stopWatcher()
 			return coordinator.recordNotRun(parent, job, authority, "Configured container runtime is unavailable: ", err)
 		}
@@ -526,7 +527,7 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	var results []checkexec.Result
 	var cancelled bool
 	if job.Executor == state.CheckExecutorContainer {
-		results, cancelled = coordinator.runContainerChecks(jobContext, job, workspace, definitions)
+		results, cancelled = coordinator.runContainerChecks(jobContext, job, container, workspace, definitions)
 	} else {
 		results, cancelled = checkexec.Run(jobContext, definitions, checkexec.Options{
 			Dir: workspace, Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,

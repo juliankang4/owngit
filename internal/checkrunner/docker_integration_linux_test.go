@@ -231,6 +231,13 @@ func requireRealDocker(t *testing.T) realDockerConfig {
 
 func newRealDockerFixture(t *testing.T, config realDockerConfig, network, command string) *realDockerFixture {
 	t.Helper()
+	return newRealDockerFixtureWith(t, config, command, func(settings *state.CheckExecutionSettings) { settings.ContainerNetwork = network })
+}
+
+// newRealDockerFixtureWith starts a coordinator whose container policy is the
+// test default changed by options.
+func newRealDockerFixtureWith(t *testing.T, config realDockerConfig, command string, options func(*state.CheckExecutionSettings)) *realDockerFixture {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), realDockerTimeout)
 	fixture := &realDockerFixture{t: t, config: config, ctx: ctx, cancel: cancel, root: t.TempDir()}
 	t.Cleanup(fixture.close)
@@ -268,15 +275,17 @@ func newRealDockerFixture(t *testing.T, config realDockerConfig, network, comman
 	runGit(t, "-C", work, "add", ".")
 	runGit(t, "-C", work, "commit", "-m", "real Docker integration fixture")
 	runGit(t, "-C", work, "push", bare, "HEAD:refs/heads/main")
+	execution := state.CheckExecutionSettings{
+		ContainerImage: config.image, ContainerRuntime: "docker-local",
+		ContainerCPUMillis: testContainerCPU, ContainerMemoryBytes: testContainerMemory,
+		ContainerPIDs: testContainerPIDs, ContainerScratchBytes: testContainerTmpfs,
+	}
+	options(&execution)
 	if _, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
 		RepositoryID: stored.ID, Executor: state.CheckExecutorContainer,
 		AllowedEvents: []string{checkworkflow.EventPush}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
 		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
-		Execution: state.CheckExecutionSettings{
-			ContainerImage: config.image, ContainerRuntime: "docker-local", ContainerNetwork: network,
-			ContainerCPUMillis: testContainerCPU, ContainerMemoryBytes: testContainerMemory,
-			ContainerPIDs: testContainerPIDs, ContainerScratchBytes: testContainerTmpfs,
-		},
+		Execution: execution,
 	}, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}

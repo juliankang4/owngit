@@ -193,7 +193,7 @@ func normalizeCheckExecutionSettings(executor string, settings CheckExecutionSet
 		switch {
 		case settings.ContainerImage == "":
 			return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerImage, Rule: RuleRequired}
-		case validImmutableContainerImage(settings.ContainerImage):
+		case ImmutableContainerImage(settings.ContainerImage):
 		case settings.ContainerAllowTags && validContainerImageReference(settings.ContainerImage):
 		default:
 			return CheckExecutionSettings{}, &CheckPolicyFieldError{Field: FieldContainerImage, Rule: RuleFormat}
@@ -291,7 +291,9 @@ func validateCheckSourceLimits(limits CheckSourceLimits) error {
 	return nil
 }
 
-func validImmutableContainerImage(value string) bool {
+// ImmutableContainerImage reports whether value names one exact image: an
+// image ID or a repository digest.
+func ImmutableContainerImage(value string) bool {
 	if value == "" || strings.ContainsAny(value, "\x00\r\n\t ") {
 		return false
 	}
