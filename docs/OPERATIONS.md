@@ -575,7 +575,7 @@ The Network tab and the OwnGit icon have their own commands, which run on the in
 
 ### Dashboard-only and command-line-only tasks
 
-Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, and `uninstall` (all listed below).
+Every owner task in Settings and on a repository's pages also has a command. Most of these commands print JSON, some only with `--json`. These print text only: the host recovery commands, the commands that run or control a process, and `uninstall` (all listed below). A command given `--json` also answers with a JSON error when it cannot start as the account that owns the state: `privilege_drop_failed` when an administrator terminal on Windows cannot start its copy without administrator rights, and `state_unavailable` when it may not act as the service account on Linux.
 
 A few tasks are on one side only, on purpose:
 
