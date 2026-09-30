@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -122,9 +123,19 @@ func (f *fixture) run(t *testing.T, id string) state.BackupRun {
 	return state.BackupRun{}
 }
 
+// present says whether run's folder holds a backup.
 func present(run state.BackupRun) bool {
-	_, err := recovery.ReadBackupHeader(filepath.Join(run.Destination, run.BackupName))
-	return err == nil
+	folder, err := recovery.OpenBackupFolder(run.Destination)
+	if err != nil {
+		return false
+	}
+	defer folder.Close()
+	backup, err := folder.Open(run.BackupName)
+	if err != nil {
+		return false
+	}
+	backup.Close()
+	return true
 }
 
 func TestBackUpNowWritesAndVerifiesABackup(t *testing.T) {
@@ -149,7 +160,7 @@ func TestBackUpNowWritesAndVerifiesABackup(t *testing.T) {
 	status, err := f.service.Status(context.Background())
 	noErr(t, err)
 	if status.Schedule.State != ScheduleOn || status.Running != nil || status.LastRun == nil || status.LastRun.ID != run.ID ||
-		status.LastVerified == nil || status.LastVerified.ID != run.ID || status.LastRun.Copy != CopyPresent || status.NextRun == nil {
+		status.LastVerified == nil || status.LastVerified.ID != run.ID || status.LastRun.Path == "" || status.NextRun == nil {
 		t.Fatalf("status: %+v", status)
 	}
 }
@@ -168,16 +179,18 @@ func TestScheduledBackupsRunOncePerInterval(t *testing.T) {
 	if len(runs) != 1 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded {
 		t.Fatalf("runs: %+v", runs)
 	}
+	// Runs record the real time; the clock of the test decides when one is
+	// due, so the first run started at most a few seconds after it.
 	f.clock.advance(23 * time.Hour)
-	if wait := f.service.tick(); wait != time.Hour {
+	if wait := f.service.tick(); wait < time.Hour || wait > time.Hour+time.Minute {
 		t.Fatalf("an hour before the next backup: waits %s", wait)
 	}
-	f.clock.advance(time.Hour)
+	f.clock.advance(time.Hour + time.Minute)
 	f.service.tick()
 	f.service.work.Wait()
 	runs, err = f.store.BackupRuns(context.Background())
 	noErr(t, err)
-	if len(runs) != 2 || runs[0].Kind != state.BackupRunScheduled || !runs[0].StartedAt.Equal(f.clock.Now()) {
+	if len(runs) != 2 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded {
 		t.Fatalf("runs: %+v", runs)
 	}
 
@@ -394,5 +407,177 @@ func TestSchedulerStartsTheFirstBackupWhenAFolderIsSet(t *testing.T) {
 	noErr(t, err)
 	if len(runs) != 1 || runs[0].Kind != state.BackupRunScheduled || runs[0].Verification != state.BackupVerifyPassed {
 		t.Fatalf("runs: %+v", runs)
+	}
+}
+
+// runAt starts and executes a manual backup with the given ID, as start
+// does, and returns its record.
+func (f *fixture) runAt(t *testing.T, id string, started time.Time) state.BackupRun {
+	t.Helper()
+	schedule, _, err := f.store.BackupSchedule(context.Background())
+	noErr(t, err)
+	run := state.BackupRun{ID: id, Kind: state.BackupRunManual, Status: state.BackupRunning, Destination: schedule.Destination,
+		BackupName: namePrefix + started.UTC().Format("20060102-150405") + "-" + id[:8], Verification: state.BackupVerifyNotRun, StartedAt: started}
+	noErr(t, f.store.StartBackupRun(context.Background(), run))
+	f.service.execute(context.Background(), run, schedule)
+	return f.run(t, id)
+}
+
+// Two backups started in the same second keep the newer one: the order is
+// the order the runs started, not their random IDs.
+func TestRetentionKeepsTheNewerOfTwoBackupsInTheSameSecond(t *testing.T) {
+	f := newFixture(t)
+	keep, off := 1, false
+	f.configure(t, ScheduleChange{Keep: &keep, Verify: &off})
+	started := time.Now().Truncate(time.Second)
+	older := f.runAt(t, strings.Repeat("f", 32), started)
+	newer := f.runAt(t, strings.Repeat("0", 32), started)
+	if newer.Status != state.BackupSucceeded || !present(newer) || present(state.BackupRun{Destination: f.destination, BackupName: namePrefix + started.UTC().Format("20060102-150405") + "-ffffffff"}) {
+		t.Fatalf("newer %+v present %v; older %+v", newer, present(newer), older)
+	}
+	status, err := f.service.Status(context.Background())
+	noErr(t, err)
+	if status.LastRun == nil || status.LastRun.ID != newer.ID {
+		t.Fatalf("last run: %+v", status.LastRun)
+	}
+}
+
+// A backup folder replaced by a link is not followed: the backup the link
+// leads to stays, and the run says what it left.
+func TestRetentionDoesNotFollowALink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("links need a privilege on Windows")
+	}
+	f := newFixture(t)
+	keep, off := 1, false
+	f.configure(t, ScheduleChange{Keep: &keep, Verify: &off})
+	first := f.backUpNow(t)
+	elsewhere := filepath.Join(t.TempDir(), "elsewhere")
+	noErr(t, os.Rename(filepath.Join(f.destination, first.BackupName), elsewhere))
+	noErr(t, os.Symlink(elsewhere, filepath.Join(f.destination, first.BackupName)))
+	second := f.backUpNow(t)
+	if second.Status != state.BackupSucceeded || !strings.Contains(second.Message, first.BackupName) || !strings.Contains(second.Message, "left in place") {
+		t.Fatalf("second: %+v", second)
+	}
+	for _, name := range []string{"manifest.json", filepath.Join("repositories", "project.bundle")} {
+		if _, err := os.Stat(filepath.Join(elsewhere, name)); err != nil {
+			t.Fatalf("the backup behind the link lost %s: %v", name, err)
+		}
+	}
+	if run := f.run(t, first.ID); run.BackupName != "" {
+		t.Fatalf("the run still claims the linked folder: %+v", run)
+	}
+}
+
+// A file added to a backup is never removed, even one named like a bundle.
+func TestRetentionLeavesAnAddedBundleFile(t *testing.T) {
+	f := newFixture(t)
+	keep, off := 1, false
+	f.configure(t, ScheduleChange{Keep: &keep, Verify: &off})
+	first := f.backUpNow(t)
+	added := filepath.Join(f.destination, first.BackupName, "repositories", "foreign.bundle")
+	noErr(t, os.WriteFile(added, []byte("mine"), 0o600))
+	second := f.backUpNow(t)
+	if !strings.Contains(second.Message, "foreign.bundle") || !present(first) {
+		t.Fatalf("second: %+v, first present %v", second, present(first))
+	}
+	if content, err := os.ReadFile(added); err != nil || string(content) != "mine" {
+		t.Fatalf("the added file: %q %v", content, err)
+	}
+}
+
+// A backup whose manifest cannot be read is reported and left, never taken
+// for absent, and the free space goes unchecked with that reason.
+func TestRetentionReportsAnUnreadableBackup(t *testing.T) {
+	f := newFixture(t)
+	keep := 1
+	f.configure(t, ScheduleChange{Keep: &keep})
+	first := f.backUpNow(t)
+	noErr(t, os.WriteFile(filepath.Join(f.destination, first.BackupName, "manifest.json"), []byte("{\"format\":"), 0o600))
+	off := false
+	f.configure(t, ScheduleChange{Verify: &off})
+	second := f.backUpNow(t)
+	if second.Status != state.BackupSucceeded || !strings.Contains(second.Message, "could not read the older backup "+first.BackupName) ||
+		!strings.Contains(second.Message, "free space was not checked") {
+		t.Fatalf("second: %+v", second)
+	}
+	if _, err := os.Stat(filepath.Join(f.destination, first.BackupName, "repositories", "project.bundle")); err != nil {
+		t.Fatalf("the unreadable backup lost its bundle: %v", err)
+	}
+	if run := f.run(t, first.ID); run.BackupName == "" {
+		t.Fatal("the unreadable backup was forgotten")
+	}
+}
+
+// Forgetting old run records keeps the newest scheduled run, so its slot
+// is not run again.
+func TestForgettingRunsKeepsTheScheduledSlot(t *testing.T) {
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	ctx := context.Background()
+	finish := func(run state.BackupRun) state.BackupRun {
+		noErr(t, f.store.StartBackupRun(ctx, run))
+		run.Status, run.Verification, run.BackupName, run.FinishedAt = state.BackupFailed, state.BackupVerifyNotRun, "", run.StartedAt
+		noErr(t, f.store.FinishBackupRun(ctx, run))
+		return run
+	}
+	scheduled := finish(state.BackupRun{ID: fmt.Sprintf("%032x", 1), Kind: state.BackupRunScheduled, Destination: f.destination, StartedAt: f.clock.Now()})
+	var last state.BackupRun
+	for index := 2; index <= runsKept+2; index++ {
+		last = finish(state.BackupRun{ID: fmt.Sprintf("%032x", index), Kind: state.BackupRunManual, Destination: f.destination, StartedAt: f.clock.Now()})
+	}
+	noErr(t, f.service.forgetOldRuns(ctx, last))
+	runs, err := f.store.BackupRuns(ctx)
+	noErr(t, err)
+	if len(runs) != runsKept+1 {
+		t.Fatalf("%d runs kept", len(runs))
+	}
+	next, err := f.service.nextRun(ctx)
+	noErr(t, err)
+	if !next.Equal(scheduled.StartedAt.Add(24 * time.Hour)) {
+		t.Fatalf("next scheduled backup %s, want one interval after %s", next, scheduled.StartedAt)
+	}
+}
+
+// Status and its summary come from OwnGit's records alone, so a backup
+// folder that is gone, or would hang, does not hold them up.
+func TestStatusReadsNoBackupFolder(t *testing.T) {
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	verified := f.backUpNow(t)
+	noErr(t, os.Rename(f.destination, f.destination+"-away"))
+	noErr(t, os.WriteFile(f.destination, []byte("not a folder"), 0o600))
+	status, err := f.service.Status(context.Background())
+	noErr(t, err)
+	summary := Summarize(status)
+	if status.LastVerified == nil || status.LastVerified.ID != verified.ID || summary.LastVerifiedAt == nil || summary.LastRun == nil {
+		t.Fatalf("status %+v summary %+v", status, summary)
+	}
+}
+
+// A run owns its folder only while it holds a backup of the run's own
+// time: a folder that another backup took, by an exchange of names for
+// example, is not the run's, and so is never removed as the run's.
+func TestARunOwnsOnlyABackupOfItsOwnTime(t *testing.T) {
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	run := f.backUpNow(t)
+	folder, err := recovery.OpenBackupFolder(f.destination)
+	noErr(t, err)
+	defer folder.Close()
+	backup, err := openOwned(folder, run)
+	noErr(t, err)
+	backup.Close()
+	for _, shifted := range []time.Duration{-time.Hour, time.Hour} {
+		other := run
+		other.StartedAt, other.FinishedAt = run.StartedAt.Add(shifted), run.FinishedAt.Add(shifted)
+		if _, err := openOwned(folder, other); !errors.Is(err, errNotOwned) {
+			t.Errorf("a run %s off owns the backup: %v", shifted, err)
+		}
+	}
+	missing := run
+	missing.BackupName = namePrefix + "missing"
+	if _, err := openOwned(folder, missing); !errors.Is(err, errMissing) {
+		t.Errorf("missing: %v", err)
 	}
 }

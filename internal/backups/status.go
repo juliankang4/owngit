@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"owngit/internal/recovery"
 	"owngit/internal/state"
 )
 
@@ -14,12 +13,6 @@ const (
 	ScheduleNotConfigured = "not_configured"
 	ScheduleOff           = "off"
 	ScheduleOn            = "on"
-)
-
-// Copy states of a finished run's backup.
-const (
-	CopyPresent = "present"
-	CopyAbsent  = "absent"
 )
 
 // ScheduleView is the schedule as owners see it.
@@ -41,8 +34,11 @@ type RunView struct {
 	Kind        string `json:"kind"`
 	Status      string `json:"status"`
 	Destination string `json:"destination"`
-	BackupName  string `json:"backup_name"`
-	Path        string `json:"path"`
+	// BackupName is the folder in Destination that holds the run's
+	// backup, empty when it wrote none or OwnGit removed it or found it
+	// gone. Path is the whole path, or empty.
+	BackupName string `json:"backup_name"`
+	Path       string `json:"path"`
 	// Verification is passed only when a rehearsed restore of this backup
 	// passed.
 	Verification string     `json:"verification"`
@@ -54,15 +50,15 @@ type RunView struct {
 	// absent until the backup read every repository.
 	LongestHoldMS         *int64 `json:"longest_hold_ms,omitempty"`
 	LongestHoldRepository string `json:"longest_hold_repository,omitempty"`
-	// Copy says whether the backup is still in its folder; absent while
-	// the run runs.
-	Copy string `json:"copy,omitempty"`
 }
 
-// Status is the state of backups: the schedule, the running backup, the
-// last one that ended, the newest verified backup still there, and when
-// the next scheduled one is due (a time already past means as soon as the
-// running backup ends).
+// Status is the state of backups as OwnGit's records hold it: the
+// schedule, the running backup, the last one that ended, the newest
+// verified backup that OwnGit keeps, and when the next scheduled one is
+// due (a time already past means as soon as the running backup ends). It
+// reads nothing in the backup folder, so a slow or unavailable folder
+// never holds it up; each backup and its removal of older ones record what
+// they found there.
 type Status struct {
 	Schedule     ScheduleView `json:"schedule"`
 	Running      *RunView     `json:"running"`
@@ -87,12 +83,14 @@ func ViewSchedule(schedule state.BackupSchedule, configured bool) ScheduleView {
 	return view
 }
 
-// ViewRun describes run; a finished run says whether its backup is still
-// there.
+// ViewRun describes run.
 func ViewRun(run state.BackupRun) *RunView {
 	view := &RunView{
 		ID: run.ID, Kind: run.Kind, Status: run.Status, Destination: run.Destination, BackupName: run.BackupName,
-		Path: filepath.Join(run.Destination, run.BackupName), Verification: run.Verification, Message: run.Message, StartedAt: run.StartedAt,
+		Verification: run.Verification, Message: run.Message, StartedAt: run.StartedAt,
+	}
+	if run.BackupName != "" {
+		view.Path = filepath.Join(run.Destination, run.BackupName)
 	}
 	if run.HoldKnown {
 		milliseconds := run.LongestHold.Milliseconds()
@@ -101,10 +99,6 @@ func ViewRun(run state.BackupRun) *RunView {
 	if run.Status != state.BackupRunning {
 		finished := run.FinishedAt
 		view.FinishedAt = &finished
-		view.Copy = CopyAbsent
-		if _, err := recovery.ReadBackupHeader(view.Path); err == nil && validName(run.BackupName) {
-			view.Copy = CopyPresent
-		}
 	}
 	return view
 }
@@ -127,10 +121,8 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 		case status.LastRun == nil:
 			status.LastRun = ViewRun(run)
 		}
-		if status.LastVerified == nil && run.Verification == state.BackupVerifyPassed {
-			if view := ViewRun(run); view.Copy == CopyPresent {
-				status.LastVerified = view
-			}
+		if status.LastVerified == nil && run.Verification == state.BackupVerifyPassed && run.BackupName != "" {
+			status.LastVerified = ViewRun(run)
 		}
 	}
 	next, err := s.nextRun(ctx)

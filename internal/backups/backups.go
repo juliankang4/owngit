@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -98,7 +99,7 @@ func (s *Service) logf(format string, arguments ...any) {
 // Start records every run that a previous process left running as
 // interrupted, then starts the scheduler. Stop ends it.
 func (s *Service) Start(ctx context.Context) error {
-	if count, err := s.Store.InterruptBackupRuns(ctx, interruptedMessage, s.now()); err != nil {
+	if count, err := s.Store.InterruptBackupRuns(ctx, interruptedMessage, time.Now()); err != nil {
 		return fmt.Errorf("record unfinished backups as interrupted: %w", err)
 	} else if count > 0 {
 		s.logf("a backup that OwnGit was making when it stopped is recorded as interrupted")
@@ -230,7 +231,10 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 	if _, err := rand.Read(id); err != nil {
 		return state.BackupRun{}, err
 	}
-	now := s.now()
+	// A run records when it really ran; the clock s.now only decides when
+	// a scheduled one is due. The backup's own manifest time is checked
+	// against these (owned).
+	now := time.Now()
 	run := state.BackupRun{
 		ID: hex.EncodeToString(id), Kind: kind, Status: state.BackupRunning, Destination: schedule.Destination,
 		Verification: state.BackupVerifyNotRun, StartedAt: now,
@@ -252,7 +256,7 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 // older backups after a good one, and records how it ended.
 func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule state.BackupSchedule) {
 	output := filepath.Join(run.Destination, run.BackupName)
-	err := s.checkRoom(ctx, run)
+	note, err := s.checkRoom(ctx, run)
 	var report recovery.CaptureReport
 	if err == nil {
 		report, err = recovery.CreateWhileServing(ctx, s.Store, s.Repositories, output)
@@ -268,6 +272,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 			run.Verification = state.BackupVerifyPassed
 		}
 	}
+	var problems []string
 	switch {
 	case ctx.Err() != nil:
 		run.Status, run.Message = state.BackupInterrupted, interruptedMessage
@@ -278,9 +283,28 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		run.Status, run.Message = state.BackupFailed, err.Error()
 	default:
 		run.Status = state.BackupSucceeded
-		run.Message = s.removeOld(ctx, run, schedule.Keep)
+		problems = s.removeOld(ctx, run, schedule.Keep)
 	}
-	run.FinishedAt = s.now()
+	// A backup that failed after it was published, or was stopped then,
+	// is still there, and is kept as OwnGit's; one never published is not.
+	if err != nil || ctx.Err() != nil {
+		if published, problem := s.published(run); !published {
+			run.BackupName = ""
+		} else if problem != "" {
+			problems = append(problems, problem)
+		}
+	}
+	if note != "" {
+		problems = append([]string{note}, problems...)
+	}
+	if len(problems) > 0 {
+		if run.Message == "" {
+			run.Message = "The backup is complete, but " + strings.Join(problems, "; ")
+		} else {
+			run.Message += " Also, " + strings.Join(problems, "; ")
+		}
+	}
+	run.FinishedAt = time.Now()
 	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err := s.Store.FinishBackupRun(record, run); err != nil {
@@ -297,29 +321,68 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	s.logf("%s", line)
 }
 
+// published says whether the folder of run holds the backup it wrote, and
+// what kept it from telling.
+func (s *Service) published(run state.BackupRun) (bool, string) {
+	folder, err := recovery.OpenBackupFolder(run.Destination)
+	if err != nil {
+		return true, fmt.Sprintf("could not check whether %s was written: %v", run.BackupName, err)
+	}
+	defer folder.Close()
+	backup, err := openOwned(folder, run)
+	switch {
+	case errors.Is(err, errMissing), errors.Is(err, errNotOwned):
+		return false, ""
+	case err != nil:
+		return true, fmt.Sprintf("could not check whether %s was written: %v", run.BackupName, err)
+	}
+	backup.Close()
+	return true, ""
+}
+
 // checkRoom refuses the backup of run when its folder has less free space
 // than the newest backup that OwnGit keeps there took, for the repositories
 // that still exist. Without such a backup there is nothing to estimate from,
-// and a full disk ends the backup while it writes.
-func (s *Service) checkRoom(ctx context.Context, run state.BackupRun) error {
+// and a full disk ends the backup while it writes. When that backup cannot
+// be read, the backup goes ahead and note says why the room was not
+// checked.
+func (s *Service) checkRoom(ctx context.Context, run state.BackupRun) (note string, err error) {
 	runs, err := s.Store.BackupRuns(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
-	// run has written nothing yet, so the newest is an earlier backup.
-	copies := ownedCopies(runs, run)
-	if len(copies) == 0 {
-		return nil
-	}
-	repositories, err := s.Store.Repositories(ctx)
+	folder, err := recovery.OpenBackupFolder(run.Destination)
 	if err != nil {
-		return err
+		return "", err
 	}
-	exists := map[string]bool{}
-	for _, item := range repositories {
-		exists[item.ID] = true
+	defer folder.Close()
+	for _, record := range runs {
+		if record.ID == run.ID || record.Status == state.BackupRunning || record.Destination != run.Destination || record.BackupName == "" {
+			continue
+		}
+		backup, err := openOwned(folder, record)
+		if errors.Is(err, errMissing) || errors.Is(err, errNotOwned) {
+			continue
+		}
+		if err != nil {
+			return fmt.Sprintf("the free space was not checked, because the last backup %s could not be read: %v", record.BackupName, err), nil
+		}
+		defer backup.Close()
+		repositories, err := s.Store.Repositories(ctx)
+		if err != nil {
+			return "", err
+		}
+		exists := map[string]bool{}
+		for _, item := range repositories {
+			exists[item.ID] = true
+		}
+		needed, err := backup.Size(func(id string) bool { return exists[id] })
+		if err != nil {
+			return fmt.Sprintf("the free space was not checked, because the last backup %s could not be read: %v", record.BackupName, err), nil
+		}
+		return "", folder.CheckRoom(needed)
 	}
-	return recovery.CheckBackupRoom(run.Destination, copies[0].path, func(id string) bool { return exists[id] })
+	return "", nil
 }
 
 // verify rehearses a restore of the backup at output within the limit.
@@ -344,35 +407,49 @@ func (s *Service) verify(ctx context.Context, output string) error {
 	return nil
 }
 
-// ownedCopy is a backup that one of OwnGit's runs wrote and that is still
-// where it wrote it.
-type ownedCopy struct {
-	run  state.BackupRun
-	path string
+// A run's folder that holds no backup of that run: errMissing when the
+// folder is gone, errNotOwned when it holds another backup or something
+// that is no backup.
+var (
+	errMissing  = errors.New("the backup is missing")
+	errNotOwned = errors.New("the folder does not hold the backup that OwnGit wrote there")
+)
+
+// openOwned opens the backup that run wrote, held for its removal. The run
+// owns its folder only while the folder, not a link, holds an OwnGit
+// backup whose instant lies within the run. A folder that is missing gives
+// errMissing, one that holds anything else errNotOwned (wrapped, saying
+// why); a folder that cannot be read gives that error.
+func openOwned(folder *recovery.BackupFolder, run state.BackupRun) (*recovery.BackupCopy, error) {
+	if !validName(run.BackupName) {
+		return nil, fmt.Errorf("%w: %q is not a backup name", errNotOwned, run.BackupName)
+	}
+	backup, err := folder.Open(run.BackupName)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, errMissing
+	case errors.Is(err, recovery.ErrNotABackup):
+		return nil, fmt.Errorf("%s: %w: %v", run.BackupName, errNotOwned, err)
+	case err != nil:
+		return nil, err
+	}
+	// Recorded times are whole seconds; a run still going ends now.
+	end := time.Now()
+	if !run.FinishedAt.IsZero() {
+		end = run.FinishedAt.Add(time.Second)
+	}
+	if backup.CreatedAt.Before(run.StartedAt.Truncate(time.Second)) || backup.CreatedAt.After(end) {
+		backup.Close()
+		return nil, fmt.Errorf("%s: %w: it holds a backup of another time", run.BackupName, errNotOwned)
+	}
+	return backup, nil
 }
 
-// ownedCopies lists, newest first, the backups in current's folder that
-// OwnGit's runs wrote and that are still there, current included. A run
-// owns the folder it names only while that folder holds a backup: a
-// manifest of OwnGit's format. current is taken as it is in memory, since
-// its record may not show how it ended yet.
-func ownedCopies(runs []state.BackupRun, current state.BackupRun) []ownedCopy {
-	var copies []ownedCopy
-	for _, run := range runs {
-		if run.ID == current.ID {
-			run = current
-		} else if run.Status == state.BackupRunning {
-			continue
-		}
-		if run.Destination != current.Destination || !validName(run.BackupName) {
-			continue
-		}
-		path := filepath.Join(run.Destination, run.BackupName)
-		if _, err := recovery.ReadBackupHeader(path); err == nil {
-			copies = append(copies, ownedCopy{run: run, path: path})
-		}
+// forget records that the backup of run is gone.
+func (s *Service) forget(ctx context.Context, run state.BackupRun) {
+	if err := s.Store.ForgetBackup(ctx, run.ID); err != nil {
+		s.logf("could not record that backup %s is gone: %v", run.BackupName, err)
 	}
-	return copies
 }
 
 // validName accepts a folder name that a run writes: a single name in its
@@ -382,40 +459,86 @@ func validName(name string) bool {
 }
 
 // removeOld removes the backups in run's folder beyond the newest keep that
-// OwnGit's runs wrote, never the newest verified one, and forgets old run
-// records. It says what it could not remove; nothing else is touched.
-func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) string {
+// OwnGit's runs wrote, in the order the runs started, never run's own and
+// never the newest verified one, and forgets old run records. A backup is
+// found by its run record and its manifest and removed through the folder
+// that was opened, never through a link, and not when it holds anything
+// OwnGit did not write. It returns what it could not do; nothing else is
+// touched.
+func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) []string {
 	runs, err := s.Store.BackupRuns(ctx)
 	if err != nil {
-		return "Older backups were not removed because the backup records could not be read: " + err.Error()
+		return []string{"older backups were not removed because the backup records could not be read: " + err.Error()}
 	}
+	folder, err := recovery.OpenBackupFolder(run.Destination)
+	if err != nil {
+		return []string{"older backups were not removed because the folder could not be opened: " + err.Error()}
+	}
+	defer folder.Close()
 	var problems []string
 	kept, verifiedKept := 0, false
-	keptRuns := map[string]bool{}
-	for _, owned := range ownedCopies(runs, run) {
-		verified := owned.run.Verification == state.BackupVerifyPassed
-		if kept < keep || verified && !verifiedKept {
-			kept++
-			verifiedKept = verifiedKept || verified
-			keptRuns[owned.run.ID] = true
+	for _, record := range runs {
+		if record.ID == run.ID {
+			record = run
+		} else if record.Status == state.BackupRunning || record.Destination != run.Destination || record.BackupName == "" {
 			continue
 		}
-		if err := recovery.RemoveBackup(owned.path); err != nil {
-			problems = append(problems, fmt.Sprintf("could not remove the older backup %s: %v", owned.path, err))
-			keptRuns[owned.run.ID] = true
+		backup, err := openOwned(folder, record)
+		switch {
+		case record.ID == run.ID && err != nil:
+			problems = append(problems, fmt.Sprintf("the new backup %s could not be opened again, so no older backup was removed: %v", record.BackupName, err))
+			return problems
+		case errors.Is(err, errMissing):
+			s.forget(ctx, record)
+			continue
+		case errors.Is(err, errNotOwned):
+			s.forget(ctx, record)
+			problems = append(problems, fmt.Sprintf("%v; it was left in place", err))
+			continue
 		}
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("could not read the older backup %s, so it was left in place: %v", record.BackupName, err))
+			continue
+		}
+		verified := record.Verification == state.BackupVerifyPassed
+		if record.ID == run.ID || kept < keep || verified && !verifiedKept {
+			kept++
+			verifiedKept = verifiedKept || verified
+			backup.Close()
+			continue
+		}
+		err = backup.Remove()
+		backup.Close()
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("could not remove the older backup %s: %v", record.BackupName, err))
+			continue
+		}
+		s.forget(ctx, record)
+	}
+	if err := s.forgetOldRuns(ctx, run); err != nil {
+		problems = append(problems, "could not forget old backup records: "+err.Error())
+	}
+	return problems
+}
+
+// forgetOldRuns forgets the records beyond the newest runsKept of runs
+// whose backup is gone, except the newest scheduled run, whose start
+// decides when the next scheduled backup is due.
+func (s *Service) forgetOldRuns(ctx context.Context, current state.BackupRun) error {
+	runs, err := s.Store.BackupRuns(ctx)
+	if err != nil {
+		return err
 	}
 	var forget []string
+	scheduledSeen := current.Kind == state.BackupRunScheduled
 	for index, record := range runs {
-		if index >= runsKept && record.ID != run.ID && record.Status != state.BackupRunning && !keptRuns[record.ID] {
+		newestScheduled := record.Kind == state.BackupRunScheduled && !scheduledSeen
+		if record.Kind == state.BackupRunScheduled {
+			scheduledSeen = true
+		}
+		if index >= runsKept && record.ID != current.ID && record.Status != state.BackupRunning && record.BackupName == "" && !newestScheduled {
 			forget = append(forget, record.ID)
 		}
 	}
-	if err := s.Store.ForgetBackupRuns(ctx, forget); err != nil {
-		problems = append(problems, "could not forget old backup records: "+err.Error())
-	}
-	if len(problems) == 0 {
-		return ""
-	}
-	return "The backup is complete, but " + strings.Join(problems, "; ")
+	return s.Store.ForgetBackupRuns(ctx, forget)
 }
