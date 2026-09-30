@@ -139,7 +139,7 @@ says when there are more.
 Inside a clone of an OwnGit repository, `owngit pr`, `owngit check`, and
 `owngit repo` find the server and the repository by themselves when `--server`
 or `--repository` is missing: they read the clone's `origin` remote and accept
-only an OwnGit clone address, `http(s)://HOST[:PORT]/git/ID.git`. `check run`
+only an OwnGit clone address, `http(s)://HOST[:PORT]/git/NAME.git`. `check run`
 reads the clone that contains `--workdir`; the other commands read the clone
 that contains the current directory. Explicit flags always win, `--repository`
 alone keeps the inferred server, and `repo list` and `repo create` infer only
@@ -154,6 +154,13 @@ in a clone, or no `origin`), `origin_ambiguous` (`origin` has more than one
 URL), `origin_unsupported` (another kind of address, such as a GitHub URL, an
 SSH address, or a local path), or `origin_server_mismatch` (`--server` names
 another server than `origin`, and `--repository` is missing).
+
+After a repository is [renamed](OPERATIONS.md#renaming-a-repository), a
+clone's `origin` still names the old address. Commands that use general access
+or the administrator password, such as `owngit pr` and `owngit repo`, then stop
+with `repository_moved`, and `details.address` gives the new name. The helper
+commands keep working there with a helper credential for 90 days and then stop.
+Update the clone with `git remote set-url origin` and the new clone address.
 
 ### Credential files and the server line
 
@@ -268,11 +275,11 @@ owngit check run \
 Read durable state:
 
 ```sh
-owngit check task list --server URL --repository ID --credential-file PATH
-owngit check status --task TASK_ID --server URL --repository ID --credential-file PATH
-owngit check log --attempt ATTEMPT_ID --server URL --repository ID --credential-file PATH
-owngit check config show --server URL --repository ID --credential-file PATH
-owngit check cycle list --task TASK_ID --server URL --repository ID --credential-file PATH
+owngit check task list --server URL --repository NAME --credential-file PATH
+owngit check status --task TASK_ID --server URL --repository NAME --credential-file PATH
+owngit check log --attempt ATTEMPT_ID --server URL --repository NAME --credential-file PATH
+owngit check config show --server URL --repository NAME --credential-file PATH
+owngit check cycle list --task TASK_ID --server URL --repository NAME --credential-file PATH
 ```
 
 ## Command reference
@@ -297,18 +304,23 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
 - `helper-credential create` issues a credential (`--label`, `--output`
   required, `--password-file` instead of `--credential-file`);
   `helper-credential list` and `helper-credential revoke --id ID` manage
-  existing credentials. `helper-credential list` without `--repository` lists
-  every repository's credentials (API `GET /api/v1/helper-credentials`).
+  existing credentials. The output of `create` names the repository's current
+  address in `repository_address`. `helper-credential list` without
+  `--repository` lists every repository's credentials, each with its
+  repository's current address in `repository_address` (API
+  `GET /api/v1/helper-credentials`).
 - `owngit tasks` prints check tasks as the dashboard shows them, with general
   access (`--password-file` with the shared password, no helper credential):
   without `--repository`, the 10 tasks that changed most recently across all
-  repositories and `truncated`; with `--repository ID`, that repository's
+  repositories and `truncated`; with `--repository NAME`, that repository's
   tasks in the order of its Checks tab; with `--task TASK` too, the task with
   its newest 100 attempts and `attempts_truncated`. Each listed task carries
-  `latest_attempt`, or null when it has none. Errors include
-  `repository_not_found`, `task_not_found`, and `invalid_arguments` (`--task`
-  without `--repository`). The API routes are `GET /api/v1/tasks`,
-  `GET /api/v1/tasks/ID`, and `GET /api/v1/tasks/ID/TASK`.
+  `latest_attempt`, or null when it has none, and its repository's current
+  address in `repository_address`. Errors include `repository_not_found`,
+  `repository_moved` (an earlier name of a renamed repository),
+  `task_not_found`, and `invalid_arguments` (`--task` without
+  `--repository`). The API routes are `GET /api/v1/tasks`,
+  `GET /api/v1/tasks/NAME`, and `GET /api/v1/tasks/NAME/TASK`.
 
 ## Reading the result
 
@@ -393,7 +405,7 @@ strength of an unmeasured `0`.
 `owngit repo` lists, shows, and creates repositories, restores their files
 from earlier commits, and prints one JSON object. It uses general access,
 like `owngit pr`: pass the shared general-access password with
-`--password-file`, or omit it when access is open. There is no rename.
+`--password-file`, or omit it when access is open.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -402,16 +414,20 @@ owngit repo create --server https://owngit.example.test --name example-project \
   --description "Optional description"
 ```
 
-Each repository carries `id`, `name`, `description`, `created_at`, and
-`clone_url`; `repo show` adds `default_branch` when the branches can be read
-at that moment, and `push_ref_namespaces`, the ref namespaces a push may
-change ([Other ref namespaces](OPERATIONS.md#other-ref-namespaces)). `repo list` returns at most 1000 repositories, with
+Each repository carries `id`, `name`, `address`, `description`, `created_at`,
+and `clone_url`. `address` is where the repository answers: its current name
+in lowercase, which is its ID until it is renamed. `repo show` adds
+`default_branch` when the branches can be read at that moment,
+`push_ref_namespaces`, the ref namespaces a push may change
+([Other ref namespaces](OPERATIONS.md#other-ref-namespaces)), and `aliases`,
+the earlier addresses that still lead to the repository, each with the time it
+stops (`until`). `repo list` returns at most 1000 repositories, with
 `truncated` true when there are more. `repo create` applies the browser form's
 rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, or `invalid_repository_description` (over 500
 bytes).
 
-Four `repo` commands are owner actions and need the administrator password in
+Five `repo` commands are owner actions and need the administrator password in
 `--password-file` instead:
 
 - `owngit repo settings show` and `owngit repo settings set` read and change
@@ -420,11 +436,21 @@ Four `repo` commands are owner actions and need the administrator password in
   and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
 - `owngit repo default-branch --branch BRANCH` makes an existing branch the
   [default branch](OPERATIONS.md#changing-the-default-branch).
+- `owngit repo rename NAME NEW-NAME` gives a repository a new name and prints
+  it as JSON ([Renaming a repository](OPERATIONS.md#renaming-a-repository)).
+  It fails with `repository_name_taken`, `repository_busy`,
+  `invalid_repository_name`, or `reserved_repository_name`.
 - `owngit repo delete --repository NAME --files keep|delete` deletes a
   repository ([Deleting on the command line](OPERATIONS.md#deleting-on-the-command-line)).
 
-Inside a clone they take `--server` from `origin`, and all but `repo delete`
-take `--repository` from it too. The password file must then name that server
+For 90 days after a rename, a `repo` or `pr` command that names the repository
+by its old address fails with `repository_moved` and changes nothing;
+`details.address` gives the new name. After the 90 days the old address answers
+`repository_not_found`.
+
+Inside a clone, these commands take `--server` from `origin`, except
+`repo rename`, which always needs `--server`. `repo settings` and `repo default-branch` also take
+`--repository` from `origin`. The password file must then name that server
 ([Credential files and the server line](#credential-files-and-the-server-line)).
 
 `owngit repo kept-history` and `owngit repo restore` bring back files from an
@@ -602,6 +628,14 @@ a server, a path, or a command, fails with `invalid_arguments`, and a
 `repository_not_allowed`. Text that is not valid UTF-8, including a `\u`
 escape of half a surrogate pair such as a lone `\ud800`, also fails with
 `invalid_arguments`, because OwnGit never replaces text it cannot read.
+
+A repository is named by its address, as `repository_list` shows it. After a
+repository is [renamed](OPERATIONS.md#renaming-a-repository), the repository
+and pull request tools fail with `repository_moved` at the old address, and
+`details.address` gives the new one. The check tools keep working there for 90
+days. Pass the new address in `repository`, or, when the repository was fixed
+at startup, update `--repository` or the clone's `origin` and restart the
+server.
 
 ### Client configuration
 

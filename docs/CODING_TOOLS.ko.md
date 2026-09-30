@@ -69,9 +69,11 @@ Homebrew, npm, Arch Linux 패키지는 `owngit`을 `PATH`에 넣습니다. 소�
 
 ## 클론 안에서 실행하기
 
-OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 `--server`나 `--repository`가 없을 때 서버와 저장소를 스스로 찾습니다. 클론의 `origin` 원격을 읽고 OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/ID.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하고, `--repository`만 넘기면 서버는 계속 `origin`에서 가져오며, `repo list`와 `repo create`는 서버만 가져옵니다. 명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`이며, 표준 출력의 JSON은 바뀌지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다.
+OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 `--server`나 `--repository`가 없을 때 서버와 저장소를 스스로 찾습니다. 클론의 `origin` 원격을 읽고 OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/NAME.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하고, `--repository`만 넘기면 서버는 계속 `origin`에서 가져오며, `repo list`와 `repo create`는 서버만 가져옵니다. 명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`이며, 표준 출력의 JSON은 바뀌지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다.
 
 다음 경우에는 어떤 서버에도 접속하기 전에 멈춥니다. `origin_unavailable`(클론 안이 아니거나 `origin`이 없음), `origin_ambiguous`(`origin`에 URL이 둘 이상), `origin_unsupported`(GitHub URL, SSH 주소, 로컬 경로 같은 다른 종류의 주소), `origin_server_mismatch`(`--server`가 `origin`과 다른 서버를 가리키는데 `--repository`가 없음)입니다.
+
+저장소 [이름을 바꾸면](OPERATIONS.ko.md#저장소-이름-바꾸기) 클론의 `origin`에는 예전 주소가 그대로 남습니다. 이때 `owngit pr`, `owngit repo`처럼 일반 접근이나 관리자 비밀번호를 쓰는 명령은 `repository_moved`로 멈추고 `details.address`에 새 이름이 나옵니다. 체크 에이전트 명령은 체크 에이전트 토큰으로 90일 동안 예전 주소에서 계속 동작하다가 그 뒤에 멈춥니다. `git remote set-url origin`으로 클론의 주소를 새 클론 주소로 바꾸세요.
 
 ### 자격 증명 파일과 서버 줄
 
@@ -150,11 +152,11 @@ owngit check run \
 저장된 상태를 읽습니다.
 
 ```sh
-owngit check task list --server URL --repository ID --credential-file PATH
-owngit check status --task TASK_ID --server URL --repository ID --credential-file PATH
-owngit check log --attempt ATTEMPT_ID --server URL --repository ID --credential-file PATH
-owngit check config show --server URL --repository ID --credential-file PATH
-owngit check cycle list --task TASK_ID --server URL --repository ID --credential-file PATH
+owngit check task list --server URL --repository NAME --credential-file PATH
+owngit check status --task TASK_ID --server URL --repository NAME --credential-file PATH
+owngit check log --attempt ATTEMPT_ID --server URL --repository NAME --credential-file PATH
+owngit check config show --server URL --repository NAME --credential-file PATH
+owngit check cycle list --task TASK_ID --server URL --repository NAME --credential-file PATH
 ```
 
 ## 명령 참조
@@ -165,8 +167,8 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 - `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 합니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
 - `check cycle reserve`는 수정 라운드 하나를 예약하고(`--task` 필수), `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 - `check status`는 작업과 가장 최근 시도를 읽고, `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽으며, `check config show`는 브랜치와 관계없이 저장소에 가장 최근에 기록된 구성을 읽습니다. `check run`은 이 구성을 쓰지 않습니다.
-- `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다. `--repository` 없이 `helper-credential list`를 실행하면 모든 저장소의 토큰을 보여 줍니다(API `GET /api/v1/helper-credentials`).
-- `owngit tasks`는 대시보드에 보이는 대로 체크 작업을 출력합니다. 일반 접근을 쓰므로 체크 에이전트 토큰 없이 공유 비밀번호가 든 `--password-file`로 실행합니다. `--repository`가 없으면 모든 저장소에서 가장 최근에 바뀐 작업 10개와 `truncated`를, `--repository ID`를 주면 그 저장소의 작업을 체크 탭과 같은 순서로, `--task TASK`까지 주면 그 작업과 최신 시도 100개, `attempts_truncated`를 출력합니다. 목록의 각 작업에는 `latest_attempt`가 들어 있고 시도가 없으면 null입니다. 오류에는 `repository_not_found`, `task_not_found`, `invalid_arguments`(`--repository` 없이 `--task`를 준 경우)가 있습니다. API 경로는 `GET /api/v1/tasks`, `GET /api/v1/tasks/ID`, `GET /api/v1/tasks/ID/TASK`입니다.
+- `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다. `create`의 출력에는 저장소의 지금 주소가 `repository_address`로 나옵니다. `--repository` 없이 `helper-credential list`를 실행하면 모든 저장소의 토큰을 보여 주며, 토큰마다 저장소의 지금 주소가 `repository_address`로 나옵니다(API `GET /api/v1/helper-credentials`).
+- `owngit tasks`는 대시보드에 보이는 대로 체크 작업을 출력합니다. 일반 접근을 쓰므로 체크 에이전트 토큰 없이 공유 비밀번호가 든 `--password-file`로 실행합니다. `--repository`가 없으면 모든 저장소에서 가장 최근에 바뀐 작업 10개와 `truncated`를, `--repository NAME`을 주면 그 저장소의 작업을 체크 탭과 같은 순서로, `--task TASK`까지 주면 그 작업과 최신 시도 100개, `attempts_truncated`를 출력합니다. 목록의 각 작업에는 `latest_attempt`(시도가 없으면 null)와 저장소의 지금 주소인 `repository_address`가 들어 있습니다. 오류에는 `repository_not_found`, `repository_moved`(이름을 바꾼 저장소의 예전 이름), `task_not_found`, `invalid_arguments`(`--repository` 없이 `--task`를 준 경우)가 있습니다. API 경로는 `GET /api/v1/tasks`, `GET /api/v1/tasks/NAME`, `GET /api/v1/tasks/NAME/TASK`입니다.
 
 ## 결과 읽기
 
@@ -191,7 +193,7 @@ JSON 객체에는 `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`, `tas
 
 ## 저장소
 
-`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들고, 이전 커밋의 파일을 되살리며 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고 접근이 열려 있으면 생략합니다. 이름 변경은 없습니다.
+`owngit repo`는 저장소 목록을 보여 주고, 저장소 하나의 정보를 읽고, 새 저장소를 만들고, 이전 커밋의 파일을 되살리며 결과를 JSON 객체 하나로 출력합니다. `owngit pr`과 같이 일반 접근을 쓰므로 공용 비밀번호를 `--password-file`로 넘기고 접근이 열려 있으면 생략합니다.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -200,15 +202,18 @@ owngit repo create --server https://owngit.example.test --name example-project \
   --description "Optional description"
 ```
 
-저장소마다 `id`, `name`, `description`, `created_at`, `clone_url`이 있고, `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 줍니다. 푸시로 바꿀 수 있는 ref 이름공간은 `push_ref_namespaces`에 나옵니다([다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 참고). `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과)으로 실패합니다.
+저장소마다 `id`, `name`, `address`, `description`, `created_at`, `clone_url`이 있습니다. `address`는 저장소에 접속하는 주소로, 지금 이름의 소문자입니다. 이름을 바꾸기 전에는 ID와 같습니다. `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 주며 아직 이 저장소로 안내하는 예전 주소를 `aliases`에 안내가 끝나는 시각(`until`)과 함께 보여 줍니다. 푸시로 바꿀 수 있는 ref 이름공간은 `push_ref_namespaces`에 나옵니다([다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 참고). `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과)으로 실패합니다.
 
-`repo` 명령 가운데 다음 넷은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
+`repo` 명령 가운데 다음 다섯은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
 
 - `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록), [다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 설정을 읽고 바꿉니다.
 - `owngit repo default-branch --branch BRANCH`는 기존 브랜치를 [기본 브랜치](OPERATIONS.ko.md#기본-브랜치-바꾸기)로 정합니다.
+- `owngit repo rename NAME NEW-NAME`은 저장소 이름을 바꾸고 바뀐 저장소를 JSON으로 출력합니다([저장소 이름 바꾸기](OPERATIONS.ko.md#저장소-이름-바꾸기) 참고). 실패하면 `repository_name_taken`, `repository_busy`, `invalid_repository_name`, `reserved_repository_name` 중 하나가 나옵니다.
 - `owngit repo delete --repository NAME --files keep|delete`는 저장소를 삭제합니다([명령줄에서 삭제하기](OPERATIONS.ko.md#명령줄에서-삭제하기) 참고).
 
-클론 안에서는 `--server`를 `origin`에서 가져오고, `repo delete`를 뺀 나머지는 `--repository`도 `origin`에서 가져옵니다. 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
+이름을 바꾼 뒤 90일 동안 예전 주소로 저장소를 가리키는 `repo`나 `pr` 명령은 아무것도 바꾸지 않고 `repository_moved`로 실패하고 `details.address`에 새 이름이 나옵니다. 90일이 지나면 예전 주소는 `repository_not_found`로 답합니다.
+
+클론 안에서는 이 명령들이 `--server`를 `origin`에서 가져옵니다. 다만 `repo rename`에는 `--server`를 늘 넘겨야 합니다. `repo settings`와 `repo default-branch`는 `--repository`도 `origin`에서 가져옵니다. 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
 
 `owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면처럼 이전 커밋의 파일을 되살리며 일반 접근도 그 화면과 같습니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 되돌리기는 두 단계입니다. 먼저 미리 보고, 미리 보기가 돌려준 `expected_head`를 넣어 적용합니다.
 
@@ -286,6 +291,8 @@ owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OI
 비밀번호 파일과 자격 증명 파일에는 [자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄)의 규칙이 그대로 적용됩니다. 서버를 `origin`에서 가져왔으면 파일에 그 서버가 적혀 있어야 합니다. 파일은 시작할 때 한 번 읽으며 비밀 값은 결과에 나오지 않습니다. `credential_origin_required`나 `insecure_http_confirmation_required`처럼 시작에 실패하면 오류 객체를 표준 오류에 쓰고 종료 상태 1로 끝납니다. 코딩 도구는 이 내용을 MCP 서버 로그에 보여 주며 `origin`에서 무엇을 가져왔는지 알리는 줄도 거기에 나옵니다.
 
 도구 인수는 풀 리퀘스트 번호, 커밋 ID, 작업 ID, 제목, 브랜치 이름 같은 값입니다. 서버, 경로, 명령처럼 도구의 입력 스키마에 없는 인수는 `invalid_arguments`로 실패하고 시작할 때 정한 저장소가 아닌 `repository`는 `repository_not_allowed`로 실패합니다. 올바른 UTF-8이 아닌 텍스트도 `invalid_arguments`로 실패합니다. 짝 없이 홀로 쓴 `\ud800`처럼 서로게이트 쌍의 절반만 적은 `\u` 이스케이프도 마찬가지입니다. OwnGit은 읽을 수 없는 텍스트를 다른 문자로 바꾸지 않기 때문입니다.
+
+저장소는 `repository_list`에 나오는 주소로 가리킵니다. 저장소 [이름을 바꾸면](OPERATIONS.ko.md#저장소-이름-바꾸기) 예전 주소에서 저장소 도구와 풀 리퀘스트 도구는 `repository_moved`로 실패하고 `details.address`에 새 주소가 나옵니다. 체크 도구는 90일 동안 그 주소에서 계속 동작합니다. `repository`에 새 주소를 넘기세요. 시작할 때 저장소를 정했다면 `--repository`나 클론의 `origin`을 바꾼 뒤 서버를 다시 시작합니다.
 
 ### 클라이언트 설정
 

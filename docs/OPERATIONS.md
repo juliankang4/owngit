@@ -1186,11 +1186,67 @@ None is listed by default, and an empty value removes them all. A change applies
 
 `owngit repo settings show` prints the list as `extra_ref_prefixes`, and the repository settings API takes the same field, which replaces the whole list. Anyone with general access can see where a push may go: `owngit repo show` and the MCP tool `repository_show` list the accepted namespaces in `push_ref_namespaces`, or say in `push_ref_namespaces_error` why the list cannot be read.
 
+### Renaming a repository
+
+An administrator can give a repository a new name. Its pages and clone address move to the new name, and everything in the repository stays. For 90 days the old address leads to the new one, so existing clones keep working while you update them.
+
+Rename in one of these places:
+
+- On the dashboard: open the repository's Settings tab, type the new name under Name and address, and choose Rename. The form asks for the administrator password when [Settings require it](#administrator-password-check).
+- On the command line: `owngit repo rename NAME NEW-NAME --server URL --password-file ADMIN-PASSWORD-FILE`. The file holds the administrator password, and the command prints the renamed repository as JSON.
+- Through the API: `POST /api/v1/repositories/NAME/rename` with the body `{"name":"NEW-NAME"}`, signed in with Basic authentication as `admin` and the administrator password.
+
+Then point every clone at the new clone address, which the repository's page shows:
+
+```sh
+git remote set-url origin http://HOST:7654/git/NEW-NAME.git
+```
+
+Do the same for [runners and helpers](#runners-and-helpers-after-a-rename) that name the repository.
+
+#### What a rename changes
+
+The addresses of the repository's pages and its clone address use the new name in lowercase. The name shown on the dashboard keeps the letter case you typed, so `Tools-2` is shown as `Tools-2` and answers at `tools-2`. Changing only the letter case changes the shown name and keeps the address.
+
+The files, history, pull requests, checks, imports, kept history and activity stay as they are. So do the storage folder and the repository ID, which is the lowercase name the repository was created with.
+
+#### The old address
+
+For 90 days after a rename, the old address leads to the new one:
+
+- Pages and the API answer with a redirect to the same page or request at the new address.
+- Git follows the redirect, so existing clones keep fetching and pushing. Git prints `warning: redirecting to` with the new address each time.
+- The `owngit` commands and MCP tools that use general access or the administrator password do not follow it. Until you update `origin` or `--repository`, they stop with `repository_moved` and change nothing; `details.address` gives the new name. Runners and helpers work differently, as [described below](#runners-and-helpers-after-a-rename).
+
+The Settings tab lists each earlier address that still leads to the repository, with the time it stops. After that time the old address answers 404, like a repository that does not exist.
+
+An expired earlier name is free again, and a new repository or a rename can take it. From then on, a clone that still uses the old address reaches the repository that took the name: a fetch gets its content and a push writes to it. Update remotes with `git remote set-url` within the 90 days to avoid this. The first name is an exception. It stays the repository's ID, and no other repository can take it while this one exists, although the address still answers 404 once its 90 days end.
+
+#### Runners and helpers after a rename
+
+[Runner](AUTOMATIC_CHECKS.md) and [helper](CODING_TOOLS.md) credentials keep working after a rename, because they belong to the repository and not to its name. A runner or helper set up with the old address, through `--repository` or a clone's `origin`, keeps working at that address for 90 days. Switch it to the new name before then, for example `owngit runner --repository NEW-NAME`, because it stops at the old address when the 90 days end.
+
+If another repository later takes the old name, a credential of the renamed repository is refused there. When you issue a new credential, the output names the repository's current address in `repository_address`.
+
+#### When a rename is refused
+
+OwnGit refuses a name that another repository uses in any letter case: as its name, as its ID, or as an earlier name that still leads to it. It also refuses the reserved names `new` and `new-import`, and names that break the [naming rules](#repository-folder).
+
+A rename is also refused while the repository is busy: an import or a check runs, a Git operation such as a push or clone holds it, maintenance runs, or a backup is reading it. Try again once that finishes. A refused rename changes nothing.
+
+#### More about renaming
+
+- You can rename a repository back to its first name at any time. That name becomes its address again.
+- With shared-password protection, someone without the password learns nothing about a rename. The old page leads to sign-in, and the API and Git ask for the password before they redirect.
+- A Git client set with `http.followRedirects=false` does not follow the old address. It fails with `The requested URL returned error: 307`; update its remote.
+- Backups keep each repository's name and earlier addresses, and a restore brings them back with the same end times.
+- The Settings tab can rename a repository only when OwnGit can read its Git data. When it cannot, use `owngit repo rename` or the API.
+
 ### Deleting a repository
 
 An administrator deletes a repository with Delete repository, at the end of the repository's tabs. The page asks you to type the repository's name, unless that is turned off (see below), and asks for the administrator password when Settings require it. You choose what happens to the files:
 
-- **Remove from OwnGit and keep the files** moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder (`ID` is the lowercase name, and the time is UTC). Its branches, tags and kept history stay there until you remove the folder yourself. Folders under `.owngit-removed` are never listed as repositories and are not in backups.
+- **Remove from OwnGit and keep the files** moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder (`ID` is the repository ID, the lowercase name it was created with, and the time is UTC). Its branches, tags and kept history stay there until you remove the folder yourself. Folders under `.owngit-removed` are never listed as repositories and are not in backups.
 - **Delete the files too** deletes the bare repository, including its kept history. Earlier backups still contain it, and the database space its records used is freed but not securely erased.
 
 Either way, deleting removes the repository's pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, and import settings and credentials. Queued check jobs are dropped, and the name is free again.
@@ -1334,7 +1390,7 @@ owngit activity --server https://owngit.example.test --year 2025
 owngit activity --server https://owngit.example.test --date 2026-09-29
 ```
 
-The result has `year`, `date` (when given), `repository_count`, `total` (commits in the year), `complete`, `incomplete_reason` when `complete` is false (`counting`, `preparing`, `unreadable`, `preparing_or_unreadable` or `limit`), `unreadable` (repository names), `days` (each day with commits and its `count`), `entries` (newest first, with `repository`, `repository_name`, `ref`, `ref_retained`, `oid`, `subject`, `author_name` and `author_date`) and `truncated`, which is true when more than 1,000 commits matched. A year outside 1970 to 9999, or a date that is not a day of the given year, fails with `invalid_request`. When no repository could be read the command fails with `activity_unavailable` instead of reporting zero commits. The API route is `GET /api/v1/activity`, with the optional query parameters `year` and `date`.
+The result has `year`, `date` (when given), `repository_count`, `total` (commits in the year), `complete`, `incomplete_reason` when `complete` is false (`counting`, `preparing`, `unreadable`, `preparing_or_unreadable` or `limit`), `unreadable` (repository names), `days` (each day with commits and its `count`), `entries` (newest first, with `repository` (the repository ID), `repository_name`, `repository_address` (where the repository answers now), `ref`, `ref_retained`, `oid`, `subject`, `author_name` and `author_date`) and `truncated`, which is true when more than 1,000 commits matched. A year outside 1970 to 9999, or a date that is not a day of the given year, fails with `invalid_request`. When no repository could be read the command fails with `activity_unavailable` instead of reporting zero commits. The API route is `GET /api/v1/activity`, with the optional query parameters `year` and `date`.
 
 ### Repositories being prepared
 

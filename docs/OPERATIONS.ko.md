@@ -1186,11 +1186,67 @@ owngit repo settings set --repository NAME --extra-ref-prefixes refs/notes/,refs
 
 `owngit repo settings show`는 이 목록을 `extra_ref_prefixes`로 보여 줍니다. 저장소 설정 API도 같은 필드를 받으며 목록 전체를 바꿉니다. 푸시가 어디로 갈 수 있는지는 일반 접근 권한만 있어도 볼 수 있습니다. `owngit repo show`와 MCP 도구 `repository_show`는 푸시할 수 있는 이름공간을 `push_ref_namespaces`에 보여 줍니다. 목록을 읽을 수 없으면 그 이유를 `push_ref_namespaces_error`에 알려 줍니다.
 
+### 저장소 이름 바꾸기
+
+관리자는 저장소 이름을 바꿀 수 있습니다. 이름을 바꾸면 저장소 화면 주소와 클론 주소가 새 이름으로 옮겨 가고 저장소 안의 내용은 모두 그대로 남습니다. 예전 주소는 90일 동안 새 주소로 안내합니다. 그동안 기존 클론은 계속 동작하니 그 사이에 클론의 주소를 바꾸면 됩니다.
+
+이름은 다음 중 한 곳에서 바꿉니다.
+
+- 대시보드: 저장소의 설정 탭을 열고 이름과 주소 항목에 새 이름을 입력한 뒤 이름 바꾸기를 누릅니다. [설정에 따라](#관리자-비밀번호-확인) 관리자 비밀번호도 묻습니다.
+- 명령줄: `owngit repo rename NAME NEW-NAME --server URL --password-file ADMIN-PASSWORD-FILE`을 실행합니다. 파일에는 관리자 비밀번호를 넣으며 명령은 이름을 바꾼 저장소를 JSON으로 출력합니다.
+- API: `POST /api/v1/repositories/NAME/rename`에 본문 `{"name":"NEW-NAME"}`을 보냅니다. 사용자 이름 `admin`과 관리자 비밀번호로 Basic 인증을 합니다.
+
+그다음 모든 클론이 새 클론 주소를 쓰도록 바꿉니다. 새 주소는 저장소 화면에 나옵니다.
+
+```sh
+git remote set-url origin http://HOST:7654/git/NEW-NAME.git
+```
+
+저장소를 이름으로 가리키는 [러너와 체크 에이전트](#이름을-바꾼-뒤의-러너와-체크-에이전트)도 같이 바꾸세요.
+
+#### 이름을 바꾸면 달라지는 것
+
+저장소 화면 주소와 클론 주소는 새 이름을 소문자로 바꾼 것을 씁니다. 대시보드에 보이는 이름은 입력한 대소문자를 그대로 쓰므로, `Tools-2`로 바꾸면 `Tools-2`로 보이고 주소는 `tools-2`가 됩니다. 대소문자만 바꾸면 보이는 이름만 바뀌고 주소는 그대로입니다.
+
+파일, 기록, 풀 리퀘스트, 체크, 가져오기, 보관된 기록, 활동 내역은 그대로입니다. 저장 폴더와 저장소 ID도 바뀌지 않습니다. 저장소 ID는 저장소를 만들 때 쓴 이름의 소문자입니다.
+
+#### 예전 주소
+
+이름을 바꾼 뒤 90일 동안은 예전 주소가 새 주소로 안내합니다.
+
+- 화면과 API는 새 주소의 같은 화면이나 같은 요청으로 리디렉션합니다.
+- Git은 리디렉션을 따라가므로 기존 클론에서 계속 가져오고 푸시할 수 있습니다. 그때마다 Git이 `warning: redirecting to`와 새 주소를 출력합니다.
+- 일반 접근이나 관리자 비밀번호를 쓰는 `owngit` 명령과 MCP 도구는 리디렉션을 따라가지 않습니다. `origin`이나 `--repository`를 바꾸기 전까지는 아무것도 바꾸지 않고 `repository_moved`로 멈추며 `details.address`에 새 이름이 나옵니다. 러너와 체크 에이전트는 [아래](#이름을-바꾼-뒤의-러너와-체크-에이전트)처럼 다르게 동작합니다.
+
+설정 탭에는 아직 이 저장소로 안내하는 예전 주소와 각 주소의 안내가 끝나는 시각이 나옵니다. 그 시각이 지나면 예전 주소는 없는 저장소처럼 404로 답합니다.
+
+안내가 끝난 예전 이름은 다시 비어서 새 저장소를 만들거나 다른 저장소의 이름을 바꿀 때 쓸 수 있습니다. 그러면 아직 예전 주소를 쓰는 클론은 그 이름을 가져간 저장소에 연결됩니다. 가져오면 그 저장소의 내용을 받고 푸시하면 그 저장소에 씁니다. 이런 일을 막으려면 90일 안에 `git remote set-url`로 원격 주소를 바꾸세요. 처음 이름만은 예외입니다. 처음 이름은 저장소 ID로 남기 때문에 이 저장소가 있는 동안 다른 저장소가 가져갈 수 없습니다. 다만 90일이 지나면 그 주소도 404로 답합니다.
+
+#### 이름을 바꾼 뒤의 러너와 체크 에이전트
+
+[러너](AUTOMATIC_CHECKS.ko.md) 토큰과 [체크 에이전트](CODING_TOOLS.ko.md) 토큰은 이름이 아니라 저장소에 묶여 있으므로 이름을 바꾼 뒤에도 그대로 쓸 수 있습니다. `--repository`나 클론의 `origin`으로 예전 주소를 쓰도록 설정한 러너와 체크 에이전트는 90일 동안 그 주소에서 계속 동작합니다. 90일이 지나면 예전 주소에서는 멈추므로 그 전에 새 이름으로 바꾸세요. 예를 들면 `owngit runner --repository NEW-NAME`입니다.
+
+나중에 다른 저장소가 예전 이름을 가져가면, 이름을 바꾼 저장소의 토큰은 그 주소에서 거부됩니다. 새 토큰을 발급하면 출력의 `repository_address`에 저장소의 지금 주소가 나옵니다.
+
+#### 이름 바꾸기가 거부될 때
+
+다른 저장소가 대소문자와 관계없이 이미 쓰는 이름은 거부합니다. 그 저장소의 이름이나 ID이거나, 아직 그 저장소로 안내하는 예전 이름인 경우입니다. 예약된 이름 `new`, `new-import`와 [이름 규칙](#저장소-폴더)에 맞지 않는 이름도 거부합니다.
+
+저장소가 사용 중일 때도 거부합니다. 가져오기나 체크가 실행 중일 때, 푸시나 클론 같은 Git 작업이 저장소를 쓰고 있을 때, 유지 관리가 실행 중일 때, 백업이 저장소를 읽고 있을 때입니다. 끝난 뒤 다시 시도하세요. 거부된 경우에는 아무것도 바뀌지 않습니다.
+
+#### 이름 바꾸기 더 알아보기
+
+- 처음 이름으로는 언제든 되돌릴 수 있습니다. 되돌리면 그 이름이 다시 저장소 주소가 됩니다.
+- 공용 비밀번호로 보호할 때 비밀번호가 없는 사람은 이름이 바뀌었다는 사실을 알 수 없습니다. 예전 화면 주소로 들어오면 로그인 화면으로 보내고 API와 Git은 리디렉션하기 전에 비밀번호부터 묻습니다.
+- `http.followRedirects=false`로 설정한 Git 클라이언트는 예전 주소에서 리디렉션을 따라가지 않고 `The requested URL returned error: 307`로 실패합니다. 이 클론의 원격 주소를 바꾸세요.
+- 백업에는 저장소마다 이름과 예전 주소가 들어 있으며 복원하면 안내가 끝나는 시각까지 그대로 돌아옵니다.
+- 설정 탭에서는 OwnGit이 저장소의 Git 데이터를 읽을 수 있을 때만 이름을 바꿀 수 있습니다. 읽을 수 없으면 `owngit repo rename`이나 API를 쓰세요.
+
 ### 저장소 삭제하기
 
 관리자는 저장소 탭 맨 끝의 저장소 삭제에서 저장소를 삭제합니다. 이 페이지는 저장소 이름을 입력하게 하고(아래처럼 끌 수 있습니다) 설정에 따라 관리자 비밀번호도 묻습니다. 파일을 어떻게 할지는 직접 고릅니다.
 
-- **OwnGit에서만 제거하고 파일은 남기기**를 고르면 bare 저장소를 그대로 저장소 폴더 안의 `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git`로 옮깁니다(`ID`는 소문자 저장소 이름, 시각은 UTC). 브랜치, 태그, 보관된 기록은 직접 지우기 전까지 그 폴더에 남습니다. `.owngit-removed` 아래의 폴더는 저장소 목록에 나오지 않으며 백업에도 들어가지 않습니다.
+- **OwnGit에서만 제거하고 파일은 남기기**를 고르면 bare 저장소를 그대로 저장소 폴더 안의 `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git`로 옮깁니다(`ID`는 저장소를 만들 때 쓴 이름의 소문자인 저장소 ID, 시각은 UTC). 브랜치, 태그, 보관된 기록은 직접 지우기 전까지 그 폴더에 남습니다. `.owngit-removed` 아래의 폴더는 저장소 목록에 나오지 않으며 백업에도 들어가지 않습니다.
 - **파일까지 영구 삭제**를 고르면 보관된 기록을 포함해 bare 저장소를 지웁니다. 이전 백업에는 그대로 들어 있고 그 기록이 쓰던 데이터베이스 공간은 비워지지만 안전하게 지워지지는 않습니다.
 
 어느 쪽이든 풀 리퀘스트, 리뷰, 작업(task), 체크 설정, 체크 작업(job)과 결과, 체크 에이전트 토큰과 러너 토큰, 가져오기 설정과 인증 정보는 사라집니다. 대기 중인 체크 작업은 버려지며 그 이름을 다시 쓸 수 있습니다.
@@ -1334,7 +1390,7 @@ owngit activity --server https://owngit.example.test --year 2025
 owngit activity --server https://owngit.example.test --date 2026-09-29
 ```
 
-결과에는 `year`, `date`(지정했을 때), `repository_count`, `total`(그해의 커밋 수), `complete`, `complete`가 false일 때의 `incomplete_reason`(`counting`, `preparing`, `unreadable`, `preparing_or_unreadable`, `limit` 중 하나), `unreadable`(저장소 이름), `days`(커밋이 있는 날과 그날의 `count`), `entries`(최신순이며 `repository`, `repository_name`, `ref`, `ref_retained`, `oid`, `subject`, `author_name`, `author_date`가 들어 있음), `truncated`가 들어 있습니다. `truncated`는 해당하는 커밋이 1,000개보다 많을 때 true입니다. 1970년부터 9999년 밖의 연도나 지정한 해의 날짜가 아닌 값은 `invalid_request`로 실패합니다. 읽을 수 있는 저장소가 하나도 없으면 커밋 0개로 답하지 않고 `activity_unavailable`로 실패합니다. API 경로는 `GET /api/v1/activity`이고 선택 쿼리 매개변수는 `year`와 `date`입니다.
+결과에는 `year`, `date`(지정했을 때), `repository_count`, `total`(그해의 커밋 수), `complete`, `complete`가 false일 때의 `incomplete_reason`(`counting`, `preparing`, `unreadable`, `preparing_or_unreadable`, `limit` 중 하나), `unreadable`(저장소 이름), `days`(커밋이 있는 날과 그날의 `count`), `entries`(최신순이며 `repository`(저장소 ID), `repository_name`, `repository_address`(저장소의 지금 주소), `ref`, `ref_retained`, `oid`, `subject`, `author_name`, `author_date`가 들어 있음), `truncated`가 들어 있습니다. `truncated`는 해당하는 커밋이 1,000개보다 많을 때 true입니다. 1970년부터 9999년 밖의 연도나 지정한 해의 날짜가 아닌 값은 `invalid_request`로 실패합니다. 읽을 수 있는 저장소가 하나도 없으면 커밋 0개로 답하지 않고 `activity_unavailable`로 실패합니다. API 경로는 `GET /api/v1/activity`이고 선택 쿼리 매개변수는 `year`와 `date`입니다.
 
 ### 준비 중인 저장소
 
