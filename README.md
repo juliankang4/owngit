@@ -199,7 +199,7 @@ Create a repository from the dashboard, then use its clone address, for example 
 
 ## Resource use
 
-OwnGit is one program of about 30 MB (an 18 MB download) plus the Git already on the computer. Measured with OwnGit 1.1.0 after setup, once memory had settled with nobody using it:
+OwnGit is one program of about 35 to 38 MB (a 20 to 22 MB download, depending on the system) plus the Git already on the computer. Measured with OwnGit 1.1.0 after setup, once memory had settled with nobody using it:
 
 | | Linux x64 | macOS (Apple silicon) |
 | --- | --- | --- |
