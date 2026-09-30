@@ -209,8 +209,9 @@ const (
 	// Fields: admin_password, initial_branch.
 	ActionSaveInitialBranch = "save_initial_branch"
 	// ActionSaveTransfers saves the Git transfer limits. Fields:
-	// admin_password, transfer_size and transfer_time, each with its
-	// _unit (see LimitInput).
+	// admin_password, transfer_per_repository, transfer_extra_slots, and
+	// transfer_size, transfer_time, transfer_idle and transfer_queue, each
+	// with its _unit (see LimitInput).
 	ActionSaveTransfers = "save_transfers"
 	// ActionSaveCheckLogs saves how long raw check logs are kept. Fields:
 	// admin_password, check_logs (one of CheckLogChoices).
@@ -462,8 +463,12 @@ type Policies struct {
 	// InitialBranch is the branch new repositories start on.
 	InitialBranch string
 	// TransferSize and TransferTime are the Git transfer limits: the
-	// largest transfer and the longest.
-	TransferSize, TransferTime LimitInput
+	// largest transfer and the longest. TransferPerRepository,
+	// TransferExtraSlots, TransferIdle and TransferQueue decide how many
+	// run at once and how long they wait.
+	TransferSize, TransferTime                LimitInput
+	TransferPerRepository, TransferExtraSlots string
+	TransferIdle, TransferQueue               LimitInput
 	// CheckLogs is how long raw check logs are kept, one of
 	// CheckLogChoices.
 	CheckLogs string

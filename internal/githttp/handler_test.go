@@ -22,7 +22,7 @@ import (
 
 func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var sawChunked atomic.Bool
@@ -126,7 +126,7 @@ func TestSmartHTTPNormalAndChunkedPushCloneFetch(t *testing.T) {
 
 func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return false, nil }
 	server := httptest.NewServer(handler)
@@ -179,7 +179,7 @@ func TestSmartHTTPGatesEveryEndpointAndRejectsDumbPaths(t *testing.T) {
 // push end first.
 func TestPushReleasesTheRepositoryBeforeTheClientFinishes(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var finished atomic.Bool
@@ -273,7 +273,7 @@ func httpGitBytes(directory string, arguments ...string) ([]byte, error) {
 // including a name that ends with a dot.
 func TestSmartHTTPServesEveryCreatableRepositoryName(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)

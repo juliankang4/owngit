@@ -49,7 +49,7 @@ func TestARefusedPushKeepsTheQuarantineOfAnotherPush(t *testing.T) {
 
 	// A push to sample over the request limit of a second handler for the
 	// same repositories.
-	limited, err := New(handler.Git, handler.Repositories, "", 2)
+	limited, err := New(handler.Git, handler.Repositories, "")
 	noErr(t, err)
 	limited.Authorize = handler.Authorize
 	useLimits(t, limited, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })

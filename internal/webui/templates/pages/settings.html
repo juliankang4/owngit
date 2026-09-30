@@ -802,8 +802,11 @@
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
-{{/* The size and time limits of each Git transfer, with explicit units. */}}
-{{$gn := forAction $p.Group "transfer" $p.Notices}}{{$focus := firstError $gn "transfer_size" "transfer_time" "admin_password"}}
+{{/* The size and time limits of each Git transfer, with explicit units.
+     How many run at once and how long they wait are an advanced change,
+     collapsed unless a save was refused or the saved limits cannot be
+     read. */}}
+{{$gn := forAction $p.Group "transfer" $p.Notices}}{{$focus := firstError $gn "transfer_size" "transfer_time" "transfer_per_repository" "transfer_extra_slots" "transfer_idle" "transfer_queue" "admin_password"}}
 {{$bad := index $p.Policies.Unreadable "transfer"}}
 <section class="grp" id="grp-transfer" aria-labelledby="grp-transfer-h" data-group="transfer"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
   {{template "grpHead" dict "Lang" $lang "Group" "transfer" "Title" (bi $lang "transfer.title")}}
@@ -817,6 +820,15 @@
     {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-size" "Field" "transfer_size" "Units" (limitUnits "size") "Saved" $p.Policies.TransferSize "Label" (code "transfer.size") "Help" (code "transfer.size_help")}}
     {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-time" "Field" "transfer_time" "Units" (limitUnits "duration") "Saved" $p.Policies.TransferTime "Label" (code "transfer.time") "Help" (code "transfer.time_help")}}
     <p class="wn">{{icon "warning"}}<span>{{bi $lang "transfer.higher"}}</span></p>
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "transfer.advanced"}}</summary>
+      <p class="scope">{{icon "info"}}<span>{{bi $lang "transfer.slots_scope"}}</span></p>
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-per-repository" "Field" "transfer_per_repository" "Saved" $p.Policies.TransferPerRepository "Label" (code "transfer.per_repository") "Help" (code "transfer.per_repository_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-extra-slots" "Field" "transfer_extra_slots" "Saved" $p.Policies.TransferExtraSlots "Label" (code "transfer.extra_slots") "Help" (code "transfer.extra_slots_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-idle" "Field" "transfer_idle" "Units" (limitUnits "duration") "Saved" $p.Policies.TransferIdle "Label" (code "transfer.idle") "Help" (code "transfer.idle_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "transfer" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "transfer-queue" "Field" "transfer_queue" "Units" (limitUnits "duration") "Saved" $p.Policies.TransferQueue "Label" (code "transfer.queue") "Help" (code "transfer.queue_help")}}
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "transfer.slots_warning"}}</span></p>
+    </details>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "transfer" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
   </form>
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
@@ -969,6 +981,18 @@
       {{end}}
     </select>
   </div>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
+  <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
+</div>
+{{end}}
+
+{{define "setCount"}}{{$lang := .Lang}}{{$p := .Page}}{{$help := print .ID "-help"}}
+{{$value := draft $p.Group $p.Draft .Group .Field .Saved}}
+<div class="f f--row">
+  <label for="{{.ID}}">{{bi $lang .Label}}</label>
+  <input id="{{.ID}}" name="{{.Field}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" required
+         value="{{$value}}" data-saved="{{if not .Bad}}{{.Saved}}{{end}}"
+         {{template "netDescribed" dict "Notices" .Notices "Scope" .Group "Field" .Field "Help" $help}}{{if eq .Focus .Field}} autofocus{{end}}>
   {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
   <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
 </div>

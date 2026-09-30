@@ -130,7 +130,7 @@ func newPRCLIFixture(t *testing.T) prCLIFixture {
 	if _, err := manager.Create(ctx, "project", "CLI integration fixture"); err != nil {
 		t.Fatal(err)
 	}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	authentication := &auth.Manager{Store: store}
 	hosts := server.NewHostPolicy()

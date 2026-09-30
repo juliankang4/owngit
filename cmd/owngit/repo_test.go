@@ -42,7 +42,7 @@ func startRepositoryCLIServer(t *testing.T, sharedPassword string) (serverURL, p
 	runner, err := gitexec.New("", filepath.Join(stateRoot, "runtime"))
 	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{

@@ -15,7 +15,7 @@ import (
 // logs why, so the documented limits can be recognised in the server log.
 func TestTransferLimitsAreLogged(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)

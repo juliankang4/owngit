@@ -177,7 +177,7 @@ func TestAChunkedPushOverTheRequestLimitGets413(t *testing.T) {
 // refuses the transfer instead of falling back to a default.
 func TestTransfersUseTheLimitsSavedWhenTheyStart(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	logs := captureLog(t)
@@ -194,7 +194,7 @@ func TestTransfersUseTheLimitsSavedWhenTheyStart(t *testing.T) {
 	}
 	save := func(bytes int64) {
 		t.Helper()
-		noErr(t, manager.Store.SavePolicies(context.Background(), state.PolicyChange{GitTransfer: &state.GitTransferLimits{MaximumBytes: bytes, Operation: time.Minute}}))
+		noErr(t, manager.Store.SavePolicies(context.Background(), state.PolicyChange{GitTransfer: &state.GitTransferLimits{MaximumBytes: bytes, Operation: time.Minute, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second}}))
 	}
 	save(1 << 20)
 	if status := push(); status != http.StatusRequestEntityTooLarge {

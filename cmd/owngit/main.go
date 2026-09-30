@@ -523,7 +523,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		stopPrune()
 		<-pruned
 	}()
-	gitHandler, err := githttp.New(runner, repositories, backendPath, 4)
+	gitHandler, err := githttp.New(runner, repositories, backendPath)
 	if err != nil {
 		return err
 	}

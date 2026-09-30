@@ -110,7 +110,7 @@ func newGzipFetchFixture(t *testing.T, protocol string) *gzipFetchFixture {
 	if _, err := manager.Create(context.Background(), "same", ""); err != nil {
 		t.Fatal(err)
 	}
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	fixture := &gzipFetchFixture{manager: manager, gzipRequests: &atomic.Int64{},
@@ -170,7 +170,7 @@ func (fixture *gzipFetchFixture) expectGzip(t *testing.T, run func()) {
 
 func TestSmartHTTPRefusesUnsupportedContentEncoding(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
@@ -191,7 +191,7 @@ func TestSmartHTTPRefusesUnsupportedContentEncoding(t *testing.T) {
 
 func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
@@ -242,7 +242,7 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 // complete request.
 func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
@@ -279,7 +279,7 @@ func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 // body with a correct checksum shows the request itself is a valid push.
 func TestSmartHTTPCorruptGzipPushDoesNotUpdateRefs(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
@@ -331,7 +331,7 @@ func badGzipChecksum(valid []byte) []byte {
 // body inflated before the backend, that buffer also bounds gzip requests.
 func TestSmartHTTPBoundsGzipUploadPackBombAtTheBackendBuffer(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
@@ -348,7 +348,7 @@ func TestSmartHTTPBoundsGzipUploadPackBombAtTheBackendBuffer(t *testing.T) {
 
 func TestSmartHTTPLogsBackendProtocolErrorsWithoutRequestContent(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)

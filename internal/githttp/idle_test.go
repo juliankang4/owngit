@@ -48,11 +48,10 @@ func idleFixture(t *testing.T, size int, idle time.Duration) (*Handler, string, 
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-q", "-m", "random")
 	runHTTPGit(t, work, "push", "-q", repositoryPath, "HEAD:refs/heads/main")
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-	handler.IdleTimeout = idle
-	useLimits(t, handler, func(limits *Limits) { limits.Operation = 20 * time.Second })
+	useLimits(t, handler, func(limits *Limits) { limits.Operation, limits.Idle = 20*time.Second, idle })
 	return handler, work, httpGitOutput(t, work, "rev-parse", "HEAD")
 }
 

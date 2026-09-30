@@ -57,7 +57,7 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	if _, err := manager.Create(ctx, "project", "check CLI fixture"); err != nil {
 		t.Fatal(err)
 	}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{
@@ -483,7 +483,7 @@ func TestCompensatingRevokeIsScopedAndIdempotent(t *testing.T) {
 	if _, err := manager.Create(ctx, "project", "compensate"); err != nil {
 		t.Fatal(err)
 	}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{

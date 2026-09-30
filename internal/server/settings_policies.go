@@ -3,8 +3,8 @@ package server
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -90,6 +90,10 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 		}
 		policies.TransferSize = webui.FormatLimit(webui.LimitSize, limits.MaximumBytes, "")
 		policies.TransferTime = webui.FormatLimit(webui.LimitDuration, limits.Operation.Milliseconds(), "")
+		policies.TransferPerRepository = strconv.Itoa(limits.PerRepository)
+		policies.TransferExtraSlots = strconv.Itoa(limits.ExtraSlots)
+		policies.TransferIdle = webui.FormatLimit(webui.LimitDuration, limits.Idle.Milliseconds(), "")
+		policies.TransferQueue = webui.FormatLimit(webui.LimitDuration, limits.QueueWait.Milliseconds(), "")
 		keep, err := app.Store.KeptHistory(request.Context())
 		if err = unreadable(webui.GroupHistory, err); err != nil {
 			return webui.Policies{}, err
@@ -123,25 +127,59 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 // transferLimitsForm reads the Git transfer limits a Settings form sent,
 // or the notices that refuse them.
 func transferLimitsForm(request *http.Request) (state.GitTransferLimits, []webui.Notice) {
-	var limits state.GitTransferLimits
-	var notices []webui.Notice
-	size, err := webui.ParseLimit(webui.LimitSize, webui.LimitInput{Amount: postValue(request, "transfer_size"), Unit: postValue(request, "transfer_size_unit")})
+	form := &limitsForm{request: request}
+	limits := state.GitTransferLimits{
+		MaximumBytes:  form.size("transfer_size", state.MinimumTransferBytes, state.MaximumTransferBytes),
+		Operation:     form.duration("transfer_time", state.MinimumTransferOperation, state.MaximumTransferOperation),
+		PerRepository: form.count("transfer_per_repository", 1, state.MaximumTransfersAtOnce),
+		ExtraSlots:    form.count("transfer_extra_slots", 0, state.MaximumTransfersAtOnce),
+		Idle:          form.duration("transfer_idle", state.MinimumTransferIdle, state.MaximumTransferIdle),
+		QueueWait:     form.duration("transfer_queue", state.MinimumTransferQueue, state.MaximumTransferQueue),
+	}
+	return limits, form.notices
+}
+
+// limitsForm reads the numeric fields of a Settings form, each checked
+// against its bounds, and collects a notice for each field that is
+// refused.
+type limitsForm struct {
+	request *http.Request
+	notices []webui.Notice
+}
+
+// count reads a whole number from minimum to maximum.
+func (form *limitsForm) count(field string, minimum, maximum int) int {
+	value, err := strconv.Atoi(strings.TrimSpace(postValue(form.request, field)))
+	if err != nil || value < minimum || value > maximum {
+		form.notices = append(form.notices, webui.Error(field, webui.MsgCCFieldRange))
+	}
+	return value
+}
+
+// size reads an amount with its unit (field_unit) in bytes, from minimum
+// to maximum.
+func (form *limitsForm) size(field string, minimum, maximum int64) int64 {
+	return form.limit(webui.LimitSize, field, minimum, maximum, 1)
+}
+
+// duration reads an amount with its unit (field_unit), a whole number of
+// seconds from minimum to maximum.
+func (form *limitsForm) duration(field string, minimum, maximum time.Duration) time.Duration {
+	milliseconds := form.limit(webui.LimitDuration, field, minimum.Milliseconds(), maximum.Milliseconds(), 1000)
+	return time.Duration(milliseconds) * time.Millisecond
+}
+
+// limit reads an amount of kind in its stored unit, a multiple of step
+// from minimum to maximum.
+func (form *limitsForm) limit(kind webui.LimitKind, field string, minimum, maximum, step int64) int64 {
+	value, err := webui.ParseLimit(kind, webui.LimitInput{Amount: postValue(form.request, field), Unit: postValue(form.request, field+"_unit")})
 	switch {
 	case err != nil:
-		notices = append(notices, webui.Error("transfer_size", webui.LimitNoticeCode(webui.LimitSize, err)))
-	case !state.ValidTransferBytes(size):
-		notices = append(notices, webui.Error("transfer_size", webui.MsgCCFieldRange))
+		form.notices = append(form.notices, webui.Error(field, webui.LimitNoticeCode(kind, err)))
+	case value < minimum || value > maximum || value%step != 0:
+		form.notices = append(form.notices, webui.Error(field, webui.MsgCCFieldRange))
 	}
-	milliseconds, err := webui.ParseLimit(webui.LimitDuration, webui.LimitInput{Amount: postValue(request, "transfer_time"), Unit: postValue(request, "transfer_time_unit")})
-	operation := time.Duration(milliseconds) * time.Millisecond
-	switch {
-	case err != nil:
-		notices = append(notices, webui.Error("transfer_time", webui.LimitNoticeCode(webui.LimitDuration, err)))
-	case milliseconds > state.MaximumTransferOperation.Milliseconds() || !state.ValidTransferOperation(operation):
-		notices = append(notices, webui.Error("transfer_time", webui.MsgCCFieldRange))
-	}
-	limits.MaximumBytes, limits.Operation = size, operation
-	return limits, notices
+	return value
 }
 
 // settingsJSON is the owner API's view of the policies. A PATCH names only
@@ -152,9 +190,9 @@ type settingsJSON struct {
 	Session *string `json:"session,omitempty"`
 	// InitialBranch is the branch new repositories start on.
 	InitialBranch *string `json:"initial_branch,omitempty"`
-	// GitTransfer holds the Git transfer limits. A PATCH may name one of
-	// them; the other keeps its saved value.
-	GitTransfer *gitTransferJSON `json:"git_transfer,omitempty"`
+	// GitTransfer holds the Git transfer limits. A PATCH may name some of
+	// them; the others keep their saved values.
+	GitTransfer *state.GitTransferFields `json:"git_transfer,omitempty"`
 	// CheckLogs is how long raw check logs are kept, one of
 	// state.CheckLogRetentions.
 	CheckLogs *string `json:"check_logs,omitempty"`
@@ -170,11 +208,6 @@ type settingsJSON struct {
 	// CrossSiteLinks is "strict" or "lax": whether a link from another site
 	// keeps the shared sign-in.
 	CrossSiteLinks *string `json:"cross_site_links,omitempty"`
-}
-
-type gitTransferJSON struct {
-	MaximumBytes     *int64 `json:"maximum_bytes,omitempty"`
-	OperationSeconds *int64 `json:"operation_seconds,omitempty"`
 }
 
 type settingsResponse struct {
@@ -235,7 +268,7 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			policies.InitialBranch = change.InitialBranch
 		}
 		if change.GitTransfer != nil {
-			limits, problem, err := app.changedTransferLimits(request.Context(), *change.GitTransfer)
+			limits, problem, err := changedGroup(request.Context(), "git_transfer", *change.GitTransfer, app.Store.GitTransferLimits)
 			if err != nil {
 				app.writeSettingsReadError(writer, request, err)
 				return
@@ -245,6 +278,9 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				return
 			}
 			policies.GitTransfer = &limits
+			if limits.Looser() {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgTransferSavedLooser))
+			}
 		}
 		if change.CheckLogs != nil {
 			retention, valid := state.ParseCheckLogRetention(*change.CheckLogs)
@@ -344,7 +380,7 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 		current.InitialBranch = &branch
 	}
 	if limits, readErr := app.Store.GitTransferLimits(ctx); keep(readErr) {
-		current.GitTransfer = &gitTransferJSON{MaximumBytes: &limits.MaximumBytes, OperationSeconds: pointer(int64(limits.Operation / time.Second))}
+		current.GitTransfer = pointer(limits.Fields())
 	}
 	if retention, readErr := app.Store.CheckLogRetention(ctx); keep(readErr) {
 		current.CheckLogs = pointer(string(retention))
@@ -364,30 +400,38 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	return current, unreadable, err
 }
 
-// changedTransferLimits applies a PATCH of the Git transfer limits to the
-// saved ones. problem says why the result is refused; err is a saved value
-// that cannot be read, which the owner replaces by naming both limits.
-func (app *App) changedTransferLimits(ctx context.Context, change gitTransferJSON) (limits state.GitTransferLimits, problem string, err error) {
-	if change.MaximumBytes == nil && change.OperationSeconds == nil {
-		return limits, "git_transfer must name maximum_bytes, operation_seconds or both.", nil
+// changedGroup applies change, a PATCH of the group named name in its
+// JSON form, to the value read saved. problem says why the result is
+// refused; err is a saved value that cannot be read, which a change that
+// names every field of the group replaces.
+func changedGroup[T any, F interface{ Apply(T) (T, error) }](ctx context.Context, name string, change F, read func(context.Context) (T, error)) (value T, problem string, err error) {
+	named, total := namedFields(change)
+	if named == 0 {
+		return value, name + " must name at least one of its fields.", nil
 	}
-	if change.MaximumBytes == nil || change.OperationSeconds == nil {
-		if limits, err = app.Store.GitTransferLimits(ctx); err != nil {
-			return limits, "", err
+	saved, err := read(ctx)
+	if errors.As(err, new(*state.PolicyError)) && named == total {
+		saved, err = value, nil
+	}
+	if err != nil {
+		return value, "", err
+	}
+	if value, err = change.Apply(saved); err != nil {
+		return value, name + ": " + err.Error() + ".", nil
+	}
+	return value, "", nil
+}
+
+// namedFields counts the fields a group's JSON form names: those that are
+// not nil, of all its fields.
+func namedFields(fields any) (named, total int) {
+	value := reflect.ValueOf(fields)
+	for index := range value.NumField() {
+		if !value.Field(index).IsNil() {
+			named++
 		}
 	}
-	if change.MaximumBytes != nil {
-		limits.MaximumBytes = *change.MaximumBytes
-	}
-	if seconds := change.OperationSeconds; seconds != nil {
-		if limits.Operation, err = state.TransferOperationSeconds(*seconds); err != nil {
-			return limits, fmt.Sprintf("git_transfer: operation_seconds is from %d to %d.", int64(state.MinimumTransferOperation/time.Second), int64(state.MaximumTransferOperation/time.Second)), nil
-		}
-	}
-	if err := limits.Validate(); err != nil {
-		return limits, "git_transfer: " + err.Error() + ".", nil
-	}
-	return limits, "", nil
+	return named, value.NumField()
 }
 
 // writeSettingsReadError answers a policy that could not be read: one whose

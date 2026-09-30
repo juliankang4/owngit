@@ -259,9 +259,9 @@ func TestRestoreStartsServerSettingsAtTheirDefaultsAndSaysSo(t *testing.T) {
 	ctx := context.Background()
 	for name, change := range map[string]state.PolicyChange{
 		"strict": {Session: pointerTo(state.Session1Hour), InitialBranch: pointerTo("trunk"), CheckLogs: pointerTo(state.CheckLogs7Days),
-			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MinimumTransferBytes, Operation: state.MinimumTransferOperation}},
+			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MinimumTransferBytes, Operation: state.MinimumTransferOperation, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second}},
 		"loose": {Session: pointerTo(state.Session30Days), InitialBranch: pointerTo("develop"), CheckLogs: pointerTo(state.KeepCheckLogs),
-			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MaximumTransferBytes, Operation: state.MaximumTransferOperation}},
+			GitTransfer: &state.GitTransferLimits{MaximumBytes: state.MaximumTransferBytes, Operation: state.MaximumTransferOperation, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()

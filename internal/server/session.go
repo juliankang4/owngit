@@ -448,6 +448,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgInitialBranchSaved)}
 	case "transfer_saved":
 		return []webui.Notice{webui.Success(webui.MsgTransferSaved)}
+	case "transfer_looser":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgTransferSavedLooser}}
 	case "check_logs_saved":
 		return []webui.Notice{webui.Success(webui.MsgCheckLogsSaved)}
 	case "kept_history_on":

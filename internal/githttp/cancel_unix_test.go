@@ -26,7 +26,7 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	backend := filepath.Join(root, "git-http-backend")
 	script := "#!/bin/sh\nsleep 60 &\nchild=$!\nprintf '%s' \"$child\" > " + quoteShell(pidFile) + "\nwait \"$child\"\n"
 	noErr(t, os.WriteFile(backend, []byte(script), 0o700))
-	handler, err := New(runner, manager, backend, 1)
+	handler, err := New(runner, manager, backend)
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	ctx, cancel := context.WithCancel(context.Background())
@@ -106,7 +106,7 @@ func TestAbandonedOperationWithStalledUploadReturnsPromptly(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			manager, runner := newHTTPTestRepository(t)
 			runner.TerminationGrace = 25 * time.Millisecond
-			handler, err := New(runner, manager, test.backend, 1)
+			handler, err := New(runner, manager, test.backend)
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			// A handler that waited for the operation deadline would take 30

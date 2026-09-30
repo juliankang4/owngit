@@ -55,16 +55,8 @@ type Handler struct {
 	// Limits returns the limits of a transfer that starts now. New reads
 	// the ones the owner saved (state.GitTransferLimits), so a change
 	// applies to the next transfer. A transfer whose limits cannot be read
-	// is refused with 503.
-	Limits func(context.Context) (Limits, error)
-	// IdleTimeout stops a transfer whose client moves no data for this long:
-	// a response write the client does not accept, or a request body read
-	// that receives nothing. Time that Git spends working without output does
-	// not count. Zero leaves only the operation limit (Limits.Operation).
-	IdleTimeout time.Duration
-	// QueueWait bounds how long a request waits for a transfer slot before
-	// it is refused with 503 and Retry-After.
-	QueueWait   time.Duration
+	// is refused with 503, or 409 naming the setting.
+	Limits      func(context.Context) (Limits, error)
 	slots       *admission
 	active      atomic.Int64
 	operationMu sync.Mutex
@@ -73,7 +65,7 @@ type Handler struct {
 }
 
 // Limits bound one transfer: a clone, fetch or push, or an archive
-// download. Zero leaves a bound out.
+// download. Zero leaves a size, operation or idle bound out.
 type Limits struct {
 	// MaximumRequest bounds the bytes a transfer receives, after gzip is
 	// inflated, and MaximumResponse the bytes it sends.
@@ -83,12 +75,19 @@ type Limits struct {
 	// it gets a transfer slot, and an archive download from when it starts
 	// to wait for one.
 	Operation time.Duration
+	// Idle stops a transfer whose client moves no data for this long: a
+	// response write the client does not accept, or a request body read
+	// that receives nothing. Time that Git spends working without output
+	// does not count.
+	Idle time.Duration
+	// PerRepository, ExtraSlots and QueueWait decide when it gets a slot
+	// (see admission). A request that finds none within QueueWait is
+	// refused with 503 and Retry-After.
+	PerRepository, ExtraSlots int
+	QueueWait                 time.Duration
 }
 
-func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string, maximumConcurrent int) (*Handler, error) {
-	if maximumConcurrent <= 0 {
-		maximumConcurrent = 4
-	}
+func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string) (*Handler, error) {
 	if backendPath == "" {
 		var err error
 		backendPath, err = DiscoverBackend(context.Background(), git)
@@ -104,10 +103,18 @@ func New(git *gitexec.Runner, repositories *repository.Manager, backendPath stri
 		Git: git, Repositories: repositories, BackendPath: backendPath,
 		Limits: func(ctx context.Context) (Limits, error) {
 			saved, err := repositories.Store.GitTransferLimits(ctx)
-			return Limits{MaximumRequest: saved.MaximumBytes, MaximumResponse: saved.MaximumBytes, Operation: saved.Operation}, err
+			return savedLimits(saved), err
 		},
-		IdleTimeout: time.Minute, QueueWait: 90 * time.Second, slots: newAdmission(maximumConcurrent),
+		slots: newAdmission(),
 	}, nil
+}
+
+// savedLimits are the limits of a transfer under saved.
+func savedLimits(saved state.GitTransferLimits) Limits {
+	return Limits{
+		MaximumRequest: saved.MaximumBytes, MaximumResponse: saved.MaximumBytes, Operation: saved.Operation, Idle: saved.Idle,
+		PerRepository: saved.PerRepository, ExtraSlots: saved.ExtraSlots, QueueWait: saved.QueueWait,
+	}
 }
 
 // transferLimits reads the limits of a transfer that starts now. When they
@@ -220,9 +227,9 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	h.operations.Add(1)
 	h.operationMu.Unlock()
 	defer h.operations.Done()
-	release, err := h.slots.acquire(request.Context(), route.repositoryID, h.QueueWait)
+	release, err := h.slots.acquire(request.Context(), route.repositoryID, limits)
 	if errors.Is(err, errBusy) {
-		logGitFailure(route, request.Method, "no Git transfer slot became free within "+h.QueueWait.String())
+		logGitFailure(route, request.Method, "no Git transfer slot became free within "+limits.QueueWait.String())
 		writer.Header().Set("Retry-After", "10")
 		http.Error(writer, "Git service is busy with other transfers; try again shortly", http.StatusServiceUnavailable)
 		return
@@ -286,14 +293,14 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		_ = controller.SetReadDeadline(deadline)
 		_ = controller.SetWriteDeadline(deadline)
 	}
-	if limits.Operation > 0 || h.IdleTimeout > 0 {
+	if limits.Operation > 0 || limits.Idle > 0 {
 		defer func() {
 			_ = controller.SetReadDeadline(time.Time{})
 			_ = controller.SetWriteDeadline(time.Time{})
 		}()
 	}
 	defer cancel()
-	deadlines := &transferDeadlines{controller: controller, idle: h.IdleTimeout, overall: deadline}
+	deadlines := &transferDeadlines{controller: controller, idle: limits.Idle, overall: deadline}
 	request = request.WithContext(operationContext)
 
 	contentLength := request.ContentLength

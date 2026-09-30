@@ -16,12 +16,13 @@ import (
 // always finds the extra slot, and a request that finds no slot waits only for
 // the queue wait.
 func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
-	slots := newAdmission(4)
+	slots := newAdmission()
 	ctx := context.Background()
+	limits := func(wait time.Duration) Limits { return Limits{PerRepository: 4, ExtraSlots: 1, QueueWait: wait} }
 	var releases []func()
 	take := func(id string) {
 		t.Helper()
-		release, err := slots.acquire(ctx, id, 0)
+		release, err := slots.acquire(ctx, id, limits(0))
 		noErr(t, err, "acquire for "+id)
 		releases = append(releases, release)
 	}
@@ -29,19 +30,19 @@ func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
 		take("big")
 	}
 	started := time.Now()
-	if _, err := slots.acquire(ctx, "big", 50*time.Millisecond); !errors.Is(err, errBusy) {
+	if _, err := slots.acquire(ctx, "big", limits(50*time.Millisecond)); !errors.Is(err, errBusy) {
 		t.Fatalf("fifth transfer of one repository: %v, want busy", err)
 	}
 	if waited := time.Since(started); waited > time.Second {
 		t.Fatalf("busy answer took %s", waited)
 	}
 	take("small")
-	if _, err := slots.acquire(ctx, "third", 50*time.Millisecond); !errors.Is(err, errBusy) {
+	if _, err := slots.acquire(ctx, "third", limits(50*time.Millisecond)); !errors.Is(err, errBusy) {
 		t.Fatalf("request beyond the total: %v, want busy", err)
 	}
 	got := make(chan error, 1)
 	go func() {
-		release, err := slots.acquire(ctx, "third", 5*time.Second)
+		release, err := slots.acquire(ctx, "third", limits(5*time.Second))
 		if err == nil {
 			release()
 		}
@@ -68,15 +69,15 @@ func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
 	take("b")
 	take("b")
 	take("c")
-	if _, err := slots.acquire(ctx, "d", 20*time.Millisecond); !errors.Is(err, errBusy) {
+	if _, err := slots.acquire(ctx, "d", limits(20*time.Millisecond)); !errors.Is(err, errBusy) {
 		t.Fatalf("request beyond the extra slot: %v, want busy", err)
 	}
-	if _, err := slots.acquire(ctx, "a", 20*time.Millisecond); !errors.Is(err, errBusy) {
+	if _, err := slots.acquire(ctx, "a", limits(20*time.Millisecond)); !errors.Is(err, errBusy) {
 		t.Fatalf("a busy repository took the extra slot: %v", err)
 	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	if _, err := slots.acquire(cancelled, "d", time.Minute); !errors.Is(err, context.Canceled) {
+	if _, err := slots.acquire(cancelled, "d", limits(time.Minute)); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled wait: %v", err)
 	}
 	for _, release := range releases {
@@ -89,18 +90,20 @@ func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
 
 func TestBusyGitRequestGets503WithRetryAfter(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
-	handler.QueueWait = 100 * time.Millisecond
+	limits := useLimits(t, handler, func(limits *Limits) {
+		limits.PerRepository, limits.ExtraSlots, limits.QueueWait = 1, 1, 100*time.Millisecond
+	})
 	logs := captureLog(t)
 	// With one slot per repository, two other repositories fill both slots.
 	var releases []func()
 	for _, id := range []string{"other", "third"} {
-		release, err := handler.slots.acquire(context.Background(), id, 0)
+		release, err := handler.slots.acquire(context.Background(), id, *limits)
 		noErr(t, err)
 		releases = append(releases, release)
 	}
@@ -122,4 +125,58 @@ func TestBusyGitRequestGets503WithRetryAfter(t *testing.T) {
 	if active := handler.Active(); active != 0 {
 		t.Fatalf("active=%d after a refused request", active)
 	}
+}
+
+// Lowering the limits never stops a transfer that holds a slot: a request
+// under the new limits waits until enough transfers have ended. Raising
+// the extra slots lets more repositories with no transfer running in.
+func TestAdmissionFollowsChangedLimitsWithoutStoppingTransfers(t *testing.T) {
+	slots := newAdmission()
+	ctx := context.Background()
+	wide := Limits{PerRepository: 4, ExtraSlots: 1, QueueWait: time.Second}
+	var running []func()
+	for range 4 {
+		release, err := slots.acquire(ctx, "a", wide)
+		noErr(t, err)
+		running = append(running, release)
+	}
+	narrow := Limits{PerRepository: 2, ExtraSlots: 4, QueueWait: 5 * time.Second}
+	got := make(chan error, 1)
+	go func() {
+		release, err := slots.acquire(ctx, "a", narrow)
+		if err == nil {
+			release()
+		}
+		got <- err
+	}()
+	var others []func()
+	for _, id := range []string{"b", "c"} {
+		release, err := slots.acquire(ctx, id, narrow)
+		noErr(t, err, "a repository with no transfer under more extra slots: "+id)
+		others = append(others, release)
+	}
+	if _, err := slots.acquire(ctx, "d", Limits{PerRepository: 2, ExtraSlots: 4, QueueWait: 20 * time.Millisecond}); !errors.Is(err, errBusy) {
+		t.Fatalf("an idle repository beyond both numbers added: %v, want busy", err)
+	}
+	if slots.active != 6 {
+		t.Fatalf("active=%d, want the four running transfers kept and two more", slots.active)
+	}
+	for _, release := range others {
+		release()
+	}
+	running[0]()
+	running[1]()
+	select {
+	case err := <-got:
+		t.Fatalf("admitted with three transfers of a running under a limit of two: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	running[2]()
+	select {
+	case err := <-got:
+		noErr(t, err, "waiting request under the lower limit")
+	case <-time.After(2 * time.Second):
+		t.Fatal("a waiting request was not admitted once the repository went below the new limit")
+	}
+	running[3]()
 }

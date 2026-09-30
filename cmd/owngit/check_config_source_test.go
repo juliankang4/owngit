@@ -43,7 +43,7 @@ func startCheckCLIServer(t *testing.T) (remoteFlags []string, taskID, work strin
 	if _, err := manager.Create(ctx, "project", "check configuration fixture"); err != nil {
 		t.Fatal(err)
 	}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{

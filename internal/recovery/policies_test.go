@@ -21,7 +21,7 @@ func TestServerPoliciesStayWithTheirInstallation(t *testing.T) {
 	session, branch, logs, off := state.Session30Days, "trunk", state.KeepCheckLogs, false
 	noErr(t, store.SavePolicies(ctx, state.PolicyChange{
 		Session: &session, InitialBranch: &branch, CheckLogs: &logs,
-		GitTransfer: &state.GitTransferLimits{MaximumBytes: 64 << 30, Operation: 24 * time.Hour}, KeptHistory: &off,
+		GitTransfer: &state.GitTransferLimits{MaximumBytes: 64 << 30, Operation: 24 * time.Hour, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second}, KeptHistory: &off,
 		DeleteRequiresName: &off, CrossSiteLinks: pointerTo(state.CrossSiteLax),
 		LoginLimits: &state.LoginLimits{Attempts: 100, Window: time.Minute, Pause: time.Minute},
 	}))

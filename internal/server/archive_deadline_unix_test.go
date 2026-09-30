@@ -71,7 +71,10 @@ func TestArchiveOutlivesThePageDeadline(t *testing.T) {
 func TestArchiveFailureBeforeTheFirstByteAnswersAnError(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	fixture.app.GitHTTP.Limits = func(context.Context) (githttp.Limits, error) {
-		return githttp.Limits{MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, Operation: time.Second}, nil
+		return githttp.Limits{
+			MaximumRequest: 4 << 30, MaximumResponse: 4 << 30, Operation: time.Second, Idle: time.Minute,
+			PerRepository: 4, ExtraSlots: 1, QueueWait: 90 * time.Second,
+		}, nil
 	}
 	server := serve(t, fixture.app.Handler())
 	api := server.URL + "/api/v1/repositories/project/archive?ref=main&format=zip"

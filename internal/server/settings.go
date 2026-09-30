@@ -271,6 +271,9 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		}
 		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{GitTransfer: &limits})
 		notice = "transfer_saved"
+		if limits.Looser() {
+			notice = "transfer_looser"
+		}
 	case webui.ActionSaveCheckLogs:
 		retention, valid := state.ParseCheckLogRetention(postValue(request, "check_logs"))
 		if !valid {
@@ -418,6 +421,7 @@ var settingsNoticeGroups = map[string]string{
 	"session_saved":          webui.GroupSession,
 	"initial_branch_saved":   webui.GroupBranch,
 	"transfer_saved":         webui.GroupTransfer,
+	"transfer_looser":        webui.GroupTransfer,
 	"check_logs_saved":       webui.GroupLogs,
 	"kept_history_on":        webui.GroupHistory,
 	"kept_history_off":       webui.GroupHistory,

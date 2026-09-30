@@ -271,7 +271,7 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	t.Cleanup(func() { _ = store.Close() })
 	repositoryRoot := filepath.Join(root, "repositories")
 	manager := newRepositoryManager(t, store, filepath.Join(root, "runtime"))
-	gitHandler, err := githttp.New(manager.Git, manager, "", 2)
+	gitHandler, err := githttp.New(manager.Git, manager, "")
 	noErr(t, err)
 	authentication := &auth.Manager{Store: store, AdminSessionLife: 5 * time.Minute}
 	renderer, err := webui.New()

@@ -40,7 +40,7 @@ func archiveFixture(t *testing.T, randomBytes int) (*Handler, string) {
 	runHTTPGit(t, work, "add", ".")
 	runHTTPGit(t, work, "commit", "-q", "-m", "sample")
 	runHTTPGit(t, work, "push", "-q", repositoryPath, "HEAD:refs/heads/main")
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	return handler, httpGitOutput(t, work, "rev-parse", "HEAD")
 }

@@ -28,7 +28,7 @@ func TestPushFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 			noErr(t, err)
 			remote, err := manager.Path("policy")
 			noErr(t, err)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)

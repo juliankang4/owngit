@@ -157,8 +157,8 @@ func TestInitialBranchAppliesToLaterRepositories(t *testing.T) {
 
 // The Git transfer limits are saved in the units they are typed in, and a
 // value outside their bounds is refused with what was typed kept. The API
-// changes one limit and keeps the other, and replaces an unreadable saved
-// value only when it names both.
+// changes one limit and keeps the others, and replaces an unreadable saved
+// value only when it names every one.
 func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 	fixture, server, _ := newConfirmationFixture(t, false, state.ConfirmEveryTime)
 	ctx := context.Background()
@@ -168,6 +168,8 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 		return browser.post("/settings/repositories", url.Values{
 			"action": {webui.ActionSaveTransfers}, "admin_password": {"admin-password"},
 			"transfer_size": {size}, "transfer_size_unit": {sizeUnit}, "transfer_time": {duration}, "transfer_time_unit": {durationUnit},
+			"transfer_per_repository": {"4"}, "transfer_extra_slots": {"1"},
+			"transfer_idle": {"1"}, "transfer_idle_unit": {"min"}, "transfer_queue": {"90"}, "transfer_queue_unit": {"s"},
 		})
 	}
 	for _, refused := range [][4]string{{"65", "GB", "30", "min"}, {"4", "GB", "25", "h"}, {"0.5", "MB", "30", "min"}, {"four", "GB", "30", "min"}} {
@@ -177,7 +179,7 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 		}
 	}
 	requireSaved(t, "transfer limits", save("8", "GB", "2", "h"))
-	if limits, err := fixture.store.GitTransferLimits(ctx); err != nil || limits != (state.GitTransferLimits{MaximumBytes: 8 << 30, Operation: 2 * time.Hour}) {
+	if limits, err := fixture.store.GitTransferLimits(ctx); err != nil || limits != (state.GitTransferLimits{MaximumBytes: 8 << 30, Operation: 2 * time.Hour, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second}) {
 		t.Fatalf("saved %+v err=%v", limits, err)
 	}
 	page := browser.get("/settings/repositories")
@@ -201,8 +203,13 @@ func TestTransferLimitsAreSavedWithTheirUnitsAndBounds(t *testing.T) {
 	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"operation_seconds": 600}}); status != http.StatusConflict || code != "setting_unreadable" {
 		t.Fatalf("PATCH one limit over an unreadable value status=%d code=%s", status, code)
 	}
-	if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"maximum_bytes": 1 << 30, "operation_seconds": 600}}); status != http.StatusOK {
-		t.Fatalf("PATCH both limits over an unreadable value status=%d", status)
+	if status, code, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{"maximum_bytes": 1 << 30, "operation_seconds": 600}}); status != http.StatusConflict || code != "setting_unreadable" {
+		t.Fatalf("PATCH two of six limits over an unreadable value status=%d code=%s", status, code)
+	}
+	if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{
+		"maximum_bytes": 1 << 30, "operation_seconds": 600, "per_repository": 2, "extra_slots": 0, "idle_seconds": 30, "queue_seconds": 30,
+	}}); status != http.StatusOK {
+		t.Fatalf("PATCH every limit over an unreadable value status=%d", status)
 	}
 }
 
@@ -224,9 +231,9 @@ func TestTransferLimitsSurviveAnUnchangedSave(t *testing.T) {
 		return input[1], selected[1]
 	}
 	for _, saved := range []state.GitTransferLimits{
-		{MaximumBytes: 1<<20 + 1, Operation: 90 * time.Second},
-		{MaximumBytes: 1536 << 10, Operation: 5400 * time.Second},
-		{MaximumBytes: 64 << 30, Operation: 24 * time.Hour},
+		{MaximumBytes: 1<<20 + 1, Operation: 90 * time.Second, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second},
+		{MaximumBytes: 1536 << 10, Operation: 5400 * time.Second, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second},
+		{MaximumBytes: 64 << 30, Operation: 24 * time.Hour, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second},
 	} {
 		if status, _, _ := settingsAPI(t, server.URL, http.MethodPatch, map[string]any{"git_transfer": map[string]any{
 			"maximum_bytes": saved.MaximumBytes, "operation_seconds": int64(saved.Operation / time.Second),
@@ -239,6 +246,8 @@ func TestTransferLimitsSurviveAnUnchangedSave(t *testing.T) {
 		requireSaved(t, "unchanged transfer limits", browser.post("/settings/repositories", url.Values{
 			"action": {webui.ActionSaveTransfers}, "admin_password": {"admin-password"},
 			"transfer_size": {size}, "transfer_size_unit": {sizeUnit}, "transfer_time": {duration}, "transfer_time_unit": {durationUnit},
+			"transfer_per_repository": {"4"}, "transfer_extra_slots": {"1"},
+			"transfer_idle": {"1"}, "transfer_idle_unit": {"min"}, "transfer_queue": {"90"}, "transfer_queue_unit": {"s"},
 		}))
 		if limits, err := fixture.store.GitTransferLimits(context.Background()); err != nil || limits != saved {
 			t.Fatalf("shown as %s %s and %s %s, saved back as %+v (err=%v), want %+v", size, sizeUnit, duration, durationUnit, limits, err, saved)
@@ -411,7 +420,7 @@ func TestSavedPoliciesAreShownOnlyToAnAdministrator(t *testing.T) {
 			session, branch, logs := state.Session30Days, "trunk-policy", state.KeepCheckLogs
 			noErr(t, fixture.store.SavePolicies(context.Background(), state.PolicyChange{
 				Session: &session, InitialBranch: &branch, CheckLogs: &logs,
-				GitTransfer: &state.GitTransferLimits{MaximumBytes: 3 << 30, Operation: 45 * time.Minute},
+				GitTransfer: &state.GitTransferLimits{MaximumBytes: 3 << 30, Operation: 45 * time.Minute, PerRepository: 4, ExtraSlots: 1, Idle: time.Minute, QueueWait: 90 * time.Second},
 			}))
 			browser := openConfirmationBrowser(t, server, test.protected)
 			if test.admin {

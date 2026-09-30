@@ -22,15 +22,16 @@ import (
 func TestResponseToAnUnreadBodyKeepsTheConnectionUsable(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
 	runner.TerminationGrace = 25 * time.Millisecond
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
 	handler.BackendPath = backend
 	authorized := true
 	handler.Authorize = func(*http.Request) (bool, error) { return authorized, nil }
-	useLimits(t, handler, func(limits *Limits) { limits.MaximumRequest = 1 << 20 })
-	handler.QueueWait = 100 * time.Millisecond
+	useLimits(t, handler, func(limits *Limits) {
+		limits.MaximumRequest, limits.PerRepository, limits.QueueWait = 1<<20, 1, 100*time.Millisecond
+	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	address := server.Listener.Addr().String()
@@ -118,7 +119,7 @@ func TestResponseToAnUnreadBodyKeepsTheConnectionUsable(t *testing.T) {
 		check(t, address, request{service: "git-receive-pack", body: small})
 	})
 	t.Run("request limit reached in the gzip header", func(t *testing.T) {
-		tiny, err := New(runner, manager, backend, 1)
+		tiny, err := New(runner, manager, backend)
 		noErr(t, err)
 		tiny.Authorize = func(*http.Request) (bool, error) { return true, nil }
 		useLimits(t, tiny, func(limits *Limits) { limits.MaximumRequest = 8 })
@@ -132,7 +133,7 @@ func TestResponseToAnUnreadBodyKeepsTheConnectionUsable(t *testing.T) {
 		// git-http-backend sends its headers before it reads a push, and
 		// receive-pack stops at the flush packet that ends an empty command
 		// list, leaving the rest of the body unread.
-		real, err := New(runner, manager, "", 1)
+		real, err := New(runner, manager, "")
 		noErr(t, err)
 		real.Authorize = func(*http.Request) (bool, error) { return true, nil }
 		realServer := httptest.NewServer(real)

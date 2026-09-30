@@ -111,7 +111,7 @@ func startImportCLIServer(t *testing.T, fetchDelay ...time.Duration) *importCLIS
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryRoot}
 	stored, err := manager.Create(ctx, "project", "")
 	noErr(t, err)
-	gitHandler, err := githttp.New(runner, manager, "", 1)
+	gitHandler, err := githttp.New(runner, manager, "")
 	noErr(t, err)
 	fixture := &importCLIServer{}
 	hosts := server.NewHostPolicy()

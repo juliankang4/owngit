@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/githttp"
 )
 
 // endlessArchive makes git archive write zeros until it is stopped. Every
@@ -29,12 +31,23 @@ func endlessArchive(t *testing.T, fixture apiFixture) {
 	fixture.app.GitHTTP.Git.TerminationGrace = 25 * time.Millisecond
 }
 
+// stallAfter makes the transfers of fixture stop when their client moves no
+// data for idle.
+func stallAfter(fixture apiFixture, idle time.Duration) {
+	read := fixture.app.GitHTTP.Limits
+	fixture.app.GitHTTP.Limits = func(ctx context.Context) (githttp.Limits, error) {
+		limits, err := read(ctx)
+		limits.Idle = idle
+		return limits, err
+	}
+}
+
 // An archive download whose client stops reading is stopped at the idle
 // limit on the browser and the API route, and the repository is free again.
 func TestArchiveIdleLimitStopsAStalledDownload(t *testing.T) {
 	const idle = 300 * time.Millisecond
 	fixture := newAPIFixture(t, false)
-	fixture.app.GitHTTP.IdleTimeout = idle
+	stallAfter(fixture, idle)
 	endlessArchive(t, fixture)
 	var serverLog lockedLog
 	previousLog, previousFlags := log.Writer(), log.Flags()
@@ -83,7 +96,7 @@ func TestArchiveIdleLimitStopsAStalledDownload(t *testing.T) {
 // archive byte still completes the download on both routes.
 func TestArchiveIdleLimitSparesAQuietStart(t *testing.T) {
 	fixture := newAPIFixture(t, false)
-	fixture.app.GitHTTP.IdleTimeout = 300 * time.Millisecond
+	stallAfter(fixture, 300*time.Millisecond)
 	slowArchiveStart(t, fixture, "1")
 	server := serve(t, fixture.app.Handler())
 	for _, target := range []string{

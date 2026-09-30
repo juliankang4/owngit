@@ -24,7 +24,7 @@ func TestPushesInvalidateTheRefSnapshotOnlyWhenRefsMayHaveChanged(t *testing.T) 
 		t.Skip("the Git process counter is a POSIX shell wrapper")
 	}
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)

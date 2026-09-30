@@ -65,6 +65,10 @@ func settingsSet(arguments []string) error {
 	initialBranch := flags.String("initial-branch", "", "the branch new repositories start on, such as main")
 	transferSize := flags.String("transfer-size", "", "the most one Git transfer may receive and, separately, send, such as 4GB or 512MB, from 1MB to 64GB")
 	transferTime := flags.String("transfer-time", "", "how long one Git transfer may take, such as 30m or 2h, from 1m to 24h")
+	transferPerRepository := flags.Int("transfer-per-repository", 0, "how many Git transfers of one repository run at once, from 1 to 32")
+	transferExtraSlots := flags.Int("transfer-extra-slots", 0, "extra transfer slots that only a repository with no transfer running may take, from 0 to 32")
+	transferIdle := flags.String("transfer-idle", "", "stop a Git transfer whose client moves no data for this long, such as 1m, from 10s to 1h")
+	transferQueue := flags.String("transfer-queue", "", "how long a Git transfer waits for a free slot, such as 90s, from 5s to 10m")
 	checkLogs := flags.String("check-logs", "", "how long raw check logs are kept: 7d, 30d, 90d, 365d or indefinite")
 	keptHistory := flags.String("kept-history", "", "whether repositories that follow the server keep overwritten and deleted history: on or off")
 	deleteName := flags.String("delete-requires-name", "", "whether deleting a repository asks for its typed name: on or off")
@@ -106,11 +110,11 @@ func settingsSet(arguments []string) error {
 		if !given[option.flag] {
 			continue
 		}
-		duration, err := time.ParseDuration(option.value)
-		if err != nil || duration%time.Second != 0 {
-			return cliProblem("invalid_arguments", "--"+option.flag+" takes a time in whole seconds, such as 10m or 1h.")
+		seconds, err := wholeSeconds(option.flag, option.value)
+		if err != nil {
+			return err
 		}
-		login[option.field] = int64(duration / time.Second)
+		login[option.field] = seconds
 	}
 	if len(login) > 0 {
 		change["login_limits"] = login
@@ -124,12 +128,23 @@ func settingsSet(arguments []string) error {
 		}
 		transfer["maximum_bytes"] = bytes
 	}
-	if given["transfer-time"] {
-		duration, err := time.ParseDuration(*transferTime)
-		if err != nil || duration%time.Second != 0 {
-			return cliProblem("invalid_arguments", "--transfer-time takes a time in whole seconds, such as 30m or 2h.")
+	for _, option := range []struct{ flag, field, value string }{
+		{"transfer-time", "operation_seconds", *transferTime}, {"transfer-idle", "idle_seconds", *transferIdle}, {"transfer-queue", "queue_seconds", *transferQueue},
+	} {
+		if !given[option.flag] {
+			continue
 		}
-		transfer["operation_seconds"] = int64(duration / time.Second)
+		seconds, err := wholeSeconds(option.flag, option.value)
+		if err != nil {
+			return err
+		}
+		transfer[option.field] = seconds
+	}
+	if given["transfer-per-repository"] {
+		transfer["per_repository"] = int64(*transferPerRepository)
+	}
+	if given["transfer-extra-slots"] {
+		transfer["extra_slots"] = int64(*transferExtraSlots)
 	}
 	if len(transfer) > 0 {
 		change["git_transfer"] = transfer
@@ -146,4 +161,14 @@ func settingsSet(arguments []string) error {
 		return err
 	}
 	return writeJSON(content)
+}
+
+// wholeSeconds reads the time an option names, such as 10m or 90s, as a
+// whole number of seconds.
+func wholeSeconds(option, value string) (int64, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration%time.Second != 0 {
+		return 0, cliProblem("invalid_arguments", "--"+option+" takes a time in whole seconds, such as 90s, 10m or 2h.")
+	}
+	return int64(duration / time.Second), nil
 }

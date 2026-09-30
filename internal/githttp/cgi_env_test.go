@@ -16,7 +16,7 @@ import (
 func newCGITestHandler(t *testing.T) *Handler {
 	t.Helper()
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	return handler
 }

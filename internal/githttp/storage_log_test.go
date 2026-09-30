@@ -15,7 +15,7 @@ import (
 // 503, and the log names the cause once, quoted on the request's line.
 func TestStorageFailureIsLoggedWithItsCause(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	path, err := manager.Path("sample")

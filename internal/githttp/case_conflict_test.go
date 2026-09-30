@@ -33,7 +33,7 @@ func TestPushRefusesRefsThatDifferOnlyInLetterCase(t *testing.T) {
 			noErr(t, err)
 			remote, err := manager.Path("cases")
 			noErr(t, err)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)
@@ -143,7 +143,7 @@ func TestPushWithACommandListOverTheLimitChangesNothing(t *testing.T) {
 	noErr(t, err)
 	remote, err := manager.Path("cases")
 	noErr(t, err)
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	server := httptest.NewServer(handler)
@@ -194,7 +194,7 @@ func TestPushRefusesNamesThatAFileSystemTreatsAsTheDefaultBranch(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			ctx := context.Background()
 			manager, runner := newHTTPTestRepository(t)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)
@@ -265,7 +265,7 @@ func TestDeletingOneOfTwoLookAlikeRefsKeepsTheOther(t *testing.T) {
 			on := true
 			_, err = manager.Store.SaveRepositoryRefPolicy(ctx, "cases", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &on})
 			noErr(t, err)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)
@@ -325,7 +325,7 @@ func TestPushRefusesAFolderSpelledLikeAnother(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			ctx := context.Background()
 			manager, runner := newHTTPTestRepository(t)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)
@@ -425,7 +425,7 @@ func TestPushKeepsTheRefHEADResolvesToThroughALookAlike(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			ctx := context.Background()
 			manager, runner := newHTTPTestRepository(t)
-			handler, err := New(runner, manager, "", 2)
+			handler, err := New(runner, manager, "")
 			noErr(t, err)
 			handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 			server := httptest.NewServer(handler)

@@ -74,7 +74,7 @@ func (body *stalledRequestBody) Close() error {
 
 func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
@@ -112,7 +112,7 @@ func TestStalledChunkedBodyTimesOutAndReapsOperation(t *testing.T) {
 
 func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	backend, err := os.Executable()
 	noErr(t, err)
@@ -168,7 +168,7 @@ func TestStalledNetworkResponseHitsWriteDeadlineAndReapsOperation(t *testing.T) 
 // cannot exit first and hide the cause.
 func TestUploadLimitRejectsPushWithoutChangingRef(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 1)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var chunkedPushes atomic.Int32

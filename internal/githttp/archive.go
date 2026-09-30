@@ -103,14 +103,14 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 		// A blocked write to a stalled client does not see the context.
 		_ = controller.SetWriteDeadline(deadline)
 	}
-	if limits.Operation > 0 || h.IdleTimeout > 0 {
+	if limits.Operation > 0 || limits.Idle > 0 {
 		defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 	}
-	deadlines := &transferDeadlines{controller: controller, idle: h.IdleTimeout, overall: deadline}
+	deadlines := &transferDeadlines{controller: controller, idle: limits.Idle, overall: deadline}
 	busy := &ArchiveError{Status: http.StatusServiceUnavailable, RetryAfter: 10 * time.Second, Message: "The repository is busy with other Git transfers. Try again shortly."}
-	release, err := h.slots.acquire(ctx, repositoryID, h.QueueWait)
+	release, err := h.slots.acquire(ctx, repositoryID, limits)
 	if err != nil {
-		logArchiveFailure(repositoryID, err, deadline, "no Git transfer slot became free within "+h.QueueWait.String())
+		logArchiveFailure(repositoryID, err, deadline, "no Git transfer slot became free within "+limits.QueueWait.String())
 		return busy
 	}
 	defer release()

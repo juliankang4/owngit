@@ -284,7 +284,7 @@ func newConfiguredCheckCLIFixture(t *testing.T) *configuredCheckCLIFixture {
 	runPRGit(t, work, "push", repositoryPath, "HEAD:refs/heads/main")
 	sourceOID := prGitOutput(t, work, "rev-parse", "HEAD")
 
-	gitHandler, err := githttp.New(git, manager, "", 2)
+	gitHandler, err := githttp.New(git, manager, "")
 	noErr(t, err)
 	hosts := server.NewHostPolicy()
 	application := &server.App{

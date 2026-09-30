@@ -68,7 +68,7 @@ func newApp(t *testing.T) (*server.App, *state.Store, string) {
 		t.Fatal(err)
 	}
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks()}
-	gitHandler, err := githttp.New(runner, manager, "", 2)
+	gitHandler, err := githttp.New(runner, manager, "")
 	if err != nil {
 		t.Fatal(err)
 	}

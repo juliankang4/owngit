@@ -3,7 +3,6 @@ package state
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -47,7 +46,7 @@ func (e *PolicyError) Advice() string { return policyNames[e.Key].advice }
 var policyNames = map[string]struct{ field, advice string }{
 	generalSessionKey:     {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
 	initialBranchKey:      {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
-	gitTransferLimitsKey:  {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size and --transfer-time."},
+	gitTransferLimitsKey:  {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size, --transfer-time, --transfer-per-repository, --transfer-extra-slots, --transfer-idle and --transfer-queue."},
 	checkLogRetentionKey:  {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
 	keptHistoryKey:        {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
 	deleteRequiresNameKey: {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
@@ -101,7 +100,7 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 		if err := change.GitTransfer.Validate(); err != nil {
 			return err
 		}
-		stored, err := change.GitTransfer.stored()
+		stored, err := storedGroup(change.GitTransfer.Fields())
 		if err != nil {
 			return err
 		}
@@ -235,102 +234,6 @@ func (s *Store) InitialBranch(ctx context.Context) (string, error) {
 		return "", &PolicyError{Key: initialBranchKey, Value: name, Cause: err}
 	}
 	return name, nil
-}
-
-// GitTransferLimits bound each Git transfer: a clone, fetch or push, or an
-// archive download. They are stored as a JSON object, in which a missing
-// field means its default.
-type GitTransferLimits struct {
-	// MaximumBytes bounds what a transfer receives and, apart, what it
-	// sends.
-	MaximumBytes int64
-	// Operation bounds how long a transfer takes.
-	Operation time.Duration
-}
-
-// The bounds of the Git transfer limits. The largest keep one transfer from
-// filling a disk or holding one of the few transfer slots for more than a
-// day.
-const (
-	MinimumTransferBytes     = 1 << 20
-	MaximumTransferBytes     = 64 << 30
-	MinimumTransferOperation = time.Minute
-	MaximumTransferOperation = 24 * time.Hour
-
-	gitTransferLimitsKey = "git_transfer_limits"
-)
-
-// DefaultGitTransferLimits apply while nothing was saved.
-var DefaultGitTransferLimits = GitTransferLimits{MaximumBytes: 4 << 30, Operation: 30 * time.Minute}
-
-// ValidTransferBytes reports whether the largest transfer is within its
-// bounds, 1 MiB to 64 GiB.
-func ValidTransferBytes(bytes int64) bool {
-	return bytes >= MinimumTransferBytes && bytes <= MaximumTransferBytes
-}
-
-// ValidTransferOperation reports whether the longest transfer is within its
-// bounds, a whole number of seconds from 1 minute to 24 hours.
-func ValidTransferOperation(operation time.Duration) bool {
-	return operation >= MinimumTransferOperation && operation <= MaximumTransferOperation && operation%time.Second == 0
-}
-
-// TransferOperationSeconds converts a number of seconds to the longest
-// transfer. It compares the number with both bounds before converting it,
-// so no value, however large or negative, can overflow into a valid one.
-func TransferOperationSeconds(seconds int64) (time.Duration, error) {
-	if seconds < int64(MinimumTransferOperation/time.Second) || seconds > int64(MaximumTransferOperation/time.Second) {
-		return 0, errors.New("the longest transfer is a whole number of seconds from 1 minute to 24 hours")
-	}
-	return time.Duration(seconds) * time.Second, nil
-}
-
-// Validate checks the limits against their bounds.
-func (l GitTransferLimits) Validate() error {
-	if !ValidTransferBytes(l.MaximumBytes) {
-		return errors.New("the largest transfer is from 1 MB to 64 GB (1 GB is 1024 MB)")
-	}
-	if !ValidTransferOperation(l.Operation) {
-		return errors.New("the longest transfer is a whole number of seconds from 1 minute to 24 hours")
-	}
-	return nil
-}
-
-// gitTransferJSON is the stored form of GitTransferLimits.
-type gitTransferJSON struct {
-	MaximumBytes     *int64 `json:"maximum_bytes,omitempty"`
-	OperationSeconds *int64 `json:"operation_seconds,omitempty"`
-}
-
-// GitTransferLimits returns the limits of a transfer that starts now.
-func (s *Store) GitTransferLimits(ctx context.Context) (GitTransferLimits, error) {
-	raw, found, err := policyValue(ctx, s.db, gitTransferLimitsKey)
-	if err != nil || !found {
-		return DefaultGitTransferLimits, err
-	}
-	limits := DefaultGitTransferLimits
-	var stored gitTransferJSON
-	if err = decodeStoredJSON(raw, &stored); err == nil {
-		if stored.MaximumBytes != nil {
-			limits.MaximumBytes = *stored.MaximumBytes
-		}
-		if stored.OperationSeconds != nil {
-			limits.Operation, err = TransferOperationSeconds(*stored.OperationSeconds)
-		}
-	}
-	if err == nil {
-		err = limits.Validate()
-	}
-	if err != nil {
-		return GitTransferLimits{}, &PolicyError{Key: gitTransferLimitsKey, Value: raw, Cause: err}
-	}
-	return limits, nil
-}
-
-func (l GitTransferLimits) stored() (string, error) {
-	seconds := int64(l.Operation / time.Second)
-	encoded, err := json.Marshal(gitTransferJSON{MaximumBytes: &l.MaximumBytes, OperationSeconds: &seconds})
-	return string(encoded), err
 }
 
 // CheckLogRetention is how long raw check logs are kept, counted from when

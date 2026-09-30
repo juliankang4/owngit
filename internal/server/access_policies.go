@@ -21,25 +21,17 @@ import (
 // loginLimitsForm reads the login attempt limits a Settings form sent, or
 // the notices that refuse them.
 func loginLimitsForm(request *http.Request) (state.LoginLimits, []webui.Notice) {
-	var limits state.LoginLimits
-	var notices []webui.Notice
+	form := &limitsForm{request: request}
 	attempts, err := strconv.Atoi(strings.TrimSpace(postValue(request, "login_attempts")))
 	if err != nil || attempts < state.MinimumLoginAttempts || attempts > state.MaximumLoginAttempts {
-		notices = append(notices, webui.Error("login_attempts", webui.MsgLoginLimitsInvalid))
+		form.notices = append(form.notices, webui.Error("login_attempts", webui.MsgLoginLimitsInvalid))
 	}
-	limits.Attempts = attempts
-	duration := func(field string) time.Duration {
-		milliseconds, err := webui.ParseLimit(webui.LimitDuration, webui.LimitInput{Amount: postValue(request, field), Unit: postValue(request, field+"_unit")})
-		switch {
-		case err != nil:
-			notices = append(notices, webui.Error(field, webui.LimitNoticeCode(webui.LimitDuration, err)))
-		case milliseconds%1000 != 0 || milliseconds < state.MinimumLoginDuration.Milliseconds() || milliseconds > state.MaximumLoginDuration.Milliseconds():
-			notices = append(notices, webui.Error(field, webui.MsgCCFieldRange))
-		}
-		return time.Duration(milliseconds) * time.Millisecond
+	limits := state.LoginLimits{
+		Attempts: attempts,
+		Window:   form.duration("login_window", state.MinimumLoginDuration, state.MaximumLoginDuration),
+		Pause:    form.duration("login_pause", state.MinimumLoginDuration, state.MaximumLoginDuration),
 	}
-	limits.Window, limits.Pause = duration("login_window"), duration("login_pause")
-	return limits, notices
+	return limits, form.notices
 }
 
 // loginLimitsJSON is the owner API's form of the login attempt limits. A

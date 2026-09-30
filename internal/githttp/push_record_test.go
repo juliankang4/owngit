@@ -19,7 +19,7 @@ import (
 // by the server, or failed.
 func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 	manager, runner := newHTTPTestRepository(t)
-	handler, err := New(runner, manager, "", 2)
+	handler, err := New(runner, manager, "")
 	noErr(t, err)
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var mu sync.Mutex
@@ -132,7 +132,7 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 
 	// A push over the request limit fails. It goes to a handler of its own
 	// with that limit, so no limit changes while a request is served.
-	limited, err := New(runner, manager, "", 2)
+	limited, err := New(runner, manager, "")
 	noErr(t, err)
 	limited.Authorize, limited.OnPush = handler.Authorize, handler.OnPush
 	useLimits(t, limited, func(limits *Limits) { limits.MaximumRequest = 64 << 10 })
