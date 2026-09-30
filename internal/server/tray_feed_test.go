@@ -385,6 +385,82 @@ func TestTrayEventsStartAfterWhatCameBefore(t *testing.T) {
 	}
 }
 
+// Records in the second the feed started are told apart by whether they
+// were there at the start, as are those in the second a kind was last read
+// while off.
+func TestTrayEventsStartKeepsWhatFollowsInTheSameSecond(t *testing.T) {
+	app, clock, _, _ := feedApp(t)
+	failedImport(t, app, "same-second-before", clock.now())
+	start := feedRead(t, app, "", nil)
+	failedImport(t, app, "same-second-after", clock.now())
+	clock.add(2 * time.Minute)
+	first := feedRead(t, app, start.Cursor, nil)
+	if got := onlyNotification(t, first); got.ID != "import_failed:same-second-after" {
+		t.Fatalf("after the start in its second %+v", got)
+	}
+
+	failedImport(t, app, "off-before", clock.now())
+	off := feedRead(t, app, first.Cursor, url.Values{"kinds": {""}})
+	failedImport(t, app, "on-after", clock.now())
+	clock.add(2 * time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, off.Cursor, nil)); got.ID != "import_failed:on-after" {
+		t.Fatalf("after an off read in its second %+v", got)
+	}
+}
+
+// Failed checks keep nanoseconds: of those in the second the feed started,
+// only the ones finished after the start are reported, and none of the
+// second before.
+func TestTrayEventsStartTellsChecksApartWithinTheSecond(t *testing.T) {
+	app, clock, _, _ := feedApp(t)
+	ctx, second := context.Background(), clock.now()
+	_, err := app.Store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "notes", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+		MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, second)
+	noErr(t, err)
+	_, err = app.Store.GrantCheckConsent(ctx, "notes", second)
+	noErr(t, err)
+	fail := func(name string, finished time.Time) {
+		t.Helper()
+		job, _, err := app.Store.AdmitCheckJob(ctx, state.CheckJobRequest{
+			RepositoryID: "notes", Trigger: "push", EventKey: "refs/heads/" + name + "@" + strings.Repeat("a", 40),
+			SourceOID: strings.Repeat("a", 40), TriggerRef: name, WorkflowDigest: strings.Repeat("b", 64),
+			Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
+		}, second.Add(-time.Minute))
+		noErr(t, err)
+		noErr(t, app.Store.Exec(ctx, `UPDATE check_jobs SET status = 'failed', finished_at = ? WHERE id = ?`, finished.UnixNano(), job.ID))
+	}
+	at := second.Add(400 * time.Millisecond)
+	app.Now = func() time.Time { return at }
+	fail("second-before", second.Add(-500*time.Millisecond))
+	fail("before-start", second.Add(200*time.Millisecond))
+	start := feedRead(t, app, "", nil)
+	fail("after-start", second.Add(700*time.Millisecond))
+	at = at.Add(2 * time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, start.Cursor, nil)); got.Subtitle != "after-start" {
+		t.Fatalf("checks in the start's second %+v", got)
+	}
+}
+
+// The largest cursor fits the length the icons keep.
+func TestTrayCursorFitsWithEveryKindAtItsBoundary(t *testing.T) {
+	cursor := trayCursor{Push: 1 << 40, Times: map[string]int64{}, Seen: map[string][]string{}, Update: "100.100.100"}
+	for _, kind := range trayRecordKinds {
+		cursor.Times[kind] = 1 << 40
+		for index := range trayBoundaryRecords {
+			cursor.Seen[kind] = append(cursor.Seen[kind], recordMark(kind+strconv.Itoa(index)))
+		}
+	}
+	encoded := cursor.encode()
+	if len(encoded) > state.TrayCursorLimit || !state.ValidTrayCursor(encoded) {
+		t.Fatalf("cursor of %d bytes", len(encoded))
+	}
+	if decoded, ok := decodeTrayCursor(encoded); !ok || len(decoded.Seen[state.NotifyBackupFailed]) != trayBoundaryRecords {
+		t.Fatalf("decoded %+v %v", decoded, ok)
+	}
+}
+
 // Records written while their kind, or all notifications, were off are
 // dropped even when the kind is on again before they are a minute old,
 // while a kind that stays on keeps its records that are not yet due.
