@@ -1530,7 +1530,7 @@ The command starts a backup into the folder of the schedule, also while schedule
 - `schedule`: its `state` is `not_configured` before a folder is set, then `on` or `off`, with the folder, interval, keep count and verification choice.
 - `running`: the backup that runs now, or null.
 - `last_run`: the last backup that ended.
-- `last_verified`: the newest backup that passed verification and is still in its folder.
+- `last_verified`: the newest backup that passed verification and that OwnGit still keeps.
 - `next_run`: when the next scheduled backup is due. A time already past means as soon as the running backup ends.
 
 `owngit backup runs` lists every recorded backup, the newest first. Each one shows:
@@ -1538,11 +1538,13 @@ The command starts a backup into the folder of the schedule, also while schedule
 - `kind`: `scheduled`, or `manual` for back up now.
 - `status`: `running`, `succeeded`, `failed` or `interrupted`. `interrupted` means that OwnGit stopped, or its process was killed, before the backup finished. Such a backup is never a finished backup.
 - `verification`: `passed`, `failed` or `not_run`. Only `passed` makes a backup verified.
-- `path`, `started_at`, `finished_at`, and a `message` that says why the backup failed or what OwnGit could not remove.
-- `copy`: `present` while the backup is still in its folder, `absent` once it is gone.
+- `backup_name` and `path`: the backup's folder. Both are empty when the run wrote no backup, or when OwnGit removed the backup or found it gone or replaced.
+- `started_at`, `finished_at`, and a `message` that says why the backup failed or what OwnGit left in place.
 - `longest_hold_ms` and `longest_hold_repository`: see [Backups while OwnGit runs](#backups-while-owngit-runs).
 
-The server log has one line for each backup that ends, with its folder and result. OwnGit keeps the records of the latest 100 backups and of every backup it still keeps.
+Both commands show what OwnGit's records hold and read nothing in the backup folder, so a slow or missing folder never holds them up. OwnGit looks at the folder when it makes the next backup. A backup that you remove by hand is still listed until then.
+
+The server log has one line for each backup that ends, with its folder and result. OwnGit keeps the records of the latest 100 backups, of every backup it still keeps, and of the latest scheduled backup, whose start sets when the next one is due.
 
 ### Verification of new backups
 
@@ -1550,16 +1552,20 @@ With verification on, OwnGit checks each new backup as [`owngit backup verify`](
 
 ### Which backups OwnGit keeps
 
-Each backup is a new folder in the destination named `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX`, where the time is the start in UTC. After a backup succeeds, and passes verification when verification is on, OwnGit keeps its newest backups in that folder, as many as `--keep` says, and also the newest verified one. It removes its older backups there.
+Each backup is a new folder in the destination named `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX`, where the time is the start in UTC. After a backup succeeds, and passes verification when verification is on, OwnGit keeps its newest backups in that folder, as many as `--keep` says, and also the newest verified one. Newest means the latest to start, also within one second. OwnGit removes its older backups there.
 
-- OwnGit recognizes its backups by its own records and by the manifest in each folder, never by the name alone. It never touches other files or folders in the destination.
-- A backup folder that holds anything a backup does not write, such as a file you added, is not removed. The backup's message names what was found.
-- After a failed or interrupted backup, nothing is removed.
+OwnGit records the SHA-256 hash of each backup's manifest with the backup. A folder counts as its backup only when it holds exactly that manifest; the name alone never counts. OwnGit never touches other files or folders in the destination, and it leaves the following in place and names them in the new backup's message:
+
+- a backup folder that holds anything besides the manifest and the bundles it names, such as a file you added;
+- a folder that is a link, or that holds another backup than the one OwnGit wrote there, for example one copied or swapped in. OwnGit stops counting such a folder as its own;
+- a backup whose manifest cannot be read.
+
+A backup whose end OwnGit could not record, for example because its process was killed, is never counted or removed. After a failed or interrupted backup, nothing is removed.
 - When you change the destination, the backups in the earlier folder stay as they are.
 
 ### Free space in the backup folder
 
-A new backup is written before an older one is removed, so the folder needs room for one more backup. Before a backup starts, OwnGit compares the free space in the folder with the size of the last backup it made there, counting only repositories that still exist. When there is less room, the backup fails at once with a message such as `not enough free space in DIR: a new backup needs about N MiB, the size of the last backup here, and M MiB is free`.
+A new backup is written before an older one is removed, so the folder needs room for one more backup. Before a backup starts, OwnGit compares the free space in the folder with the size of the last backup it made there, counting only repositories that still exist. When there is less room, the backup fails at once with a message such as `not enough free space in DIR: a new backup needs about N MiB, the size of the last backup here, and M MiB is free`. When the last backup cannot be read, the backup goes ahead, and its message says that the free space was not checked.
 
 Before the first backup in a folder there is nothing to compare with. A disk that fills up during a backup ends it with `not enough free space in DIR`, and no incomplete backup takes its name.
 
@@ -1615,7 +1621,7 @@ OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older bui
 
 ### Restoring a backup
 
-Restore into new paths that do not exist:
+Restore into new paths that do not exist, on a disk whose file system can rename without replacing (see [Where backups can be written](#where-backups-can-be-written)):
 
 ```sh
 owngit restore \
@@ -1655,8 +1661,15 @@ Backup and restore make each new folder under a temporary name beside its final 
 - On macOS and Linux, that folder and every folder on the way to it must be ones that no other account can change, as on the way to the state directory; a sticky folder such as `/tmp` is accepted. Otherwise OwnGit stops before it creates anything, names the folder, and gives the `chmod` command that fixes it when there is one. You can also choose a folder that only this account can change.
 - Missing folders on the way are created, private to this account, but only inside a folder where no other account can create names, so not directly in `/tmp`.
 - On Windows, OwnGit follows no link, junction or mounted volume on the way, and keeps the folders on the way from being renamed while it works.
-- The backup and the restored repository folder may be on a network share, except when OwnGit runs as root or as an elevated administrator on Windows. The restored state directory must be on a local disk, as every state directory must.
-- Some file systems cannot rename a folder without replacing what is at the new name, such as exFAT and FAT on macOS and NFS on Linux. There OwnGit checks that nothing is at the final name and then renames; a folder with content that appears there meanwhile is never replaced. Backups to an exFAT disk were tested on macOS; NFS was not tested.
+- The backup and the restored repository folder may be on a network share, except when OwnGit runs as root or as an elevated administrator on Windows. A restore also needs a file system that can rename without replacing, as described below. The restored state directory must be on a local disk, as every state directory must.
+
+Some file systems cannot rename a folder without replacing what is at the new name, such as exFAT and FAT on macOS, and NFS and some other network shares on Linux.
+
+- Backups work there. OwnGit creates the backup's folder, which fails when anything is at that name, and moves the finished backup into it with the manifest last, writing each part to disk on the way. A folder left without a manifest by a stop in the middle is not a backup, and OwnGit neither counts nor removes it.
+- A restore does not. On macOS and Linux, `owngit restore` checks both target folders before it starts, and on such a file system it stops, names the file system (for example `exfat`) and changes nothing. Restore to a folder on another disk.
+- `owngit backup verify` rehearses in the system's temporary folder, so it can check a backup stored on such a disk.
+
+Backing up to an exFAT disk, and the refusal to restore onto one, were tested on macOS; NFS was not tested.
 
 ### Verifying a backup
 
