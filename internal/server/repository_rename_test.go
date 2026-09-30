@@ -315,3 +315,70 @@ func TestOwnerRoutesFollowTheRepositoryAddress(t *testing.T) {
 		t.Fatalf("deletion at the current address status=%d code=%q", status, code)
 	}
 }
+
+// The reads across repositories name each repository's current address
+// beside its ID, and the task view of one repository finds it by its
+// address: an earlier name redirects while its alias lasts, and is not
+// found after it expires.
+func TestReadViewsFollowARenamedRepository(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	task, err := fixture.store.CreateTask(ctx, "project", "Renamed task", time.Now().UTC())
+	noErr(t, err)
+	_, _, _, err = fixture.app.issueHelperCredential(ctx, "project", "laptop helper", "")
+	noErr(t, err)
+	_, err = fixture.app.Repositories.Rename(ctx, "project", "renamed", time.Now())
+	noErr(t, err)
+	server := serve(t, fixture.app.Handler())
+
+	for _, target := range []string{taskViewAPIPath, taskViewAPIPath + "/renamed"} {
+		var listed taskViewListResponse
+		if status := decodeAPI(t, sendJSON(t, http.MethodGet, server.URL+target, nil), &listed); status != http.StatusOK ||
+			len(listed.Tasks) != 1 || listed.Tasks[0].RepositoryID != "project" || listed.Tasks[0].RepositoryAddress != "renamed" {
+			t.Fatalf("%s status=%d %+v", target, status, listed.Tasks)
+		}
+	}
+	var detail taskDetailResponse
+	if status := decodeAPI(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath+"/renamed/"+task.ID, nil), &detail); status != http.StatusOK || detail.Task.ID != task.ID {
+		t.Fatalf("task detail at the current address status=%d", status)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := noRedirect.Get(server.URL + taskViewAPIPath + "/project/" + task.ID)
+	noErr(t, err)
+	location := response.Header.Get("Location")
+	if status, code := checkStatus(t, response); status != http.StatusTemporaryRedirect || code != "repository_moved" || location != taskViewAPIPath+"/renamed/"+task.ID {
+		t.Fatalf("task detail at the earlier address status=%d code=%s location=%q", status, code, location)
+	}
+
+	var credentials struct {
+		Credentials []struct {
+			RepositoryID      string `json:"repository_id"`
+			RepositoryAddress string `json:"repository_address"`
+		} `json:"credentials"`
+	}
+	if status := decodeAPI(t, adminAPIRequest(t, http.MethodGet, server.URL+allHelperCredentialsAPIPath, nil, "admin-password"), &credentials); status != http.StatusOK ||
+		len(credentials.Credentials) != 1 || credentials.Credentials[0].RepositoryID != "project" || credentials.Credentials[0].RepositoryAddress != "renamed" {
+		t.Fatalf("credential list status=%d %+v", status, credentials)
+	}
+	activity := completeActivity(t, server.URL+activityAPIPath)
+	if len(activity.Entries) == 0 {
+		t.Fatal("no activity entries")
+	}
+	for _, entry := range activity.Entries {
+		if entry.Repository != "project" || entry.RepositoryAddress != "renamed" {
+			t.Fatalf("activity entry %+v", entry)
+		}
+	}
+	client, jar := newBrowserClient(t)
+	signInAdmin(t, fixture, server.URL, jar)
+	coding := browserGET(t, client, server.URL+codingToolsPath)
+	if coding.status != http.StatusOK || !strings.Contains(coding.body, tasksURL("renamed", task.ID)) || !strings.Contains(coding.body, baseHelperCredentialsURL("renamed")) ||
+		strings.Contains(coding.body, "/repositories/project") {
+		t.Fatalf("Coding tools page status=%d does not link the current address", coding.status)
+	}
+
+	noErr(t, fixture.store.Exec(ctx, `UPDATE repository_names SET alias_until=? WHERE kind='alias'`, time.Now().Add(-time.Second).Unix()))
+	if status, code := checkStatus(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath+"/project", nil)); status != http.StatusNotFound || code != "repository_not_found" {
+		t.Fatalf("tasks at the expired address status=%d code=%s", status, code)
+	}
+}
