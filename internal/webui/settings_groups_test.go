@@ -27,7 +27,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupLogs:       {"check_logs"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
-		GroupTailscale:  {"tailscale", "home_network"},
+		GroupTailscale:  {"tailscale", "home_network", "tailscale_port", "tailscale_https_port"},
 	}
 	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z_]+)"`)
 	namePattern := regexp.MustCompile(`name="([a-z_]+)"`)

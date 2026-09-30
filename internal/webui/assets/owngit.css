@@ -1584,6 +1584,11 @@ span.hm__cell { cursor: default; }
   border-radius: 0 var(--r-s) var(--r-s) 0;
 }
 .tslog .icon { flex: none; margin-top: 2px; color: var(--text-3); }
+/* Replacing what is on a port is the second choice after a free port, so
+   it follows the form under a rule, one port at a time. */
+.tsreplace { display: grid; gap: 10px; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--sep); }
+.tsreplace h3 { margin: 0; font-size: 13px; }
+.tsreplace__port { display: grid; gap: 6px; }
 
 /* ---------- settings tabs and groups ---------- */
 

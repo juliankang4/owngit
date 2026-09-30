@@ -55,9 +55,11 @@ func tailscaleCommand(arguments []string) error {
 func printTailscaleUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit tailscale <status|on|off> [options]")
 	fmt.Fprintln(writer, "  tailscale status [--json]                  whether OwnGit is shared on the tailnet over HTTPS, and what is missing")
-	fmt.Fprintln(writer, "  tailscale on [--home-network[=false]] [--https-port PORT]")
+	fmt.Fprintln(writer, "  tailscale on [--home-network[=false]] [--https-port PORT [--replace-endpoint DIGEST]]")
 	fmt.Fprintln(writer, "                                             share OwnGit at https://NAME.TAILNET.ts.net/ with Tailscale Serve;")
-	fmt.Fprintln(writer, "                                             if HTTPS port 443 serves something else, OwnGit uses 8443 or 10000")
+	fmt.Fprintln(writer, "                                             if HTTPS port 443 serves something else, OwnGit uses 8443 or 10000;")
+	fmt.Fprintln(writer, "                                             another --https-port moves sharing that is on; --replace-endpoint")
+	fmt.Fprintln(writer, "                                             replaces what that port has, as status reviewed it (its digest)")
 	fmt.Fprintln(writer, "  tailscale off                              remove the Tailscale address OwnGit made and the settings it changed")
 	fmt.Fprintln(writer, "Tailscale must be installed and signed in on this computer, with MagicDNS and HTTPS certificates on in the tailnet.")
 	fmt.Fprintln(writer, "on and off change the saved settings; a running OwnGit uses them after a restart. The Settings page applies them at once.")
@@ -114,6 +116,9 @@ func (options tailscaleFlags) failure(code string, err error) error {
 		explained := tailscaleFailure(refusal)
 		if errors.Is(err, server.ErrTailscaleAhead) {
 			explained = fmt.Errorf("%w: %w", server.ErrTailscaleAhead, explained)
+		}
+		if errors.Is(err, server.ErrTailscaleMoveStopped) {
+			explained = fmt.Errorf("%w: %w", server.ErrTailscaleMoveStopped, explained)
 		}
 		code, err = refusal.Problem, explained
 	case errors.Is(err, state.ErrNotExist):
@@ -212,7 +217,8 @@ func tailscaleStatus(arguments []string) error {
 func tailscaleOn(arguments []string) error {
 	options := newTailscaleFlags("tailscale on")
 	homeNetwork := options.flags.Bool("home-network", false, "also let devices on the home network connect over plain HTTP; --home-network=false keeps OwnGit on this computer only. Without it the listen address stays as it is when Tailscale can reach it")
-	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443")
+	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443, and keeps the port sharing uses now. Another port moves sharing that is on")
+	replace := options.flags.String("replace-endpoint", "", "replace what another service has on --https-port with OwnGit's address: the `digest` \"owngit tailscale status\" or a refusal showed for that port. Nothing is replaced when the port has anything else by then")
 	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}
@@ -232,6 +238,9 @@ func tailscaleOn(arguments []string) error {
 	if portSet && (*httpsPort < 1 || *httpsPort > 65535) {
 		return options.failure("invalid_arguments", errors.New("--https-port must be a port from 1 to 65535"))
 	}
+	if *replace != "" && !portSet {
+		return options.failure("invalid_arguments", errors.New("--replace-endpoint needs the --https-port it replaces"))
+	}
 	ctx := context.Background()
 	sharing, store, err := options.sharing(ctx)
 	if err != nil {
@@ -248,7 +257,12 @@ func tailscaleOn(arguments []string) error {
 			fmt.Println(certificateLog)
 		}
 	}
-	change, err := sharing.On(ctx, choice, *httpsPort)
+	var change server.TailscaleChange
+	if *replace != "" {
+		change, err = sharing.Replace(ctx, choice, *httpsPort, *replace)
+	} else {
+		change, err = sharing.On(ctx, choice, *httpsPort)
+	}
 	if err != nil {
 		return options.failure("failed", err)
 	}
@@ -275,6 +289,9 @@ func tailscaleOn(arguments []string) error {
 		fmt.Printf("Tailscale already answered HTTPS for %s with the address OwnGit made, passing it to OwnGit at %s.\n", address, change.Record.Target)
 	default:
 		fmt.Printf("Tailscale already answered HTTPS for %s with OwnGit at %s; OwnGit left that setting as it was.\n", address, change.Record.Target)
+	}
+	if change.MovedFrom != "" {
+		fmt.Printf("Sharing moved from %s. Clones that use that address need the new one, for example with git remote set-url.\n", change.MovedFrom)
 	}
 	if len(change.PassedPorts) > 0 {
 		fmt.Println(fmt.Sprintf(webui.Text(webui.LangEN, webui.TailscalePortNote(len(change.PassedPorts))), server.PortList(change.PassedPorts), strconv.Itoa(change.Record.HTTPSPort)))
@@ -361,7 +378,19 @@ func tailscaleFailure(refusal *server.TailscaleError) error {
 	case server.TailscaleProblemUnrecorded:
 		text += " " + tailscaleFixText(refusal.Found, false, "", refusal.Port)
 	}
+	if refusal.Occupied != nil {
+		text += " " + replaceText(*refusal.Occupied)
+	}
 	return errors.New(text)
+}
+
+// replaceText says how to replace what another service has on a port, or
+// why OwnGit does not.
+func replaceText(occupied server.TailscaleOccupied) string {
+	if !occupied.Replaceable {
+		return webui.Text(webui.LangEN, webui.MsgTSReplaceNotAllowed)
+	}
+	return fmt.Sprintf("If you no longer need what is on port %d, replace it with \"owngit tailscale on --https-port %d --replace-endpoint %s\"; it then stops answering there.", occupied.Port, occupied.Port, occupied.Digest)
 }
 
 // tailscaleFixText is the English step that clears what is on HTTPS port
@@ -427,6 +456,9 @@ func printTailscaleReport(writer io.Writer, report server.TailscaleReport) {
 		fmt.Fprintf(writer, "  %s\n", tailscaleFixText(report.Found, true, report.Sharing.Target, report.Sharing.HTTPSPort))
 	case report.PortsTaken:
 		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSTaken), server.TailscaleUsesText(report.Found), webui.Text(webui.LangEN, webui.MsgTSTakenSteps))
+		for _, occupied := range report.Occupied {
+			fmt.Fprintf(writer, "  Port %d: %s %s\n", occupied.Port, server.TailscaleUsesText(occupied.Found), replaceText(occupied))
+		}
 	case !report.On && report.Endpoint == server.TailscaleEndpointUnrecorded:
 		fmt.Fprintf(writer, "  %s %s\n  %s\n", webui.Text(webui.LangEN, webui.MsgTSUnrecorded), server.TailscaleUsesText(report.Found), tailscaleFixText(report.Found, false, "", report.TurnOnPort))
 	}

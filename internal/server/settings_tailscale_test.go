@@ -157,10 +157,14 @@ func TestTailscaleRefusalIsExplainedOnTheBlock(t *testing.T) {
 			t.Errorf("the refusal lacks %q", want)
 		}
 	}
-	// Listed once, in the block below the alert.
+	// Listed once, port by port in the block below the alert, each with
+	// the form that replaces exactly what is listed.
 	list := regexp.MustCompile(`(?s)<ul class="tsfound">.*?</ul>`)
-	if lists := list.FindAllString(result.body, -1); len(lists) != 1 || strings.Contains(list.ReplaceAllString(result.body, ""), "127.0.0.1:3000") {
-		t.Errorf("what is on the port is not listed exactly once: %d lists", len(lists))
+	if lists := list.FindAllString(result.body, -1); len(lists) != 3 || strings.Contains(list.ReplaceAllString(result.body, ""), "127.0.0.1:3000") {
+		t.Errorf("what is on the ports is not listed once each: %d lists", len(lists))
+	}
+	if forms := strings.Count(result.body, `name="replace_digest"`); forms != 3 {
+		t.Errorf("%d replacement forms, want one per port", forms)
 	}
 	if len(fake.Writes()) != 0 {
 		t.Fatalf("writes=%q", fake.Writes())
@@ -382,7 +386,7 @@ func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
 	if !strings.Contains(body, enText(webui.MsgTSTakenBrief)) {
 		t.Error("a viewer is not told that the port is taken")
 	}
-	for _, secret := range []string{"127.0.0.1:3000", "127.0.0.1:9090", "oldbox", enText(webui.MsgTSStale)} {
+	for _, secret := range []string{"127.0.0.1:3000", "127.0.0.1:9090", "oldbox", enText(webui.MsgTSStale), "replace_digest"} {
 		if strings.Contains(body, secret) {
 			t.Errorf("a viewer sees %q", secret)
 		}
@@ -393,7 +397,7 @@ func TestOnlyTheAdministratorSeesWhatElseTailscaleServes(t *testing.T) {
 	parsed, _ := url.Parse(base)
 	client.Jar.SetCookies(parsed, []*http.Cookie{{Name: adminCookie, Value: "tailscale-admin-session", Path: "/"}})
 	body, _ = dashboardGET(t, client, base+"/settings/network")
-	for _, want := range []string{enText(webui.MsgTSTaken), "127.0.0.1:3000", "https://oldbox.tail0000.ts.net:443/"} {
+	for _, want := range []string{enText(webui.MsgTSTakenBelow), "127.0.0.1:3000", "https://oldbox.tail0000.ts.net:443/", `name="replace_digest"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the administrator does not see %q", want)
 		}

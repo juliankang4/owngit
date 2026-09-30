@@ -3,6 +3,8 @@ package tailscale
 import (
 	"bytes"
 	"cmp"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net"
 	"slices"
@@ -123,6 +125,73 @@ func (config ServeConfig) withEndpoint(name string, port int, target string) ([]
 		top[field] = encoded
 	}
 	return json.Marshal(top)
+}
+
+// PortDigest identifies everything the configuration as read has on port:
+// its TCP entry, the web handlers of every name on it, its Funnel entries
+// and the same inside foreground sessions, each as Tailscale wrote it. The
+// owner reviews what is on a port before OwnGit replaces it, and the
+// replacement goes ahead only while the port's digest is still the one
+// reviewed, whatever else changed meanwhile.
+func (config ServeConfig) PortDigest(port int) (string, error) {
+	portText := strconv.Itoa(port)
+	var entries func(content []byte) (map[string]json.RawMessage, error)
+	entries = func(content []byte) (map[string]json.RawMessage, error) {
+		found := map[string]json.RawMessage{}
+		top := map[string]json.RawMessage{}
+		if nothingConfigured(content) {
+			return found, nil
+		}
+		if err := json.Unmarshal(content, &top); err != nil {
+			return nil, &Error{Kind: KindUnreadable}
+		}
+		for _, field := range []string{"TCP", "Web", "AllowFunnel"} {
+			var byKey map[string]json.RawMessage
+			if err := decodeEntries(top, field, &byKey); err != nil {
+				return nil, err
+			}
+			for key, value := range byKey {
+				if key == portText {
+					found[field+" "+key] = value
+				} else if _, p, err := net.SplitHostPort(key); err == nil && p == portText {
+					found[field+" "+key] = value
+				}
+			}
+		}
+		var sessions map[string]json.RawMessage
+		if err := decodeEntries(top, "Foreground", &sessions); err != nil {
+			return nil, err
+		}
+		for session, content := range sessions {
+			inner, err := entries(content)
+			if err != nil {
+				return nil, err
+			}
+			for key, value := range inner {
+				found["Foreground "+session+" "+key] = value
+			}
+		}
+		return found, nil
+	}
+	found, err := entries(config.content)
+	if err != nil {
+		return "", err
+	}
+	// Marshal sorts the keys and compacts each entry.
+	encoded, err := json.Marshal(found)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:16]), nil
+}
+
+// Replaceable reports whether OwnGit may replace what uses lists on a port
+// with its own endpoint when the owner asks: never a port open to Funnel,
+// which would make OwnGit public, and never one a foreground "tailscale
+// serve" session holds, which only that session can change.
+func Replaceable(uses []Use) bool {
+	return len(uses) > 0 && !slices.ContainsFunc(uses, func(use Use) bool { return use.Kind == UseFunnel || use.Kind == UseForeground })
 }
 
 // decodeEntries decodes the map in field of top into entries, leaving each

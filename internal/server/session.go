@@ -426,6 +426,8 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgTSTurnedOn)}
 	case "tailscale_off":
 		return []webui.Notice{webui.Success(webui.MsgTSTurnedOff)}
+	case "tailscale_moved":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgTSMoved}}
 	case "access_password_saved":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAccessSaved)}
 	case "access_enabled":

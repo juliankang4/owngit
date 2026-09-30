@@ -42,8 +42,17 @@ import (
 // ports Tailscale names for HTTPS (the ports Funnel may use), so an address
 // such as https://box.tail1234.ts.net:8443/ still reads as a web address.
 // Turning on uses the first one that is free and leaves the others as they
-// are; "owngit tailscale on --https-port" names any other port.
+// are; the owner can name any other port instead (a custom port in
+// Settings, "owngit tailscale on --https-port"). Naming another port while
+// sharing is on moves it there. What another service has on a port is left
+// alone unless the owner reviewed it and asked to replace it
+// (Tailscale.Replace).
 var tailscaleHTTPSPorts = []int{443, 8443, 10000}
+
+// ErrTailscaleMoveStopped marks a failure to turn sharing on at a newly
+// named port after sharing was turned off at its old port to move it:
+// sharing is off now.
+var ErrTailscaleMoveStopped = errors.New("sharing was turned off at its old port to move it, and could not be turned on at the new one")
 
 // ErrTailscaleAhead marks a failure after Tailscale accepted a change of
 // its endpoint, or showed the change, while OwnGit's settings were not
@@ -202,6 +211,10 @@ type TailscaleReport struct {
 	// turning on would try (listed in Found), so it cannot be turned on,
 	// or on again, until one is free or another port is named.
 	PortsTaken bool `json:"ports_taken,omitempty"`
+	// Occupied describes, port by port, what else uses the ports that
+	// turning on would try while PortsTaken, for the owner to review
+	// before replacing one (Tailscale.Replace).
+	Occupied []TailscaleOccupied `json:"occupied,omitempty"`
 	// Stale lists what Tailscale keeps on the HTTPS ports OwnGit uses under a
 	// name this computer had before (tailscale.Endpoint).
 	Stale []tailscale.Use `json:"stale,omitempty"`
@@ -322,6 +335,14 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 			report.PortsTaken, report.Found = true, plan.found
 			if !on {
 				report.Endpoint = TailscaleEndpointTaken
+			}
+			for _, port := range plan.passed {
+				occupied, err := occupiedPort(reading.config, report.Name, port)
+				if err != nil {
+					report.Problem, report.ProblemDetail = problemOf(err)
+					break
+				}
+				report.Occupied = append(report.Occupied, occupied)
 			}
 		}
 	}
@@ -462,6 +483,30 @@ func planEndpoint(config tailscale.ServeConfig, name, target string, ports []int
 	return plan
 }
 
+// TailscaleOccupied is what another service has on one HTTPS port for
+// this computer's name: the handlers, their paths and targets, TCP
+// forwarding and Funnel (Found). Digest identifies exactly that
+// (tailscale.ServeConfig.PortDigest); a replacement the owner asks for
+// after reviewing it goes ahead only while the port still has it.
+// Replaceable is false when OwnGit never replaces what is there: a port
+// open to Funnel or held by a foreground "tailscale serve".
+type TailscaleOccupied struct {
+	Port        int             `json:"port"`
+	Found       []tailscale.Use `json:"found"`
+	Replaceable bool            `json:"replaceable"`
+	Digest      string          `json:"digest"`
+}
+
+// occupiedPort describes what config has on port for name.
+func occupiedPort(config tailscale.ServeConfig, name string, port int) (TailscaleOccupied, error) {
+	digest, err := config.PortDigest(port)
+	if err != nil {
+		return TailscaleOccupied{}, err
+	}
+	found := config.Endpoint(name, port, "").Found
+	return TailscaleOccupied{Port: port, Found: found, Replaceable: tailscale.Replaceable(found), Digest: digest}, nil
+}
+
 // httpsPorts lists the HTTPS ports that turning on tries, in order: the
 // port the owner named; the recorded port while sharing is on under the
 // same name, so its address stays as it is; the recorded port first after
@@ -540,6 +585,10 @@ type TailscaleError struct {
 	Port   int
 	// MacApp is true for the Tailscale app for macOS.
 	MacApp bool
+	// Occupied is what another service has on the one port a refusal
+	// concerns, when the owner named that port, for the owner to review
+	// before replacing it.
+	Occupied *TailscaleOccupied
 	// cause is the connection's error behind a failed exchange with
 	// Tailscale (tailscale.Error), for logs only.
 	cause error
@@ -550,9 +599,12 @@ const (
 	// TailscaleProblemTaken: something else uses every HTTPS port that
 	// turning on tried.
 	TailscaleProblemTaken = "port_taken"
-	// TailscaleProblemOtherPort: sharing is on at another HTTPS port than
-	// the one named; turning it off first moves it.
-	TailscaleProblemOtherPort = "other_port"
+	// TailscaleProblemReplaceChanged: what is on the port changed since the
+	// owner reviewed it, so OwnGit replaced nothing. Occupied shows it now.
+	TailscaleProblemReplaceChanged = "replace_changed"
+	// TailscaleProblemNotReplaceable: the port is open to Funnel or held by
+	// a foreground "tailscale serve", which OwnGit never replaces.
+	TailscaleProblemNotReplaceable = "not_replaceable"
 	// TailscaleProblemUnrecorded: OwnGit's exact endpoint is there without
 	// a record of OwnGit making it.
 	TailscaleProblemUnrecorded = "unrecorded"
@@ -627,6 +679,9 @@ type TailscaleChange struct {
 	// PassedPorts are the HTTPS ports that turning on passed over because
 	// something else uses them, before the one in Record.
 	PassedPorts []int
+	// MovedFrom is the address sharing had before it moved to the port the
+	// owner named, or empty.
+	MovedFrom string
 }
 
 // On turns sharing on. homeNetwork chooses the listen address: nil keeps it
@@ -634,15 +689,34 @@ type TailscaleChange struct {
 // true also listens on the home network, and false listens on this computer
 // only. Changing the listen address applies at the next start. port is the
 // HTTPS port to use, or 0 to use the recorded one or the first free one of
-// tailscaleHTTPSPorts.
+// tailscaleHTTPSPorts. A port other than the one sharing uses now moves it
+// there: sharing is turned off at the old port and on at the new one, after
+// the new one was found free.
 func (sharing *Tailscale) On(ctx context.Context, homeNetwork *bool, port int) (TailscaleChange, error) {
+	return sharing.turnOn(ctx, homeNetwork, port, "")
+}
+
+// Replace turns sharing on at port, as On does, replacing what another
+// service has there: exactly what the owner reviewed, identified by digest
+// (TailscaleOccupied). When the port has anything else by then, it replaces
+// nothing and refuses with TailscaleProblemReplaceChanged and what is there
+// now. It never replaces Funnel or a foreground "tailscale serve", and
+// changes nothing on other ports or names.
+func (sharing *Tailscale) Replace(ctx context.Context, homeNetwork *bool, port int, digest string) (TailscaleChange, error) {
+	if port < 1 || port > 65535 || digest == "" {
+		return TailscaleChange{}, errors.New("a replacement names a port and the digest of what was reviewed there")
+	}
+	return sharing.turnOn(ctx, homeNetwork, port, digest)
+}
+
+func (sharing *Tailscale) turnOn(ctx context.Context, homeNetwork *bool, port int, replace string) (TailscaleChange, error) {
 	ctx, unlock, err := sharing.lock(ctx)
 	if err != nil {
 		return TailscaleChange{}, err
 	}
 	defer unlock()
 	defer sharing.forget()
-	change, err := sharing.on(ctx, homeNetwork, port)
+	change, err := sharing.on(ctx, homeNetwork, port, replace)
 	if err == nil && sharing.Live != nil {
 		sharing.Live.ApplyTailscale(change.Record, change.RemovedHost)
 	}
@@ -679,7 +753,9 @@ func (sharing *Tailscale) lock(ctx context.Context) (context.Context, func(), er
 	}, nil
 }
 
-func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort int) (TailscaleChange, error) {
+// on turns sharing on at httpsPort, or the ports httpsPorts lists when it
+// is 0, replacing what the owner reviewed there when replace is its digest.
+func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort int, replace string) (TailscaleChange, error) {
 	command, err := sharing.Find()
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, false)
@@ -725,15 +801,29 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 	if err != nil {
 		return TailscaleChange{}, tailscaleError(err, command.MacApp)
 	}
-	// Sharing that is on moves to another port only by turning it off
-	// first, which removes the endpoint on the old one. The same holds for
-	// an interrupted turning on whose endpoint is still there: a record for
-	// the new port would replace the only record of it.
-	if httpsPort != 0 && wasOn && previous.Name == status.Name && httpsPort != previous.HTTPSPort &&
-		(previous.Confirmed || previous.Created && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact) {
-		return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemOtherPort, Detail: TailscaleOrigin(previous.Name, previous.HTTPSPort) + "/"}
+	// Sharing that is on moves to another port by turning it off, which
+	// removes the endpoint on the old one, and on at the new one. The same
+	// holds for an interrupted turning on whose endpoint is still there: a
+	// record for the new port would replace the only record of it. The new
+	// port is checked first, so a move that cannot finish changes nothing.
+	moving := httpsPort != 0 && wasOn && previous.Name == status.Name && httpsPort != previous.HTTPSPort &&
+		(previous.Confirmed || previous.Created && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact)
+	plan := planEndpoint(config, status.Name, target, httpsPorts(httpsPort, previous, wasOn, status.Name), previous, wasOn && !moving)
+	if replace != "" {
+		occupied, err := occupiedPort(config, status.Name, httpsPort)
+		switch {
+		case err != nil:
+			return TailscaleChange{}, tailscaleError(err, command.MacApp)
+		case occupied.Digest != replace:
+			return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemReplaceChanged, Found: occupied.Found, Port: httpsPort, Occupied: &occupied}
+		case !occupied.Replaceable:
+			return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemNotReplaceable, Found: occupied.Found, Port: httpsPort, Occupied: &occupied}
+		}
+		plan = endpointPlan{port: httpsPort, outcome: endpointCreated}
 	}
-	plan := planEndpoint(config, status.Name, target, httpsPorts(httpsPort, previous, wasOn, status.Name), previous, wasOn)
+	if moving && plan.outcome == endpointCreated {
+		return sharing.move(ctx, homeNetwork, httpsPort, replace)
+	}
 	// A record whose settings were never saved belongs to a turning on that
 	// was interrupted before it changed any setting, so this one starts
 	// anew: it records the base URL saved now and what it adds itself.
@@ -755,7 +845,16 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 	case TailscaleProblemOwnersEndpoint:
 		return TailscaleChange{}, &TailscaleError{Problem: plan.outcome, Detail: target, Port: plan.port}
 	default:
-		return TailscaleChange{}, &TailscaleError{Problem: plan.outcome, Found: plan.found, Port: plan.port}
+		refusal := &TailscaleError{Problem: plan.outcome, Found: plan.found, Port: plan.port}
+		// A port the owner named can be reviewed and replaced.
+		if httpsPort != 0 && plan.outcome == TailscaleProblemTaken {
+			occupied, err := occupiedPort(config, status.Name, httpsPort)
+			if err != nil {
+				return TailscaleChange{}, tailscaleError(err, command.MacApp)
+			}
+			refusal.Port, refusal.Occupied = httpsPort, &occupied
+		}
+		return TailscaleChange{}, refusal
 	}
 
 	if change.Endpoint == endpointCreated {
@@ -833,6 +932,27 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		return TailscaleChange{}, tailscaleAhead(err, written)
 	}
 	change.Record = record
+	return change, nil
+}
+
+// move moves sharing that is on to port, which on found usable: it turns
+// sharing off at the old port and on at port. When turning on fails after
+// that, sharing stays off and the error says so (ErrTailscaleMoveStopped).
+func (sharing *Tailscale) move(ctx context.Context, homeNetwork *bool, port int, replace string) (TailscaleChange, error) {
+	stopped, baseURL, err := sharing.off(ctx)
+	if err != nil {
+		return TailscaleChange{}, err
+	}
+	// The running server stops answering at the old address now, whatever
+	// happens at the new one.
+	if sharing.Live != nil {
+		sharing.Live.RemoveTailscale(stopped.Record, baseURL)
+	}
+	change, err := sharing.on(ctx, homeNetwork, port, replace)
+	if err != nil {
+		return TailscaleChange{}, fmt.Errorf("%w: %w", ErrTailscaleMoveStopped, err)
+	}
+	change.MovedFrom = TailscaleOrigin(stopped.Record.Name, stopped.Record.HTTPSPort) + "/"
 	return change, nil
 }
 

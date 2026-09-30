@@ -432,6 +432,7 @@ var settingsNoticeGroups = map[string]string{
 	"tailscale_on":           webui.GroupTailscale,
 	"tailscale_on_kept":      webui.GroupTailscale,
 	"tailscale_off":          webui.GroupTailscale,
+	"tailscale_moved":        webui.GroupTailscale,
 }
 
 // settingsSaved ends a saved Settings change: a redirect to target, or to
@@ -524,8 +525,10 @@ type settingsView struct {
 	// page may show what only an administrator sees.
 	AdminVerified bool
 	// TailscaleRefused is the problem of a refused Tailscale change shown
-	// on the page, which the Tailscale block then does not repeat.
-	TailscaleRefused string
+	// on the page, which the Tailscale block then does not repeat, and
+	// TailscaleOccupied what it found on the port the owner named.
+	TailscaleRefused  string
+	TailscaleOccupied *TailscaleOccupied
 	// Unchanged is true when the form asked for nothing that could be
 	// saved: the group then shows the saved values, not what was sent.
 	Unchanged bool
@@ -538,7 +541,7 @@ var settingsDraftFields = map[string]bool{
 	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false,
 	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false,
 	"delete_requires_name": false, "login_attempts": false, "login_window": false, "login_window_unit": false, "login_pause": false, "login_pause_unit": false, "cross_site_links": false,
-	"update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "tailscale_port": false, "tailscale_https_port": false, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.
@@ -626,7 +629,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	// Only the Network tab shows sharing on the tailnet, and reading it
 	// asks Tailscale, so the other tabs do not.
 	if tab == webui.SettingsNetwork {
-		page.Tailscale = app.tailscaleBlock(request, chrome.Viewer.AdminConfirmed || view.AdminVerified, view.TailscaleRefused)
+		page.Tailscale = app.tailscaleBlock(request, chrome.Viewer.AdminConfirmed || view.AdminVerified, view.TailscaleRefused, view.TailscaleOccupied)
 	}
 	app.render(writer, request, status, page)
 }

@@ -99,7 +99,7 @@ func TestStoppingEndsTheBackgroundReading(t *testing.T) {
 	// The Tailscale block then says only that this is unavailable, and
 	// nothing is logged, since nothing failed.
 	serverLog := captureServerLog(t)
-	if info := app.tailscaleBlock(httptest.NewRequest(http.MethodGet, "/settings", nil), true, ""); info.Problem != webui.MsgErrUnavailable {
+	if info := app.tailscaleBlock(httptest.NewRequest(http.MethodGet, "/settings", nil), true, "", nil); info.Problem != webui.MsgErrUnavailable {
 		t.Fatalf("the block after stop shows %q, want %q", info.Problem, webui.MsgErrUnavailable)
 	}
 	checkLoggedSteps(t, "the block after stop", loggedFailures(serverLog, 0))

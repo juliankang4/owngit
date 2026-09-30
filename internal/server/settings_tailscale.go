@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -30,8 +31,10 @@ import (
 // Other viewers see that the port is taken.
 //
 // refused is the problem of a refusal the page shows above the block, or
-// "": the block does not repeat the same message.
-func (app *App) tailscaleBlock(request *http.Request, admin bool, refused string) webui.TailscaleInfo {
+// "": the block does not repeat the same message. occupied is what that
+// refusal found on the port the owner named, which the block offers to
+// replace like the ports it reads itself.
+func (app *App) tailscaleBlock(request *http.Request, admin bool, refused string, occupied *TailscaleOccupied) webui.TailscaleInfo {
 	report, err := app.Tailscale.Report(request.Context())
 	var info webui.TailscaleInfo
 	switch {
@@ -48,18 +51,31 @@ func (app *App) tailscaleBlock(request *http.Request, admin bool, refused string
 	default:
 		info = tailscaleInfo(report)
 	}
+	if occupied != nil && !slices.ContainsFunc(info.Occupied, func(shown webui.TailscaleOccupied) bool { return shown.Port == strconv.Itoa(occupied.Port) }) {
+		info.Occupied = append([]webui.TailscaleOccupied{tailscaleOccupied(info.Name, *occupied)}, info.Occupied...)
+	}
 	if refused != "" && info.Problem == webui.TailscaleProblemCode(refused) {
 		info.Problem, info.ProblemDetail = "", ""
 	}
 	if !admin {
 		info.ProblemDetail, info.Stale = "", nil
 		info.Problem = webui.TailscaleProblemBrief(info.Problem)
-		if info.Found != nil {
+		if info.FoundNote != "" {
 			info.Found, info.FoundFix, info.FoundFixPort, info.FoundFixValue = nil, "", "", ""
 			info.FoundNote = webui.TailscalePortNoteBrief(info.FoundNote)
 		}
+		info.Occupied = nil
 	}
 	return info
+}
+
+// tailscaleOccupied turns what another service has on a port into the
+// page's form.
+func tailscaleOccupied(name string, occupied TailscaleOccupied) webui.TailscaleOccupied {
+	return webui.TailscaleOccupied{
+		Port: strconv.Itoa(occupied.Port), Address: TailscaleOrigin(name, occupied.Port) + "/",
+		Uses: tailscaleUses(occupied.Found), Replaceable: occupied.Replaceable, Digest: occupied.Digest,
+	}
 }
 
 // tailscaleInfo turns the report into the page block.
@@ -98,6 +114,18 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 		info.FoundFixPort = strconv.Itoa(report.TurnOnPort)
 	}
 	info.Stale = tailscaleUses(report.Stale)
+	// What is on each port is listed port by port, with its replacement,
+	// instead of in one list.
+	for _, occupied := range report.Occupied {
+		info.Occupied = append(info.Occupied, tailscaleOccupied(report.Name, occupied))
+		info.Found, info.FoundNote = nil, webui.MsgTSTakenBelow
+	}
+	// Automatic keeps the port sharing uses now, so a port it would not
+	// choose first is shown as the custom port it is.
+	info.PortMode = "auto"
+	if report.On && !slices.Contains(tailscaleHTTPSPorts, report.Sharing.HTTPSPort) {
+		info.PortMode, info.HTTPSPort = "custom", strconv.Itoa(report.Sharing.HTTPSPort)
+	}
 	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
 	// A --listen option decides where the running server listens, so the
 	// home network choice would change nothing then.
@@ -112,9 +140,33 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 // changeTailscale handles the Tailscale group, and the ActionTailscaleOn and
 // ActionTailscaleOff forms of 1.1.2, after the administrator password was
 // verified.
+//
+// The group's HTTPS port is Automatic (0: the ports tailscaleHTTPSPorts
+// lists, or the port sharing uses now) or a custom port, which moves
+// sharing that is on to it. A replace_digest field asks to replace what
+// another service has on the custom port, exactly as the owner reviewed it.
 func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Request, settings state.Settings, csrf, action string) {
 	homeNetwork := new(bool)
 	*homeNetwork = formChecked(postValue(request, "home_network"))
+	port := 0
+	switch postValue(request, "tailscale_port") {
+	case "", "auto":
+	case "custom":
+		number, err := strconv.Atoi(strings.TrimSpace(postValue(request, "tailscale_https_port")))
+		if err != nil || number < 1 || number > 65535 {
+			app.renderSettingsPage(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Error("tailscale_https_port", webui.MsgTSPortInvalid)}, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		port = number
+	default:
+		app.renderSettings(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+		return
+	}
+	replace := postValue(request, "replace_digest")
+	if replace != "" && port == 0 {
+		app.renderSettings(writer, request, settings, csrf, webui.ActionSaveTailscale, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
+		return
+	}
 	// The switch of the Tailscale group sends what sharing should be.
 	if action == webui.ActionSaveTailscale {
 		var on bool
@@ -134,7 +186,8 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		// network choice sent while sharing stays off is used only when
 		// sharing is turned on, which the answer says.
 		if report, err := app.Tailscale.Report(request.Context()); err == nil {
-			if on && report.On && !report.CanTurnOn || !on && !report.On {
+			samePort := port == 0 || report.Sharing != nil && port == report.Sharing.HTTPSPort
+			if on && report.On && !report.CanTurnOn && samePort && replace == "" || !on && !report.On {
 				notice := webui.MsgSettingsNothing
 				if !on && report.ListenOption == "" && *homeNetwork != report.HomeNetwork {
 					notice = webui.MsgSettingsTSHomeOff
@@ -155,17 +208,33 @@ func (app *App) changeTailscale(writer http.ResponseWriter, request *http.Reques
 		}
 	}
 	if action == webui.ActionTailscaleOn {
-		change, err := app.Tailscale.On(request.Context(), homeNetwork, 0)
+		// A page opened at the address a move ends follows the result to
+		// the new address.
+		away := app.throughTailscale(request)
+		var change TailscaleChange
+		var err error
+		if replace != "" {
+			change, err = app.Tailscale.Replace(request.Context(), homeNetwork, port, replace)
+		} else {
+			change, err = app.Tailscale.On(request.Context(), homeNetwork, port)
+		}
 		if err != nil {
 			app.renderTailscaleRefusal(writer, request, settings, csrf, action, err)
 			return
 		}
 		// Only a new address waits for a certificate on its first visit.
 		notice := "tailscale_on"
-		if change.Endpoint != endpointCreated {
+		switch {
+		case change.MovedFrom != "":
+			notice = "tailscale_moved"
+		case change.Endpoint != endpointCreated:
 			notice = "tailscale_on_kept"
 		}
-		app.settingsSaved(writer, request, settingsResultURL(action, notice))
+		target := settingsResultURL(action, notice)
+		if away && change.MovedFrom != "" {
+			target = TailscaleOrigin(change.Record.Name, change.Record.HTTPSPort) + target
+		}
+		app.settingsSaved(writer, request, target)
 		return
 	}
 	// A page opened through the tailnet address is answered through it once
@@ -213,10 +282,14 @@ func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http
 	if ahead {
 		notices = append(notices, webui.Error("tailscale", webui.MsgTSNotSavedAhead))
 	}
+	if errors.Is(err, ErrTailscaleMoveStopped) {
+		notices = append(notices, webui.Error("tailscale", webui.MsgTSMoveStopped))
+	}
 	view := settingsView{AdminVerified: true}
 	var refusal *TailscaleError
 	switch {
 	case errors.As(err, &refusal):
+		view.TailscaleOccupied = refusal.Occupied
 		// What is on the port is listed in the block, in the page's language.
 		notice := webui.Notice{Kind: webui.NoticeError, Code: webui.TailscaleRefusalCode(refusal.Problem, len(refusal.Found) > 0), Field: "tailscale", Detail: refusal.Detail}
 		if len(refusal.Found) > 0 {

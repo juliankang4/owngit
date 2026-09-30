@@ -707,10 +707,64 @@
       <p class="setblock__d" data-show-if="tailscale=off">{{bi $lang "settings.tailscale.off_note"}}</p>
       {{if $again}}<p class="netnote" data-show-if="tailscale=on">{{icon "clock"}}<span>{{bi $lang "settings.tailscale.again"}}</span></p>{{end}}
     {{end}}
+    {{/* The HTTPS port, in the details of turning on: Automatic, or a
+         custom port, which moves sharing that is on. */}}
     {{if or $canSwitch $again}}
+      {{$mode := draft $p.Group $p.Draft "tailscale" "tailscale_port" $ts.PortMode}}
+      {{$port := draft $p.Group $p.Draft "tailscale" "tailscale_https_port" $ts.HTTPSPort}}
+      <div data-show-if="tailscale=on">
+        <div class="f f--row">
+          <label for="ts-port-mode">{{bi $lang "settings.tailscale.port"}}</label>
+          <select id="ts-port-mode" name="tailscale_port" data-saved="{{$ts.PortMode}}" aria-describedby="ts-port-mode-help">
+            <option value="auto" data-en="{{t "en" "settings.tailscale.port_auto"}}" data-ko="{{t "ko" "settings.tailscale.port_auto"}}"{{if ne $mode "custom"}} selected{{end}}>{{t $lang "settings.tailscale.port_auto"}}</option>
+            <option value="custom" data-en="{{t "en" "settings.tailscale.port_custom"}}" data-ko="{{t "ko" "settings.tailscale.port_custom"}}"{{if eq $mode "custom"}} selected{{end}}>{{t $lang "settings.tailscale.port_custom"}}</option>
+          </select>
+          <p class="f__help" id="ts-port-mode-help">{{bi $lang "settings.tailscale.port_help"}}</p>
+        </div>
+        <div class="f f--row" data-show-if="tailscale_port=custom">
+          <label for="ts-port">{{bi $lang "settings.tailscale.port_number"}}</label>
+          <input id="ts-port" name="tailscale_https_port" type="text" inputmode="numeric" autocomplete="off" spellcheck="false"
+                 value="{{$port}}" data-saved="{{$ts.HTTPSPort}}"
+                 {{template "netDescribed" dict "Notices" $gn "Scope" "tailscale" "Field" "tailscale_https_port" "Help" "ts-port-help"}}{{if eq $focus "tailscale_https_port"}} autofocus{{end}}>
+          {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "tailscale" "Field" "tailscale_https_port"}}
+          <p class="f__help" id="ts-port-help">{{bi $lang "settings.tailscale.port_number_help"}}</p>
+        </div>
+        {{if $ts.On}}<p class="wn" data-show-if="tailscale_port=custom">{{icon "warning"}}<span>{{biF $lang "settings.tailscale.port_move_warning" $ts.URL}}</span></p>{{end}}
+      </div>
       {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "tailscale" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
     {{end}}
   </form>
+  {{/* What another service has on a port, which the administrator can
+       replace after reviewing it. Each is its own form, bound to what is
+       listed (Digest), and the browser posts it. A free port stays the
+       first choice, above. */}}
+  {{with $ts.Occupied}}
+    <div class="tsreplace">
+      <h3>{{bi $lang "settings.tailscale.replace_title"}}</h3>
+      <p class="setblock__d">{{bi $lang "settings.tailscale.replace_lead"}}</p>
+      {{range .}}
+        <div class="tsreplace__port">
+          <p>{{biF $lang "settings.tailscale.replace_port" .Port}}</p>
+          <ul class="tsfound">{{range .Uses}}<li>{{tsUse $lang .}}</li>{{end}}</ul>
+          {{if .Replaceable}}
+            <form class="form" method="post" action="{{tabURL "network"}}">
+              <input type="hidden" name="csrf" value="{{$.Chrome.CSRF}}">
+              <input type="hidden" name="action" value="save_tailscale">
+              <input type="hidden" name="tailscale" value="on">
+              <input type="hidden" name="tailscale_port" value="custom">
+              <input type="hidden" name="tailscale_https_port" value="{{.Port}}">
+              <input type="hidden" name="replace_digest" value="{{.Digest}}">
+              <p class="wn">{{icon "warning"}}<span>{{biF $lang "settings.tailscale.replace_warning" .Address}}</span></p>
+              {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" nil "Scope" "tailscale" "ID" (print "ts-replace-password-" .Port)}}
+              <div class="actions"><button type="submit" class="btn btn--danger">{{icon "warning"}}<span>{{bi $lang "settings.tailscale.replace_button"}}</span></button></div>
+            </form>
+          {{else}}
+            <p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "settings.tailscale.replace_not_allowed"}}</span></p>
+          {{end}}
+        </div>
+      {{end}}
+    </div>
+  {{end}}
 </section>
 {{end}}
 

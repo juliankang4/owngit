@@ -218,11 +218,6 @@ var tailscaleCatalog = map[MessageCode]message{
 		en: "Sharing uses an HTTPS address that you made in Tailscale, and it still passes requests to OwnGit's earlier local address. OwnGit does not rewrite what you made, so it changed nothing. Point that address at OwnGit's local address now with \"tailscale serve\", or turn sharing off, remove the address and turn sharing on again. OwnGit's local address now:",
 		ko: "공유는 Tailscale에서 직접 만든 HTTPS 주소를 쓰고 있고, 이 주소는 아직 OwnGit의 예전 로컬 주소로 요청을 넘깁니다. OwnGit은 직접 만든 설정을 고쳐 쓰지 않으므로 아무것도 바꾸지 않았습니다. \"tailscale serve\"로 이 주소가 지금의 OwnGit 로컬 주소를 가리키게 하거나, 공유를 끄고 이 주소를 지운 뒤 공유를 다시 켜세요. 지금의 OwnGit 로컬 주소:",
 	},
-	// Detail: the address of sharing now.
-	"tailscale.problem.other_port": {
-		en: "OwnGit already has an address on another HTTPS port of this computer, so OwnGit changed nothing. To move it, run \"owngit tailscale off\", then \"owngit tailscale on --https-port PORT\". The address now:",
-		ko: "이 컴퓨터의 다른 HTTPS 포트에 OwnGit의 주소가 이미 있어 OwnGit은 아무것도 바꾸지 않았습니다. 포트를 옮기려면 \"owngit tailscale off\"를 실행한 뒤 \"owngit tailscale on --https-port 포트\"를 실행하세요. 지금 주소:",
-	},
 	"tailscale.problem.serve_changed": {
 		en: "Something else changed Tailscale's Serve settings while OwnGit was about to change them, so OwnGit changed nothing. Try again.",
 		ko: "OwnGit이 바꾸려던 Tailscale Serve 설정을 그사이 다른 프로그램이나 사람이 바꿔 OwnGit은 아무것도 바꾸지 않았습니다. 다시 시도하세요.",
@@ -324,8 +319,8 @@ var tailscaleCatalog = map[MessageCode]message{
 		ko: "더 이상 필요 없다면 이 컴퓨터에서 \"tailscale serve\"로 포트 %[1]s의 설정을 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
 	},
 	MsgTSTakenSteps: {
-		en: "Name another free port with \"owngit tailscale on --https-port PORT\" on this computer. Or, if you no longer need one of these, remove it with \"tailscale serve\" (\"tailscale serve status\" shows them) and turn sharing on.",
-		ko: "이 컴퓨터에서 \"owngit tailscale on --https-port 포트\"로 비어 있는 다른 포트를 지정하세요. 또는 이 중 더 이상 필요 없는 설정을 \"tailscale serve\"로 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
+		en: "Choose Custom under HTTPS port and enter another free port, or run \"owngit tailscale on --https-port PORT\" on this computer. Or, if you no longer need one of these, replace it below or remove it with \"tailscale serve\" (\"tailscale serve status\" shows them) and turn sharing on.",
+		ko: "HTTPS 포트에서 직접 지정을 고르고 비어 있는 다른 포트를 입력하거나, 이 컴퓨터에서 \"owngit tailscale on --https-port 포트\"를 실행하세요. 또는 이 중 더 이상 필요 없는 설정을 아래에서 바꾸거나 \"tailscale serve\"로 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
 	},
 	// Detail: what is on the port.
 	"tailscale.problem.unrecorded": {

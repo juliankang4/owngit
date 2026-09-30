@@ -185,14 +185,15 @@ func TestTailscaleSharingPortOrder(t *testing.T) {
 		t.Fatalf("a refusal changed the running server: %d", response.Code)
 	}
 	info := tailscaleInfo(report)
-	if len(info.Found) != 3 || info.FoundFix == "" || info.FoundFixPort != "" || info.CanTurnOn {
+	if len(info.Occupied) != 3 || info.FoundNote != webui.MsgTSTakenBelow || info.FoundFix == "" || info.FoundFixPort != "" || info.CanTurnOn {
 		t.Fatalf("Settings block=%+v", info)
 	}
 }
 
 // A port the owner names is used as it is, even when 443 is free, and is
-// refused without trying another when something else uses it. Sharing
-// that is on moves to another named port only after turning off.
+// refused without trying another when something else uses it. Naming
+// another port while sharing is on moves it there; naming a taken one
+// changes nothing.
 func TestTailscaleSharingOnANamedPort(t *testing.T) {
 	name := tailscaletest.Name
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: otherService(tailscale.ServeConfig{}, name, 9443)})
@@ -207,18 +208,36 @@ func TestTailscaleSharingOnANamedPort(t *testing.T) {
 	if change.Record.HTTPSPort != 4443 || len(change.PassedPorts) != 0 || change.Record.BaseURL != "https://"+name+":4443" {
 		t.Fatalf("change=%+v", change)
 	}
-	_, err = app.Tailscale.On(ctx, nil, 443)
-	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemOtherPort || refusal.Detail != "https://"+name+":4443/" {
-		t.Fatalf("moving while on: err=%v", err)
-	}
-	if len(fake.Writes()) != 1 || !fake.Endpoint(4443, "http://127.0.0.1:7654").Exact {
-		t.Fatalf("writes=%q", fake.Writes())
-	}
 	// The same port again changes nothing.
 	change, err = app.Tailscale.On(ctx, nil, 4443)
 	noErr(t, err)
 	if change.Endpoint != "kept" || len(fake.Writes()) != 1 {
 		t.Fatalf("again: %+v %q", change, fake.Writes())
+	}
+	// A taken port is refused before anything is turned off.
+	_, err = app.Tailscale.On(ctx, nil, 9443)
+	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemTaken || refusal.Occupied == nil || refusal.Occupied.Port != 9443 || !refusal.Occupied.Replaceable || len(fake.Writes()) != 1 {
+		t.Fatalf("moving to a taken port: err=%v occupied=%+v writes=%q", err, refusal.Occupied, fake.Writes())
+	}
+	change, err = app.Tailscale.On(ctx, nil, 443)
+	noErr(t, err)
+	if change.Endpoint != "created" || change.Record.HTTPSPort != 443 || change.MovedFrom != "https://"+name+":4443/" || change.Record.BaseURL != "https://"+name {
+		t.Fatalf("moving while on: %+v", change)
+	}
+	if !fake.Endpoint(4443, "").Free || !fake.Endpoint(443, "http://127.0.0.1:7654").Exact || !fake.Endpoint(9443, "http://127.0.0.1:3000").Exact {
+		t.Fatalf("after the move: %+v", fake.State().Serve)
+	}
+	settings, hosts, proxies, record := savedSharing(t, app.Store)
+	if settings.BaseURL != "https://"+name || !slices.Contains(hosts, name) || !slices.Contains(proxies, loopbackProxy) || record == nil || !record.Confirmed || record.HTTPSPort != 443 || record.PreviousBaseURL != "" {
+		t.Fatalf("saved after the move: %+v %v %v %+v", settings, hosts, proxies, record)
+	}
+	if response := throughServe(app, "/"); response.Code == http.StatusMisdirectedRequest {
+		t.Fatal("the running server does not answer at the moved address")
+	}
+	change, err = app.Tailscale.Off(ctx)
+	noErr(t, err)
+	if change.Endpoint != "removed" || !fake.Endpoint(443, "").Free {
+		t.Fatalf("off after the move: %+v", change)
 	}
 }
 
@@ -277,7 +296,7 @@ func TestTailscaleSharingOnAnotherPortAfterARename(t *testing.T) {
 	if report.CanTurnOn || !report.PortsTaken || len(report.Found) != 3 || !slices.Contains(report.Waiting, TailscaleWaitName) {
 		t.Fatalf("with the new name's ports taken: %+v", report)
 	}
-	if info := tailscaleInfo(report); info.CanTurnOn || len(info.Found) != 3 || info.FoundNote == "" {
+	if info := tailscaleInfo(report); info.CanTurnOn || len(info.Occupied) != 3 || info.FoundNote == "" {
 		t.Fatalf("Settings block=%+v", info)
 	}
 	writes := len(fake.Writes())
@@ -319,10 +338,9 @@ func TestTailscaleSharingOnAnotherPortAfterARename(t *testing.T) {
 
 // A turning on that was interrupted after Tailscale made OwnGit's address
 // on 8443 left a record that was never confirmed. Naming another port then
-// is refused as for sharing that is on, because a record for the new port
-// would replace the only record of the address on 8443. Turning off
-// removes that address, and the named port works afterwards. Without the
-// address, the named port is used at once.
+// moves it as for sharing that is on: turning off removes the address on
+// 8443 first, because a record for the new port would replace the only
+// record of it. Without the address, the named port is used at once.
 func TestTailscaleSharingNamedPortAfterAnInterruptedTurningOn(t *testing.T) {
 	name := tailscaletest.Name
 	target := "http://127.0.0.1:7654"
@@ -340,23 +358,10 @@ func TestTailscaleSharingNamedPortAfterAnInterruptedTurningOn(t *testing.T) {
 	if !report.On || !report.CanTurnOff || report.Endpoint != TailscaleEndpointOwnGit || !slices.Contains(report.Waiting, TailscaleWaitUnfinished) {
 		t.Fatalf("report of the interrupted turning on=%+v", report)
 	}
-	_, err = app.Tailscale.On(ctx, nil, 10000)
-	var refusal *TailscaleError
-	if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemOtherPort || refusal.Detail != "https://"+name+":8443/" || len(fake.Writes()) != 0 {
-		t.Fatalf("another named port: err=%v writes=%q", err, fake.Writes())
-	}
-	if _, _, _, record := savedSharing(t, app.Store); record == nil || *record != interrupted {
-		t.Fatalf("the refusal changed the record: %+v", record)
-	}
-	change, err := app.Tailscale.Off(ctx)
+	change, err := app.Tailscale.On(ctx, nil, 10000)
 	noErr(t, err)
-	if change.Endpoint != "removed" || len(fake.Writes()) != 1 || !fake.Endpoint(8443, "").Free {
-		t.Fatalf("off: %+v %q", change, fake.Writes())
-	}
-	change, err = app.Tailscale.On(ctx, nil, 10000)
-	noErr(t, err)
-	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 {
-		t.Fatalf("on after off: %+v", change)
+	if change.Endpoint != "created" || change.Record.HTTPSPort != 10000 || change.MovedFrom != "https://"+name+":8443/" || len(fake.Writes()) != 2 || !fake.Endpoint(8443, "").Free || !fake.Endpoint(10000, target).Exact {
+		t.Fatalf("another named port: %+v writes=%q", change, fake.Writes())
 	}
 
 	// The interrupted turning on left no address.

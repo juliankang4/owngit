@@ -292,7 +292,7 @@ func TestTailscaleMessagesFitAnyPort(t *testing.T) {
 // detail. Any other problem, such as a new kind of Tailscale failure, needs
 // its brief.
 func TestAViewerGetsACompleteSentenceForEveryTailscaleProblem(t *testing.T) {
-	administratorOnly := []string{"port_taken", "owners_endpoint", "other_port", "endpoint_changed", "listen_option", "unrecorded"}
+	administratorOnly := []string{"port_taken", "owners_endpoint", "replace_changed", "not_replaceable", "endpoint_changed", "listen_option", "unrecorded"}
 	for code := range catalog {
 		problem, ok := strings.CutPrefix(string(code), "tailscale.problem.")
 		if !ok || strings.HasSuffix(problem, "_brief") || strings.HasSuffix(problem, "_listed") || slices.Contains(administratorOnly, problem) {
@@ -307,6 +307,41 @@ func TestAViewerGetsACompleteSentenceForEveryTailscaleProblem(t *testing.T) {
 	for _, problem := range administratorOnly {
 		if !Has(MessageCode("tailscale.problem." + problem)) {
 			t.Errorf("tailscale.problem.%s is named but not in the catalog", problem)
+		}
+	}
+}
+
+// Each port another service uses is listed with its own form, which sends
+// exactly that port and the digest of what is listed and asks for the
+// administrator password. A port OwnGit never replaces gets the reason and
+// no form.
+func TestTailscaleOccupiedPortsOfferTheirReplacement(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		page := SettingsPage{Chrome: fullChrome(lang), Tab: SettingsNetwork, SubmitURL: "/settings/network",
+			Tailscale: TailscaleInfo{CanTurnOn: true, Name: "owngit.tail0000.ts.net", PortMode: "auto", FoundNote: MsgTSTakenBelow, Occupied: []TailscaleOccupied{
+				{Port: "443", Address: "https://owngit.tail0000.ts.net/", Replaceable: true, Digest: "d443",
+					Uses: []TailscaleUse{{Kind: "proxy", Address: "https://owngit.tail0000.ts.net:443/api", Target: "http://localhost:4000"}}},
+				{Port: "8443", Address: "https://owngit.tail0000.ts.net:8443/", Digest: "d8443",
+					Uses: []TailscaleUse{{Kind: "funnel", Address: "owngit.tail0000.ts.net:8443"}}},
+			}}}
+		out := render(t, r, page)
+		replace := out[strings.Index(out, `class="tsreplace"`):]
+		replace = replace[:strings.Index(replace, "</section>")]
+		for _, want := range []string{
+			`name="tailscale_https_port" value="443"`, `name="replace_digest" value="d443"`, `name="tailscale" value="on"`,
+			`name="admin_password" type="password" required`, "localhost:4000", strings.Split(Text(lang, MsgTSReplaceNotAllowed), `"`)[0],
+			strings.Split(Text(lang, MsgTSReplaceWarning), "%s")[0],
+		} {
+			if !strings.Contains(replace, want) {
+				t.Errorf("%s: the replacement lacks %q", lang, want)
+			}
+		}
+		if strings.Count(replace, "<form") != 1 || strings.Contains(replace, "d8443") {
+			t.Errorf("%s: a Funnel port is offered for replacement", lang)
+		}
+		if !strings.Contains(out, `name="tailscale_port" data-saved="auto"`) || strings.Index(out, `id="ts-port-mode"`) > strings.Index(out, `class="tsreplace"`) {
+			t.Errorf("%s: a free port is not the first choice", lang)
 		}
 	}
 }

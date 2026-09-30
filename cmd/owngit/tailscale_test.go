@@ -406,13 +406,48 @@ func TestTailscaleOnWithANamedPort(t *testing.T) {
 	if !report.On || report.Sharing == nil || report.Sharing.HTTPSPort != 9443 || report.URL != "https://"+tailscaletest.Name+":9443/" {
 		t.Fatalf("report=%+v", report)
 	}
-	// Moving sharing that is on to another port needs turning it off first.
-	_, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "443")
-	if err == nil || !strings.Contains(err.Error(), "owngit tailscale off") {
-		t.Fatalf("moving: %v", err)
+	// Another port moves sharing that is on, and says what clones need.
+	output, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "443")
+	noErr(t, err)
+	if !strings.Contains(output, "Sharing moved from https://"+tailscaletest.Name+":9443/") || !strings.Contains(output, "git remote set-url") {
+		t.Fatalf("moving printed %q", output)
 	}
-	if len(fake.Writes()) != 1 || !fake.Endpoint(9443, "http://127.0.0.1:7654").Exact {
-		t.Fatalf("writes=%q", fake.Writes())
+	if !fake.Endpoint(9443, "").Free || !fake.Endpoint(443, "http://127.0.0.1:7654").Exact {
+		t.Fatalf("after moving: %+v", fake.State().Serve)
+	}
+}
+
+// A port another service uses is replaced only with the digest of what
+// the owner reviewed there, which the refusal and status give.
+func TestTailscaleOnReplacesOnlyWhatWasReviewed(t *testing.T) {
+	stateDir := initializedState(t, false)
+	fake := tailscaletest.New(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: everyPortTaken()})
+	if _, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--replace-endpoint", "abc"); err == nil || !strings.Contains(err.Error(), "--https-port") {
+		t.Fatalf("--replace-endpoint without a port: %v", err)
+	}
+	status, err := runTailscale(t, "status", "--state-dir", stateDir, "--tailscale", fake.Path)
+	noErr(t, err)
+	report := tailscaleJSON(t, stateDir, fake.Path)
+	if len(report.Occupied) != 3 || !strings.Contains(status, "--https-port 8443 --replace-endpoint "+report.Occupied[1].Digest) {
+		t.Fatalf("status printed %q, report %+v", status, report.Occupied)
+	}
+	_, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "8443")
+	if err == nil || !strings.Contains(err.Error(), "--replace-endpoint "+report.Occupied[1].Digest) {
+		t.Fatalf("a taken named port: %v", err)
+	}
+	// What is on 8443 changes after the review: nothing is replaced.
+	fake.Update(func(s *tailscaletest.State) {
+		s.Serve.Web[tailscaletest.Name+":8443"].Handlers["/docs"] = tailscale.Handler{Path: "/srv/docs"}
+	})
+	_, err = runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "8443", "--replace-endpoint", report.Occupied[1].Digest)
+	if err == nil || !strings.Contains(err.Error(), "changed after you reviewed it") || len(fake.Writes()) != 0 {
+		t.Fatalf("a changed port: %v writes=%q", err, fake.Writes())
+	}
+	report = tailscaleJSON(t, stateDir, fake.Path)
+	output, err := runTailscale(t, "on", "--state-dir", stateDir, "--tailscale", fake.Path, "--https-port", "8443", "--replace-endpoint", report.Occupied[1].Digest)
+	noErr(t, err)
+	if !strings.Contains(output, "https://"+tailscaletest.Name+":8443/") || !fake.Endpoint(8443, "http://127.0.0.1:7654").Exact || !fake.Endpoint(443, "http://127.0.0.1:3000").Exact {
+		t.Fatalf("replacing printed %q, serve %+v", output, fake.State().Serve)
 	}
 }
 

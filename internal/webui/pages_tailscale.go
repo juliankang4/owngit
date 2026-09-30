@@ -83,6 +83,25 @@ type TailscaleInfo struct {
 	// giving out another address while sharing is on; the page then says
 	// so instead of showing clone addresses under the HTTPS address.
 	BaseURLOption string
+	// PortMode is "auto" or "custom", the HTTPS port choice the form
+	// starts with, and HTTPSPort the custom port it shows: the port sharing
+	// uses now when Automatic would not choose it first.
+	PortMode, HTTPSPort string
+	// Occupied lists what else uses the ports turning on would try, or the
+	// port the owner named, for the administrator to review and replace one.
+	Occupied []TailscaleOccupied
+}
+
+// TailscaleOccupied is what another service has on one HTTPS port, which
+// the administrator can replace with OwnGit's address when Replaceable.
+// Digest identifies exactly what is listed, so a replacement goes ahead only
+// while the port still has it.
+type TailscaleOccupied struct {
+	Port        string
+	Address     string
+	Uses        []TailscaleUse
+	Replaceable bool
+	Digest      string
 }
 
 // TailscaleOffPage is shown after sharing was turned off from a page opened
