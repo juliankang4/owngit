@@ -5,10 +5,15 @@ package server
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strings"
 	"syscall"
 )
+
+func chooserFolder(entry fs.DirEntry) (bool, error) {
+	return entry.IsDir() || entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0, nil
+}
 
 func chooserHidden(_, name string) (bool, error) { return strings.HasPrefix(name, "."), nil }
 func platformFolderName(name string) bool        { return len(name) <= 255 }

@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -103,6 +105,35 @@ func TestFolderChooserWindowsJunctions(t *testing.T) {
 	noErr(t, err)
 	if !info.IsDir() {
 		t.Fatal("selected junction target did not receive folder")
+	}
+}
+
+func TestFolderChooserWindowsFileReparseEntryIsNotAFolder(t *testing.T) {
+	base := t.TempDir()
+	root, target := filepath.Join(base, "browse"), filepath.Join(base, "target-file")
+	noErr(t, os.Mkdir(root, 0o700))
+	noErr(t, os.Mkdir(filepath.Join(root, "directory"), 0o700))
+	noErr(t, os.WriteFile(target, []byte("fixture"), 0o600))
+	link := filepath.Join(root, "file-link")
+	err := os.Symlink(target, link)
+	if errors.Is(err, windows.ERROR_PRIVILEGE_NOT_HELD) {
+		t.Skip("file symlink creation requires Developer Mode or symlink privilege")
+	}
+	noErr(t, err)
+	info, err := os.Lstat(link)
+	noErr(t, err)
+	attributes := info.Sys().(*syscall.Win32FileAttributeData).FileAttributes
+	if attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 || attributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0 {
+		t.Fatalf("fixture is not a file reparse point: %x", attributes)
+	}
+	// The file entry must stay excluded even when its target is absent.
+	noErr(t, os.Rename(target, filepath.Join(base, "target-moved")))
+	for _, hidden := range []bool{false, true} {
+		result, err := listFolders(context.Background(), root, hidden, false)
+		noErr(t, err)
+		if len(result.Folders) != 1 || result.Folders[0].Name != "directory" || result.SkippedFolders {
+			t.Fatalf("hidden=%v: file reparse entry in folders: %+v", hidden, result)
+		}
 	}
 }
 

@@ -264,7 +264,12 @@ func listFolders(ctx context.Context, path string, showHidden, start bool) (fold
 		}
 		name := entry.Name()
 		child := filepath.Join(path, name)
-		if !entry.IsDir() && entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+		candidate, err := chooserFolder(entry)
+		if err != nil {
+			result.SkippedFolders = true
+			continue
+		}
+		if !candidate {
 			continue
 		}
 		if !showHidden {

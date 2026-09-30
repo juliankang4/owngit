@@ -394,7 +394,7 @@
   (function folderChooser() {
     var dialog = document.querySelector('[data-folder-chooser]');
     var opener = document.querySelector('[data-folder-open]');
-    var field = document.getElementById('storage_path');
+    var field = document.querySelector('#storage_path');
     if (!dialog || !opener || !field || !dialog.showModal || !window.fetch || !window.AbortController) { return; }
     var list = dialog.querySelector('[data-folder-list]');
     var pathLabel = dialog.querySelector('[data-folder-path]');
@@ -404,7 +404,7 @@
     var use = dialog.querySelector('[data-folder-use]');
     var create = dialog.querySelector('[data-folder-create]');
     var createButton = dialog.querySelector('[data-folder-create-button]');
-    var name = document.getElementById('folder-name');
+    var name = document.querySelector('#folder-name');
     var retry = dialog.querySelector('[data-folder-retry]');
     var limit = dialog.querySelector('[data-folder-limit]');
     var skipped = dialog.querySelector('[data-folder-skipped]');

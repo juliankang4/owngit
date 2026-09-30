@@ -3,12 +3,27 @@ package server
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
 )
+
+func chooserFolder(entry fs.DirEntry) (bool, error) {
+	// Windows ReadDir retains each entry's own attributes; Info does no I/O.
+	info, err := entry.Info()
+	if err != nil {
+		return false, err
+	}
+	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
+	if !ok {
+		return false, errors.New("unsupported directory entry attributes")
+	}
+	return attributes.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0, nil
+}
 
 func chooserHidden(path, name string) (bool, error) {
 	if strings.HasPrefix(name, ".") {
