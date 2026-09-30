@@ -164,7 +164,7 @@ owngit check cycle list --task TASK_ID --server URL --repository NAME --credenti
 모든 명령은 `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`(원격 플래그)를 받으며 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
 
 - `check task new`는 작업을 만들고(`--title`), `check task list`는 저장소의 작업과 각 작업의 수정 라운드 한도를 보여 줍니다.
-- `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 합니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
+- `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 하며 어느 쪽이든 넘은 체크는 멈추고 완료되지 않은 것으로 끝납니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
 - `check cycle reserve`는 수정 라운드 하나를 예약하고(`--task` 필수), `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 - `check status`는 작업과 가장 최근 시도를 읽고, `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽으며, `check config show`는 브랜치와 관계없이 저장소에 가장 최근에 기록된 구성을 읽습니다. `check run`은 이 구성을 쓰지 않습니다.
 - `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다. `create`의 출력에는 저장소의 지금 주소가 `repository_address`로 나옵니다. `--repository` 없이 `helper-credential list`를 실행하면 모든 저장소의 토큰을 보여 주며, 토큰마다 저장소의 지금 주소가 `repository_address`로 나옵니다(API `GET /api/v1/helper-credentials`).

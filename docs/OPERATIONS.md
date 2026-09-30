@@ -1908,7 +1908,7 @@ Check ceilings are this computer's upper bounds for what a repository's [check p
 
 - A ceiling is checked when a check policy is saved and when a check is queued. The checks page states each field's range under the ceilings, and a value above a ceiling is refused with a note that an administrator can raise it.
 - Changing a ceiling never changes a saved policy or its consent. After a ceiling is lowered, a policy above it queues no new check until you raise the ceiling or lower the policy; Check ceilings lists those repositories, and their checks page says so. Checks already queued run with the limits they were queued with.
-- The output of a check is kept in memory while it runs, so a larger output ceiling lets a check use more memory.
+- The output ceiling limits how much one check may print; OwnGit stops a check that prints more, and it ends as `incomplete`. OwnGit counts every byte but keeps only the first 256 KiB of each check's output, the most a raw log stores, so a larger output ceiling does not make a check use more memory.
 - Raising any ceiling above its default warns that repositories you enable can request more resources.
 - In the settings API, the group `check_ceilings` has `timeout_seconds`, `output_bytes`, `queue_limit`, `active_jobs`, `container_cpu_millis`, `container_memory_bytes`, `container_pids`, `container_scratch_bytes` and `source_total_bytes`. A `PATCH` that lowers a ceiling below a saved policy answers with a warning naming the repositories.
 - The ceilings belong to this computer and are not in backups. A policy saved under higher ceilings is backed up in format 11 and restores anywhere; on a computer with lower ceilings it queues nothing until they are raised there.

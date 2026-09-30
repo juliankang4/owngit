@@ -293,7 +293,8 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
 - `check run` executes checks and, unless `--no-upload` is set, records the
   attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
   `--timeout` (default 10 minutes), `--output-limit` (default 65536 bytes per
-  check, both must be positive), `--no-upload` (the remote flags are then
+  check, both must be positive; a check that passes either is stopped and
+  incomplete), `--no-upload` (the remote flags are then
   optional), and repeatable `--check name=command`.
 - `check cycle reserve` reserves one correction round (`--task` required);
   `check cycle list` lists the reserved rounds.

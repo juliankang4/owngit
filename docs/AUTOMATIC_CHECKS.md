@@ -134,8 +134,10 @@ bytes). Each field shows its range and default. The upper end of a range is
 this computer's [check ceiling](OPERATIONS.md#check-ceilings) for that field,
 which an administrator can raise. The time and output limits are
 maximums: a check gets 10 minutes and
-keeps 64 KiB of output unless its check file asks for a different value under
-`limits`, up to these maximums.
+may print 64 KiB of output unless its check file asks for a different value under
+`limits`, up to these maximums. A check that prints more than its output limit
+is stopped, as one that runs out of time is, and ends as `incomplete`; its
+output starts with a line saying so.
 
 A job page shows the commit, executor, workflow path, configuration and policy
 versions, and admission timestamps. It offers Cancel while a job is pending,
