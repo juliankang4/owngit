@@ -391,7 +391,7 @@ docker compose restart
 
 Before setup, only the setup link works, as with any OwnGit.
 
-OwnGit counts wrong passwords per address: four within 10 minutes block that address for 15 minutes ([Git transfer limits](#git-transfer-limits)). With ordinary Docker, IPv4 connections keep each device's address, so each device is counted on its own. IPv6 connections through Docker's proxy, and every connection under rootless Docker, arrive from one address. Wrong passwords from all those devices then count together, so four wrong tries from anyone on the network block sign-in for everyone for 15 minutes, including someone with the right password. The block ends by itself.
+OwnGit counts wrong passwords per address: by default, four within 10 minutes pause that address for 15 minutes ([Login attempt limits](#login-attempt-limits)). With ordinary Docker, IPv4 connections keep each device's address, so each device is counted on its own. IPv6 connections through Docker's proxy, and every connection under rootless Docker, arrive from one address. Wrong passwords from all those devices then count together, so four wrong tries from anyone on the network pause sign-in for everyone for 15 minutes, including someone with the right password. The pause ends by itself.
 
 ### Update
 
@@ -501,9 +501,9 @@ With `--repositories /tank/owngit`, the repositories stay in `/tank/owngit` on t
 Settings has five tabs. Each is its own address, so it works as an ordinary link, also without JavaScript:
 
 - **General** (`/settings`): the display choices of this browser (language, appearance and repository list order), which apply at once and never ask for a password, and the new-release [update check](#new-release-notice) for the whole server.
-- **Access** (`/settings/access`): who can read and push (anyone who reaches OwnGit, or only people with the shared password), [how long a sign-in lasts](#how-long-a-sign-in-lasts), the administrator password, and [how often it is asked](#administrator-password-check).
+- **Access** (`/settings/access`): who can read and push (anyone who reaches OwnGit, or only people with the shared password), [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), the administrator password, and [how often it is asked](#administrator-password-check).
 - **Network** (`/settings/network`): the connection of this browser, the [network settings](#network-settings) and [sharing on your tailnet](#share-on-your-tailnet-over-https).
-- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits) and a link to the settings of each repository.
+- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
 - **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator, and how long [raw check logs](#raw-check-logs) are kept.
 
 Each part of a tab has its own Save and Cancel, and Save sends only that part. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Network settings apply at the next start; everything else applies as soon as you save.
@@ -525,9 +525,9 @@ The question lists each change, showing a password only as entered, and offers S
 
 ### Server settings on the command line
 
-Five settings are shown with their saved values only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits) and how long [raw check logs](#raw-check-logs) are kept. Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
+These settings are shown with their saved values only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and how long [raw check logs](#raw-check-logs) are kept. Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
 
-The command line reads and changes the same five through the administrator API. Both commands need `--server` and a `--password-file` holding the administrator password:
+The command line reads and changes the same settings through the administrator API. Both commands need `--server` and a `--password-file` holding the administrator password:
 
 - `owngit settings show` prints these settings as JSON.
 - `owngit settings set` changes only the ones its options name, such as `--session 7d`.
@@ -541,6 +541,38 @@ These settings belong to this installation host and are not in backups, so a res
 "A sign-in lasts" on the Access tab sets how long a browser stays signed in after it signs in with the shared password: 1 hour, 8 hours, 12 hours (the default), 1 day, 7 days or 30 days.
 
 A new time applies to sign-ins after you save it; a browser already signed in keeps the end it has. To end every sign-in now, change the shared password. A longer time lets someone using a signed-in browser use the dashboard without the password for longer. When anyone can reach OwnGit without a password, nobody signs in and the time has no effect.
+
+### Links from other sites
+
+"Links from other sites" on the Access tab decides what happens to a shared password sign-in when you open an OwnGit link from a chat, webmail or another site:
+
+- **Require fresh navigation** (the default): the link opens the sign-in page, or the page as someone not signed in, until you open it again from OwnGit.
+- **Keep the sign-in**: the link opens with this browser's shared sign-in. Choose it when links from your chat or mail should open straight away.
+
+Either way, the administrator confirmation is never kept on a link from another site, and OwnGit refuses a form that another site sends. The choice applies to this browser as soon as you save it and to other browsers at their next sign-in. On the command line, run `owngit settings set --cross-site-links strict` or `--cross-site-links lax`. When anyone can reach OwnGit without a password, nobody signs in and the choice has no effect.
+
+If the saved choice cannot be read, nobody can sign in with the shared password, and the sign-in page names the setting. Set it again under Settings, Access, or with `owngit settings set --cross-site-links`.
+
+### Login attempt limits
+
+OwnGit pauses an address that sends too many wrong passwords. By default, 4 wrong passwords from one address within 10 minutes pause that address for 15 minutes. During the pause the address cannot sign in, even with the right password; the pause ends by itself. Correct passwords never count.
+
+The limits apply in the dashboard, Git and the API. Wrong shared passwords and wrong administrator passwords are counted separately.
+
+To change the limits, open Login attempts on the Access tab and use Change the limits, or run:
+
+```sh
+owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m
+```
+
+- The number of wrong passwords goes from 1 to 100. The window and the pause each go from 1 minute to 24 hours. The limits cannot be turned off.
+- New limits apply to wrong passwords after you save. An address already paused stays paused until its pause ends.
+- More attempts, a shorter window or a shorter pause lets people who can reach OwnGit try more passwords. Settings warns about it before you save, and `owngit settings set` lists the warning under `warnings`.
+- Until a proxy is trusted, everyone who reaches OwnGit through it arrives from the proxy's address, so they are paused together. Before you loosen the limits, add that proxy under Trusted proxies on the Network tab ([Behind a reverse proxy](#behind-a-reverse-proxy)); OwnGit then counts each person at their own address.
+
+During a pause, Git and the API get HTTP 429 (Too Many Requests) with a `Retry-After` header that gives the seconds left in the pause. Git gets 429 instead of the authentication failure a wrong password gets, so Git keeps the password its credential helper saved.
+
+If the saved limits cannot be read, for example after a hand edit of the state database, a correct password still signs in. A wrong password is refused without being counted, and the message names the command that repairs the limits. Set all three together, under Settings, Access, or with the command above; setting only one or two fails while the saved limits cannot be read.
 
 ### Administrator password check
 
@@ -715,7 +747,7 @@ When Tailscale issues the certificate, the names of this computer and your tailn
 
 #### What turning on does
 
-1. It picks the HTTPS port: 443 if free, otherwise 8443, otherwise 10000, or the one you give with `--https-port PORT`. Whatever is on other ports stays as it is. If every port it would try is taken, or an address already points at OwnGit without OwnGit's record of making it, it changes nothing. It then shows what is on each port with the command that removes it; `owngit tailscale status` always shows these details, and the Settings page shows them only to an administrator. If your tailnet's access controls limit ports, allow the one OwnGit uses.
+1. It picks the HTTPS port: 443 if free, otherwise 8443, otherwise 10000, or the one you choose ([Changing the HTTPS port](#changing-the-https-port)). Whatever is on other ports stays as it is. If every port it would try is taken, or an address already points at OwnGit without OwnGit's record of making it, it changes nothing. It then shows what is on each port with the command that removes it, and when you no longer need it, you can [replace it](#replacing-what-another-service-has-on-a-port); `owngit tailscale status` always shows these details, and the Settings page shows them only to an administrator. If your tailnet's access controls limit ports, allow the one OwnGit uses.
 2. It adds the address to Tailscale's Serve settings, as `tailscale serve --bg --https=HTTPS_PORT http://127.0.0.1:PORT` would, and confirms that it points at OwnGit. Tailscale applies the change only if its Serve settings are still as OwnGit read them. If anything else changed them meanwhile, OwnGit changes nothing and asks you to try again.
 3. It saves the HTTPS address as the base URL, the Tailscale name as an allowed Host and `127.0.0.1` as a trusted proxy, each only if not saved yet. Trusting `127.0.0.1` also trusts other programs on this computer that forward requests; see [Behind a reverse proxy](#behind-a-reverse-proxy).
 4. It decides the listen address. Tailscale connects through `127.0.0.1`, so a listen address that accepts that, such as the default `127.0.0.1:7654` or `0.0.0.0:7654`, is kept. If OwnGit listens only on its Tailscale address, turning on saves `127.0.0.1:PORT` instead, and from the next start devices reach OwnGit only through the HTTPS address. A new listen address applies at the next start.
@@ -730,7 +762,33 @@ While sharing is on and ready, a browser that opens a dashboard page at the Tail
 
 Turning off removes the Tailscale address only if it is still exactly as OwnGit made it, and again only if Tailscale's Serve settings are still as OwnGit read them. Otherwise it changes nothing, and the Settings page and `owngit tailscale status` show the `tailscale serve` steps that put the port back or clear it. It then restores the base URL saved before, removes the allowed Host and trusted proxy it added, and leaves the listen address as it is.
 
-Turning off needs Tailscale to answer, so it is not offered while Tailscale is stopped, signed out or older than 1.50. On a page opened at the HTTPS address, turning off ends with a short page that gives OwnGit's address on this computer instead. To move sharing to another port, turn it off and on again with `--https-port`.
+Turning off needs Tailscale to answer, so it is not offered while Tailscale is stopped, signed out or older than 1.50. On a page opened at the HTTPS address, turning off ends with a short page that gives OwnGit's address on this computer instead.
+
+#### Changing the HTTPS port
+
+Choose the port under HTTPS port in "Share on your tailnet over HTTPS" on the Network tab:
+
+- **Automatic** (the default) uses 443, or 8443 or 10000 when something else is on 443. While sharing is on, it keeps the port sharing uses now.
+- **Custom** uses the port you enter, from 1 to 65535.
+
+On the command line, run `owngit tailscale on --https-port 8443`. Without `--https-port`, the command keeps the port sharing uses now, or picks one as Automatic does.
+
+While sharing is on, saving another port moves it. OwnGit checks that the new port is free, turns sharing off at the old port and turns it on at the new one. The old address stops working, so each clone that uses it needs the new address:
+
+```sh
+git remote set-url origin https://NAME.TAILNET.ts.net:8443/git/project.git
+```
+
+If the new port is taken, nothing changes. If sharing was turned off at the old port and then cannot be turned on at the new one, it stays off and the message says why; save a port again to turn it back on. If your tailnet's access controls limit ports, allow the new one.
+
+#### Replacing what another service has on a port
+
+Choosing a free port keeps everything else on Tailscale working, so try that first. If you no longer need what Tailscale serves on a port, OwnGit can take its place there:
+
+1. Review what is on the port. On the Network tab, a confirmed administrator sees each taken port under Replace what is on a port, with what Tailscale serves there. `owngit tailscale status` lists the same, and so does a refused `owngit tailscale on --https-port PORT`, each with the command that replaces it.
+2. Choose Replace this endpoint and enter the administrator password, or run the command shown: `owngit tailscale on --https-port PORT --replace-endpoint DIGEST`. `DIGEST` identifies what you reviewed.
+
+OwnGit replaces only what you reviewed. If anything Tailscale serves changed after your review, on that port or any other, it replaces nothing and shows the port again for a new review. Only that port changes; other ports, names and Funnel stay as they are. OwnGit never replaces a port open to Funnel, which would make OwnGit public, or a port held by a `tailscale serve` running in a terminal. When sharing is on at another port, the replacement also moves it, as described above.
 
 #### Details and troubleshooting
 
@@ -783,7 +841,7 @@ owngit network show
 
 Through the proxy, the page header then says "Encrypted by the proxy in front of OwnGit".
 
-Until you tell OwnGit that the proxy is trusted, it treats every client as the proxy. Wrong passwords from one device then lock out every device for 15 minutes, cookies are not marked `Secure`, and forms sent over HTTPS fail the Origin check.
+Until you tell OwnGit that the proxy is trusted, it treats every client as the proxy. Wrong passwords from one device then pause every device ([Login attempt limits](#login-attempt-limits)), cookies are not marked `Secure`, and forms sent over HTTPS fail the Origin check.
 
 `--trusted-proxy` takes the address the proxy connects from:
 
@@ -1020,12 +1078,14 @@ A new repository starts on `main`. To start new repositories on another branch, 
 
 ### Deleting a repository
 
-An administrator deletes a repository with Delete repository, at the end of the repository's tabs, by typing its name and, when asked, the administrator password. You choose what happens to the files:
+An administrator deletes a repository with Delete repository, at the end of the repository's tabs. The page asks you to type the repository's name, unless that is turned off (see below), and asks for the administrator password when Settings require it. You choose what happens to the files:
 
 - **Remove from OwnGit and keep the files** moves the bare repository, unchanged, to `.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git` inside the repository folder (`ID` is the lowercase name, and the time is UTC). Its branches, tags and kept history stay there until you remove the folder yourself. Folders under `.owngit-removed` are never listed as repositories and are not in backups.
 - **Delete the files too** deletes the bare repository, including its kept history. Earlier backups still contain it, and the database space its records used is freed but not securely erased.
 
 Either way, deleting removes the repository's pull requests, reviews, tasks, check settings, jobs and results, helper and runner credentials, and import settings and credentials. Queued check jobs are dropped, and the name is free again.
+
+Typing the name is on by default. To delete without it, choose Do not ask under Deleting a repository on the Settings Repositories tab, or run `owngit settings set --delete-requires-name off`. The Delete page then shows the repository's name and asks you to check it, and a mistaken deletion no longer needs the name. `--delete-requires-name on` asks for it again. If the saved choice cannot be read, OwnGit deletes nothing and the Delete page says how to set it again.
 
 To bring a kept repository back, create an empty repository with the same name in the dashboard. Then run the push command the dashboard shows for the kept folder, on the computer where OwnGit runs. For another name, use its URL:
 
@@ -1355,7 +1415,7 @@ Raw check logs are stored in `owngit.sqlite`, limited to 256 KiB each, and kept 
 - Each Git request (clone, fetch, push, archive) can receive at most 4 GB, send at most 4 GB, and must finish within 30 minutes. To change these limits, use Largest transfer and Longest transfer under Git transfers on the Settings Repositories tab, or run `owngit settings set --transfer-size 8GB --transfer-time 2h`. The size goes from 1 MB to 64 GB (1 GB is 1024 MB), and the time from 1 minute to 24 hours. A change applies to transfers that start afterwards. Higher limits let large or slow transfers keep the server busy for longer and use more disk space.
 - A push over the size is refused with HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`. A clone or fetch over a limit is cut off. A transfer whose client moves no data for 60 seconds is stopped too. OwnGit does not host Git LFS, so a repository whose history is larger than the size limit cannot be cloned through it; keep large binary files out of Git history.
 - At most 5 Git requests run at once, and one repository can use at most 4 of them, so one repository's slow transfers never block the others. A request that finds no free place waits up to 90 seconds, then gets HTTP 503 with `Git service is busy with other transfers; try again shortly`; run the command again.
-- With shared-password protection, 4 wrong passwords from one address within 10 minutes block that address for 15 minutes; correct passwords never count. During the block Git gets HTTP 429 (Too Many Requests) instead of the authentication failure a wrong password gets, so Git keeps the password its credential helper saved. The administrator password has the same limit, counted separately.
+- Too many wrong passwords pause the address that sent them, and Git then gets HTTP 429 (Too Many Requests) with `Retry-After`. See [Login attempt limits](#login-attempt-limits).
 - When OwnGit is stopped, it waits up to 10 seconds for running requests, then ends the rest and logs how many it ended.
 
 ## Storage
@@ -1470,7 +1530,7 @@ After a restore, start `owngit serve` with the restored state before you use it 
 
 - Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, and enable automatic checks again. Unfinished jobs are marked `interrupted`.
 - Raw logs are absent, and unsettled import publications are closed without being applied.
-- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, and the administrator password check and the new release check are back at their defaults. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
+- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, a link from another site opens without the shared sign-in, and the administrator password check and the new release check are back at their defaults. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
 
 ### When a backup or restore is interrupted
 
