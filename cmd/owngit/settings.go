@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +90,10 @@ func settingsSet(arguments []string) error {
 	browse := map[string]*string{}
 	for _, option := range browseOptions {
 		browse[option.flag] = flags.String(option.flag, "", option.usage)
+	}
+	ceilings := map[string]*string{}
+	for _, option := range ceilingOptions {
+		ceilings[option.flag] = flags.String(option.flag, "", option.usage)
 	}
 	maintenance := flags.String("maintenance", "", "whether OwnGit maintains repositories: on or off")
 	maintenanceWindow := flags.String("maintenance-window", "", "the daily consolidation window in local whole hours, START-END such as 3-5; it may pass midnight, such as 22-6")
@@ -195,6 +200,20 @@ func settingsSet(arguments []string) error {
 	if len(browseChange) > 0 {
 		change["browse_limits"] = browseChange
 	}
+	ceilingChange := map[string]int64{}
+	for _, option := range ceilingOptions {
+		if !given[option.flag] {
+			continue
+		}
+		value, err := option.parse(option.flag, *ceilings[option.flag])
+		if err != nil {
+			return err
+		}
+		ceilingChange[option.field] = value
+	}
+	if len(ceilingChange) > 0 {
+		change["check_ceilings"] = ceilingChange
+	}
 	maintenanceChange := map[string]any{}
 	if given["maintenance"] {
 		maintenanceChange["enabled"] = *maintenance == "on"
@@ -275,6 +294,41 @@ var browseOptions = []struct{ flag, field, usage string }{
 	{"browse-commit-file", "commit_file_bytes", "the largest diff of one file shown within a commit page, such as 256KB, from 16KB to 16MB"},
 	{"browse-compare", "compare_bytes", "how much diff a pull request page reads, such as 8MB, from 64KB to 64MB"},
 	{"browse-compare-time", "compare_seconds", "how long reading a pull request comparison may take, such as 20s, from 5s to 1m"},
+}
+
+// ceilingOptions are the options of the check ceilings and their fields in
+// the settings API.
+var ceilingOptions = []struct {
+	flag, field, usage string
+	parse              func(option, value string) (int64, error)
+}{
+	{"check-time", "timeout_seconds", "the longest time a check policy may give one check, such as 48h, from 1s to 168h", wholeSeconds},
+	{"check-output", "output_bytes", "the most output a check policy may keep for one check, such as 64MB, from 1KB to 1024MB", byteSize},
+	{"check-queue", "queue_limit", "the most checks a check policy may queue per repository, from 1 to 10000", wholeNumber},
+	{"check-active", "active_jobs", "the most checks a check policy may run at once per repository, from 1 to 1000", wholeNumber},
+	{"check-cpus", "container_cpu_millis", "the most CPUs a check policy may give a container, such as 64 or 0.5, from 0.1 to 1024", cores},
+	{"check-memory", "container_memory_bytes", "the most memory a check policy may give a container, such as 64GB, from 64MB to 1024GB", byteSize},
+	{"check-processes", "container_pids", "the most processes a check policy may allow in a container, from 16 to 65536", wholeNumber},
+	{"check-scratch", "container_scratch_bytes", "the most scratch space a check policy may give a container, such as 16GB, from 1MB to 1024GB", byteSize},
+	{"check-source", "source_total_bytes", "the most source a check policy may copy for one check, such as 4GB, up to 1024GB", byteSize},
+}
+
+// wholeNumber reads the whole number an option names.
+func wholeNumber(option, value string) (int64, error) {
+	number, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, cliProblem("invalid_arguments", "--"+option+" takes a whole number.")
+	}
+	return number, nil
+}
+
+// cores reads a number of CPUs, such as 2 or 0.5, in thousandths.
+func cores(option, value string) (int64, error) {
+	millis, err := webui.ParseLimit(webui.LimitCores, webui.LimitInput{Amount: value, Unit: webui.UnitCores})
+	if err != nil {
+		return 0, cliProblem("invalid_arguments", "--"+option+" takes a number of CPUs, such as 64 or 0.5.")
+	}
+	return millis, nil
 }
 
 // byteSize reads the amount an option names with its unit, such as 4GB or

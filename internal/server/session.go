@@ -452,6 +452,10 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgBrowseSaved)}
 	case "browse_looser":
 		return []webui.Notice{webui.Success(webui.MsgBrowseSaved), {Kind: webui.NoticeWarning, Code: webui.MsgBrowseWarning}}
+	case "ceilings_saved":
+		return []webui.Notice{webui.Success(webui.MsgCeilingsSaved)}
+	case "ceilings_looser":
+		return []webui.Notice{webui.Success(webui.MsgCeilingsSaved), {Kind: webui.NoticeWarning, Code: webui.MsgCeilingsWarning}}
 	case "maintenance_saved":
 		return []webui.Notice{webui.Success(webui.MsgMaintenanceSaved)}
 	case "maintenance_looser":

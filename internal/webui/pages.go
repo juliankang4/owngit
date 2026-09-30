@@ -246,6 +246,12 @@ const (
 	// ActionSaveCleanup saves the unused object cleanup choice. Fields:
 	// admin_password, cleanup_enabled ("on" or "off"), cleanup_grace (days).
 	ActionSaveCleanup = "save_cleanup"
+	// ActionSaveCheckCeilings saves the check ceilings. Fields:
+	// admin_password, ceiling_queue, ceiling_active and ceiling_pids
+	// (counts), and ceiling_timeout, ceiling_output, ceiling_cpu,
+	// ceiling_memory, ceiling_scratch and ceiling_source, each with its
+	// _unit (see LimitInput).
+	ActionSaveCheckCeilings = "save_check_ceilings"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -320,6 +326,7 @@ const (
 	GroupBrowse      = "browse"
 	GroupMaintenance = "maintenance"
 	GroupCleanup     = "cleanup"
+	GroupCeilings    = "ceilings"
 )
 
 // settingsGroupTabs names the tab of each group.
@@ -329,7 +336,7 @@ var settingsGroupTabs = map[string]string{
 	GroupCrossSite: SettingsAccess, GroupLogin: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories, GroupHistory: SettingsRepositories,
-	GroupDeleteName: SettingsRepositories, GroupBrowse: SettingsRepositories,
+	GroupDeleteName: SettingsRepositories, GroupBrowse: SettingsRepositories, GroupCeilings: SettingsRepositories,
 	GroupLogs: SettingsStorage, GroupMaintenance: SettingsStorage, GroupCleanup: SettingsStorage,
 	GroupBackups: SettingsStorage, GroupBackupRuns: SettingsStorage,
 }
@@ -374,6 +381,8 @@ func SettingsActionGroup(action string) string {
 		return GroupMaintenance
 	case ActionSaveCleanup:
 		return GroupCleanup
+	case ActionSaveCheckCeilings:
+		return GroupCeilings
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -519,6 +528,10 @@ type Policies struct {
 	Browse      BrowsePolicies
 	Maintenance MaintenancePolicies
 	Cleanup     CleanupPolicies
+	// Ceilings are the check ceilings, and AboveCeilings the names of the
+	// repositories whose check policy is above them.
+	Ceilings      CeilingPolicies
+	AboveCeilings []string
 	// Visible is true for a confirmed administrator. Otherwise no saved
 	// value is read or shown, and each group says where to confirm.
 	Visible bool
@@ -530,6 +543,12 @@ type Policies struct {
 // BrowsePolicies are the browsing limits as the form shows them.
 type BrowsePolicies struct {
 	Raw, File, CommitPatch, FilePatch, CommitFile, Compare, CompareTime LimitInput
+}
+
+// CeilingPolicies are the check ceilings as the form shows them.
+type CeilingPolicies struct {
+	Timeout, Output, CPU, Memory, Scratch, Source LimitInput
+	Queue, Active, PIDs                           string
 }
 
 // MaintenancePolicies are the maintenance choices as the form shows them.

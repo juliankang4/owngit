@@ -949,6 +949,39 @@
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
+{{/* The check ceilings, an advanced change collapsed unless a save was
+     refused or the saved ceilings cannot be read. The repositories whose
+     policy is above them are listed whatever the group's state. */}}
+{{$gn := forAction $p.Group "ceilings" $p.Notices}}{{$focus := firstError $gn "ceiling_timeout" "ceiling_output" "ceiling_queue" "ceiling_active" "ceiling_cpu" "ceiling_memory" "ceiling_pids" "ceiling_scratch" "ceiling_source" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "ceilings"}}{{$c := $p.Policies.Ceilings}}
+<section class="grp" id="grp-ceilings" aria-labelledby="grp-ceilings-h" data-group="ceilings"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "ceilings" "Title" (bi $lang "ceilings.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "ceilings.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{with $p.Policies.AboveCeilings}}<div class="wn">{{icon "warning"}}<span>{{bi $lang "ceilings.above"}} <span class="mono">{{range $i, $name := .}}{{if $i}}, {{end}}{{$name}}{{end}}</span></span></div>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_check_ceilings">
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "ceilings.change"}}</summary>
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-timeout" "Field" "ceiling_timeout" "Units" (limitUnits "duration") "Saved" $c.Timeout "Label" (code "ceilings.timeout") "Help" (code "ceilings.timeout_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-output" "Field" "ceiling_output" "Units" (limitUnits "size") "Saved" $c.Output "Label" (code "ceilings.output") "Help" (code "ceilings.output_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-queue" "Field" "ceiling_queue" "Saved" $c.Queue "Label" (code "ceilings.queue") "Help" (code "ceilings.queue_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-active" "Field" "ceiling_active" "Saved" $c.Active "Label" (code "ceilings.active") "Help" (code "ceilings.active_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-cpu" "Field" "ceiling_cpu" "Units" (limitUnits "cores") "Saved" $c.CPU "Label" (code "ceilings.cpu") "Help" (code "ceilings.cpu_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-memory" "Field" "ceiling_memory" "Units" (limitUnits "size") "Saved" $c.Memory "Label" (code "ceilings.memory") "Help" (code "ceilings.memory_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-pids" "Field" "ceiling_pids" "Saved" $c.PIDs "Label" (code "ceilings.pids") "Help" (code "ceilings.pids_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-scratch" "Field" "ceiling_scratch" "Units" (limitUnits "size") "Saved" $c.Scratch "Label" (code "ceilings.scratch") "Help" (code "ceilings.scratch_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "ceilings" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "ceiling-source" "Field" "ceiling_source" "Units" (limitUnits "size") "Saved" $c.Source "Label" (code "ceilings.source") "Help" (code "ceilings.source_help")}}
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "ceilings.warning"}}</span></p>
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "ceilings" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+    </details>
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
   <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
   {{if $nav.Repositories}}

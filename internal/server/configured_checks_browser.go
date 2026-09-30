@@ -235,7 +235,7 @@ func (app *App) saveAndEnableCheckPolicy(writer http.ResponseWriter, request *ht
 		switch {
 		case errors.Is(err, state.ErrCheckPolicyStale):
 			app.reviewSaveAndEnable(writer, request, stored, summary, chrome, form, []webui.Notice{webui.Error("", webui.MsgCCPolicyStale)}, http.StatusConflict)
-		case errors.Is(err, state.ErrInvalidCheckPolicy):
+		case errors.Is(err, state.ErrInvalidCheckPolicy), errors.As(err, new(*state.PolicyError)):
 			app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 				action: webui.ActionSaveCheckPolicy, form: &form, notices: policySaveNotices(err),
 			}, http.StatusConflict)
@@ -350,6 +350,11 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 			code, status = webui.MsgCCJobRefused, http.StatusConflict
 		case errors.Is(err, errRerunSourceMissing):
 			code, status = webui.MsgCCJobSourceMissing, http.StatusConflict
+		case errors.Is(err, state.ErrCheckCeilingExceeded):
+			code, status = webui.MsgCCRunAboveCeilings, http.StatusConflict
+		case errors.As(err, new(*state.PolicyError)):
+			logFailure(request, "configured check job change", err)
+			code, status = webui.MsgCCCeilingsUnreadable, http.StatusConflict
 		default:
 			code, status = webui.MsgCCFailed, unavailable(request, "configured check job change", err)
 		}
@@ -458,7 +463,21 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 	// The accepted ranges and defaults come from the backend on every render,
 	// refused or not, so the editor states the same numbers that will judge
 	// the next submission.
-	page.Form.Ranges = policyFieldRanges()
+	ceilings, err := app.Store.CheckCeilings(request.Context())
+	switch {
+	case errors.As(err, new(*state.PolicyError)):
+		// The ranges are then the defaults, for display only: saving is
+		// refused until the ceilings are set again, as the notice says.
+		logFailure(request, "check ceilings read", err)
+		page.Chrome.Notices = append(page.Chrome.Notices, webui.Error("", webui.MsgCCCeilingsUnreadable))
+		ceilings = state.DefaultCheckCeilings
+	case err != nil:
+		app.renderError(writer, request, unavailable(request, "check ceilings read", err), webui.MsgCCFailed, "")
+		return
+	case exists && len(ceilings.Exceeded(policy.CeilingValues())) != 0:
+		page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgCCPolicyAboveCeilings})
+	}
+	page.Form.Ranges = policyFieldRanges(ceilings)
 	page.Form.Defaults = policyFieldDefaults()
 	if page.Form.ContainerImage != "" {
 		page.Form.DownloadRegistry = state.ContainerImageRegistry(page.Form.ContainerImage)
@@ -806,10 +825,10 @@ func terminalBrowserJob(status string) bool {
 // is simply absent, so the screen says nothing about it rather than inventing
 // a bound. This also keeps the view package free of any import of the storage
 // package: the server adapter is the only thing that knows both shapes.
-func policyFieldRanges() map[string]webui.FieldRange {
+func policyFieldRanges(ceilings state.CheckCeilings) map[string]webui.FieldRange {
 	ranges := make(map[string]webui.FieldRange, len(policyRangeFields))
 	for _, field := range policyRangeFields {
-		bounds, known := state.CheckPolicyBoundsFor(field)
+		bounds, known := ceilings.Bounds(field)
 		if !known {
 			continue
 		}
@@ -1060,6 +1079,9 @@ func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.Che
 // the enforced one. A refusal this package cannot place still reaches the
 // operator as a form-level message rather than disappearing.
 func policySaveNotices(err error) []webui.Notice {
+	if errors.As(err, new(*state.PolicyError)) {
+		return []webui.Notice{webui.Error("", webui.MsgCCCeilingsUnreadable)}
+	}
 	refusals := state.PolicyFieldErrors(err)
 	if len(refusals) == 0 {
 		if errors.Is(err, state.ErrInvalidCheckPolicy) {
@@ -1086,6 +1108,10 @@ func policySaveNotices(err error) []webui.Notice {
 func policySaveStatus(request *http.Request, err error) int {
 	if errors.Is(err, state.ErrInvalidCheckPolicy) {
 		return http.StatusUnprocessableEntity
+	}
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "configured check policy save", err)
+		return http.StatusConflict
 	}
 	return unavailable(request, "configured check policy save", err)
 }

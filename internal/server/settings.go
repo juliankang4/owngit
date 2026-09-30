@@ -263,6 +263,17 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if limits.Looser() {
 			notice = "browse_looser"
 		}
+	case webui.ActionSaveCheckCeilings:
+		ceilings, notices := checkCeilingsForm(request)
+		if len(notices) > 0 {
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{CheckCeilings: &ceilings})
+		notice = "ceilings_saved"
+		if ceilings.Looser() {
+			notice = "ceilings_looser"
+		}
 	case webui.ActionSaveMaintenance:
 		choices, notices := maintenanceForm(request)
 		if len(notices) > 0 {
@@ -430,6 +441,8 @@ var settingsNoticeGroups = map[string]string{
 	"transfer_looser":        webui.GroupTransfer,
 	"browse_saved":           webui.GroupBrowse,
 	"browse_looser":          webui.GroupBrowse,
+	"ceilings_saved":         webui.GroupCeilings,
+	"ceilings_looser":        webui.GroupCeilings,
 	"maintenance_saved":      webui.GroupMaintenance,
 	"maintenance_looser":     webui.GroupMaintenance,
 	"cleanup_off":            webui.GroupCleanup,
@@ -567,6 +580,10 @@ var settingsDraftFields = map[string]bool{
 	"maintenance_window_start": false, "maintenance_window_end": false, "maintenance_pack_threshold": false, "cleanup_enabled": false,
 	"cleanup_grace":      false,
 	"backup_destination": false, "backup_interval": false, "backup_keep": false, "backup_scheduled": true, "backup_verify": true,
+	"ceiling_timeout": false, "ceiling_timeout_unit": false, "ceiling_output": false, "ceiling_output_unit": false,
+	"ceiling_queue": false, "ceiling_active": false, "ceiling_cpu": false, "ceiling_cpu_unit": false, "ceiling_memory": false,
+	"ceiling_memory_unit": false, "ceiling_pids": false, "ceiling_scratch": false, "ceiling_scratch_unit": false, "ceiling_source": false,
+	"ceiling_source_unit": false,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

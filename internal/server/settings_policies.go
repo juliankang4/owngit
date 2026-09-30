@@ -123,6 +123,22 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 			FilePatch: size(browse.FilePatchBytes), CommitFile: size(browse.CommitFileBytes), Compare: size(browse.CompareBytes),
 			CompareTime: webui.FormatLimit(webui.LimitDuration, browse.CompareTime.Milliseconds(), ""),
 		}
+		ceilings, err := app.Store.CheckCeilings(request.Context())
+		if err = unreadable(webui.GroupCeilings, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupCeilings] {
+			ceilings = state.DefaultCheckCeilings
+		} else if policies.AboveCeilings, err = app.Store.RepositoriesAboveCheckCeilings(request.Context()); err != nil {
+			return webui.Policies{}, err
+		}
+		policies.Ceilings = webui.CeilingPolicies{
+			Timeout: webui.FormatLimit(webui.LimitDuration, ceilings.TimeoutMS, ""), Output: size(ceilings.OutputLimitBytes),
+			Queue: strconv.FormatInt(ceilings.QueueLimit, 10), Active: strconv.FormatInt(ceilings.ActiveJobs, 10),
+			CPU: webui.FormatLimit(webui.LimitCores, ceilings.ContainerCPUMillis, ""), Memory: size(ceilings.ContainerMemoryBytes),
+			PIDs: strconv.FormatInt(ceilings.ContainerPIDs, 10), Scratch: size(ceilings.ContainerScratchBytes),
+			Source: size(ceilings.SourceTotalBytes),
+		}
 	}
 	if tab == webui.SettingsStorage {
 		retention, err := app.Store.CheckLogRetention(request.Context())
@@ -188,6 +204,33 @@ func browseLimitsForm(request *http.Request) (state.BrowseLimits, []webui.Notice
 		CompareTime:     form.duration("browse_compare_time", state.MinimumCompareTime, state.MaximumCompareTime),
 	}
 	return limits, form.notices
+}
+
+// checkCeilingsForm reads the check ceilings a Settings form sent, or the
+// notices that refuse them. Each is checked against the range
+// state.CheckCeilingRange gives the policy field it bounds.
+func checkCeilingsForm(request *http.Request) (state.CheckCeilings, []webui.Notice) {
+	form := &limitsForm{request: request}
+	within := func(kind webui.LimitKind, name, field string, step int64) int64 {
+		minimum, maximum := state.CheckCeilingRange(field)
+		return form.limit(kind, name, minimum, maximum, step)
+	}
+	count := func(name, field string) int64 {
+		minimum, maximum := state.CheckCeilingRange(field)
+		return int64(form.count(name, int(minimum), int(maximum)))
+	}
+	ceilings := state.CheckCeilings{
+		TimeoutMS:             within(webui.LimitDuration, "ceiling_timeout", state.FieldMaxTimeoutMS, 1000),
+		OutputLimitBytes:      within(webui.LimitSize, "ceiling_output", state.FieldMaxOutputLimitBytes, 1),
+		QueueLimit:            count("ceiling_queue", state.FieldQueueLimit),
+		ActiveJobs:            count("ceiling_active", state.FieldMaxActiveJobs),
+		ContainerCPUMillis:    within(webui.LimitCores, "ceiling_cpu", state.FieldContainerCPUMillis, 1),
+		ContainerMemoryBytes:  within(webui.LimitSize, "ceiling_memory", state.FieldContainerMemoryBytes, 1),
+		ContainerPIDs:         count("ceiling_pids", state.FieldContainerPIDs),
+		ContainerScratchBytes: within(webui.LimitSize, "ceiling_scratch", state.FieldContainerScratchBytes, 1),
+		SourceTotalBytes:      within(webui.LimitSize, "ceiling_source", state.FieldSourceMaxTotalBytes, 1),
+	}
+	return ceilings, form.notices
 }
 
 // maintenanceForm reads the maintenance choices a Settings form sent, or
@@ -300,6 +343,10 @@ type settingsJSON struct {
 	BrowseLimits        *state.BrowseFields      `json:"browse_limits,omitempty"`
 	Maintenance         *state.MaintenanceFields `json:"maintenance,omitempty"`
 	UnusedObjectCleanup *state.CleanupFields     `json:"unused_object_cleanup,omitempty"`
+	// CheckCeilings are this computer's upper bounds for repository check
+	// policies. A PATCH may name some of them; the others keep their saved
+	// values.
+	CheckCeilings *state.CheckCeilingFields `json:"check_ceilings,omitempty"`
 	// UpdateCheck is "on" when the daily new-release check may run, and
 	// "off" when it may not.
 	UpdateCheck *string `json:"update_check,omitempty"`
@@ -486,6 +533,21 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCleanupWarning))
 			}
 		}
+		if change.CheckCeilings != nil {
+			ceilings, problem, err := changedGroup(request.Context(), "check_ceilings", *change.CheckCeilings, app.Store.CheckCeilings)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.CheckCeilings = &ceilings
+			if ceilings.Looser() {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCeilingsWarning))
+			}
+		}
 		if change.UpdateCheck != nil {
 			check, valid := parseOnOff(*change.UpdateCheck)
 			if !valid {
@@ -500,6 +562,16 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 		}
 		if policies.Maintenance != nil || policies.Cleanup != nil {
 			app.Repositories.WakeMaintenance()
+		}
+		if policies.CheckCeilings != nil {
+			above, err := app.Store.RepositoriesAboveCheckCeilings(request.Context())
+			if err != nil {
+				writeAPIError(writer, unavailable(request, "settings read", err), "state_unavailable", "The settings were saved but could not be read. Try again later.", nil)
+				return
+			}
+			if len(above) != 0 {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCeilingsAbove)+" "+strings.Join(above, ", "))
+			}
 		}
 	}
 	current, unreadable, err := app.savedSettings(request.Context())
@@ -575,6 +647,9 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	}
 	if cleanup, readErr := app.Store.UnusedObjectCleanup(ctx); keep(readErr) {
 		current.UnusedObjectCleanup = pointer(cleanup.Fields())
+	}
+	if ceilings, readErr := app.Store.CheckCeilings(ctx); keep(readErr) {
+		current.CheckCeilings = pointer(ceilings.Fields())
 	}
 	return current, unreadable, err
 }

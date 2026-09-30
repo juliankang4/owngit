@@ -133,6 +133,8 @@ func (app *App) writePolicyAPIAnswer(writer http.ResponseWriter, request *http.R
 		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_check_policy", err.Error(), nil)
 	case errors.Is(err, state.ErrCheckPolicyStale):
 		writeAPIError(writer, http.StatusConflict, "check_policy_stale", err.Error(), nil)
+	case errors.As(err, new(*state.PolicyError)):
+		writeSettingUnreadable(writer, request, "configured check policy save", err)
 	case err != nil:
 		writeAPIError(writer, unavailable(request, "configured check policy save", err), "state_unavailable", "The configured-check policy could not be saved.", nil)
 	default:
@@ -735,6 +737,10 @@ func writeConfiguredJobError(writer http.ResponseWriter, request *http.Request, 
 		writeAPIError(writer, http.StatusConflict, "check_job_state", err.Error(), nil)
 	case errors.Is(err, errRerunSourceMissing):
 		writeAPIError(writer, http.StatusConflict, "check_source_missing", "The job's commit is no longer in the repository, so the job cannot run again.", nil)
+	case errors.Is(err, state.ErrCheckCeilingExceeded):
+		writeAPIError(writer, http.StatusConflict, "check_policy_above_ceilings", err.Error(), nil)
+	case errors.As(err, new(*state.PolicyError)):
+		writeSettingUnreadable(writer, request, "configured check job change", err)
 	default:
 		writeAPIError(writer, unavailable(request, "configured check job change", err), "state_unavailable", "The configured-check job could not be changed.", nil)
 	}

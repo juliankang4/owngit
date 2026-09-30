@@ -54,6 +54,7 @@ const (
 	PolicyRuleDuplicate       = "duplicate"
 	PolicyRuleForbidden       = "forbidden"
 	PolicyRuleNeedsRepository = "needs_repository"
+	PolicyRuleCeiling         = "ceiling"
 )
 
 // policyFormFields maps a backend field to the control that carries it.
@@ -150,6 +151,8 @@ func policyRuleMessage(field, rule string) MessageCode {
 		return MsgCCFieldForbidden
 	case PolicyRuleNeedsRepository:
 		return MsgCCPullNeedsName
+	case PolicyRuleCeiling:
+		return MsgCCFieldCeiling
 	case PolicyRuleRange:
 		if field == PolicyFieldSourceMaxTotalBytes {
 			// This field's floor moves with the file limit above it, so the
