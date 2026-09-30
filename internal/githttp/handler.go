@@ -230,9 +230,24 @@ func (h *Handler) ServeRead(writer http.ResponseWriter, request *http.Request, r
 	}
 	// Git protocol version 2 fetches any object a client names by its ID,
 	// also one only a hidden ref such as kept history reaches. Version 0
-	// fetches only what the advertised branches and tags reach.
+	// fetches only what the advertised refs reach.
 	request.Header.Del("Git-Protocol")
+	route.config = readOnlyConfig
 	h.serve(writer, request, route)
+}
+
+// readOnlyConfig limits a ServeRead fetch to branches and tags, whatever
+// the repository's own config says. Command-line scope comes after the
+// repository's config, so the last hideRefs entries decide: every ref is
+// hidden, then branches and tags are shown again. No object is served by
+// its ID alone.
+var readOnlyConfig = [][2]string{
+	{"uploadpack.hideRefs", "refs/"},
+	{"uploadpack.hideRefs", "!refs/heads/"},
+	{"uploadpack.hideRefs", "!refs/tags/"},
+	{"uploadpack.allowTipSHA1InWant", "false"},
+	{"uploadpack.allowReachableSHA1InWant", "false"},
+	{"uploadpack.allowAnySHA1InWant", "false"},
 }
 
 // serve runs the Git service of route for an authorized request.
@@ -814,6 +829,8 @@ type route struct {
 	suffix  string
 	service string
 	query   string
+	// config is Git config at command-line scope for this request only.
+	config [][2]string
 }
 
 func parseRoute(request *http.Request) (route, bool) {
@@ -898,6 +915,12 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 	}
 	if info.Secure() {
 		environment = append(environment, "HTTPS=on")
+	}
+	for i, setting := range route.config {
+		environment = append(environment, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting[1]))
+	}
+	if len(route.config) > 0 {
+		environment = append(environment, "GIT_CONFIG_COUNT="+strconv.Itoa(len(route.config)))
 	}
 	return environment, nil
 }

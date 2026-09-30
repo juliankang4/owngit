@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/repository"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -266,6 +268,85 @@ func TestShareCloneLinkFetchesAndRefusesPushes(t *testing.T) {
 	other.SetBasicAuth("visitor", secret)
 	if answer := browserRequest(t, &http.Client{}, other); answer.status != http.StatusUnauthorized {
 		t.Fatalf("a secret opened another link's Git address: %d", answer.status)
+	}
+}
+
+// A clone link fetches branches and tags only, in either object format:
+// not a ref in an extra namespace such as refs/notes/, and no commit by its
+// ID alone, also when the repository's own config allows such wants. Its
+// pages name no such ref or commit either. The owner still sees every ref.
+func TestShareCloneLinkServesOnlyBranchesAndTags(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	server := serve(t, fixture.app.Handler())
+	ctx := context.Background()
+	for _, format := range []string{"sha1", "sha256"} {
+		t.Run(format, func(t *testing.T) {
+			name := "refs-" + format
+			_, err := fixture.app.Repositories.CreateWithOptions(ctx, name, "", repository.CreateOptions{ObjectFormat: format})
+			noErr(t, err)
+			prefixes := []string{"refs/notes/"}
+			_, err = fixture.store.SaveRepositoryRefPolicy(ctx, name, state.RepositoryRefPolicyChange{ExtraRefPrefixes: &prefixes})
+			noErr(t, err)
+			ownerRemote := strings.Replace(server.URL, "://", "://owngit:shared-password@", 1) + "/git/" + name + ".git"
+			owner := filepath.Join(t.TempDir(), "owner")
+			apiRunGit(t, "", "init", "-q", "--object-format="+format, "--initial-branch=main", owner)
+			for _, setting := range [][2]string{{"user.name", "Share Test"}, {"user.email", "share-test@example.invalid"}} {
+				apiRunGit(t, owner, "config", setting[0], setting[1])
+			}
+			apiRunGit(t, owner, "commit", "-q", "--allow-empty", "-m", "base")
+			apiRunGit(t, owner, "tag", "v1")
+			apiRunGit(t, owner, "push", "-q", ownerRemote, "main", "v1")
+			apiRunGit(t, owner, "commit", "-q", "--allow-empty", "-m", "kept only")
+			keptOID := apiGitOutput(t, owner, "rev-parse", "HEAD")
+			apiRunGit(t, owner, "push", "-q", ownerRemote, "HEAD:refs/heads/gone")
+			apiRunGit(t, owner, "push", "-q", ownerRemote, ":refs/heads/gone")
+			apiRunGit(t, owner, "checkout", "-q", "--orphan", "note")
+			apiRunGit(t, owner, "commit", "-q", "--allow-empty", "-m", "extra namespace only")
+			noteOID := apiGitOutput(t, owner, "rev-parse", "HEAD")
+			apiRunGit(t, owner, "push", "-q", ownerRemote, "HEAD:refs/notes/private")
+			if refs := apiGitOutput(t, "", "ls-remote", ownerRemote); !strings.Contains(refs, "refs/notes/private") {
+				t.Fatalf("the owner does not see the extra ref:\n%s", refs)
+			}
+
+			created := createShare(t, server.URL, name, map[string]any{"label": "Contractor", "scope": "clone"})
+			secret := strings.TrimPrefix(created.URL, server.URL+"/share/")
+			shareRemote := strings.Replace(created.CloneURL, "://", "://visitor:"+secret+"@", 1)
+			for _, protocol := range []string{"0", "2"} {
+				for _, line := range strings.Split(apiGitOutput(t, "", "-c", "protocol.version="+protocol, "ls-remote", shareRemote), "\n") {
+					_, ref, _ := strings.Cut(line, "\t")
+					if ref != "HEAD" && !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/tags/") {
+						t.Errorf("protocol %s advertises %q", protocol, ref)
+					}
+				}
+			}
+			clone := filepath.Join(t.TempDir(), "clone")
+			apiRunGit(t, "", "clone", "-q", shareRemote, clone)
+			repositoryPath, err := fixture.app.Repositories.Path(name)
+			noErr(t, err)
+			for _, allow := range []string{"", "uploadpack.allowTipSHA1InWant", "uploadpack.allowReachableSHA1InWant", "uploadpack.allowAnySHA1InWant"} {
+				if allow != "" {
+					apiRunGit(t, "", "--git-dir", repositoryPath, "config", allow, "true")
+				}
+				for _, protocol := range []string{"0", "2"} {
+					for want, what := range map[string]string{"refs/notes/private": "an extra ref", noteOID: "an extra ref's commit", keptOID: "a kept commit"} {
+						if output, err := gitCombined(clone, "-c", "protocol.version="+protocol, "fetch", "origin", "+"+want+":refs/fetched/x"); err == nil {
+							t.Errorf("%s was fetched with %q set and protocol %s:\n%s", what, allow, protocol, output)
+						}
+					}
+					apiRunGit(t, clone, "-c", "protocol.version="+protocol, "fetch", "-q", "origin", "main", "tag", "v1")
+				}
+				if allow != "" {
+					apiRunGit(t, "", "--git-dir", repositoryPath, "config", "--unset", allow)
+				}
+			}
+
+			client, home := openShare(t, created)
+			for _, path := range []string{"/commits/" + noteOID, "/commits/" + keptOID, "/code?ref=refs%2Fnotes%2Fprivate", "/commits?ref=refs%2Fnotes%2Fprivate"} {
+				if page := browserGET(t, client, home+path); page.status != http.StatusNotFound || strings.Contains(page.body, "extra namespace only") {
+					t.Errorf("%s status=%d", path, page.status)
+				}
+			}
+		})
 	}
 }
 
