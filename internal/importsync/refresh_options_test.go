@@ -386,53 +386,6 @@ func TestClearingUnusableSavedExtraNamespacesRepairsThem(t *testing.T) {
 	noErr(t, err)
 }
 
-// Another sign-in may see fewer refs. It starts a new source generation, so
-// refs it does not see are not taken as deleted upstream. Retrying the same
-// sign-in or changing only the CA keeps the generation.
-func TestChangedSignInNeverDeletesRefsItCannotSee(t *testing.T) {
-	for _, change := range []struct {
-		name       string
-		credential *Credentials
-	}{
-		{"replaced", &Credentials{BearerToken: "synthetic-narrow"}},
-		{"cleared", nil},
-	} {
-		t.Run(change.name, func(t *testing.T) {
-			ctx := context.Background()
-			f := newFixture(t)
-			f.commit("one", "one\n")
-			f.git(f.source, "branch", "dev")
-			f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
-			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-first"}))
-			_, err := f.refresh()
-			noErr(t, err)
-			before, _, err := f.store.ImportSource(ctx, "project")
-			noErr(t, err)
-			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "synthetic-first"}))
-			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{RootCAPEM: []byte("synthetic CA")}))
-			same, _, err := f.store.ImportSource(ctx, "project")
-			noErr(t, err)
-			if same.SourceGeneration != before.SourceGeneration {
-				t.Fatalf("the same sign-in moved generation %d to %d", before.SourceGeneration, same.SourceGeneration)
-			}
-			noErr(t, f.service.SetCredentials(ctx, "project", change.credential))
-			after, _, err := f.store.ImportSource(ctx, "project")
-			noErr(t, err)
-			if after.SourceGeneration != before.SourceGeneration+1 || !after.FollowUpstreamDeletions {
-				t.Fatalf("after the sign-in change source = %+v", after)
-			}
-			f.transport.mutateAdvertised = func(a *importgit.Advertisement) {
-				a.Refs = slices.DeleteFunc(a.Refs, func(ref importgit.Ref) bool { return ref.Name == "refs/heads/dev" })
-			}
-			_, err = f.refresh()
-			noErr(t, err)
-			if f.destinationRefs()["refs/heads/dev"] == "" {
-				t.Fatal("a ref the new sign-in cannot see was deleted")
-			}
-		})
-	}
-}
-
 // A publication confirmed during reconciliation counts a ref it deleted as
 // deleted upstream, like the run that planned it.
 func TestReconciledDeletionIsCountedAsDeletedUpstream(t *testing.T) {

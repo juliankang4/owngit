@@ -94,10 +94,8 @@ var ErrImportActive = errors.New("an import run is already active")
 var ErrImportSourceChanged = errors.New("the import source changed before the run was recorded")
 
 // ImportSource is one repository's persisted inbound source configuration.
-// SourceGeneration advances only when the URL identity or the credential's
-// sign-in identity changes, preserving same-source observations: refs a
-// source generation observed are the only ones a refresh may replace or
-// delete, so a credential that sees fewer refs never deletes the others. AuthorityRevision advances for every effective
+// SourceGeneration advances only when the URL identity changes, preserving
+// same-source observations. AuthorityRevision advances for every effective
 // execution-authority change and invalidates work admitted under an older
 // configuration. CredentialGeneration is a nonsecret machine-local binding
 // identifier and is deliberately omitted from portable recovery state.
@@ -487,21 +485,14 @@ func (s *Store) setImportConsent(ctx context.Context, repositoryID, column strin
 	return record, err
 }
 
-// activateImportCredential binds credentialGeneration to source. With
-// newSourceGeneration, the sign-in identity changed, so the source starts a
-// new generation as a new URL does.
-func (s *Store) activateImportCredential(ctx context.Context, source ImportSource, credentialGeneration string, newSourceGeneration bool, now time.Time) (ImportSource, error) {
+func (s *Store) activateImportCredential(ctx context.Context, source ImportSource, credentialGeneration string, now time.Time) (ImportSource, error) {
 	if source.AuthorityRevision <= 0 || now.IsZero() || (credentialGeneration != "" && !isLowerHex(credentialGeneration, 32)) {
 		return ImportSource{}, errors.New("invalid import credential authority transition")
 	}
-	generation := source.SourceGeneration
-	if newSourceGeneration {
-		generation++
-	}
 	result, err := s.db.ExecContext(ctx, `UPDATE import_sources
-		SET source_generation=?,authority_revision=authority_revision+1,credential_generation=?,updated_at=?
+		SET authority_revision=authority_revision+1,credential_generation=?,updated_at=?
 		WHERE repository_id=? AND url=? AND source_generation=? AND authority_revision=? AND credential_generation=?`,
-		generation, credentialGeneration, now.Unix(), source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision, source.CredentialGeneration)
+		credentialGeneration, now.Unix(), source.RepositoryID, source.URL, source.SourceGeneration, source.AuthorityRevision, source.CredentialGeneration)
 	if err != nil {
 		return ImportSource{}, err
 	}
@@ -512,7 +503,6 @@ func (s *Store) activateImportCredential(ctx context.Context, source ImportSourc
 	if affected != 1 {
 		return ImportSource{}, errors.New("import authority changed before credential mutation completed")
 	}
-	source.SourceGeneration = generation
 	source.AuthorityRevision++
 	source.CredentialGeneration = credentialGeneration
 	source.UpdatedAt = now

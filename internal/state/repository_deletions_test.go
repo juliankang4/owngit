@@ -95,21 +95,21 @@ func seedRepositoryRecords(t *testing.T, fixture *checkJobFixture) {
 		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ImportModeStandalone, Now: testImportNow(),
 	})
 	noErr(t, err)
-	source, err = store.SaveImportCredentials(ctx, ImportCredentials{
+	if _, err := store.SaveImportCredentials(ctx, ImportCredentials{
 		RepositoryID: "project", URL: source.URL, SourceGeneration: source.SourceGeneration, ExpectedAuthorityRevision: source.AuthorityRevision,
 		BearerToken: "synthetic-token",
-	}, testImportNow())
-	noErr(t, err)
-	generation := source.SourceGeneration
-	run := testImportRun(t, strings.Repeat("c", 32), "project", generation, ImportKindRefresh, ImportRunPreparing)
+	}, testImportNow()); err != nil {
+		t.Fatal(err)
+	}
+	run := testImportRun(t, strings.Repeat("c", 32), "project", 1, ImportKindRefresh, ImportRunPreparing)
 	noErr(t, store.BeginImportRun(ctx, run))
 	run.Status, run.FinishedAt = ImportRunComplete, testImportNow().Add(time.Minute)
 	noErr(t, store.FinishImportRun(ctx, run))
 	noErr(t, store.RecordImportObservations(ctx, []ImportObservation{{
-		RepositoryID: "project", SourceGeneration: generation, RefName: "refs/heads/main", OID: strings.Repeat("a", 40), ObservedAt: testImportNow(), RunID: run.ID,
+		RepositoryID: "project", SourceGeneration: 1, RefName: "refs/heads/main", OID: strings.Repeat("a", 40), ObservedAt: testImportNow(), RunID: run.ID,
 	}}))
 	noErr(t, store.CreateImportIntent(ctx, ImportIntent{
-		ID: strings.Repeat("d", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: generation, AuthorityRevision: 1, Status: ImportIntentPlanning,
+		ID: strings.Repeat("d", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1, Status: ImportIntentPlanning,
 		Expected: map[string]string{"refs/heads/main": ""}, Desired: map[string]string{"refs/heads/main": strings.Repeat("a", 40)},
 		Observed: map[string]string{"refs/heads/main": strings.Repeat("a", 40)}, Retained: map[string]string{}, CreatedAt: testImportNow(),
 	}))
