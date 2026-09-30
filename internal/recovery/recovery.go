@@ -412,16 +412,8 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	if err := requireAbsent(absolute, "backup"); err != nil {
 		return err
 	}
-	stateRoot, err := canonicalExistingDirectory(store.Dir(), "state storage")
-	if err != nil {
+	if err := requireApartFromStorage(store, manager, absolute); err != nil {
 		return err
-	}
-	repositoryRoot, err := canonicalExistingDirectory(manager.RepositoryRoot(), "repository storage")
-	if err != nil {
-		return err
-	}
-	if pathsOverlap(absolute, stateRoot) || pathsOverlap(absolute, repositoryRoot) {
-		return errors.New("backup destination must not overlap state or repository storage")
 	}
 	hold, err := manager.HoldForBackup()
 	if err != nil {
@@ -434,6 +426,7 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	}
 	snapshot := captured.snapshot
 	report.Repositories = len(captured.repositories)
+	report.Captured = true
 	manifest := Manifest{
 		Format: backupFormat, CreatedAt: captured.at,
 		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
@@ -547,6 +540,31 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	published = true
 	if err := syncDirectory(parent); err != nil {
 		return fmt.Errorf("backup was published but its parent directory could not be synchronized: %w", err)
+	}
+	return nil
+}
+
+// CheckBackupFolder refuses dir as the folder of new backups when a backup
+// in it would overlap the state or repository storage.
+func CheckBackupFolder(store *state.Store, manager *repository.Manager, dir string) error {
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+	return requireApartFromStorage(store, manager, filepath.Join(absolute, "backup"))
+}
+
+func requireApartFromStorage(store *state.Store, manager *repository.Manager, output string) error {
+	stateRoot, err := canonicalExistingDirectory(store.Dir(), "state storage")
+	if err != nil {
+		return err
+	}
+	repositoryRoot, err := canonicalExistingDirectory(manager.RepositoryRoot(), "repository storage")
+	if err != nil {
+		return err
+	}
+	if pathsOverlap(output, stateRoot) || pathsOverlap(output, repositoryRoot) {
+		return errors.New("backup destination must not overlap state or repository storage")
 	}
 	return nil
 }

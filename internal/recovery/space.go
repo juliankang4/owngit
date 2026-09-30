@@ -6,6 +6,7 @@ import (
 	"math/bits"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -13,15 +14,21 @@ import (
 // says nothing about the backup or the state being copied.
 type SpaceError struct {
 	Dir string
-	// Needed and Free are the estimate that refused the restore before it
-	// started, in bytes; Err is the error of a restore that ran out of room.
-	Needed, Free uint64
-	Err          error
+	// Needed and Free are the estimate that refused the restore or backup
+	// before it started, in bytes; Err is the error of one that ran out of
+	// room. FromLastBackup says that Needed is the size of the last backup
+	// in Dir.
+	Needed, Free   uint64
+	FromLastBackup bool
+	Err            error
 }
 
 func (e *SpaceError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("not enough free space in %s: %v", e.Dir, e.Err)
+	}
+	if e.FromLastBackup {
+		return fmt.Sprintf("not enough free space in %s: a new backup needs about %d MiB, the size of the last backup here, and %d MiB is free", e.Dir, mebibytes(e.Needed), e.Free>>20)
 	}
 	return fmt.Sprintf("not enough free space in %s: at least %d MiB is needed and %d MiB is free", e.Dir, mebibytes(e.Needed), e.Free>>20)
 }
@@ -68,23 +75,28 @@ func checkSpace(inputRoot, dir string, repositories []RepositoryManifest) error 
 // roomNeeded is the room that restoring bundles of these sizes needs at
 // least: the bundles, which the restored repositories take about as much
 // as, and the largest once more for the copy that restore checks and reads
-// (copyBundle). A sum that 64 bits cannot hold, which only files far larger
-// than any disk reach, is the largest value, so no disk has that room.
+// (copyBundle).
 func roomNeeded(sizes []uint64) uint64 {
-	var needed, largest uint64
-	add := func(size uint64) {
-		sum, carry := bits.Add64(needed, size, 0)
-		if carry != 0 {
-			sum = math.MaxUint64
-		}
-		needed = sum
-	}
+	var largest uint64
 	for _, size := range sizes {
-		add(size)
 		largest = max(largest, size)
 	}
-	add(largest)
-	return needed
+	return sumSizes(append(slices.Clone(sizes), largest))
+}
+
+// sumSizes adds sizes. A sum that 64 bits cannot hold, which only files far
+// larger than any disk reach, is the largest value, so no disk has that
+// room.
+func sumSizes(sizes []uint64) uint64 {
+	var sum uint64
+	for _, size := range sizes {
+		next, carry := bits.Add64(sum, size, 0)
+		if carry != 0 {
+			return math.MaxUint64
+		}
+		sum = next
+	}
+	return sum
 }
 
 // diskFull reports whether err says that a disk was full, as Go, Git or

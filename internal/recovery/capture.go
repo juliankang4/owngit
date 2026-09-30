@@ -63,6 +63,9 @@ type CaptureReport struct {
 	// writes, such as pushes, waiting, and LongestHoldRepository names it.
 	LongestHold           time.Duration `json:"longest_hold"`
 	LongestHoldRepository string        `json:"longest_hold_repository,omitempty"`
+	// Captured says that the capture finished: the instant was taken and
+	// every repository's refs were read, so the fields above are final.
+	Captured bool `json:"captured"`
 }
 
 // capturedRepository is one repository as the backup describes it: its
