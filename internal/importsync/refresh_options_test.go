@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -736,6 +737,9 @@ func TestPreviewIsUnknownWhenStorageCannotBeRead(t *testing.T) {
 // then onto the ref being deleted after the last recheck. Every move is
 // refused, or none of them lets the branch HEAD resolves to be deleted.
 func TestHEADStaysLockedWhenARefreshAlsoWritesItsBranch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the HEAD mover is a POSIX shell wrapper around Git")
+	}
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	f.git(f.source, "branch", "dev")
