@@ -55,6 +55,11 @@ try {
     imports.system.exit(3);
 }
 
+// The panel's window, and so the notifications the desktop files under it,
+// carry the name OwnGit rather than the name of gjs.
+GLib.set_prgname('OwnGit');
+GLib.set_application_name('OwnGit');
+
 const loop = new GLib.MainLoop(null, false);
 const bus = Gio.DBus.session;
 let icons = '';
