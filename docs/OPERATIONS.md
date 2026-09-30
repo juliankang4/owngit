@@ -1162,7 +1162,7 @@ A change applies to pushes and imports that start after you save; a run already 
 
 The default branch is the one OwnGit and `git clone` open first (the repository's `HEAD`). An administrator picks any existing branch in the repository's Settings tab, or runs `owngit repo default-branch --repository NAME --branch BRANCH` with the administrator password in `--password-file`. Inside a clone of the repository, `--server` and `--repository` come from its `origin` remote. An imported repository whose only branch is `master` shows no default branch until you choose one. Changing it creates no branch and leaves every ref and kept history as it was.
 
-To keep the default branch from being rewritten or deleted, turn on Protect the default branch on the repository's Settings tab, or run `owngit repo settings set --repository NAME --protect-default-branch on`. It is off by default. While it is on, OwnGit refuses a push that is not a fast-forward of the default branch and a push that deletes it, and Git shows `remote: OwnGit protects the default branch main and refused ...` with `! [remote rejected]`. Pushes that add commits, every other branch and tag, merging a pull request, restoring files and deleting the repository work as before. An import still follows a fast-forward of the default branch. When the source rewrote it, the refresh fails with `protected_default_branch` and changes nothing; to follow the source, turn the protection off and refresh again. Changing the default branch moves the protection to the new one.
+To keep the default branch from being rewritten or deleted, turn on Protect the default branch on the repository's Settings tab, or run `owngit repo settings set --repository NAME --protect-default-branch on`. It is off by default. While it is on, OwnGit refuses a push that is not a fast-forward of the default branch and a push that deletes it, and Git shows `remote: OwnGit protects the default branch main and refused ...` with `! [remote rejected]`. Pushes that add commits, every other branch and tag, merging a pull request, restoring files and deleting the repository work as before. An import still follows a fast-forward of the default branch. When the source rewrote it, or when [Overwrite diverged branches](#overwrite-diverged-branches) would replace a local change to it, the refresh fails with `protected_default_branch` and changes nothing; to follow the source, turn the protection off and refresh again. The protected branch is the one HEAD resolves to, also when HEAD reaches it through another symbolic ref. Changing the default branch moves the protection to the new one.
 
 A new repository starts on `main`. To start new repositories on another branch, such as `trunk`, change Initial branch under New repositories on the Settings Repositories tab, or run `owngit settings set --initial-branch trunk`. The name uses up to 100 letters, digits, `-`, `_`, `.` and `/`, and must be one Git accepts. It applies to repositories created afterwards, in the dashboard, on the command line or through the API. Existing repositories keep their branches, and an import takes its source's default branch. The page of an empty repository shows the `git push` command for its branch.
 
@@ -1182,7 +1182,7 @@ None is listed by default, and an empty value removes them all. A change applies
 - A push to any other ref is refused with `OwnGit accepts branches, tags and the ref namespaces listed in the repository's settings.`
 - A push that would update a symbolic ref other than `HEAD` is refused, in any namespace, with a message to push the ref it points to directly.
 - If the saved list cannot be read, pushes to the repository are refused until you save the list again.
-- Backups carry the list and the refs in these namespaces, and a restore brings both back. Imports still publish only branches and tags.
+- Backups carry the list and the refs in these namespaces, and a restore brings both back. The list does not affect imports, which have their own [extra ref namespaces](#extra-ref-namespaces).
 
 `owngit repo settings show` prints the list as `extra_ref_prefixes`, and the repository settings API takes the same field, which replaces the whole list. Anyone with general access can see where a push may go: `owngit repo show` and the MCP tool `repository_show` list the accepted namespaces in `push_ref_namespaces`, or say in `push_ref_namespaces_error` why the list cannot be read.
 
@@ -1341,9 +1341,9 @@ A repository whose folder can be read but whose Git data cannot is listed with a
 
 An import copies a repository from another Git host over HTTPS (or plain HTTP, when you allow it for that source) into a new OwnGit repository, and can refresh it later, on demand or on a schedule. Imports are inbound only: OwnGit never writes to the source, and Git LFS objects are not fetched or hosted.
 
-In the browser, an administrator uses Import a repository on the dashboard to start one. The repository's Import tab then changes its source, credentials, and [connection choices and limits](#connection-choices-and-limits), refreshes, cancels, and sets a schedule.
+In the browser, an administrator uses Import a repository on the dashboard to start one. The repository's Import tab then changes its source, credentials, [connection choices and limits](#connection-choices-and-limits) and [refs and refresh choices](#refs-and-refresh-choices), refreshes, cancels, and sets a schedule.
 
-- Anyone who can read the repository sees the tab's status, run history and ref states. The source address, credential state and run messages are for administrators only.
+- Anyone who can read the repository sees the tab's status, run history and ref states. The source address, credential state, run messages and refresh choices are for administrators only.
 - Changes ask for the administrator password as set under [Administrator password check](#administrator-password-check).
 - The credential form changes only what you enter. A new token or Basic credential keeps a stored CA, and **No new sign-in (CA only)** keeps the credential; only Clear credentials removes them.
 - The form is limited to 1 MiB, so store a CA bundle near that size with the command line.
@@ -1377,14 +1377,16 @@ owngit import credentials PROJECT --ca-file /path/to/source-ca.pem
 owngit import credentials PROJECT --clear
 owngit import configure PROJECT --redirects same_origin
 owngit import configure PROJECT --limit run_seconds=2h --limit pack_bytes=32GiB
+owngit import configure PROJECT --extra-ref-prefixes refs/notes/
+owngit import configure PROJECT --overwrite-diverged --follow-upstream-deletions
 owngit import resolve PROJECT
 ```
 
 - `--basic-file` replaces `--token-file` for a Basic credential (username and password on separate lines). `--ca-file` stores a source certificate authority, up to 1 MiB. `import credentials` changes only what you pass; `--clear` removes credential and CA. Output shows the credential type and whether one is stored, never the secret.
 - `--allow-private-network` permits a source on a private LAN, CGNAT, tailnet or loopback address. `--git-only-consent` accepts a repository with Git LFS pointers ([Git LFS](#git-lfs)).
-- `import add` and `import configure` take the source's [connection choices and limits](#connection-choices-and-limits). `import configure` changes only the options you pass and keeps the address, mode and consents.
+- `import add` and `import configure` take the source's [connection choices and limits](#connection-choices-and-limits) and its [refs and refresh choices](#refs-and-refresh-choices). `import configure` changes only the options you pass and keeps the address, mode and consents.
 - `import add` creates the repository and refuses an existing name with `repository_taken`; `import refresh` updates from the stored source. Both wait for the whole run. The server stops a run at the source's run time (1 hour by default) and answers within about a minute after that. The command's own request limit is fixed at 24 hours and 2 minutes, the longest allowed run time plus margins, whatever the source's settings. They exit 0 on success, 3 when the run kept local refs that differ from the source (listed in the output), 130 when it was cancelled, and 1 otherwise.
-- `import status` lists the last and active runs, the source's connection choices and changed limits, and every branch or tag that does not match the source. With `--json` it prints the status as JSON, including every limit in force.
+- `import status` lists the last and active runs, the source's connection choices, changed limits and refresh choices, every imported ref that does not match the source, and the refs the refresh choices [would change now](#checking-what-the-choices-would-change). With `--json` it prints the status as JSON, including every limit in force.
 - `import cancel` can stop a run only until its result is published; for a first import, that is the moment the repository appears. If the first import fails or is cancelled, OwnGit removes the source and credentials stored for that name (at its next start if it crashed), and a retry uses only what you supply.
 - A schedule interval is between 60 seconds and 7 days (`invalid_schedule` otherwise), and scheduled refreshes run only while `owngit serve` runs.
 
@@ -1454,7 +1456,7 @@ The API takes sizes in bytes, times in seconds and counts as numbers. `owngit im
 
 #### When the source address changes
 
-Connection choices belong to one address. When a source's address changes, OwnGit turns plain HTTP and the exceptional destination off, sets Redirects back to Refuse redirects, and drops the approved origin. Limits and private network consent stay.
+Connection choices belong to one address. When a source's address changes, OwnGit turns plain HTTP, the exceptional destination, [Overwrite diverged branches](#overwrite-diverged-branches) and [Follow upstream deletions](#follow-upstream-deletions) off, sets Redirects back to Refuse redirects, and drops the approved origin. Limits, private network consent and extra ref namespaces stay.
 
 On the Import tab, the page clears these choices as soon as you edit the address and says so. Enter the new address first, then choose again whatever it needs.
 
@@ -1474,33 +1476,125 @@ When a source setting stops a run, the last-run message on the Import tab says t
 
 A redirect loop, too many redirects, or a redirect to an address that is not a Git repository is reported as `protocol`.
 
-If a saved choice or limit can no longer be used, for example an approved origin with a path or a run time shorter than the download time, the Import tab and `import status` name the setting, and runs from that source stop before they connect. Save that setting again on the Import tab, or with `owngit import configure --redirects` or `--limit`, and runs resume.
+If a saved choice or limit can no longer be used, for example an approved origin with a path or a run time shorter than the download time, the Import tab and `import status` name the setting, and runs from that source stop before they connect. The same applies to a saved list of [extra ref namespaces](#extra-ref-namespaces). Save that setting again on the Import tab, or with `owngit import configure --redirects`, `--limit` or `--extra-ref-prefixes`, and runs resume. For the namespaces, saving an empty list works too.
 
 #### Choices and limits stay on this machine
 
-Backups do not include a source's connection choices and limits. After a [restore](#restoring-a-backup), every source starts from the defaults, so turn on again whatever a source needs, such as plain HTTP for an `http://` source.
+Backups do not include a source's connection choices and limits. After a [restore](#restoring-a-backup), every source starts from the defaults, so turn on again whatever a source needs, such as plain HTTP for an `http://` source. The [refs and refresh choices](#refs-and-refresh-choices) are in backups and come back with a restore.
 
 ### What an import publishes
 
-Each run fetches a full copy into a private staging area. Before anything reaches the repository, it checks that every advertised branch, tag and HEAD is present with a complete object graph.
+Each run fetches a full copy into a private staging area. Before anything reaches the repository, it checks that every advertised ref it imports, and HEAD, is present with a complete object graph.
 
-- Only branches and tags are published. Notes, replace refs, pull request refs and a HEAD outside `refs/heads/` are skipped or refused.
+- Branches and tags are published, and so are the refs of any [extra ref namespaces](#extra-ref-namespaces) you list, such as `refs/notes/`. Refs in namespaces you did not list are skipped. Pull request refs, for example, are skipped unless you list `refs/pull/`. A HEAD outside `refs/heads/` is refused.
 - Hooks and configuration are not copied.
 - A source with another object format (SHA-1 or SHA-256) fails, and a ref name longer than 417 bytes fails with `unsupported_refs`.
-- OwnGit asks the source for Git protocol v2, which lets it list only HEAD, branches and tags, so pull request refs are never fetched or counted. A source that lists more refs than the source's ref limit (50,000 by default) fails with `too_many_refs`. A source without protocol v2 lists every ref, and the refs OwnGit skips, such as pull request refs, then count too. For such a source, raise the [ref limit](#limits) or [move it by hand](#moving-an-existing-repository-into-owngit) with a clone that pushes its branches and tags.
+- OwnGit asks the source for Git protocol v2, which lets it ask only for HEAD, branches, tags and the extra namespaces, so refs in other namespaces, such as pull request refs, are not fetched. A source that lists more refs than the source's ref limit (50,000 by default) fails with `too_many_refs`. Every ref the source lists counts, including refs OwnGit then skips: a source without protocol v2 lists every ref, and a protocol v2 source may send refs OwnGit did not ask for. For such a source, raise the [ref limit](#limits) or [move it by hand](#moving-an-existing-repository-into-owngit) with a clone that pushes its branches and tags.
 
-A refresh never overwrites local work:
+By default, a refresh never overwrites local work. Two [refresh choices](#refs-and-refresh-choices) change that, and the rules below say where.
 
 - A missing ref is created, and an identical one is left alone.
 - A branch follows the source only while it still holds the value OwnGit last saw from this source URL, or moved forward from it and the new source value includes it.
-- A tag changes only while it is still the exact tag last seen.
-- Anything else is divergent and kept, and the run reports it.
-- A ref deleted at the source is never removed locally (**Deleted at source** in the Import tab and `import status`).
+- A tag, or a ref in an extra namespace, changes only while it still holds the exact value last seen.
+- Anything else is divergent and kept, and the run reports it. [Overwrite diverged branches](#overwrite-diverged-branches) replaces it instead.
+- A ref deleted at the source stays locally (**Deleted at source** in the Import tab and `import status`). [Follow upstream deletions](#follow-upstream-deletions) deletes it instead.
 - A source ref whose name, or any folder in its name, matches a local ref in the way described under [Moving an existing repository into OwnGit](#moving-an-existing-repository-into-owngit) is reported as divergent instead of created, and HEAD does not follow the source to such a name. `cafe` and `café` are different names.
-- A replaced value stays in kept history when kept history was on for the repository as the refresh started; with Do not keep it is not kept.
+- A replaced branch or tag value stays in kept history when kept history was on for the repository as the refresh started; with Do not keep it is not kept. A replaced value in an extra namespace is never kept.
 - HEAD follows the source only when OwnGit set it on an earlier import from the same source and nothing changed it since.
 
-After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced.
+After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced, and no ref is deleted.
+
+### Refs and refresh choices
+
+Each source has three choices about what a refresh brings in and how closely it follows the source. By default a refresh brings in branches and tags, keeps what you changed in OwnGit, and only reports refs the source deleted. The choices sit in the **Refs and refresh** part of the collapsed **Connection and limits** group, on the new-import form and on the Import tab. They apply from the next refresh, and only administrators see them.
+
+| Choice in the browser | Default | Command line | API field |
+|---|---|---|---|
+| [Extra ref namespaces](#extra-ref-namespaces) | None | `--extra-ref-prefixes refs/notes/,refs/changes/` | `extra_ref_prefixes` |
+| [Overwrite diverged branches](#overwrite-diverged-branches) | Off | `--overwrite-diverged` | `overwrite_diverged` |
+| [Follow upstream deletions](#follow-upstream-deletions) | Off | `--follow-upstream-deletions` | `follow_upstream_deletions` |
+
+On the command line, `--extra-ref-prefixes=` clears the list, and `--overwrite-diverged=false` or `--follow-upstream-deletions=false` turns a choice off. The API takes these fields in the same requests as the [connection choices](#connection-choices-and-limits). There, `extra_ref_prefixes` is an array, `[]` clears it, and a field left out keeps its saved value. The source's `options` object reports all three, and the Import tab lists the ones you changed under Refresh.
+
+The last two choices can change or delete local work, so the form warns "Local work may be replaced; upstream deletions will remove these local refs." The command line prints the same warning when either is on. Before you turn one on, [check what it would change](#checking-what-the-choices-would-change).
+
+Changing any of the three stops a refresh in progress that has not published yet, which ends as `superseded`. A new source address turns both Overwrite diverged branches and Follow upstream deletions off and keeps the namespaces ([When the source address changes](#when-the-source-address-changes)).
+
+#### Extra ref namespaces
+
+An extra ref namespace makes an import bring in refs outside branches and tags, such as Git notes under `refs/notes/`. In the browser, enter one namespace per line; on the command line, separate them with commas.
+
+- Each namespace starts with `refs/`, has a name after it and ends with a slash, such as `refs/notes/` or `refs/changes/`.
+- A source can list up to 32, each once.
+- A namespace inside, or containing, `refs/heads/`, `refs/tags/` or `refs/owngit/` is refused.
+
+A refused list is not saved; the form shows the error on the field and keeps what you typed.
+
+Refs in these namespaces are fetched, published and restored from backups like branches, and count against the same limits and name rules. Like a tag, such a ref follows the source only while it still holds the value last seen; the two choices below widen that. Kept history does not cover these namespaces, so the previous value of an overwritten or deleted ref there is not kept.
+
+Removing a namespace from the list leaves the refs it brought in as they are. Later refreshes no longer change or delete them, or count them as deleted at the source. If the source still lists them, they still count toward the [ref limit](#limits). The Import tab and `import status` show them as **Namespace not imported** (`not_imported` in JSON).
+
+The list affects imports only. Which refs a push may change is set separately under [Other ref namespaces](#other-ref-namespaces).
+
+#### Overwrite diverged branches
+
+With this choice on, a refresh replaces a branch, tag or extra ref that was changed in OwnGit since the source was last seen, instead of keeping it as divergent. It covers only refs that this source address has seen, so a ref you created only in OwnGit is never touched. The replaced branch or tag commit stays in kept history when kept history is on.
+
+These stay as they are even with the choice on:
+
+- The protected default branch. When overwriting would rewrite it, the refresh stops with `protected_default_branch` and changes nothing ([Changing the default branch](#changing-the-default-branch)).
+- Symbolic refs, and a ref whose name clashes with another ref's spelling as described under [Moving an existing repository into OwnGit](#moving-an-existing-repository-into-owngit).
+- A HEAD you changed in OwnGit.
+
+#### Follow upstream deletions
+
+With this choice on, a refresh deletes a ref that the source deleted. It does so only when all of these hold:
+
+- this source address saw the ref, and so did a refresh made with the current sign-in ([After a sign-in change or a restore](#after-a-sign-in-change-or-a-restore));
+- the ref still holds the value last seen, or Overwrite diverged branches is on too;
+- the ref is in a namespace the import still brings in.
+
+A deleted branch or tag commit stays in kept history when kept history is on; a deleted ref in an extra namespace is not kept. Once a ref is deleted, its name is free, and a ref you later create with that name is treated as local work.
+
+A refresh never deletes:
+
+- a symbolic ref;
+- the branch HEAD points to, directly or through other symbolic refs, or the branch the source's HEAD points to in that refresh;
+- a ref whose name matches another ref's apart from letter case or spelling, such as `refs/Notes/commits` when the import brings in `refs/notes/`;
+- anything, when the source lists none of the refs the import brings in. An empty listing does not empty the repository.
+
+#### After a sign-in change or a restore
+
+A new sign-in may see fewer refs than the old one, so a ref it does not list may only be hidden from it. After a sign-in change, a refresh therefore deletes a ref only once a refresh with the new sign-in has seen it.
+
+- Saving a different token or Basic credential, or clearing a stored one, is a sign-in change. Changing only the CA, or saving the same credential again, is not.
+- A [restore](#restoring-a-backup) counts as a sign-in change for every source.
+
+A ref the source deleted after the last refresh with the old sign-in, and before the first one with the new sign-in, is never deleted automatically. It stays as Deleted at source until you delete it yourself. Everything else continues as before: branches keep following the source, and Overwrite diverged branches still applies.
+
+#### Checking what the choices would change
+
+The Import tab lists, under **Refs these choices would change now**, every local ref that Overwrite diverged branches or Follow upstream deletions would change, whether the choice is on yet or not. `owngit import status` prints the same list. For each ref it says:
+
+- whether it would be replaced with the source's value or deleted;
+- which choice that needs (a ref the source deleted and you changed in OwnGit needs both);
+- whether kept history keeps its current commit.
+
+When default branch protection would stop overwriting, the list names that branch with **Refresh stops**. With Overwrite diverged branches on, a refresh stops there and changes nothing until you turn the protection off. The rest of the list then shows what following deletions alone would delete.
+
+The list applies the refresh rules to the source as the last complete refresh saw it, and changes nothing. The next refresh decides against the source as it is then, so its result can differ. Before the first complete refresh the list is empty.
+
+When the list cannot be worked out, the page and `import status` say so instead of showing an empty list. This happens while the repository is being written, when its storage cannot be read, or when a saved setting cannot be used. Reload the page or run the command again later.
+
+In JSON (`import status --json` and the API), the list is `refresh_effects`. Each entry has `name`, `effect` (`replace`, `delete` or `refused`), `local_oid`, `local_changed` and `history` (`kept` or `not_kept`). `refresh_effects_unknown` is `true` when the list could not be worked out.
+
+### When a refresh writes in two steps
+
+A refresh usually writes all of its ref changes in one Git transaction, so other clients see all of them or none. A refresh that deletes refs, or rewrites a branch other than by a fast-forward while default branch protection is on, writes in two steps when it also updates the branch HEAD points to. It first writes every other change, then that branch.
+
+While a refresh writes to the repository, clones and fetches through OwnGit wait, so they do not see the state between the two steps. A program that reads the repository folder directly can: it may find the other changes written while HEAD's branch still has its old value. If the second step fails, that state remains and clones and fetches see it too. The run then ends as [unresolved](#unresolved-publications) instead of complete.
+
+While a refresh deletes refs, or rewrites a branch under default branch protection, OwnGit locks HEAD and every symbolic ref HEAD passes through. Another Git command that tries to change HEAD then fails with `cannot lock ref 'HEAD'`; run it again after the refresh. If HEAD was moved onto a ref the refresh deletes or rewrites just before those locks, the refresh stops before it writes anything, and the run is reported as unresolved.
 
 ### Git LFS
 
@@ -1514,7 +1608,7 @@ When `owngit serve` stops, it cancels running imports and waits up to 45 seconds
 
 ### Unresolved publications
 
-A publication is unresolved when OwnGit cannot prove how it ended, for example when refs were written and HEAD was not. Refreshes are refused until you accept the repository as it is:
+A publication is unresolved when OwnGit cannot prove how it ended, for example when refs were written and HEAD was not, or when the second step of a [two-step refresh](#when-a-refresh-writes-in-two-steps) failed. Refreshes are refused until you accept the repository as it is:
 
 1. Check its branches, tags and HEAD, and the reason on the last run.
 2. Fix what you do not want to keep with ordinary Git.
@@ -1870,7 +1964,7 @@ A backup holds a manifest and one Git bundle per nonempty repository. Together t
 - each repository's own kept history choice, default branch protection and [other ref namespaces](#other-ref-namespaces);
 - pull requests, reviews and merge records;
 - tasks, check configurations and results, and automatic-check policies and jobs;
-- import sources and history;
+- import sources and history, including each source's extra ref namespaces and refresh choices;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
 
 A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, repository maintenance, unused object cleanup and the raw log retention).
@@ -1879,7 +1973,7 @@ A backup holds up to 1 GiB of OwnGit records, counted by the memory they take an
 
 ### Backup versions
 
-OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, such as a repository's own kept history choice, default branch protection or other ref namespaces, or its manifest would pass the 64 MiB that version 10 allows. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
+OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, or its manifest would pass the 64 MiB that version 10 allows. Records that need version 11 include a repository's own kept history choice, default branch protection or other ref namespaces, and an import source's extra ref namespaces or refresh choices. Import history needs version 11 too when it records refs outside branches and tags, or a deletion that followed the source, even after those choices were turned off. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
 
 ### Restoring a backup
 
@@ -1902,6 +1996,7 @@ After a restore, start `owngit serve` with the restored state before you use it 
 
 - Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
 - Raw logs are absent, and unsettled import publications are closed without being applied.
+- An import that follows upstream deletions deletes a ref only after a refresh has seen it again ([After a sign-in change or a restore](#after-a-sign-in-change-or-a-restore)).
 - Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
 
 ### When a backup or restore is interrupted
