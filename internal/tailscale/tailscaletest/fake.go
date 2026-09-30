@@ -61,6 +61,10 @@ type State struct {
 	// next Serve change arrives, before Tailscale checks it, as another
 	// program changing Serve at that moment; it is then cleared.
 	ChangedBeforeWrite *tailscale.ServeConfig `json:"changed_before_write,omitempty"`
+	// ChangedAfterRead, when set, replaces the Serve configuration right
+	// after the next read of it is answered, as another program changing
+	// Serve between OwnGit's read and its change; it is then cleared.
+	ChangedAfterRead *tailscale.ServeConfig `json:"changed_after_read,omitempty"`
 	// IgnoreWrites makes Serve changes succeed without being kept, as
 	// Tailscale does when it cannot save its state.
 	IgnoreWrites bool `json:"ignore_writes,omitempty"`
@@ -436,6 +440,9 @@ func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Reques
 		status, answer = http.StatusOK, state.serveJSON()
 		if !state.Unversioned {
 			version = versionOf(answer)
+		}
+		if state.ChangedAfterRead != nil {
+			state.Serve, state.ChangedAfterRead = *state.ChangedAfterRead, nil
 		}
 	})
 	if err != nil {

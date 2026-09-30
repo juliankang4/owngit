@@ -150,62 +150,15 @@ func (config ServeConfig) ReviewDigest(port int) (string, error) {
 	return hex.EncodeToString(sum[:16]), nil
 }
 
-// PortDigest identifies everything the configuration as read has on port:
-// its TCP entry, the web handlers of every name on it, its Funnel entries
-// and the same inside foreground sessions, each as Tailscale wrote it.
-// Moving sharing to a port being replaced checks with it that the port
-// still has what was reviewed after OwnGit took its own endpoint away.
-func (config ServeConfig) PortDigest(port int) (string, error) {
-	portText := strconv.Itoa(port)
-	var entries func(content []byte) (map[string]json.RawMessage, error)
-	entries = func(content []byte) (map[string]json.RawMessage, error) {
-		found := map[string]json.RawMessage{}
-		top := map[string]json.RawMessage{}
-		if nothingConfigured(content) {
-			return found, nil
-		}
-		if err := json.Unmarshal(content, &top); err != nil {
-			return nil, &Error{Kind: KindUnreadable}
-		}
-		for _, field := range []string{"TCP", "Web", "AllowFunnel"} {
-			var byKey map[string]json.RawMessage
-			if err := decodeEntries(top, field, &byKey); err != nil {
-				return nil, err
-			}
-			for key, value := range byKey {
-				if key == portText {
-					found[field+" "+key] = value
-				} else if _, p, err := net.SplitHostPort(key); err == nil && p == portText {
-					found[field+" "+key] = value
-				}
-			}
-		}
-		var sessions map[string]json.RawMessage
-		if err := decodeEntries(top, "Foreground", &sessions); err != nil {
-			return nil, err
-		}
-		for session, content := range sessions {
-			inner, err := entries(content)
-			if err != nil {
-				return nil, err
-			}
-			for key, value := range inner {
-				found["Foreground "+session+" "+key] = value
-			}
-		}
-		return found, nil
-	}
-	found, err := entries(config.content)
+// ReviewDigestWithout is ReviewDigest of the configuration as read with the
+// endpoint for name on removed taken away, as RemoveHTTPS writes it: what
+// the owner reviewed, once OwnGit removed its own endpoint to move there.
+func (config ServeConfig) ReviewDigestWithout(name string, removed, port int) (string, error) {
+	content, err := config.withEndpoint(name, removed, "")
 	if err != nil {
 		return "", err
 	}
-	// Marshal sorts the keys and compacts each entry.
-	encoded, err := json.Marshal(found)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:16]), nil
+	return ServeConfig{content: content}.ReviewDigest(port)
 }
 
 // Replaceable reports whether OwnGit may replace what uses lists on a port

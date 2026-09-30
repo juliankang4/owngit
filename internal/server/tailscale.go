@@ -711,13 +711,21 @@ func (sharing *Tailscale) Replace(ctx context.Context, homeNetwork *bool, port i
 	return sharing.turnOn(ctx, homeNetwork, port, replacement{digest: digest})
 }
 
-// replacement names what turning on replaces on its port: the owner's
-// review of the whole Serve configuration (ReviewDigest), or, when moving
-// turns sharing on again after taking OwnGit's own endpoint away, what the
-// review found on that port alone (PortDigest, portOnly).
+// replacement names what turning on replaces on its port: the digest of
+// the whole Serve configuration the owner reviewed (ReviewDigest). When
+// moving turns sharing on again, it is the digest of that configuration
+// with only OwnGit's old endpoint removed (ReviewDigestWithout).
 type replacement struct {
-	digest   string
-	portOnly bool
+	digest string
+}
+
+// serveRead is a Serve configuration read and checked by the change that
+// uses it: turning off within a move clears OwnGit's old endpoint from it,
+// bound to its version, instead of reading again.
+type serveRead struct {
+	command tailscale.Command
+	name    string
+	config  tailscale.ServeConfig
 }
 
 func (sharing *Tailscale) turnOn(ctx context.Context, homeNetwork *bool, port int, replace replacement) (TailscaleChange, error) {
@@ -820,20 +828,12 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 	moving := httpsPort != 0 && wasOn && previous.Name == status.Name && httpsPort != previous.HTTPSPort &&
 		(previous.Confirmed || previous.Created && config.Endpoint(previous.Name, previous.HTTPSPort, previous.Target).Exact)
 	plan := planEndpoint(config, status.Name, target, httpsPorts(httpsPort, previous, wasOn, status.Name), previous, wasOn && !moving)
-	portDigest := ""
 	if replace.digest != "" {
 		occupied, err := occupiedPort(config, status.Name, httpsPort)
-		current := occupied.Digest
-		if err == nil {
-			portDigest, err = config.PortDigest(httpsPort)
-		}
-		if replace.portOnly {
-			current = portDigest
-		}
 		switch {
 		case err != nil:
 			return TailscaleChange{}, tailscaleError(err, command.MacApp)
-		case current != replace.digest:
+		case occupied.Digest != replace.digest:
 			return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemReplaceChanged, Found: occupied.Found, Port: httpsPort, Occupied: &occupied}
 		case !occupied.Replaceable:
 			return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemNotReplaceable, Found: occupied.Found, Port: httpsPort, Occupied: &occupied}
@@ -841,10 +841,7 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 		plan = endpointPlan{port: httpsPort, outcome: endpointCreated}
 	}
 	if moving && plan.outcome == endpointCreated {
-		if replace.digest != "" {
-			replace = replacement{digest: portDigest, portOnly: true}
-		}
-		return sharing.move(ctx, homeNetwork, httpsPort, replace)
+		return sharing.move(ctx, homeNetwork, httpsPort, replace, serveRead{command: command, name: status.Name, config: config})
 	}
 	// A record whose settings were never saved belongs to a turning on that
 	// was interrupted before it changed any setting, so this one starts
@@ -957,13 +954,36 @@ func (sharing *Tailscale) on(ctx context.Context, homeNetwork *bool, httpsPort i
 	return change, nil
 }
 
-// move moves sharing that is on to port, which on found usable: it turns
-// sharing off at the old port and on at port. When turning on fails after
-// that, sharing stays off and the error says so (ErrTailscaleMoveStopped).
-func (sharing *Tailscale) move(ctx context.Context, homeNetwork *bool, port int, replace replacement) (TailscaleChange, error) {
-	stopped, baseURL, err := sharing.off(ctx)
+// move moves sharing that is on to port, which on found usable in read:
+// it turns sharing off at the old port and on at port. Turning off clears
+// OwnGit's old endpoint from read, bound to its version, so a change
+// anybody else made since refuses the move with sharing still on. A
+// replacement then goes ahead only while Tailscale has exactly read without
+// that endpoint. When turning on fails after turning off, sharing stays off
+// and the error says so (ErrTailscaleMoveStopped).
+func (sharing *Tailscale) move(ctx context.Context, homeNetwork *bool, port int, replace replacement, read serveRead) (TailscaleChange, error) {
+	stopped, baseURL, err := sharing.off(ctx, &read)
+	var failure *TailscaleError
+	if err != nil && replace.digest != "" && errors.As(err, &failure) && failure.Problem == TailscaleProblemServeChanged && !errors.Is(err, ErrTailscaleAhead) {
+		// Shown again for a new review, as when the change is found first.
+		if config, readErr := read.command.ServeConfig(ctx); readErr == nil {
+			if occupied, occupiedErr := occupiedPort(config, read.name, port); occupiedErr == nil {
+				return TailscaleChange{}, &TailscaleError{Problem: TailscaleProblemReplaceChanged, Found: occupied.Found, Port: port, Occupied: &occupied}
+			}
+		}
+	}
 	if err != nil {
 		return TailscaleChange{}, err
+	}
+	if replace.digest != "" {
+		expected, err := read.config.ReviewDigest(port)
+		if stopped.Endpoint == "removed" && err == nil {
+			expected, err = read.config.ReviewDigestWithout(stopped.Record.Name, stopped.Record.HTTPSPort, port)
+		}
+		if err != nil {
+			return TailscaleChange{}, fmt.Errorf("%w: %w", ErrTailscaleMoveStopped, tailscaleError(err, read.command.MacApp))
+		}
+		replace.digest = expected
 	}
 	// The running server stops answering at the old address now, whatever
 	// happens at the new one.
@@ -1028,15 +1048,16 @@ func (sharing *Tailscale) Off(ctx context.Context) (TailscaleChange, error) {
 	}
 	defer unlock()
 	defer sharing.forget()
-	change, baseURL, err := sharing.off(ctx)
+	change, baseURL, err := sharing.off(ctx, nil)
 	if err == nil && sharing.Live != nil {
 		sharing.Live.RemoveTailscale(change.Record, baseURL)
 	}
 	return change, err
 }
 
-// off turns sharing off and returns the base URL saved now.
-func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, error) {
+// off turns sharing off and returns the base URL saved now. It reads the
+// Serve configuration, unless read holds one a move already checked.
+func (sharing *Tailscale) off(ctx context.Context, read *serveRead) (TailscaleChange, string, error) {
 	record, on, err := sharing.Store.TailscaleServe(ctx)
 	if err != nil {
 		return TailscaleChange{}, "", err
@@ -1046,17 +1067,9 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 	}
 	change := TailscaleChange{Record: record, Endpoint: "left"}
 	if record.Created {
-		command, err := sharing.Find()
+		command, status, config, err := sharing.readServe(ctx, read)
 		if err != nil {
-			return TailscaleChange{}, "", tailscaleError(err, false)
-		}
-		status, err := command.Status(ctx)
-		if err != nil {
-			return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
-		}
-		config, err := command.ServeConfig(ctx)
-		if err != nil {
-			return TailscaleChange{}, "", tailscaleError(err, command.MacApp)
+			return TailscaleChange{}, "", err
 		}
 		endpoint := config.Endpoint(record.Name, record.HTTPSPort, record.Target)
 		switch {
@@ -1116,6 +1129,27 @@ func (sharing *Tailscale) off(ctx context.Context) (TailscaleChange, string, err
 	}
 	change.Listen = nextListen(saved)
 	return change, update.Settings.BaseURL, nil
+}
+
+// readServe returns read, or reads the command, status and Serve
+// configuration now. A move checked read under the name it has now.
+func (sharing *Tailscale) readServe(ctx context.Context, read *serveRead) (tailscale.Command, tailscale.Status, tailscale.ServeConfig, error) {
+	if read != nil {
+		return read.command, tailscale.Status{Name: read.name}, read.config, nil
+	}
+	command, err := sharing.Find()
+	if err != nil {
+		return command, tailscale.Status{}, tailscale.ServeConfig{}, tailscaleError(err, false)
+	}
+	status, err := command.Status(ctx)
+	if err != nil {
+		return command, status, tailscale.ServeConfig{}, tailscaleError(err, command.MacApp)
+	}
+	config, err := command.ServeConfig(ctx)
+	if err != nil {
+		return command, status, config, tailscaleError(err, command.MacApp)
+	}
+	return command, status, config, nil
 }
 
 // matchingHosts returns the saved hosts that name normalizes to.

@@ -71,43 +71,36 @@ func sameJSON(t *testing.T, got []byte, want string) bool {
 	return reflect.DeepEqual(a, b)
 }
 
-// A port's digest changes with anything on that port, Funnel and
-// foreground sessions included, and with nothing on another port.
-func TestPortDigestCoversExactlyThePort(t *testing.T) {
+// The review digest without OwnGit's own endpoint is that of the
+// configuration Tailscale has once the endpoint is removed, and of nothing
+// else.
+func TestReviewDigestWithoutOwnGitsEndpoint(t *testing.T) {
 	digest := func(content string) string {
 		t.Helper()
-		value, err := ServeConfig{content: []byte(content)}.PortDigest(443)
+		value, err := ServeConfig{content: []byte(content)}.ReviewDigest(443)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return value
 	}
-	base := `{"TCP": {"443": {"HTTPS": true}, "8443": {"HTTPS": true}},
+	read := ServeConfig{content: []byte(`{"TCP": {"443": {"HTTPS": true}, "4443": {"HTTPS": true}},
 		"Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}},
-		        "box.tail0000.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:4000"}}}}}`
-	same := []string{
-		// Another port changes, and the order and spacing of the JSON.
-		`{"Web": {"box.tail0000.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:5000"}}},
-		          "box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}},
-		  "TCP": {"8443": {"HTTPS": true}, "443": {"HTTPS": true}}, "AllowFunnel": {"box.tail0000.ts.net:8443": true}}`,
+		        "box.tail0000.ts.net:4443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:7654"}}}},
+		"AllowFunnel": {"box.tail0000.ts.net:8443": true}}`)}
+	got, err := read.ReviewDigestWithout("box.tail0000.ts.net", 4443, 443)
+	if err != nil {
+		t.Fatal(err)
 	}
-	different := []string{
-		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3001"}}}}}`,
-		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000", "Future": 1}}}}}`,
-		`{"TCP": {"443": {"HTTPS": true}, "8443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}, "AllowFunnel": {"box.tail0000.ts.net:443": true}}`,
-		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}, "old.tail0000.ts.net:443": {}}}`,
-		`{"TCP": {"443": {"HTTPS": true}}, "Web": {"box.tail0000.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}, "Foreground": {"s1": {"TCP": {"443": {"HTTPS": true}}}}}`,
-		`null`,
+	after := `{"AllowFunnel":{"box.tail0000.ts.net:8443":true},"TCP":{"443":{"HTTPS":true}},"Web":{"box.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}`
+	if got != digest(after) {
+		t.Error("the digest differs from the configuration without the endpoint")
 	}
-	want := digest(base)
-	for _, content := range same {
-		if got := digest(content); got != want {
-			t.Errorf("a change elsewhere changed the digest: %s", content)
-		}
-	}
-	for _, content := range different {
-		if got := digest(content); got == want {
-			t.Errorf("a change on the port kept the digest: %s", content)
+	for _, other := range []string{
+		`{"AllowFunnel":{"box.tail0000.ts.net:8443":true,"box.tail0000.ts.net:5000":true},"TCP":{"443":{"HTTPS":true}},"Web":{"box.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}`,
+		`{"AllowFunnel":{"box.tail0000.ts.net:8443":true},"TCP":{"443":{"HTTPS":true}},"Web":{"box.tail0000.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3001"}}}}}`,
+	} {
+		if got == digest(other) {
+			t.Errorf("another change kept the digest: %s", other)
 		}
 	}
 }

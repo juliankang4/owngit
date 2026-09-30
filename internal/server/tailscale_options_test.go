@@ -243,3 +243,55 @@ func TestReplacingKeepsTheHomeNetworkChoice(t *testing.T) {
 		t.Fatalf("after replacing while on: listen=%q serve=%+v", settings.Listen, fake.State().Serve)
 	}
 }
+
+// A replacement that moves sharing is bound to the reviewed configuration
+// up to its first change: a change anybody else makes after OwnGit read it,
+// on another port or on the reviewed one, refuses the replacement before
+// anything is written, with sharing still on at its old port and the port
+// shown again for a new review.
+func TestMovingReplacementRefusesAChangeBeforeItsFirstWrite(t *testing.T) {
+	name := tailscaletest.Name
+	for _, test := range []struct {
+		name   string
+		change func(*tailscale.ServeConfig)
+	}{
+		{"another port", func(serve *tailscale.ServeConfig) { serve.AllowFunnel[name+":5000"] = true }},
+		{"the reviewed port", func(serve *tailscale.ServeConfig) {
+			serve.Web[name+":443"].Handlers["/api"] = tailscale.Handler{Proxy: "http://127.0.0.1:4001"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: busyServe()})
+			_, err := app.Tailscale.On(ctx, nil, 4443)
+			noErr(t, err)
+			_, err = app.Tailscale.On(ctx, nil, 443)
+			var refusal *TailscaleError
+			if !errors.As(err, &refusal) || refusal.Occupied == nil {
+				t.Fatalf("preview: %v", err)
+			}
+			reviewed := refusal.Occupied.Digest
+			meanwhile := fake.State().Serve
+			test.change(&meanwhile)
+			fake.Update(func(s *tailscaletest.State) { s.ChangedAfterRead = &meanwhile })
+			writes := len(fake.Writes())
+
+			_, err = app.Tailscale.Replace(ctx, nil, 443, reviewed)
+			if !errors.As(err, &refusal) || refusal.Problem != TailscaleProblemReplaceChanged || refusal.Occupied == nil || refusal.Occupied.Digest == reviewed || errors.Is(err, ErrTailscaleMoveStopped) {
+				t.Fatalf("err=%v, want %s with a new review", err, TailscaleProblemReplaceChanged)
+			}
+			if state := fake.State(); !reflect.DeepEqual(state.Serve, meanwhile) || state.ChangedAfterRead != nil {
+				t.Fatalf("Tailscale has %+v, want the change made meanwhile only (writes %q)", state.Serve, fake.Writes()[writes:])
+			}
+			if record, on, err := app.Store.TailscaleServe(ctx); err != nil || !on || record.HTTPSPort != 4443 || !fake.Endpoint(4443, tailscale.Target(7654)).Exact {
+				t.Fatalf("sharing after the refusal: on=%v record=%+v err=%v", on, record, err)
+			}
+			// A new review of what is there now replaces it.
+			change, err := app.Tailscale.Replace(ctx, nil, 443, refusal.Occupied.Digest)
+			noErr(t, err)
+			if change.MovedFrom == "" || !fake.Endpoint(443, tailscale.Target(7654)).Exact || !fake.Endpoint(4443, "").Free {
+				t.Fatalf("replacing after a new review: %+v serve=%+v", change, fake.State().Serve)
+			}
+		})
+	}
+}
