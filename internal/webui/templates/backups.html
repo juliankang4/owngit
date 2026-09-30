@@ -170,7 +170,7 @@
     <li>{{biF $lang "backup.restore_move" $r.StateDir $r.MovedState $r.RepositoryRoot $r.MovedRepositories}}</li>
     <li>{{bi $lang "backup.restore_run"}}
       <div class="clonefield bkcmd" data-clone>
-        <label class="clonefield__l" for="{{.ID}}">{{bi $lang "backup.restore_command"}}</label>
+        <label class="clonefield__l" for="{{.ID}}">{{bi $lang "backup.restore_command"}}{{with $r.Shell}} ({{.}}){{end}}</label>
         <div class="clonefield__row">
           <input id="{{.ID}}" class="clonefield__v mono" type="text" readonly value="{{$r.Command}}" spellcheck="false" autocomplete="off" data-select-on-focus dir="ltr">
           <button type="button" class="btn clonefield__copy" data-copy="{{.ID}}" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>

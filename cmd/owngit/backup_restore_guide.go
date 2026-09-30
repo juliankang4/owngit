@@ -28,6 +28,7 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 		guide := &webui.BackupRestore{
 			StateDir: stateDir, RepositoryRoot: repositoryRoot,
 			MovedState: stateDir + ".before-restore", MovedRepositories: repositoryRoot + ".before-restore",
+			Shell: commandShell(runtime.GOOS),
 		}
 		// An uploaded backup is in the state folder, which moves first.
 		if relative, err := filepath.Rel(stateDir, input); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
@@ -42,11 +43,25 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 	}
 }
 
-// commandWord quotes a path for this computer's shell: single quotes for a
-// POSIX shell, and double quotes on Windows, where a path cannot hold one.
-func commandWord(word string) string {
-	if runtime.GOOS == "windows" {
-		return `"` + word + `"`
+// commandWord quotes a path for this computer's shell (shellWord).
+func commandWord(word string) string { return shellWord(runtime.GOOS, word) }
+
+// commandShell names the shell the commands are written for, on a system
+// where that is not the usual POSIX shell.
+func commandShell(goos string) string {
+	if goos == "windows" {
+		return "PowerShell"
+	}
+	return ""
+}
+
+// shellWord quotes word as one literal argument for the shell of goos: a
+// PowerShell literal string on Windows, in which only an apostrophe is
+// special and is doubled, and a POSIX shell word elsewhere. Neither
+// expands anything inside the quotes.
+func shellWord(goos, word string) string {
+	if goos == "windows" {
+		return "'" + strings.ReplaceAll(word, "'", "''") + "'"
 	}
 	return service.ShellQuote(word)
 }

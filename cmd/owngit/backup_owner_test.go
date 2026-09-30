@@ -220,3 +220,18 @@ func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
 		t.Fatalf("uploaded guide: %+v", uploaded)
 	}
 }
+
+// Every path in a restore command stays one literal argument: nothing in
+// it is expanded by PowerShell on Windows or by a POSIX shell elsewhere.
+func TestRestoreCommandWordsAreLiteral(t *testing.T) {
+	path := `D:\Data\o'wner\$(Invoke-Evil) ` + "`" + `%TEMP% & x`
+	if got := shellWord("windows", path); got != `'D:\Data\o''wner\$(Invoke-Evil) `+"`"+`%TEMP% & x'` {
+		t.Fatalf("PowerShell word: %s", got)
+	}
+	if got := shellWord("linux", "/srv/o'wner/$(evil) `x`"); got != `'/srv/o'\''wner/$(evil) `+"`x`'" {
+		t.Fatalf("POSIX word: %s", got)
+	}
+	if commandShell("windows") != "PowerShell" || commandShell("darwin") != "" {
+		t.Fatal("the shell is not named for Windows only")
+	}
+}

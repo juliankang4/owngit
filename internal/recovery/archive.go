@@ -92,8 +92,9 @@ var ErrNotABackupArchive = errors.New("not a backup archive")
 
 // UnpackArchive unpacks the backup archive read from reader into the empty
 // folder dir and returns the name of the backup folder it made there. It
-// accepts only the entries WriteArchive writes, under one top folder: the
-// folders, manifest.json and repositories/NAME.bundle files. An absolute
+// accepts only the entries WriteArchive writes, under one top folder whose
+// name holds only ASCII letters, digits, '.', '_' and '-': the folders,
+// manifest.json and repositories/NAME.bundle files. An absolute
 // path, a ".." or "." element, a link, any other kind of entry or file, and
 // a second entry of the same name refuse the archive, as does one that ends
 // early or holds no manifest. Every file is created new inside dir, never
@@ -131,6 +132,11 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 		}
 		if top == "" {
 			top = elements[0]
+			// The folder name reaches the restore command shown for this
+			// backup, so it holds only what OwnGit's own names hold.
+			if strings.Trim(top, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") != "" {
+				return refuse("its folder name %q holds characters other than letters, digits, '.', '_' and '-'", top)
+			}
 		}
 		if elements[0] != top {
 			return refuse("it holds more than one folder: %q and %q", top, elements[0])

@@ -122,8 +122,10 @@ type BackupRestore struct {
 	// and MovedRepositories.
 	StateDir, RepositoryRoot      string
 	MovedState, MovedRepositories string
-	// Command is the restore command.
+	// Command is the restore command, and Shell the shell it is written
+	// for when that is not the usual POSIX shell (PowerShell on Windows).
 	Command string
+	Shell   string
 }
 
 // backupIntervalLabels names each schedule interval.

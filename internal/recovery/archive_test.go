@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -94,21 +95,23 @@ func TestUnpackArchiveRefusesWhatABackupDoesNotHold(t *testing.T) {
 		// Cut inside the bundle. A cut between two entries leaves an
 		// archive that tar cannot tell from a shorter one; the
 		// verification then misses the bundles the manifest names.
-		"truncated":        good[:3000],
-		"parent element":   tarOf(t, dir, manifest, repos, entry{name: "b/repositories/../../escape.bundle", kind: tar.TypeReg, content: "x"}),
-		"leading parent":   tarOf(t, entry{name: "../b/", kind: tar.TypeDir}),
-		"absolute path":    tarOf(t, entry{name: "/b/", kind: tar.TypeDir}),
-		"symbolic link":    tarOf(t, dir, manifest, repos, entry{name: "b/repositories/one.bundle", kind: tar.TypeSymlink, linkname: "/etc/passwd"}),
-		"hard link":        tarOf(t, dir, manifest, repos, entry{name: "b/repositories/one.bundle", kind: tar.TypeLink, linkname: "b/manifest.json"}),
-		"extra file":       tarOf(t, dir, manifest, entry{name: "b/notes.txt", kind: tar.TypeReg, content: "x"}),
-		"extra folder":     tarOf(t, dir, manifest, entry{name: "b/more/", kind: tar.TypeDir}),
-		"two top folders":  tarOf(t, dir, manifest, entry{name: "c/", kind: tar.TypeDir}),
-		"same file twice":  tarOf(t, dir, manifest, entry{name: "b/manifest.json", kind: tar.TypeReg, content: "{}"}),
-		"no manifest":      tarOf(t, dir, repos, bundle),
-		"file before dir":  tarOf(t, manifest),
-		"current element":  tarOf(t, dir, entry{name: "b/./manifest.json", kind: tar.TypeReg, content: "{}"}),
-		"backslash":        tarOf(t, dir, entry{name: `b\manifest.json`, kind: tar.TypeReg, content: "{}"}),
-		"not a tar stream": []byte(strings.Repeat("not a tar archive ", 100)),
+		"truncated":         good[:3000],
+		"parent element":    tarOf(t, dir, manifest, repos, entry{name: "b/repositories/../../escape.bundle", kind: tar.TypeReg, content: "x"}),
+		"leading parent":    tarOf(t, entry{name: "../b/", kind: tar.TypeDir}),
+		"absolute path":     tarOf(t, entry{name: "/b/", kind: tar.TypeDir}),
+		"symbolic link":     tarOf(t, dir, manifest, repos, entry{name: "b/repositories/one.bundle", kind: tar.TypeSymlink, linkname: "/etc/passwd"}),
+		"hard link":         tarOf(t, dir, manifest, repos, entry{name: "b/repositories/one.bundle", kind: tar.TypeLink, linkname: "b/manifest.json"}),
+		"extra file":        tarOf(t, dir, manifest, entry{name: "b/notes.txt", kind: tar.TypeReg, content: "x"}),
+		"extra folder":      tarOf(t, dir, manifest, entry{name: "b/more/", kind: tar.TypeDir}),
+		"two top folders":   tarOf(t, dir, manifest, entry{name: "c/", kind: tar.TypeDir}),
+		"same file twice":   tarOf(t, dir, manifest, entry{name: "b/manifest.json", kind: tar.TypeReg, content: "{}"}),
+		"no manifest":       tarOf(t, dir, repos, bundle),
+		"file before dir":   tarOf(t, manifest),
+		"current element":   tarOf(t, dir, entry{name: "b/./manifest.json", kind: tar.TypeReg, content: "{}"}),
+		"backslash":         tarOf(t, dir, entry{name: `b\manifest.json`, kind: tar.TypeReg, content: "{}"}),
+		"shell syntax name": tarOf(t, entry{name: "b$(calc)/", kind: tar.TypeDir}, entry{name: "b$(calc)/manifest.json", kind: tar.TypeReg, content: "{}"}),
+		"control character": tarOf(t, entry{name: "b\x1b[0m/", kind: tar.TypeDir}),
+		"not a tar stream":  []byte(strings.Repeat("not a tar archive ", 100)),
 	}
 	for name, archive := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -139,5 +142,35 @@ func TestRestoreLimitOfAnOrdinaryFolder(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
 		t.Fatalf("the test left %v %v", entries, err)
+	}
+}
+
+// A held backup is verified only as itself: when another backup takes its
+// folder's name after it was opened, the verification fails.
+func TestHeldBackupVerifiesOnlyAsItself(t *testing.T) {
+	root := t.TempDir()
+	for _, dir := range []string{"one", "two"} {
+		noErr(t, os.Mkdir(filepath.Join(root, dir), 0o700))
+	}
+	first := newTwoRepositoryBackup(t, filepath.Join(root, "one"))
+	second := newTwoRepositoryBackup(t, filepath.Join(root, "two"))
+	folder, err := OpenBackupFolder(filepath.Dir(first))
+	noErr(t, err)
+	defer folder.Close()
+	opened, err := folder.Open(filepath.Base(first))
+	noErr(t, err)
+	defer opened.Close()
+	if result, err := opened.Verify(context.Background(), filepath.Join(root, "rehearsal"), ""); err != nil || !result.Verified {
+		t.Fatalf("the held backup did not verify: %v %+v", err, result)
+	}
+	if err := os.Rename(first, first+".aside"); err != nil && runtime.GOOS == "windows" {
+		// Windows keeps a held folder from being renamed at all.
+		return
+	} else {
+		noErr(t, err)
+	}
+	noErr(t, os.Rename(second, first))
+	if _, err := opened.Verify(context.Background(), filepath.Join(root, "rehearsal"), ""); !errors.Is(err, ErrReplaced) {
+		t.Fatalf("verification of another backup at the name: %v", err)
 	}
 }
