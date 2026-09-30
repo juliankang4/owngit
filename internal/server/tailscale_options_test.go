@@ -179,3 +179,23 @@ func TestSettingsMovesSharingAndReplacesAReviewedEndpoint(t *testing.T) {
 		t.Fatalf("serve after replacing: %+v", fake.State().Serve)
 	}
 }
+
+// With every port Automatic tries taken, the switch stays usable with
+// Custom chosen, so the owner can turn sharing on at a free port from
+// Settings without the command line.
+func TestEveryAutomaticPortTakenStillOffersACustomPort(t *testing.T) {
+	name := tailscaletest.Name
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), Serve: otherService(tailscale.ServeConfig{}, name, 443, 8443, 10000)})
+	client, base, csrf, page := networkSettingsClient(t, app)
+	if on, _, _ := tailscaleOffers(page); !on || !strings.Contains(page, `name="tailscale_port" data-saved="custom"`) {
+		t.Fatalf("every automatic port taken: switch offered=%v\n%s", on, page)
+	}
+	values := tailscaleForm(csrf, webui.ActionSaveTailscale, "admin-password", false)
+	values.Set("tailscale", "on")
+	values.Set("tailscale_port", "custom")
+	values.Set("tailscale_https_port", "4443")
+	requireSaved(t, "turning on at a custom port", browserForm(t, client, base+"/settings", values, base))
+	if !fake.Endpoint(4443, tailscale.Target(7654)).Exact || fake.Endpoint(443, "").Free {
+		t.Fatalf("serve after turning on: %+v", fake.State().Serve)
+	}
+}

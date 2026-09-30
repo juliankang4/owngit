@@ -1673,13 +1673,15 @@
     });
 
     // A form sent by the browser, from a group or from elsewhere on the
-    // page. A group this script saves in place never gets here.
+    // page. A group this script saves in place never gets here. Any form of
+    // a group, such as a replacement it offers beside its own form, sends
+    // that group's change, so the group's draft does not hold it back.
     document.addEventListener('submit', function (event) {
       if (event.defaultPrevented) { return; }
       var form = event.target;
       var opens = form.getAttribute('target');
       if (opens && opens !== '_self') { return; }
-      leaveBy(event, { form: form, except: form.hasAttribute('data-group-form') ? form.closest('[data-group]') : null });
+      leaveBy(event, { form: form, except: form.closest('[data-group]') });
     });
 
     window.addEventListener('popstate', function () {

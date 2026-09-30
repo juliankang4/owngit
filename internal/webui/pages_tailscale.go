@@ -63,6 +63,10 @@ type TailscaleInfo struct {
 	// something turning off refuses to remove (FoundFix says what to do).
 	CanTurnOff bool
 	CanTurnOn  bool
+	// CanTurnOnCustom is true when sharing is off and Tailscale is ready,
+	// but every port Automatic tries is taken: it can be turned on at a
+	// custom port.
+	CanTurnOnCustom bool
 	// HomeNetwork is the initial state of the home network checkbox: true
 	// when OwnGit already listens on every network.
 	HomeNetwork bool

@@ -622,9 +622,10 @@
 {{define "setTailscale"}}{{$p := .Page}}{{$lang := .Lang}}{{$ts := $p.Tailscale}}
 {{$gn := forAction $p.Group "tailscale" $p.Notices}}{{$focus := firstError $gn "tailscale" "admin_password"}}
 {{/* The switch changes only what can change now: on while Tailscale is
-     ready for it, off while turning off would work. Sharing that is on but
+     ready for it, at a custom port when every port Automatic tries is
+     taken, and off while turning off would work. Sharing that is on but
      unfinished keeps its save bar open, because saving turns it on again. */}}
-{{$canSwitch := or (and $ts.On $ts.CanTurnOff) (and (not $ts.On) $ts.CanTurnOn)}}
+{{$canSwitch := or (and $ts.On $ts.CanTurnOff) (and (not $ts.On) (or $ts.CanTurnOn $ts.CanTurnOnCustom))}}
 {{$again := and $ts.On $ts.CanTurnOn}}
 {{$on := draft $p.Group $p.Draft "tailscale" "tailscale" (onOff $ts.On)}}
 <section class="grp" id="grp-tailscale" aria-labelledby="grp-tailscale-h" data-group="tailscale"{{if hasError $gn}} data-group-refused{{end}}{{if $again}} data-group-open{{end}}>

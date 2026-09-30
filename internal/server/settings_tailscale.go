@@ -126,6 +126,11 @@ func tailscaleInfo(report TailscaleReport) webui.TailscaleInfo {
 	if report.On && !slices.Contains(tailscaleHTTPSPorts, report.Sharing.HTTPSPort) {
 		info.PortMode, info.HTTPSPort = "custom", strconv.Itoa(report.Sharing.HTTPSPort)
 	}
+	// With every port Automatic tries taken, sharing can still be turned
+	// on at a custom port.
+	if !report.On && report.PortsTaken && report.Problem == "" {
+		info.CanTurnOnCustom, info.PortMode = true, "custom"
+	}
 	info.CanTurnOn, info.CanTurnOff = report.CanTurnOn, report.CanTurnOff
 	// A --listen option decides where the running server listens, so the
 	// home network choice would change nothing then.
