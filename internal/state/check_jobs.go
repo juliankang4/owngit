@@ -378,6 +378,28 @@ func (s *Store) CheckPolicy(ctx context.Context, repositoryID string) (CheckPoli
 	return readCheckPolicyTx(ctx, s.db, repositoryID)
 }
 
+// CheckPolicyRepositories returns the IDs of the repositories that have an
+// operator policy, in the order of Repositories. Only these can have
+// configured checks, so background work over checks reads no other
+// repository.
+func (s *Store) CheckPolicyRepositories(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT r.id FROM check_policies p JOIN repositories r ON r.id=p.repository_id
+		ORDER BY lower(r.name),r.name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func readCheckPolicyTx(ctx context.Context, queryer querier, repositoryID string) (CheckPolicy, bool, error) {
 	policy, err := scanCheckPolicy(queryer.QueryRowContext(ctx, checkPolicySelect+` WHERE repository_id=?`, repositoryID))
 	if errors.Is(err, sql.ErrNoRows) {

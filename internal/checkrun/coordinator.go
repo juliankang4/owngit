@@ -207,31 +207,31 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	if _, err := coordinator.Store.ExpireCheckJobLeases(ctx, time.Now().UTC()); err != nil {
 		return err
 	}
-	repositories, err := coordinator.Store.Repositories(ctx)
+	ids, err := coordinator.Store.CheckPolicyRepositories(ctx)
 	if err != nil {
 		return err
 	}
-	for _, stored := range repositories {
+	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		// A repository still being prepared after startup is reconciled once
 		// it is ready; its preparation wakes the coordinator.
-		if coordinator.Repositories.Preparing(stored.ID) {
+		if coordinator.Repositories.Preparing(id) {
 			continue
 		}
-		policy, exists, err := coordinator.Store.CheckPolicy(ctx, stored.ID)
+		policy, exists, err := coordinator.Store.CheckPolicy(ctx, id)
 		if err != nil {
 			return err
 		}
 		if !exists || !policy.ConsentActive || policy.ConsentDigest != policy.Digest || policy.Execution.Legacy {
 			continue
 		}
-		if err := coordinator.reconcilePushes(ctx, stored.ID, policy); err != nil {
-			coordinator.log("reconcile push checks for %s: %v", stored.ID, err)
+		if err := coordinator.reconcilePushes(ctx, id, policy); err != nil {
+			coordinator.log("reconcile push checks for %s: %v", id, err)
 		}
-		if err := coordinator.reconcilePullRequests(ctx, stored.ID, policy); err != nil {
-			coordinator.log("reconcile pull request checks for %s: %v", stored.ID, err)
+		if err := coordinator.reconcilePullRequests(ctx, id, policy); err != nil {
+			coordinator.log("reconcile pull request checks for %s: %v", id, err)
 		}
 	}
 	return nil
@@ -427,15 +427,15 @@ func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPol
 }
 
 func (coordinator *Coordinator) runOneLocal(ctx context.Context) error {
-	repositories, err := coordinator.Store.Repositories(ctx)
+	ids, err := coordinator.Store.CheckPolicyRepositories(ctx)
 	if err != nil {
 		return err
 	}
-	for _, stored := range repositories {
-		if coordinator.Repositories.Preparing(stored.ID) {
+	for _, id := range ids {
+		if coordinator.Repositories.Preparing(id) {
 			continue
 		}
-		job, claimed, err := coordinator.Store.ClaimLocalCheckJob(ctx, stored.ID, time.Now().UTC())
+		job, claimed, err := coordinator.Store.ClaimLocalCheckJob(ctx, id, time.Now().UTC())
 		if err != nil {
 			return err
 		}
@@ -445,7 +445,7 @@ func (coordinator *Coordinator) runOneLocal(ctx context.Context) error {
 		if err := coordinator.executeLocal(ctx, job); err != nil {
 			return err
 		}
-		coordinator.Wake(stored.ID)
+		coordinator.Wake(id)
 		return nil
 	}
 	return nil

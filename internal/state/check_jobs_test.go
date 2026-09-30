@@ -156,6 +156,22 @@ func TestCheckPolicyChangeInvalidatesConsent(t *testing.T) {
 	}
 }
 
+func TestCheckPolicyRepositoriesListsOnlyRepositoriesWithAPolicy(t *testing.T) {
+	fixture := newCheckJobFixture(t)
+	ctx := context.Background()
+	noErr(t, fixture.store.AddRepository(ctx, Repository{ID: "archive", Name: "archive", CreatedAt: fixture.now}))
+	ids, err := fixture.store.CheckPolicyRepositories(ctx)
+	if err != nil || len(ids) != 0 {
+		t.Fatalf("repositories with a policy before any was set = %v, %v", ids, err)
+	}
+	fixture.setPolicy(t, nil)
+	fixture.setPolicy(t, func(input *CheckPolicyInput) { input.RepositoryID = "archive" })
+	ids, err = fixture.store.CheckPolicyRepositories(ctx)
+	if err != nil || strings.Join(ids, ",") != "archive,project" {
+		t.Fatalf("repositories with a policy = %v, %v; want archive,project in name order without other", ids, err)
+	}
+}
+
 func TestImmutableContainerImageAcceptsIDsAndDigestsButRejectsTags(t *testing.T) {
 	digest := strings.Repeat("a", 64)
 	for _, image := range []string{"sha256:" + digest, "example.invalid/checks@sha256:" + digest} {
