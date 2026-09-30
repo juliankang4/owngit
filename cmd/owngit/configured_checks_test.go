@@ -116,6 +116,15 @@ func TestConfiguredCheckCLIEndToEnd(t *testing.T) {
 	if disabled.Policy == nil || disabled.Policy.ConsentActive {
 		t.Fatal("check-policy disable did not revoke consent")
 	}
+	// Save and enable turns checks on for exactly the policy in the file.
+	policyInput.QueueLimit = 5
+	policyJSON, err = json.Marshal(policyInput)
+	noErr(t, err)
+	noErr(t, os.WriteFile(policyFile, policyJSON, 0o600))
+	savedEnabled := fixture.runPolicy(t, "set", "--policy-file", policyFile, "--enable")
+	if savedEnabled.Policy == nil || !savedEnabled.Policy.ConsentActive || savedEnabled.Policy.QueueLimit != 5 || savedEnabled.Policy.Digest == set.Policy.Digest {
+		t.Fatalf("check-policy set --enable stored %+v", savedEnabled.Policy)
+	}
 	fixture.runPolicy(t, "enable")
 
 	tokenFile := filepath.Join(fixture.root, "runner-token")

@@ -230,6 +230,7 @@ func TestAdministratorAPIAcceptsOnlyTheAdministratorPassword(t *testing.T) {
 		{http.MethodPut, "/check-policy", map[string]any{}},
 		{http.MethodPost, "/check-policy/enable", map[string]any{}},
 		{http.MethodPost, "/check-policy/disable", map[string]any{}},
+		{http.MethodPost, "/check-policy/save-and-enable", map[string]any{}},
 		{http.MethodGet, "/check-jobs", nil},
 		{http.MethodGet, "/check-jobs/missing", nil},
 		{http.MethodGet, "/check-jobs/missing/log", nil},

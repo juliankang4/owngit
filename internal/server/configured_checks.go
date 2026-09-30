@@ -67,22 +67,21 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 		if !decodeAPIJSON(writer, request, &input) {
 			return
 		}
-		policy, err := app.Store.SetCheckPolicy(request.Context(), state.CheckPolicyInput{
-			RepositoryID: repositoryID, Executor: input.Executor, AllowedEvents: input.AllowedEvents,
-			MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
-			QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
-			Execution: input.Execution,
-		}, app.now())
-		if errors.Is(err, state.ErrInvalidCheckPolicy) {
-			writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_check_policy", err.Error(), nil)
+		policy, err := app.Store.SetCheckPolicy(request.Context(), statePolicyInput(repositoryID, input), app.now())
+		app.writePolicyAPIAnswer(writer, request, repositoryID, policy, err)
+		return
+	}
+	if remainder == "save-and-enable" && request.Method == http.MethodPost {
+		var input checkapi.SaveAndEnableInput
+		if !decodeAPIJSON(writer, request, &input) {
 			return
 		}
-		if err != nil {
-			writeAPIError(writer, unavailable(request, "configured check policy save", err), "state_unavailable", "The configured-check policy could not be saved.", nil)
-			return
+		var base *state.ExpectedCheckPolicy
+		if input.Expected != nil {
+			base = &state.ExpectedCheckPolicy{Version: input.Expected.Version, Digest: input.Expected.Digest}
 		}
-		app.wakeChecks(repositoryID)
-		writeAPIJSON(writer, http.StatusOK, app.policyResponse(policy))
+		policy, err := app.Store.SaveCheckPolicyAndGrantConsent(request.Context(), statePolicyInput(repositoryID, input.Policy), base, app.now())
+		app.writePolicyAPIAnswer(writer, request, repositoryID, policy, err)
 		return
 	}
 	if (remainder == "enable" || remainder == "disable") && request.Method == http.MethodPost {
@@ -116,6 +115,30 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+}
+
+func statePolicyInput(repositoryID string, input checkapi.PolicyInput) state.CheckPolicyInput {
+	return state.CheckPolicyInput{
+		RepositoryID: repositoryID, Executor: input.Executor, AllowedEvents: input.AllowedEvents,
+		MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
+		QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
+		Execution: input.Execution,
+	}
+}
+
+// writePolicyAPIAnswer answers a policy save, with or without enabling.
+func (app *App) writePolicyAPIAnswer(writer http.ResponseWriter, request *http.Request, repositoryID string, policy state.CheckPolicy, err error) {
+	switch {
+	case errors.Is(err, state.ErrInvalidCheckPolicy):
+		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_check_policy", err.Error(), nil)
+	case errors.Is(err, state.ErrCheckPolicyStale):
+		writeAPIError(writer, http.StatusConflict, "check_policy_stale", err.Error(), nil)
+	case err != nil:
+		writeAPIError(writer, unavailable(request, "configured check policy save", err), "state_unavailable", "The configured-check policy could not be saved.", nil)
+	default:
+		app.wakeChecks(repositoryID)
+		writeAPIJSON(writer, http.StatusOK, app.policyResponse(policy))
+	}
 }
 
 func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Request, repositoryID, remainder string) {

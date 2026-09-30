@@ -310,6 +310,22 @@ type PolicyInput struct {
 	Execution           state.CheckExecutionSettings `json:"execution"`
 }
 
+// SaveAndEnableInput saves a policy and turns checks on for exactly that
+// policy in one step.
+type SaveAndEnableInput struct {
+	Policy PolicyInput `json:"policy"`
+	// Expected, when present, is the stored policy the change was reviewed
+	// against; version 0 with an empty digest means none existed. The step is
+	// refused if the stored policy is another one.
+	Expected *ExpectedPolicy `json:"expected,omitempty"`
+}
+
+// ExpectedPolicy names one stored policy generation.
+type ExpectedPolicy struct {
+	Version int64  `json:"version"`
+	Digest  string `json:"digest"`
+}
+
 type Policy struct {
 	RepositoryID        string                       `json:"repository_id"`
 	Version             int64                        `json:"version"`

@@ -41,9 +41,10 @@ func checkPolicyCommand(arguments []string) error {
 	flags := newCommandFlagSet("check-policy " + action)
 	admin := addHelperAdminFlags(flags)
 	// Each action accepts, and its help lists, only the options it uses.
-	policyFile := new(string)
+	policyFile, enable := new(string), new(bool)
 	if action == "set" {
 		flags.StringVar(policyFile, "policy-file", "", "JSON file containing the complete configured-check policy")
+		flags.BoolVar(enable, "enable", false, "also turn checks on for exactly this policy; changed commands may run immediately")
 	}
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
@@ -69,6 +70,9 @@ func checkPolicyCommand(arguments []string) error {
 			return err
 		}
 		method, input = http.MethodPut, policy
+		if *enable {
+			method, path, input = http.MethodPost, path+"/save-and-enable", checkapi.SaveAndEnableInput{Policy: policy}
+		}
 	case "enable", "disable":
 		method, path = http.MethodPost, path+"/"+action
 	default:

@@ -125,8 +125,8 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 		path      string
 		want, not []string
 	}{
-		{"check-policy show", nil, []string{"--policy-file"}},
-		{"check-policy set", []string{"--policy-file"}, nil},
+		{"check-policy show", nil, []string{"--policy-file", "--enable"}},
+		{"check-policy set", []string{"--policy-file", "--enable"}, nil},
 		{"check-job list", nil, []string{"--job"}},
 		{"check-job show", []string{"--job"}, nil},
 		{"runner-credential list", []string{"--ca-file"}, []string{"--label", "--token-file", "--creation-id", "--credential"}},
