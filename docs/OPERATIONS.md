@@ -174,7 +174,7 @@ A service passes `--headless=true` or `false` from its install, so it does not d
 
 It chooses who runs the service from how you run the command, waits until the service answers, and prints the setup link. If the service stops with an error while it waits, for example because another program uses the port, the command prints that error with the next step.
 
-The service runs only an `owngit` program that no other account on the computer can change, apart from root or the administrators, and the same holds for every folder above it. When the program does not qualify, `owngit service install` stops before it changes anything and names the path to fix. On Windows, an administrator's install registers a protected copy in Program Files instead. A Homebrew install hands the service to Homebrew.
+Before `owngit service install` registers its own service, it checks that no account other than yours, root or the administrators can replace the `owngit` program, either directly or through a folder or link on its path. When another account could, the command stops before it changes anything and names the path to fix. On Windows, an administrator's install registers a protected copy in Program Files instead. A Homebrew install hands the service to Homebrew.
 
 | Command | What it does |
 | --- | --- |
@@ -196,7 +196,7 @@ Which kind of service you get depends on where you run the command:
 - **As root**, for example in an LXC container or on a cloud server, OwnGit creates a system account `owngit`, keeps the state in `/var/lib/owngit/state` and runs the service as that account. See [Installing as root](#installing-as-root).
 - **When Homebrew installed OwnGit**, the command runs `brew services restart owngit`, so that Homebrew keeps managing the service it upgrades.
 
-The user service and the system service run the `owngit` you ran the command with. If another account could change that file, a folder above it or a link on the way, the command stops and names the path. Move `owngit` to a folder only you or root can change, such as `~/.local/bin`, or use the [one-line installer](#one-line-installer). On a desktop, the program that the icon's sign-in entry starts must pass the same check.
+The user service and the system service run the `owngit` you ran the command with. If another account could replace that file, directly or through a folder or link on its path, the command stops and names the path. Move `owngit` to a folder only you or root can change, such as `~/.local/bin`, or use the [one-line installer](#one-line-installer). On a desktop, the program that the icon's sign-in entry starts must pass the same check.
 
 The log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
 
@@ -590,7 +590,7 @@ Windows 11 may put a new icon among the hidden icons (the ^ button). To keep it 
 
 #### The icon on Linux
 
-On a Linux desktop, run `owngit service install` from a terminal on that desktop. It starts the icon in the desktop's panel and writes `~/.config/autostart/owngit-icon.desktop`, so the icon starts again each time you sign in. The icon runs as your account, without `sudo`. For a Homebrew install the entry names Homebrew's `opt/owngit` link, so it keeps working after `brew upgrade`. If that file already exists and OwnGit did not write it, or cannot read it, the install leaves it as it is, does not start the icon and says so. `owngit service uninstall` removes the entry. Without the service, `owngit tray icon` shows the icon until you quit it.
+On a Linux desktop, run `owngit service install` from a terminal on that desktop. It starts the icon in the desktop's panel and writes `~/.config/autostart/owngit-icon.desktop`, so the icon starts again each time you sign in. The icon runs as your account, without `sudo`. For a Homebrew install the entry names Homebrew's `opt/owngit` link, so it keeps working after `brew upgrade`. If that file already exists and OwnGit did not write it, or cannot read it, the install leaves it as it is, does not start the icon and says so. `owngit service uninstall` removes only an entry that OwnGit wrote; another program's file, or one OwnGit cannot read, stays. Without the service, `owngit tray icon` shows the icon until you quit it.
 
 Some installs have no icon: one without a screen (`--headless`, the default over SSH), and a root install, whose service runs as the `owngit` account.
 
@@ -601,7 +601,7 @@ The desktop has to show StatusNotifierItem icons, the standard way for a program
 
 Other desktops that show StatusNotifierItem icons, such as KDE Plasma, should show it too, but they were not tested.
 
-The icon and its panel are drawn by the desktop's `gjs` with GTK 4. Omarchy includes both. Elsewhere, if `owngit tray status` says they are missing, install the distribution's `gjs` package. OwnGit starts `gjs` only when no other account can change that file or a folder above it. Otherwise the icon does not start, and `owngit tray status` names the path. OwnGit itself keeps running without the icon.
+The icon and its panel are drawn by the desktop's `gjs` with GTK 4. Omarchy includes both. Elsewhere, if `owngit tray status` says they are missing, install the distribution's `gjs` package. OwnGit starts `gjs` only when no account other than yours or root can replace it, directly or through a folder or link on its path. Otherwise the icon does not start, and `owngit tray status` names the path. OwnGit itself keeps running without the icon.
 
 On Omarchy, click the icon to open its panel, and right-click it for its menu. On GNOME, a single click opens the menu and a double click opens the panel. The panel shows whether OwnGit is running, needs attention (with the command that updates or repairs it, and a Copy button), is not running (with the command that starts it), or cannot report its status now. It also shows the clone address with a Copy button and the three latest pushes.
 

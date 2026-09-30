@@ -30,9 +30,11 @@ Start
 
   First start without a terminal (for example as a background service)
     OwnGit writes an owner-readable setup file in the state directory and
-    logs the file's path. It also opens the file in a browser, unless it
-    was started with --no-open. To get a new setup link, run
-    {{.Invocation}} setup-link.
+    logs the file's path. In a session with a desktop that someone sees,
+    it also opens the file in a browser, unless it was started with
+    --no-open. Every OwnGit service starts with --no-open. Otherwise open
+    the file in a browser on this computer yourself, or run
+    {{.Invocation}} setup-link for a new setup link.
 
 {{if .IconApp}}Menu bar icon
   OwnGit.app beside the program is the OwnGit icon in the macOS menu bar. It
