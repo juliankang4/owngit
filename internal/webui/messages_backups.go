@@ -244,8 +244,8 @@ var backupsCatalog = map[MessageCode]message{
 		ko: "먼저 백업 폴더를 정하세요.",
 	},
 	MsgBackupRestoreLimit: {
-		en: "The backup folder is on a file system (%s) that cannot rename a folder without replacing what is there. Backups work there, but a restore cannot write into a folder on that disk, so restore to a folder on another disk.",
-		ko: "백업 폴더가 있는 파일 시스템(%s)은 같은 이름의 폴더를 덮어쓰지 않고는 이름을 바꿀 수 없습니다. 이곳에 백업하는 것은 문제없지만, 이 디스크의 폴더로는 복원할 수 없으니 다른 디스크의 폴더로 복원하세요.",
+		en: "The backup folder is on a file system (%s) that repositories cannot be restored to. Backups work there, but restore the repositories to a folder on another disk.",
+		ko: "백업 폴더가 있는 파일 시스템(%s)으로는 저장소를 복원할 수 없습니다. 이곳에 백업하는 것은 문제없지만, 저장소는 다른 디스크의 폴더로 복원하세요.",
 	},
 	MsgBackupRunsTitle: {
 		en: "Recorded backups",

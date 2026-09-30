@@ -47,5 +47,5 @@ func requireAttributesInPlace(dir string) (err error) {
 	} else if err != nil {
 		return err
 	}
-	return fmt.Errorf("%s is on a file system (%s) that keeps file attributes in separate ._ files, which Git would read as part of the restored repositories; restore the repositories to a folder on another disk", dir, fileSystemName(dir))
+	return &LimitError{Dir: dir, FileSystem: fileSystemName(dir), Reason: "keeps file attributes in separate ._ files, which Git would read as part of the restored repositories; restore the repositories to a folder on another disk"}
 }
