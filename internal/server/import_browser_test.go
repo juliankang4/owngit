@@ -274,14 +274,21 @@ func TestImportFormsReportTheRuleOnTheField(t *testing.T) {
 		field  string
 		code   webui.MessageCode
 	}{
-		{"new import over http", "/repositories/new-import", url.Values{"url": {"http://example.invalid/team/p.git"}, "credential_form": {"none"}}, "url", webui.MsgImportURLHTTPS},
+		{"new import over http", "/repositories/new-import", url.Values{"url": {"http://example.invalid/team/p.git"}, "credential_form": {"none"}}, "url", webui.MsgImportURLPlainHTTP},
+		{"new import over ftp", "/repositories/new-import", url.Values{"url": {"ftp://example.invalid/team/p.git"}, "allow_plain_http": {"1"}, "credential_form": {"none"}}, "url", webui.MsgImportURLHTTPS},
+		{"new import with a path origin", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "redirects": {"approved"}, "approved_redirect_origin": {"https://mirror.example/team"}, "credential_form": {"none"}}, "approved_redirect_origin", webui.MsgImportOriginInvalid},
+		{"new import with a plain HTTP origin", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "redirects": {"approved"}, "approved_redirect_origin": {"http://mirror.example"}, "credential_form": {"none"}}, "approved_redirect_origin", webui.MsgImportOriginInvalid},
+		{"new import with too many refs", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "refs": {"300000"}, "credential_form": {"none"}}, "refs", webui.MsgImportLimitRange},
+		{"new import with a fraction of a second", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "tls_handshake_seconds": {"1.5"}, "tls_handshake_seconds_unit": {"s"}, "credential_form": {"none"}}, "tls_handshake_seconds", webui.MsgImportLimitWholeSeconds},
+		{"new import fetching longer than it runs", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "fetch_seconds": {"2"}, "fetch_seconds_unit": {"h"}, "credential_form": {"none"}}, "fetch_seconds", webui.MsgImportLimitRange},
 		{"new import with user info", "/repositories/new-import", url.Values{"url": {"https://user:pw@example.invalid/p.git"}, "credential_form": {"none"}}, "url", webui.MsgImportURLUser},
 		{"new import with a bad name", "/repositories/new-import", url.Values{"name": {"bad name"}, "url": {"https://example.invalid/p.git"}, "credential_form": {"none"}}, "name", webui.MsgRepoNameInvalid},
 		{"new import token missing", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "credential_form": {"bearer"}}, "token", webui.MsgImportTokenRequired},
 		{"new import password missing", "/repositories/new-import", url.Values{"url": {"https://example.invalid/p.git"}, "credential_form": {"basic"}, "username": {"someone"}}, "password", webui.MsgImportBasicNeedsBoth},
 		{"new import with a long description", "/repositories/new-import", url.Values{"description": {strings.Repeat("a", 501)}, "url": {"https://example.invalid/p.git"}, "credential_form": {"none"}}, "description", webui.MsgRepoDescriptionTooLong},
 		{"new repository with a long description", "/repositories", url.Values{"name": {"long-description"}, "description": {strings.Repeat("설", 167)}}, "description", webui.MsgRepoDescriptionTooLong},
-		{"source over http", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"http://example.invalid/team/p.git"}, "mode": {"standalone"}}, "url", webui.MsgImportURLHTTPS},
+		{"source over http", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"http://example.invalid/team/p.git"}, "mode": {"standalone"}}, "url", webui.MsgImportURLPlainHTTP},
+		{"source verifying longer than it runs", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"https://example.invalid/team/p.git"}, "mode": {"standalone"}, "verify_seconds": {"90"}, "verify_seconds_unit": {"min"}}, "verify_seconds", webui.MsgImportLimitRange},
 		{"source with a query", "/repositories/project/import", url.Values{"action": {webui.ActionImportConfigure}, "url": {"https://example.invalid/p.git?x=1"}, "mode": {"standalone"}}, "url", webui.MsgImportURLQuery},
 	} {
 		for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {

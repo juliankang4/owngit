@@ -73,21 +73,35 @@ func (app *App) handleImportSourceAPI(writer http.ResponseWriter, request *http.
 			Mode                string `json:"mode"`
 			GitOnlyConsent      bool   `json:"git_only_consent"`
 			AllowPrivateNetwork bool   `json:"allow_private_network"`
+			importOptionsInput
 		}
 		if !decodeAPIJSON(writer, request, &input) {
 			return
 		}
 		source, err := app.Imports.ConfigureSource(request.Context(), importsync.ConfigureInput{
 			RepositoryID: repositoryID, URL: input.URL, Mode: importsync.Mode(input.Mode),
-			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork,
+			GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Options: input.change(),
 		})
 		if err != nil {
 			writeImportProblem(writer, request, "import source change", err)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, importSourceJSON(source))
+	case http.MethodPatch:
+		// Changes only the connection options and limits named in the
+		// request; the source address, mode and consents stay.
+		var input importOptionsInput
+		if !decodeAPIJSON(writer, request, &input) {
+			return
+		}
+		source, err := app.Imports.ChangeOptions(request.Context(), repositoryID, input.change())
+		if err != nil {
+			writeImportProblem(writer, request, "import options change", err)
+			return
+		}
+		writeAPIJSON(writer, http.StatusOK, importSourceJSON(source))
 	default:
-		writeAPIMethodError(writer, http.MethodGet+", "+http.MethodPut)
+		writeAPIMethodError(writer, http.MethodGet+", "+http.MethodPut+", "+http.MethodPatch)
 	}
 }
 
@@ -108,11 +122,11 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		Password            string `json:"password"`
 		Token               string `json:"token"`
 		CAPEM               string `json:"ca_pem"`
+		importOptionsInput
 	}
 	if !decodeAPIJSONLimit(writer, request, &input, MaximumImportCredentialRequest) {
 		return
 	}
-	request = app.beginOperation(writer, request)
 	_, _, exists, err := app.Repositories.ExistingPath(request.Context(), repositoryID)
 	if err != nil {
 		writeAPIError(writer, unavailable(request, "repository storage read", err), importsync.CodeStateUnavailable, "The repository destination could not be read.", nil)
@@ -121,7 +135,8 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 	// A request that names a source is a new import. It must not turn into a
 	// refresh of whatever source an existing repository has, and a refresh
 	// must not turn into a new import without a source.
-	addShaped := input.URL != "" || input.Name != "" || input.Mode != "" || input.Description != "" || input.GitOnlyConsent || input.AllowPrivateNetwork
+	addShaped := input.URL != "" || input.Name != "" || input.Mode != "" || input.Description != "" || input.GitOnlyConsent || input.AllowPrivateNetwork ||
+		input.importOptionsInput.present()
 	credentialsPresent := importCredentialFieldsPresent(input.CredentialForm, input.Username, input.Password, input.Token, input.CAPEM)
 	if exists {
 		if addShaped {
@@ -132,7 +147,14 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 			writeAPIError(writer, http.StatusUnprocessableEntity, importsync.CodeInvalidSource, "Refresh does not accept credentials. Save them with the credentials endpoint first.", nil)
 			return
 		}
-		run, runErr := app.Imports.Refresh(request.Context(), repositoryID, app.importRunLimits())
+		saved, err := app.Imports.SavedLimits(request.Context(), repositoryID)
+		if err != nil {
+			writeImportProblem(writer, request, "import limits read", err)
+			return
+		}
+		limits := app.sourceRunLimits(saved.RunSeconds)
+		request = app.beginImportRun(writer, request, limits.RunTimeout)
+		run, runErr := app.Imports.Refresh(request.Context(), repositoryID, limits)
 		app.writeImportRunResult(writer, request, repositoryID, run, runErr)
 		return
 	}
@@ -157,9 +179,12 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		}
 		credential = parsed
 	}
+	limits := app.sourceRunLimits(input.Limits["run_seconds"])
+	request = app.beginImportRun(writer, request, limits.RunTimeout)
 	result, runErr := app.Imports.Import(request.Context(), importsync.ImportInput{
 		Name: name, Description: input.Description, URL: input.URL, Mode: importsync.Mode(input.Mode),
-		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Credentials: credential, Limits: app.importRunLimits(),
+		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Credentials: credential,
+		Options: input.change(), Limits: limits,
 	})
 	app.writeImportRunResult(writer, request, result.RepositoryID, result.Run, runErr)
 }
@@ -478,19 +503,56 @@ func importCredentialFromInput(form, username, password, token, caPEM string) (*
 
 func importSourceJSON(source state.ImportSource) any {
 	return struct {
-		OK                  bool   `json:"ok"`
-		RepositoryID        string `json:"repository_id"`
-		URL                 string `json:"url"`
-		Mode                string `json:"mode"`
-		SourceGeneration    int64  `json:"source_generation"`
-		AuthorityRevision   int64  `json:"authority_revision"`
-		GitOnlyConsent      bool   `json:"git_only_consent"`
-		AllowPrivateNetwork bool   `json:"allow_private_network"`
+		OK                  bool                      `json:"ok"`
+		RepositoryID        string                    `json:"repository_id"`
+		URL                 string                    `json:"url"`
+		Mode                string                    `json:"mode"`
+		SourceGeneration    int64                     `json:"source_generation"`
+		AuthorityRevision   int64                     `json:"authority_revision"`
+		GitOnlyConsent      bool                      `json:"git_only_consent"`
+		AllowPrivateNetwork bool                      `json:"allow_private_network"`
+		Options             *importsync.OptionsStatus `json:"options"`
 	}{
 		OK: true, RepositoryID: source.RepositoryID, URL: source.URL, Mode: source.Mode,
 		SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 		GitOnlyConsent: source.GitOnlyConsent, AllowPrivateNetwork: source.AllowPrivateNetwork,
+		Options: importsync.DescribeOptions(source.Options, nil),
 	}
+}
+
+// importOptionsInput is the JSON form of a change to a source's connection
+// options and limits. An omitted field keeps its value; limits names only
+// the limits to set, each to a value in its range (setting the default value
+// returns a limit to its default).
+type importOptionsInput struct {
+	AllowPlainHTTP         *bool            `json:"allow_plain_http"`
+	Redirects              *string          `json:"redirects"`
+	ApprovedRedirectOrigin *string          `json:"approved_redirect_origin"`
+	AllowReservedAddresses *bool            `json:"allow_reserved_addresses"`
+	Limits                 map[string]int64 `json:"limits"`
+}
+
+func (input importOptionsInput) change() importsync.OptionsChange {
+	return importsync.OptionsChange{
+		AllowPlainHTTP: input.AllowPlainHTTP, Redirects: input.Redirects, ApprovedRedirectOrigin: input.ApprovedRedirectOrigin,
+		AllowReservedAddresses: input.AllowReservedAddresses, Limits: input.Limits,
+	}
+}
+
+func (input importOptionsInput) present() bool {
+	return input.AllowPlainHTTP != nil || input.Redirects != nil || input.ApprovedRedirectOrigin != nil ||
+		input.AllowReservedAddresses != nil || input.Limits != nil
+}
+
+// sourceRunLimits bounds a run this server starts by the run time its source
+// asks for, or the server's own run time when the source asks for none or
+// for one outside the allowed range, which the import service refuses.
+func (app *App) sourceRunLimits(runSeconds int64) importsync.Limits {
+	limits := app.importRunLimits()
+	if runSeconds != 0 && state.CheckImportLimit("run_seconds", runSeconds) == nil {
+		limits.RunTimeout = time.Duration(runSeconds) * time.Second
+	}
+	return limits
 }
 
 func importScheduleJSON(schedule state.ImportSchedule, exists bool) any {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"owngit/internal/importfetch"
 	"owngit/internal/importsync"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -24,7 +25,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
-	page := webui.NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import"}
+	page := webui.NewImportPage{Chrome: chrome, SubmitURL: "/repositories/new-import", Options: importOptionsForm(nil, nil, nil)}
 	if request.Method == http.MethodGet {
 		app.render(writer, request, http.StatusOK, page)
 		return
@@ -42,42 +43,48 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	page.CredentialForm = postValue(request, "credential_form")
-	if ok, status := app.confirmImportAdmin(writer, request, &chrome); !ok {
+	posted := readPostedImportOptions(request)
+	// render shows the form again as typed, with its notices.
+	render := func(status int, notices ...webui.Notice) {
+		chrome.Notices = append(chrome.Notices, notices...)
 		page.Chrome = chrome
+		page.Options = importOptionsForm(nil, &posted, chrome.Notices)
 		app.render(writer, request, status, page)
+	}
+	if ok, status := app.confirmImportAdmin(writer, request, &chrome); !ok {
+		render(status)
 		return
 	}
 	// A mistake the form can name is reported on its field, before anything
 	// is sent to the import service, which stays the authority on every rule.
 	if problems := importNameProblems(page.Name, page.Description); len(problems) > 0 {
-		chrome.Notices = problems
-		page.Chrome = chrome
-		app.render(writer, request, http.StatusUnprocessableEntity, page)
+		render(http.StatusUnprocessableEntity, problems...)
 		return
 	}
-	if notice, ok := importURLProblem(page.URL); !ok {
-		chrome.Notices = []webui.Notice{notice}
-		page.Chrome = chrome
-		app.render(writer, request, http.StatusUnprocessableEntity, page)
+	if notice, ok := importURLProblem(page.URL, posted.plainHTTP); !ok {
+		render(http.StatusUnprocessableEntity, notice)
+		return
+	}
+	options, problems := posted.change()
+	if len(problems) > 0 {
+		render(http.StatusUnprocessableEntity, problems...)
 		return
 	}
 	if problems, status := importCredentialProblems(request); len(problems) > 0 {
-		chrome.Notices = problems
-		page.Chrome = chrome
-		app.render(writer, request, status, page)
+		render(status, problems...)
 		return
 	}
 	credential, credErr := postedImportCredential(request)
 	if credErr != nil {
-		chrome.Notices = []webui.Notice{importFailureNotice(credErr, "")}
-		page.Chrome = chrome
-		app.render(writer, request, http.StatusUnprocessableEntity, page)
+		render(http.StatusUnprocessableEntity, importFailureNotice(credErr, ""))
 		return
 	}
-	request = app.beginOperation(writer, request)
+	limits := app.sourceRunLimits(options.Limits["run_seconds"])
+	request = app.beginImportRun(writer, request, limits.RunTimeout)
 	result, err := app.Imports.Import(request.Context(), importsync.ImportInput{
 		Name: page.Name, Description: page.Description, URL: page.URL, Mode: importsync.Mode(page.Mode),
-		GitOnlyConsent: page.GitOnlyConsent, AllowPrivateNetwork: page.PrivateNetwork, Credentials: credential, Limits: app.importRunLimits(),
+		GitOnlyConsent: page.GitOnlyConsent, AllowPrivateNetwork: page.PrivateNetwork, Credentials: credential,
+		Options: options, Limits: limits,
 	})
 	notice := "import_started"
 	if err != nil {
@@ -90,29 +97,27 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 			if lookupErr != nil {
 				// Whether it did is unknown, so the form says so rather than
 				// stating either outcome.
-				chrome.Notices = []webui.Notice{webui.Error("", webui.MsgImportCancelledUnsure)}
-				page.Chrome = chrome
-				app.render(writer, request, unavailable(request, "repository record read", lookupErr), page)
+				render(unavailable(request, "repository record read", lookupErr), webui.Error("", webui.MsgImportCancelledUnsure))
 				return
 			}
 		}
 		if !repositoryExists {
 			// Nothing to show on a repository page: keep the form and explain.
+			var notice webui.Notice
 			if cancelled {
-				chrome.Notices = []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgImportCancelledNoRepo}}
+				notice = webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgImportCancelledNoRepo}
 			} else if errors.Is(err, repository.ErrReservedName) {
-				chrome.Notices = []webui.Notice{webui.Error("name", webui.MsgRepoNameReserved)}
+				notice = webui.Error("name", webui.MsgRepoNameReserved)
 			} else if code := importsyncProblemCode(err); code == importsync.CodeRepositoryTaken {
-				chrome.Notices = []webui.Notice{webui.Error("name", webui.MsgImportErrorRepoTaken)}
+				notice = webui.Error("name", webui.MsgImportErrorRepoTaken)
 			} else if code == importsync.CodeInvalidSource {
-				// The name and the address were checked above, so what is
-				// left is the address as the import service reads it.
-				chrome.Notices = []webui.Notice{webui.Error("url", webui.MsgImportErrorInvalidSource)}
+				// The name and the form's own mistakes were checked above, so
+				// what is left is the source as the import service reads it.
+				notice = importSourceProblem(err)
 			} else {
-				chrome.Notices = []webui.Notice{importFailureNotice(err, result.Run.ErrorClass)}
+				notice = importFailureNotice(err, result.Run.ErrorClass)
 			}
-			page.Chrome = chrome
-			app.render(writer, request, importProblemStatus(request, "import start", err), page)
+			render(importProblemStatus(request, "import start", err), notice)
 			return
 		}
 		notice = "import_run_cancelled"
@@ -163,17 +168,25 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 	refresh := false
 	switch postValue(request, "action") {
 	case webui.ActionImportConfigure:
-		if problem, ok := importURLProblem(postValue(request, "url")); !ok {
+		posted := readPostedImportOptions(request)
+		if problem, ok := importURLProblem(postValue(request, "url"), posted.plainHTTP); !ok {
 			chrome.Notices = append(chrome.Notices, problem)
+			app.renderImportPage(writer, request, stored, summary, chrome, http.StatusUnprocessableEntity)
+			return
+		}
+		options, problems := posted.change()
+		if len(problems) > 0 {
+			chrome.Notices = append(chrome.Notices, problems...)
 			app.renderImportPage(writer, request, stored, summary, chrome, http.StatusUnprocessableEntity)
 			return
 		}
 		_, err = app.Imports.ConfigureSource(request.Context(), importsync.ConfigureInput{
 			RepositoryID: stored.ID, URL: postValue(request, "url"), Mode: importsync.Mode(postValue(request, "mode")),
 			GitOnlyConsent: postValue(request, "git_only_consent") == "1", AllowPrivateNetwork: postValue(request, "allow_private_network") == "1",
+			Options: options,
 		})
 		if importsyncProblemCode(err) == importsync.CodeInvalidSource {
-			chrome.Notices = append(chrome.Notices, webui.Error("url", webui.MsgImportErrorInvalidSource))
+			chrome.Notices = append(chrome.Notices, importSourceProblem(err))
 			app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(request, "import change", err))
 			return
 		}
@@ -201,8 +214,14 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		err = app.Imports.SetCredentials(request.Context(), stored.ID, nil)
 		notice = "import_credentials_cleared"
 	case webui.ActionImportRefresh:
-		request = app.beginOperation(writer, request)
-		_, err = app.Imports.Refresh(request.Context(), stored.ID, app.importRunLimits())
+		var saved state.ImportLimits
+		if saved, err = app.Imports.SavedLimits(request.Context(), stored.ID); err != nil {
+			refresh = true
+			break
+		}
+		limits := app.sourceRunLimits(saved.RunSeconds)
+		request = app.beginImportRun(writer, request, limits.RunTimeout)
+		_, err = app.Imports.Refresh(request.Context(), stored.ID, limits)
 		refresh = true
 		notice = "import_refreshed"
 		if importsyncProblemCode(err) == importsync.CodeCancelled {
@@ -292,6 +311,9 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		page.URL = importStatus.URL
 		page.GitOnlyConsent = importStatus.GitOnlyConsent
 		page.PrivateNetwork = importStatus.TransportConsent
+		page.Options = importOptionsForm(importStatus.Options, nil, chrome.Notices)
+		page.OptionsSummary = importOptionFacts(importStatus.Options)
+		page.OptionsProblem = importStatus.Options != nil && importStatus.Options.Problem != ""
 		page.CredentialForm = importStatus.CredentialForm
 		page.CredentialBound = importStatus.CredentialBound
 		page.CAPresent = importStatus.CAPresent
@@ -301,6 +323,8 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			page.Mode = postValue(request, "mode")
 			page.GitOnlyConsent = postValue(request, "git_only_consent") == "1"
 			page.PrivateNetwork = postValue(request, "allow_private_network") == "1"
+			posted := readPostedImportOptions(request)
+			page.Options = importOptionsForm(importStatus.Options, &posted, chrome.Notices)
 		}
 	}
 	cursor, _ := strconv.ParseInt(request.URL.Query().Get("cursor"), 10, 64)
@@ -403,7 +427,8 @@ func importNameProblems(name, description string) []webui.Notice {
 // importURLProblem names the rule a source address breaks, on the address
 // field. The import service applies the full rules afterwards; this only
 // turns the common mistakes into a sentence that says what to change.
-func importURLProblem(raw string) (webui.Notice, bool) {
+// plainHTTP is the form's plain HTTP choice.
+func importURLProblem(raw string, plainHTTP bool) (webui.Notice, bool) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return webui.Error("url", webui.MsgImportURLRequired), false
@@ -412,7 +437,9 @@ func importURLProblem(raw string) (webui.Notice, bool) {
 	switch {
 	case err != nil:
 		return webui.Error("url", webui.MsgImportErrorInvalidSource), false
-	case parsed.Scheme != "https":
+	case parsed.Scheme == "http" && !plainHTTP:
+		return webui.Error("url", webui.MsgImportURLPlainHTTP), false
+	case parsed.Scheme != "https" && parsed.Scheme != "http":
 		return webui.Error("url", webui.MsgImportURLHTTPS), false
 	case parsed.User != nil:
 		return webui.Error("url", webui.MsgImportURLUser), false
@@ -486,4 +513,165 @@ func importProblemStatus(request *http.Request, step string, err error) int {
 		return http.StatusConflict
 	}
 	return status
+}
+
+// postedImportOptions is the connection and limits group of a submitted
+// source form, as typed.
+type postedImportOptions struct {
+	plainHTTP bool
+	redirects string
+	origin    string
+	reserved  bool
+	limits    map[string]webui.LimitInput
+}
+
+func readPostedImportOptions(request *http.Request) postedImportOptions {
+	posted := postedImportOptions{
+		plainHTTP: postValue(request, "allow_plain_http") == "1",
+		redirects: postValue(request, "redirects"),
+		origin:    strings.TrimSpace(postValue(request, "approved_redirect_origin")),
+		reserved:  postValue(request, "allow_reserved_addresses") == "1",
+		limits:    map[string]webui.LimitInput{},
+	}
+	if posted.redirects == "" {
+		posted.redirects = state.ImportRedirectRefuse
+	}
+	for _, name := range webui.ImportLimitFieldNames() {
+		posted.limits[name] = webui.LimitInput{Amount: postValue(request, name), Unit: postValue(request, name+"_unit")}
+	}
+	return posted
+}
+
+// change turns the form into an options change. The form carries every
+// option, so the change sets each one, and an empty limit returns to its
+// default. A mistake the form can name is returned on its field, before
+// anything reaches the import service, which stays the authority.
+func (posted postedImportOptions) change() (importsync.OptionsChange, []webui.Notice) {
+	change := importsync.OptionsChange{
+		AllowPlainHTTP: &posted.plainHTTP, Redirects: &posted.redirects, AllowReservedAddresses: &posted.reserved,
+		Limits: map[string]int64{},
+	}
+	var problems []webui.Notice
+	switch posted.redirects {
+	case state.ImportRedirectRefuse, state.ImportRedirectSameOrigin:
+	case state.ImportRedirectApproved:
+		if _, err := importfetch.ParseRedirectOrigin(posted.origin, posted.plainHTTP); err != nil {
+			problems = append(problems, webui.Error("approved_redirect_origin", webui.MsgImportOriginInvalid))
+		}
+		change.ApprovedRedirectOrigin = &posted.origin
+	default:
+		problems = append(problems, webui.Error("redirects", webui.MsgImportErrorInvalidSource))
+	}
+	defaults := importsync.DefaultSourceLimits()
+	for _, name := range webui.ImportLimitFieldNames() {
+		value, err := webui.ParseImportLimit(name, posted.limits[name])
+		if err != nil {
+			problems = append(problems, webui.Error(name, webui.ImportLimitNotice(name, err)))
+			continue
+		}
+		if value == 0 {
+			standard, _ := defaults.Field(name)
+			value = *standard
+		}
+		if state.CheckImportLimit(name, value) != nil {
+			problems = append(problems, webui.Error(name, webui.MsgImportLimitRange))
+			continue
+		}
+		change.Limits[name] = value
+	}
+	return change, problems
+}
+
+// importOptionFields names the fields of the options group, so a refusal on
+// one of them opens the group.
+func importOptionField(field string) bool {
+	switch field {
+	case "allow_plain_http", "redirects", "approved_redirect_origin", "allow_reserved_addresses":
+		return true
+	}
+	for _, name := range webui.ImportLimitFieldNames() {
+		if field == name {
+			return true
+		}
+	}
+	return false
+}
+
+// importOptionsForm draws the connection and limits group: the saved
+// options, or a refused submission as typed when posted is not nil.
+func importOptionsForm(saved *importsync.OptionsStatus, posted *postedImportOptions, notices []webui.Notice) webui.ImportOptionsForm {
+	if saved == nil {
+		saved = importsync.DescribeOptions(state.DefaultImportOptions(), nil)
+	}
+	changed := map[string]int64{}
+	for _, name := range saved.ChangedLimits {
+		value, _ := saved.Limits.Field(name)
+		changed[name] = *value
+	}
+	defaults := importsync.DefaultSourceLimits()
+	bounds := map[string]webui.ImportLimitBounds{}
+	for _, field := range state.ImportLimitFields {
+		standard, _ := defaults.Field(field.Name)
+		bounds[field.Name] = webui.ImportLimitBounds{Min: field.Min, Max: field.Max, Default: *standard}
+	}
+	form := webui.ImportOptionsForm{
+		PlainHTTP: saved.AllowPlainHTTP, Redirects: saved.Redirects, ApprovedOrigin: saved.ApprovedRedirectOrigin, Reserved: saved.AllowReservedAddresses,
+	}
+	var typed map[string]webui.LimitInput
+	if posted != nil {
+		form.PlainHTTP, form.Redirects, form.ApprovedOrigin, form.Reserved = posted.plainHTTP, posted.redirects, posted.origin, posted.reserved
+		typed = posted.limits
+	}
+	form.Limits = webui.NewImportLimitControls(changed, typed, bounds)
+	form.Open = form.PlainHTTP || form.Redirects != state.ImportRedirectRefuse || form.Reserved || len(changed) > 0
+	for _, notice := range notices {
+		if importOptionField(notice.Field) {
+			form.Open = true
+			if form.Refused == "" {
+				form.Refused = notice.Field
+			}
+		}
+	}
+	return form
+}
+
+// importOptionFacts lists the options that differ from their defaults, for
+// the status strip.
+func importOptionFacts(options *importsync.OptionsStatus) []webui.ImportOptionFact {
+	if options == nil {
+		return nil
+	}
+	var facts []webui.ImportOptionFact
+	if options.AllowPlainHTTP {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactPlainHTTP})
+	}
+	switch options.Redirects {
+	case state.ImportRedirectSameOrigin:
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactSameOrigin})
+	case state.ImportRedirectApproved:
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactApproved, Value: options.ApprovedRedirectOrigin})
+	}
+	if options.AllowReservedAddresses {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactReserved})
+	}
+	if len(options.ChangedLimits) > 0 {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactLimits, Value: strconv.Itoa(len(options.ChangedLimits))})
+	}
+	return facts
+}
+
+// importSourceProblem names, on its field, why the import service refused a
+// source configuration.
+func importSourceProblem(err error) webui.Notice {
+	var conflict *importsync.LimitConflictError
+	var outOfRange *state.ImportLimitRangeError
+	switch {
+	case errors.Is(err, importfetch.ErrPlainHTTP):
+		return webui.Error("url", webui.MsgImportURLPlainHTTP)
+	case errors.As(err, &conflict):
+		return webui.Error(conflict.Field, webui.MsgImportLimitRange)
+	case errors.As(err, &outOfRange):
+		return webui.Error(outOfRange.Field.Name, webui.MsgImportLimitRange)
+	}
+	return webui.Error("url", webui.MsgImportErrorInvalidSource)
 }

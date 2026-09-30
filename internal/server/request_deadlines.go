@@ -125,6 +125,17 @@ func (app *App) beginOperation(writer http.ResponseWriter, request *http.Request
 	return request
 }
 
+// beginImportRun begins an import run whose own deadline is runTimeout. The
+// operation keeps ImportResponseMargin beyond the run, as requestTimeout
+// gives a run with the server's own run time, so a source with a longer or
+// shorter run time keeps its request open for that run and no longer.
+func (app *App) beginImportRun(writer http.ResponseWriter, request *http.Request, runTimeout time.Duration) *http.Request {
+	if deadlines, _ := request.Context().Value(requestDeadlinesKey{}).(*requestDeadlines); deadlines != nil && deadlines.cancel == nil {
+		deadlines.operation = time.Now().Add(ImportRunRequestTimeout(runTimeout))
+	}
+	return app.beginOperation(writer, request)
+}
+
 // finish runs after the handler returns. Without an operation, net/http may
 // read the rest of a body the handler left unread, to reuse the connection,
 // until the page deadline. Other deadlines are cleared while they have not

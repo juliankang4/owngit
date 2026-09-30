@@ -2,8 +2,9 @@
      The new-import page and the repository's Import tab use the same ones, so
      both forms look and behave alike. */}}
 
-{{/* The source address, the mode, and the two consents.
-     Call as: {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" false}} */}}
+{{/* The source address, the mode, the two consents, and the connection and
+     limits group.
+     Call as: {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Options" $p.Options "Focus" false}} */}}
 {{define "importSourceFields"}}
 {{$lang := .Lang}}{{$n := .Notices}}{{$id := .ID}}
 <div class="f">
@@ -41,6 +42,90 @@
   <span class="check__t">{{bi $lang "import.private_network"}}</span>
   <span class="check__d">{{bi $lang "import.private_network_help"}}</span>
 </label>
+
+{{/* Connection choices and limits of this source. The group starts
+     collapsed with the defaults in place, and opens by itself when an option
+     differs from its default or a refusal points into it, so a changed
+     address is never saved with a consent the owner cannot see. */}}
+{{$o := .Options}}
+<details class="ccadv"{{if $o.Open}} open{{end}}>
+  <summary class="btn">{{bi $lang "import.options"}}</summary>
+  <div class="ccadv__body">
+    <p class="f__help">{{bi $lang "import.options_help"}}</p>
+    <label class="check">
+      <input type="checkbox" name="allow_plain_http" value="1"{{if $o.PlainHTTP}} checked{{end}}>
+      <span class="check__t">{{bi $lang "import.plain_http"}}</span>
+      <span class="check__d">{{bi $lang "import.plain_http_help"}}</span>
+    </label>
+    <fieldset class="fset">
+      <legend>{{bi $lang "import.redirects"}}</legend>
+      <p class="f__help">{{bi $lang "import.redirects_help"}}</p>
+      <label class="choice">
+        <input type="radio" name="redirects" value="refuse"{{if or (eq $o.Redirects "refuse") (eq $o.Redirects "")}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "import.redirect.refuse"}}</span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="redirects" value="same_origin"{{if eq $o.Redirects "same_origin"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "import.redirect.same_origin"}}</span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="redirects" value="approved"{{if eq $o.Redirects "approved"}} checked{{end}}>
+        <span class="choice__t">{{bi $lang "import.redirect.approved"}}</span>
+      </label>
+      <div class="f">
+        <label for="{{$id}}-redirect-origin">{{bi $lang "import.redirect.origin"}}</label>
+        <input id="{{$id}}-redirect-origin" name="approved_redirect_origin" type="url" spellcheck="false" autocapitalize="off" autocomplete="off"
+               value="{{$o.ApprovedOrigin}}" {{template "fieldInvalid" dict "Notices" $n "Field" "approved_redirect_origin"}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "approved_redirect_origin"}}
+        <p class="f__help">{{bi $lang "import.redirect.origin_help"}}</p>
+      </div>
+    </fieldset>
+    <label class="check">
+      <input type="checkbox" name="allow_reserved_addresses" value="1"{{if $o.Reserved}} checked{{end}}>
+      <span class="check__t">{{bi $lang "import.reserved"}}</span>
+      <span class="check__d">{{bi $lang "import.reserved_help"}}</span>
+    </label>
+    <fieldset class="fset">
+      <legend>{{bi $lang "import.limits"}}</legend>
+      <p class="f__help">{{bi $lang "import.limits_help"}}</p>
+      <div class="ccgrid">
+        {{range $o.MainLimits}}{{template "importLimit" dict "Lang" $lang "Notices" $n "L" .}}{{end}}
+      </div>
+      <details class="ccadv"{{if $o.DeeperOpen}} open{{end}}>
+        <summary class="btn">{{bi $lang "import.limits_more"}}</summary>
+        <div class="ccadv__body">
+          <div class="ccgrid">
+            {{range $o.DeeperLimits}}{{template "importLimit" dict "Lang" $lang "Notices" $n "L" .}}{{end}}
+          </div>
+        </div>
+      </details>
+    </fieldset>
+  </div>
+</details>
+{{end}}
+
+{{/* One import limit: an amount and its unit, with the default and the
+     allowed range stated beside it. An empty amount uses the default.
+     Call as: {{template "importLimit" dict "Lang" $lang "Notices" $n "L" $control}} */}}
+{{define "importLimit"}}
+{{$lang := .Lang}}{{$l := .L}}
+<div class="f cclimit">
+  <label for="{{$l.ID}}">{{bi $lang $l.Label}}</label>
+  <div class="cclimit__row">
+    <input id="{{$l.ID}}" name="{{$l.Field}}" type="text" inputmode="{{$l.InputMode}}" autocomplete="off"
+           spellcheck="false" value="{{$l.Input.Amount}}"
+           {{template "fieldInvalid" dict "Notices" .Notices "Field" $l.Field}}>
+    {{if $l.Kind.HasUnitMenu}}
+      <select name="{{$l.UnitField}}" {{unitMenuLabel $lang $l.Label}}>
+        {{range $l.Kind.Units}}
+          <option value="{{.Name}}"{{if eq .Name $l.Input.Unit}} selected{{end}} {{biOption .Label}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+    {{end}}
+  </div>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Field" $l.Field}}
+  {{with $l.HintEN}}<p class="f__help f__range">{{biText $lang $l.HintEN $l.HintKO}}</p>{{end}}
+</div>
 {{end}}
 
 {{/* The credential form and only its own fields.

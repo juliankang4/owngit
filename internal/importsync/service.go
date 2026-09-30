@@ -417,6 +417,16 @@ func (s *Service) configure(ctx context.Context, repositoryID string, replaces f
 	return source, nil
 }
 
+// SavedLimits returns the limits the owner set for a source, for bounding a
+// request that waits for its run.
+func (s *Service) SavedLimits(ctx context.Context, repositoryID string) (state.ImportLimits, error) {
+	source, _, err := s.Store.ImportSource(ctx, repositoryID)
+	if err != nil {
+		return state.ImportLimits{}, sourceReadProblem(err)
+	}
+	return source.Options.Limits, nil
+}
+
 // settingErrors lists the unusable saved options a source read reported.
 func settingErrors(err error) []*state.ImportSourceSettingError {
 	if err == nil {
@@ -462,7 +472,7 @@ func (s *Service) checkOptions(rawURL string, options state.ImportOptions) (stat
 	if err := options.Limits.Validate(); err != nil {
 		return options, err
 	}
-	defaults := limitValues(DefaultLimits())
+	defaults := DefaultSourceLimits()
 	for _, field := range state.ImportLimitFields {
 		value, _ := options.Limits.Field(field.Name)
 		standard, _ := defaults.Field(field.Name)
@@ -954,8 +964,10 @@ type OptionsStatus struct {
 	Problem string `json:"problem,omitempty"`
 }
 
-// optionsStatus describes a source's options and the limits a run uses.
-func optionsStatus(options state.ImportOptions, readErr error) *OptionsStatus {
+// DescribeOptions describes a source's options and the limits a run uses.
+// readErr is the error the source read reported, if any; unusable saved
+// options in it become the Problem.
+func DescribeOptions(options state.ImportOptions, readErr error) *OptionsStatus {
 	status := &OptionsStatus{
 		AllowPlainHTTP: options.AllowPlainHTTP, Redirects: options.Redirects,
 		ApprovedRedirectOrigin: options.ApprovedRedirectOrigin, AllowReservedAddresses: options.AllowReservedAddresses,
@@ -1004,7 +1016,7 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 	}
 	// A saved option that cannot be used is reported beside the rest of the
 	// status, so the owner can see and set it again.
-	status.Options = optionsStatus(source.Options, err)
+	status.Options = DescribeOptions(source.Options, err)
 	status.Configured = true
 	status.URL = source.URL
 	status.Mode = source.Mode

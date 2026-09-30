@@ -152,7 +152,87 @@ const (
 	MsgImportRefEarlier        MessageCode = "import.ref.earlier_source"
 	MsgImportRefUnknown        MessageCode = "import.ref.unknown_local"
 	MsgImportRefDeleted        MessageCode = "import.ref.deleted_at_source"
+
+	MsgImportOptions            MessageCode = "import.options"
+	MsgImportOptionsHelp        MessageCode = "import.options_help"
+	MsgImportOptionsUnreadable  MessageCode = "import.options_unreadable"
+	MsgImportPlainHTTP          MessageCode = "import.plain_http"
+	MsgImportPlainHTTPHelp      MessageCode = "import.plain_http_help"
+	MsgImportRedirects          MessageCode = "import.redirects"
+	MsgImportRedirectsHelp      MessageCode = "import.redirects_help"
+	MsgImportRedirectRefuse     MessageCode = "import.redirect.refuse"
+	MsgImportRedirectSame       MessageCode = "import.redirect.same_origin"
+	MsgImportRedirectApproved   MessageCode = "import.redirect.approved"
+	MsgImportRedirectOrigin     MessageCode = "import.redirect.origin"
+	MsgImportRedirectOriginHelp MessageCode = "import.redirect.origin_help"
+	MsgImportReserved           MessageCode = "import.reserved"
+	MsgImportReservedHelp       MessageCode = "import.reserved_help"
+	MsgImportLimits             MessageCode = "import.limits"
+	MsgImportLimitsHelp         MessageCode = "import.limits_help"
+	MsgImportLimitsMore         MessageCode = "import.limits_more"
+	MsgImportLimitPack          MessageCode = "import.limit.pack"
+	MsgImportLimitRun           MessageCode = "import.limit.run"
+	MsgImportLimitFetch         MessageCode = "import.limit.fetch"
+	MsgImportLimitIndex         MessageCode = "import.limit.index"
+	MsgImportLimitVerify        MessageCode = "import.limit.verify"
+	MsgImportLimitRefs          MessageCode = "import.limit.refs"
+	MsgImportLimitAdvertisement MessageCode = "import.limit.advertisement"
+	MsgImportLimitTLS           MessageCode = "import.limit.tls"
+	MsgImportLimitHeaders       MessageCode = "import.limit.headers"
+	MsgImportLimitLFS           MessageCode = "import.limit.lfs"
+	MsgImportLimitWholeSeconds  MessageCode = "import.limit.whole_seconds"
+	MsgImportLimitRange         MessageCode = "import.limit.range"
+	MsgImportFactConnection     MessageCode = "import.fact.connection"
+	MsgImportFactDefaults       MessageCode = "import.fact.defaults"
+	MsgImportFactPlainHTTP      MessageCode = "import.fact.plain_http"
+	MsgImportFactSameOrigin     MessageCode = "import.fact.same_origin"
+	MsgImportFactApproved       MessageCode = "import.fact.approved"
+	MsgImportFactReserved       MessageCode = "import.fact.reserved"
+	MsgImportFactLimits         MessageCode = "import.fact.limits"
+	MsgImportOriginInvalid      MessageCode = "import.origin_invalid"
+	MsgImportURLPlainHTTP       MessageCode = "import.url_plain_http"
 )
+
+var importOptionsCatalog = map[MessageCode]message{
+	MsgImportOptions:            {en: "Connection and limits", ko: "연결과 한도"},
+	MsgImportOptionsHelp:        {en: "These choices apply to this source only. The defaults suit most sources.", ko: "이 원본에만 적용됩니다. 대부분의 원본은 기본값으로 충분합니다."},
+	MsgImportOptionsUnreadable:  {en: "A saved connection choice or limit of this source cannot be read, so imports from it stop. Set it again under Connection and limits.", ko: "이 원본에 저장된 연결 설정이나 한도를 읽을 수 없어 가져오기가 멈췄습니다. ‘연결과 한도’에서 다시 설정하세요."},
+	MsgImportPlainHTTP:          {en: "Allow plain HTTP for this source", ko: "이 원본에 암호화되지 않은 HTTP 허용"},
+	MsgImportPlainHTTPHelp:      {en: "This source's code and credentials can be read or changed in transit. Use it only on a network you trust.", ko: "전송 중에 이 원본의 코드와 인증 정보가 노출되거나 바뀔 수 있습니다. 믿을 수 있는 네트워크에서만 사용하세요."},
+	MsgImportRedirects:          {en: "Redirects", ko: "리디렉션"},
+	MsgImportRedirectsHelp:      {en: "OwnGit follows a redirect only for the first request, and never sends this source's sign-in or CA to another origin.", ko: "OwnGit은 첫 요청의 리디렉션만 따르고, 이 원본의 로그인 정보나 CA를 다른 출처로 보내지 않습니다."},
+	MsgImportRedirectRefuse:     {en: "Refuse redirects", ko: "리디렉션 거부"},
+	MsgImportRedirectSame:       {en: "Follow redirects within the same origin", ko: "같은 출처 안의 리디렉션만 따르기"},
+	MsgImportRedirectApproved:   {en: "Also follow redirects to one approved origin", ko: "승인한 출처 한 곳으로의 리디렉션도 따르기"},
+	MsgImportRedirectOrigin:     {en: "Approved origin", ko: "승인한 출처"},
+	MsgImportRedirectOriginHelp: {en: "Used only with the approved-origin choice. Scheme and host only, for example https://mirror.example. The source's sign-in is not sent there; if that origin needs one, change the source address to it instead.", ko: "승인한 출처를 고른 경우에만 씁니다. https://mirror.example처럼 스킴과 호스트만 입력합니다. 원본의 로그인 정보는 이 출처로 보내지 않으므로, 로그인이 필요하면 원본 주소를 그 출처로 바꾸세요."},
+	MsgImportReserved:           {en: "Allow this exceptional destination", ko: "예외 대상 주소 허용"},
+	MsgImportReservedHelp:       {en: "This source can connect to services on a normally blocked network, such as a link-local, documentation or benchmarking address. Private addresses still need the private-network choice, and multicast and unspecified addresses stay blocked.", ko: "평소 차단되는 네트워크(링크 로컬, 문서용, 벤치마크용 주소 등)의 서비스에 이 원본이 연결할 수 있습니다. 사설 주소는 여전히 사설망 원본 허용이 필요하고, 멀티캐스트와 지정되지 않은 주소는 계속 차단됩니다."},
+	MsgImportLimits:             {en: "Capacity and time", ko: "용량과 시간"},
+	MsgImportLimitsHelp:         {en: "Leave a field empty to use its default. Higher limits let this import use more disk and keep the server busy longer. A change applies from the next run.", ko: "비워 두면 기본값을 씁니다. 한도를 높이면 이 가져오기가 디스크를 더 많이 쓰고 서버가 더 오래 바쁠 수 있습니다. 바꾼 값은 다음 실행부터 적용됩니다."},
+	MsgImportLimitsMore:         {en: "Transfer and scan limits", ko: "전송과 검사 한도"},
+	MsgImportLimitPack:          {en: "Largest pack", ko: "최대 팩 크기"},
+	MsgImportLimitRun:           {en: "Run time", ko: "전체 실행 시간"},
+	MsgImportLimitFetch:         {en: "Download time, including indexing", ko: "내려받기 시간(색인 포함)"},
+	MsgImportLimitIndex:         {en: "Indexing time", ko: "색인 시간"},
+	MsgImportLimitVerify:        {en: "Verification time", ko: "검증 시간"},
+	MsgImportLimitRefs:          {en: "Most refs listed", ko: "목록에 올 수 있는 ref 수"},
+	MsgImportLimitAdvertisement: {en: "Largest ref list", ko: "ref 목록 최대 크기"},
+	MsgImportLimitTLS:           {en: "TLS handshake time", ko: "TLS 핸드셰이크 시간"},
+	MsgImportLimitHeaders:       {en: "Wait for response headers", ko: "응답 헤더 대기 시간"},
+	MsgImportLimitLFS:           {en: "Objects checked for Git LFS", ko: "Git LFS 확인 대상 객체 수"},
+	MsgImportLimitWholeSeconds:  {en: "Enter a whole number of seconds.", ko: "초 단위의 정수로 입력하세요."},
+	MsgImportLimitRange:         {en: "This value is outside the allowed range, or the times do not fit inside the run time.", ko: "허용 범위를 벗어났거나 각 단계 시간이 전체 실행 시간 안에 들어가지 않습니다."},
+	MsgImportFactConnection:     {en: "Connection", ko: "연결"},
+	MsgImportFactDefaults:       {en: "Defaults", ko: "기본값"},
+	MsgImportFactPlainHTTP:      {en: "Plain HTTP allowed", ko: "암호화되지 않은 HTTP 허용"},
+	MsgImportFactSameOrigin:     {en: "Redirects within the origin", ko: "같은 출처 안 리디렉션"},
+	MsgImportFactApproved:       {en: "Redirects to", ko: "리디렉션 허용 출처"},
+	MsgImportFactReserved:       {en: "Exceptional destination allowed", ko: "예외 대상 주소 허용"},
+	MsgImportFactLimits:         {en: "Changed limits:", ko: "바꾼 한도:"},
+	MsgImportURLPlainHTTP:       {en: "This address uses plain HTTP. Allow plain HTTP for this source under Connection and limits, or enter an address that starts with https://.", ko: "이 주소는 암호화되지 않은 HTTP를 씁니다. ‘연결과 한도’에서 이 원본에 HTTP를 허용하거나 https://로 시작하는 주소를 입력하세요."},
+	MsgImportOriginInvalid:      {en: "Enter a scheme and host such as https://mirror.example, without a path. A plain HTTP origin also needs the plain HTTP choice.", ko: "https://mirror.example처럼 경로 없이 스킴과 호스트를 입력하세요. HTTP 출처는 암호화되지 않은 HTTP 허용도 필요합니다."},
+}
 
 var importCatalog = map[MessageCode]message{
 	MsgImportTab:                {en: "Import", ko: "가져오기"},
@@ -242,9 +322,9 @@ var importCatalog = map[MessageCode]message{
 	MsgImportModeHelp:              {en: "The mode records how you use this copy. Imports and refreshes work the same way in both modes.", ko: "방식에는 이 복사본을 어떻게 쓰는지 기록해 둡니다. 가져오기와 새로고침은 어느 방식이든 똑같이 동작합니다."},
 	MsgImportModeStandaloneHelp:    {en: "You use OwnGit as the main copy from now on.", ko: "앞으로 OwnGit을 주 저장소로 씁니다."},
 	MsgImportModeCoexistHelp:       {en: "The other host stays the main copy, and you refresh this copy from it.", ko: "다른 호스트가 계속 주 저장소이고 이 복사본은 거기서 새로고침합니다."},
-	MsgImportURLHelp:               {en: "The HTTPS clone address, for example https://example.com/team/project.git.", ko: "HTTPS 클론 주소를 입력합니다. 예: https://example.com/team/project.git"},
+	MsgImportURLHelp:               {en: "The HTTPS clone address, for example https://example.com/team/project.git. A plain HTTP address needs the plain HTTP choice under Connection and limits.", ko: "HTTPS 클론 주소를 입력합니다. 예: https://example.com/team/project.git. 암호화되지 않은 HTTP 주소는 ‘연결과 한도’에서 HTTP를 허용해야 합니다."},
 	MsgImportURLRequired:           {en: "Enter the source address.", ko: "원본 주소를 입력하세요."},
-	MsgImportURLHTTPS:              {en: "Only HTTPS addresses can be imported. Enter an address that starts with https://.", ko: "HTTPS 주소만 가져올 수 있습니다. https://로 시작하는 주소를 입력하세요."},
+	MsgImportURLHTTPS:              {en: "Only HTTPS addresses can be imported, and HTTP addresses when plain HTTP is allowed. Enter an address that starts with https://.", ko: "HTTPS 주소만 가져올 수 있으며, HTTP 주소는 암호화되지 않은 HTTP를 허용한 경우에만 가져올 수 있습니다. https://로 시작하는 주소를 입력하세요."},
 	MsgImportURLUser:               {en: "Leave the username and password out of the address. Enter them under Credentials instead.", ko: "주소에서 사용자 이름과 비밀번호를 빼세요. 인증 정보에 따로 입력하세요."},
 	MsgImportURLQuery:              {en: "Remove the part of the address after ? or #.", ko: "주소에서 ? 또는 # 뒤의 부분을 지우세요."},
 	MsgImportNameHelp:              {en: "Optional. Without a name, OwnGit uses the last part of the address. Letters, numbers, dots, dashes, and underscores.", ko: "선택 사항입니다. 비워 두면 주소의 마지막 부분을 이름으로 씁니다. 영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다."},
@@ -265,8 +345,8 @@ var importCatalog = map[MessageCode]message{
 	MsgImportErrorRefs:          {en: "The source has refs that cannot be imported safely.", ko: "원본에 안전하게 가져올 수 없는 ref가 있습니다."},
 	MsgImportErrorNetwork:       {en: "The source could not be reached.", ko: "원본에 연결할 수 없었습니다."},
 	MsgImportErrorProtocol:      {en: "The source sent a response that OwnGit could not accept.", ko: "원본이 OwnGit이 받아들일 수 없는 응답을 보냈습니다."},
-	MsgImportErrorTooLarge:      {en: "The source is larger than the import limits.", ko: "원본이 가져오기 한도보다 큽니다."},
-	MsgImportErrorTooManyRefs:   {en: "The source has more than 50,000 refs, the most an import accepts. If the source does not support Git protocol v2, pull request refs count too, although they are not imported. Clone the source and push its branches and tags to a new repository instead.", ko: "원본의 ref가 가져오기 한도인 50,000개를 넘습니다. 원본이 Git 프로토콜 v2를 지원하지 않으면 가져오지 않는 풀 리퀘스트 ref도 개수에 들어갑니다. 원본을 clone한 뒤 브랜치와 태그를 새 저장소에 푸시하세요."},
+	MsgImportErrorTooLarge:      {en: "The source is larger than this import's limits. You can raise them under Connection and limits.", ko: "원본이 이 가져오기의 한도보다 큽니다. ‘연결과 한도’에서 한도를 높일 수 있습니다."},
+	MsgImportErrorTooManyRefs:   {en: "The source lists more refs than this import accepts (50,000 unless you changed it). If the source does not support Git protocol v2, pull request refs count too, although they are not imported. Raise the ref limit under Connection and limits, or clone the source and push its branches and tags to a new repository.", ko: "원본의 ref가 이 가져오기의 한도(바꾸지 않았다면 50,000개)를 넘습니다. 원본이 Git 프로토콜 v2를 지원하지 않으면 가져오지 않는 풀 리퀘스트 ref도 개수에 들어갑니다. ‘연결과 한도’에서 ref 한도를 높이거나, 원본을 clone한 뒤 브랜치와 태그를 새 저장소에 푸시하세요."},
 	MsgImportErrorIndex:         {en: "The received pack could not be indexed.", ko: "받은 팩을 색인하지 못했습니다."},
 	MsgImportErrorVerify:        {en: "The received content did not pass verification.", ko: "받은 내용이 검증을 통과하지 못했습니다."},
 	MsgImportErrorPublish:       {en: "The imported refs could not be published.", ko: "가져온 ref를 게시하지 못했습니다."},
@@ -440,10 +520,12 @@ func importTokenCode(token string) (MessageCode, bool) {
 }
 
 func init() {
-	for code, entry := range importCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
+	for _, source := range []map[MessageCode]message{importCatalog, importOptionsCatalog} {
+		for code, entry := range source {
+			if _, exists := catalog[code]; exists {
+				panic("webui: duplicate message code " + string(code))
+			}
+			catalog[code] = entry
 		}
-		catalog[code] = entry
 	}
 }

@@ -8,7 +8,7 @@
   </div>
   <form class="form" method="post" action="{{$p.SubmitURL}}">
     <input type="hidden" name="csrf" value="{{$csrf}}">
-    {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import-new" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Focus" false}}
+    {{template "importSourceFields" dict "Lang" $lang "Notices" $n "ID" "import-new" "URL" $p.URL "Mode" $p.Mode "GitOnly" $p.GitOnlyConsent "Private" $p.PrivateNetwork "Options" $p.Options "Focus" false}}
     <div class="f">
       <label for="import-new-name">{{bi $lang "import.name"}}</label>
       <input id="import-new-name" name="name" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" value="{{$p.Name}}"

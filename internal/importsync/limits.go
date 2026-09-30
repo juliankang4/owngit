@@ -195,26 +195,38 @@ func (l Limits) withSource(saved state.ImportLimits) (Limits, error) {
 	return l, nil
 }
 
+// LimitConflictError refuses saved limits whose stages cannot finish inside
+// the run. Field names the limit to raise with it.
+type LimitConflictError struct {
+	Field   string
+	message string
+}
+
+func (e *LimitConflictError) Error() string { return e.message }
+
 // checkSourceLimits refuses saved limits whose stages cannot finish inside
 // the run: the fetch, verification and indexing each within the run time, and
 // indexing, which reads the pack while it arrives, within the fetch time.
 func checkSourceLimits(saved state.ImportLimits) error {
-	limits, err := Limits{}.withSource(saved)
+	limits, err := SourceLimits(saved)
 	if err != nil {
-		return err
-	}
-	if limits, err = limits.effective(); err != nil {
 		return err
 	}
 	switch {
 	case limits.Fetch.TotalTimeout > limits.RunTimeout:
-		return fmt.Errorf("the fetch time (%s) is longer than the run time (%s); raise the run time too", limits.Fetch.TotalTimeout, limits.RunTimeout)
+		return &LimitConflictError{Field: "fetch_seconds", message: fmt.Sprintf("the download time (%s) is longer than the run time (%s); raise the run time too", limits.Fetch.TotalTimeout, limits.RunTimeout)}
 	case limits.VerifyTimeout > limits.RunTimeout:
-		return fmt.Errorf("the verification time (%s) is longer than the run time (%s); raise the run time too", limits.VerifyTimeout, limits.RunTimeout)
+		return &LimitConflictError{Field: "verify_seconds", message: fmt.Sprintf("the verification time (%s) is longer than the run time (%s); raise the run time too", limits.VerifyTimeout, limits.RunTimeout)}
 	case limits.IndexTimeout > limits.Fetch.TotalTimeout:
-		return fmt.Errorf("the indexing time (%s) is longer than the fetch time (%s), which includes indexing; raise the fetch time too", limits.IndexTimeout, limits.Fetch.TotalTimeout)
+		return &LimitConflictError{Field: "index_seconds", message: fmt.Sprintf("the indexing time (%s) is longer than the download time (%s), which includes indexing; raise the download time too", limits.IndexTimeout, limits.Fetch.TotalTimeout)}
 	}
 	return nil
+}
+
+// DefaultSourceLimits states the built-in limits in the units a source saves
+// them, for showing each default beside its field.
+func DefaultSourceLimits() state.ImportLimits {
+	return limitValues(DefaultLimits())
 }
 
 // limitValues states effective limits in the units a source saves them.

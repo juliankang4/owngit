@@ -2,15 +2,18 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,7 +28,7 @@ import (
 func importCommand(arguments []string) error {
 	if len(arguments) == 0 {
 		printImportUsage(os.Stderr)
-		return cliProblem("invalid_arguments", "import requires add, refresh, status, history, cancel, schedule, credentials, or resolve.")
+		return cliProblem("invalid_arguments", "import requires add, configure, refresh, status, history, cancel, schedule, credentials, or resolve.")
 	}
 	if isHelpArgument(arguments[0]) {
 		printImportUsage(os.Stdout)
@@ -34,6 +37,8 @@ func importCommand(arguments []string) error {
 	switch arguments[0] {
 	case "add":
 		return importAdd(arguments[1:])
+	case "configure":
+		return importConfigure(arguments[1:])
 	case "refresh":
 		return importRefresh(arguments[1:])
 	case "status":
@@ -54,10 +59,11 @@ func importCommand(arguments []string) error {
 }
 
 func printImportUsage(writer io.Writer) {
-	fmt.Fprintln(writer, "Usage: owngit import <add|refresh|status|history|cancel|schedule|credentials|resolve> [options]")
-	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH]")
+	fmt.Fprintln(writer, "Usage: owngit import <add|configure|refresh|status|history|cancel|schedule|credentials|resolve> [options]")
+	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH] [source options]")
+	fmt.Fprintln(writer, "  import configure <name> [source options] [--json]   change the connection options and limits of a source")
 	fmt.Fprintln(writer, "  import refresh <name>")
-	fmt.Fprintln(writer, "  import status <name>")
+	fmt.Fprintln(writer, "  import status <name> [--json]")
 	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW]")
 	fmt.Fprintln(writer, "  import cancel <name>")
 	fmt.Fprintln(writer, "  import schedule <name> --enable --interval 1h | --disable")
@@ -65,6 +71,16 @@ func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  import credentials <name> --clear")
 	fmt.Fprintln(writer, "  import resolve <name>   accept the repository as it is after an unresolved publication")
 	fmt.Fprintln(writer, "Credentials are read from a private file or an interactive prompt, never from arguments or the environment.")
+	fmt.Fprintln(writer, "Source options:")
+	fmt.Fprintln(writer, "  --allow-plain-http[=false]              use an http:// source; its code and credentials can be read or changed in transit")
+	fmt.Fprintln(writer, "  --redirects refuse|same_origin|approved follow no redirect, redirects within the origin, or also to --approved-origin")
+	fmt.Fprintln(writer, "  --approved-origin https://HOST[:PORT]    the one other origin approved redirects follow; it never receives the source's credentials")
+	fmt.Fprintln(writer, "  --allow-exceptional-destination[=false] reach usable special-purpose addresses, such as documentation or link-local ranges")
+	fmt.Fprintln(writer, "  --limit NAME=VALUE                      set one limit, repeatable; setting a limit to its default value returns it to the default")
+	fmt.Fprintln(writer, "    sizes (pack_bytes, advertisement_bytes) take bytes or KiB, MiB, GiB, TiB; times (run_seconds, fetch_seconds,")
+	fmt.Fprintln(writer, "    index_seconds, verify_seconds, tls_handshake_seconds, response_header_seconds) take seconds or a duration such")
+	fmt.Fprintln(writer, "    as 90m; counts (refs, lfs_objects) take a number. Higher limits let an import use more disk and run longer.")
+	fmt.Fprintln(writer, "  owngit import status <name> shows every limit in force.")
 }
 
 type importFlags struct {
@@ -113,6 +129,7 @@ func importAdd(arguments []string) error {
 	tokenFile := flags.String("token-file", "", "private file containing a bearer token")
 	basicFile := flags.String("basic-file", "", "private file containing a username and password on separate lines")
 	caFile := flags.String("ca-file", "", "PEM file containing source trust anchors")
+	options := addImportOptionFlags(flags)
 	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
@@ -130,6 +147,9 @@ func importAdd(arguments []string) error {
 	body := map[string]any{
 		"name": flags.Arg(0), "url": flags.Arg(1), "mode": *mode,
 		"git_only_consent": *gitOnly, "allow_private_network": *privateNetwork,
+	}
+	for key, value := range options.body(flags) {
+		body[key] = value
 	}
 	if *tokenFile != "" && *basicFile != "" {
 		return cliProblem("invalid_arguments", "Use only one of --token-file or --basic-file.")
@@ -183,9 +203,19 @@ func importRefresh(arguments []string) error {
 }
 
 // importRunClientTimeout bounds one synchronous import run request. It is
-// longer than the server's request deadline for that run, so the server, not
-// this client, ends a slow run and the client still receives its outcome.
-var importRunClientTimeout = server.ImportRunRequestTimeout(importsync.DefaultLimits().RunTimeout) + time.Minute
+// longer than the server's request deadline for a run with the longest run
+// time a source can set, so the server, not this client, ends a slow run and
+// the client still receives its outcome.
+var importRunClientTimeout = server.ImportRunRequestTimeout(longestImportRunTime()) + time.Minute
+
+func longestImportRunTime() time.Duration {
+	for _, field := range state.ImportLimitFields {
+		if field.Name == "run_seconds" {
+			return time.Duration(field.Max) * time.Second
+		}
+	}
+	return importsync.DefaultLimits().RunTimeout
+}
 
 // runImport posts one synchronous import run. Other import commands keep the
 // ordinary API request limit.
@@ -195,10 +225,16 @@ func runImport(client *apiclient.Client, path string, body map[string]any) ([]by
 }
 
 func importStatus(arguments []string) error {
-	name, remote, err := parseNamedImport("import status", arguments)
-	if err != nil {
+	flags := newCommandFlagSet("import status")
+	remote := addImportFlags(flags)
+	asJSON := flags.Bool("json", false, "print JSON")
+	if err := parseImportFlags(flags, arguments); err != nil {
 		return err
 	}
+	if flags.NArg() != 1 {
+		return cliProblem("invalid_arguments", "import status requires <name>.")
+	}
+	name := flags.Arg(0)
 	path, err := importRepositoryPath(name)
 	if err != nil {
 		return err
@@ -234,16 +270,20 @@ func importStatus(arguments []string) error {
 			Code             string `json:"code"`
 			Reason           string `json:"reason"`
 		} `json:"runtime"`
-		Refs          []importRefView `json:"refs"`
-		RefsTruncated bool            `json:"refs_truncated"`
-		LastRun       *runSummary     `json:"last_run"`
-		ActiveRun     *runSummary     `json:"active_run"`
+		Refs          []importRefView           `json:"refs"`
+		RefsTruncated bool                      `json:"refs_truncated"`
+		LastRun       *runSummary               `json:"last_run"`
+		ActiveRun     *runSummary               `json:"active_run"`
+		Options       *importsync.OptionsStatus `json:"options"`
 	}
 	var envelope struct {
 		Status json.RawMessage `json:"status"`
 	}
 	if err := json.Unmarshal(content, &envelope); err != nil || json.Unmarshal(envelope.Status, &status) != nil {
 		return cliProblem("invalid_response", "Import status could not be read.")
+	}
+	if *asJSON {
+		return printIndentedJSON(envelope.Status)
 	}
 	if !status.Configured {
 		fmt.Printf("Import for %s is not configured.\n", name)
@@ -254,6 +294,7 @@ func importStatus(arguments []string) error {
 		bound = "yes"
 	}
 	fmt.Printf("Import for %s\nURL: %s\nMode: %s\nCredential: %s, bound: %s\n", name, status.URL, status.Mode, status.CredentialForm, bound)
+	printImportOptions(status.Options)
 	if status.Content.Incomplete {
 		fmt.Println("Content is incomplete.")
 	}
@@ -556,6 +597,201 @@ func readImportCA(path string) (string, error) {
 	return string(content), nil
 }
 
+// importOptionFlags are the source options of import add and import
+// configure. Only the options given on the command line are sent, so the
+// others keep their value.
+type importOptionFlags struct {
+	plainHTTP      *bool
+	redirects      *string
+	approvedOrigin *string
+	reserved       *bool
+	limits         importLimitFlags
+}
+
+func addImportOptionFlags(flags *flag.FlagSet) *importOptionFlags {
+	options := &importOptionFlags{
+		plainHTTP:      flags.Bool("allow-plain-http", false, "allow an http:// source for this source"),
+		redirects:      flags.String("redirects", "", "refuse, same_origin, or approved"),
+		approvedOrigin: flags.String("approved-origin", "", "the one other origin approved redirects follow, such as https://mirror.example"),
+		reserved:       flags.Bool("allow-exceptional-destination", false, "reach usable special-purpose addresses for this source"),
+		limits:         importLimitFlags{},
+	}
+	flags.Var(options.limits, "limit", "set one limit as `NAME=VALUE`; repeatable")
+	return options
+}
+
+// body is the request fields of the options given on the command line.
+func (options *importOptionFlags) body(flags *flag.FlagSet) map[string]any {
+	body := map[string]any{}
+	flags.Visit(func(given *flag.Flag) {
+		switch given.Name {
+		case "allow-plain-http":
+			body["allow_plain_http"] = *options.plainHTTP
+		case "redirects":
+			body["redirects"] = *options.redirects
+		case "approved-origin":
+			body["approved_redirect_origin"] = *options.approvedOrigin
+		case "allow-exceptional-destination":
+			body["allow_reserved_addresses"] = *options.reserved
+		}
+	})
+	if len(options.limits) > 0 {
+		body["limits"] = map[string]int64(options.limits)
+	}
+	return body
+}
+
+// importLimitFlags collects --limit NAME=VALUE. A size takes bytes or a
+// binary unit, a time takes seconds or a Go duration, and a count a number.
+// The server checks each value against its range.
+type importLimitFlags map[string]int64
+
+func (limits importLimitFlags) String() string { return "" }
+
+func (limits importLimitFlags) Set(argument string) error {
+	name, raw, found := strings.Cut(argument, "=")
+	name, raw = strings.TrimSpace(name), strings.TrimSpace(raw)
+	if !found || name == "" || raw == "" {
+		return errors.New("a limit is NAME=VALUE, such as run_seconds=2h")
+	}
+	known := false
+	for _, field := range state.ImportLimitFields {
+		known = known || field.Name == name
+	}
+	if !known {
+		return fmt.Errorf("unknown limit %q; see owngit import --help", name)
+	}
+	if _, repeated := limits[name]; repeated {
+		return fmt.Errorf("limit %s is given twice", name)
+	}
+	value, err := parseImportLimitValue(name, raw)
+	if err != nil {
+		return fmt.Errorf("limit %s: %w", name, err)
+	}
+	limits[name] = value
+	return nil
+}
+
+func parseImportLimitValue(name, raw string) (int64, error) {
+	if number, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		return number, nil
+	}
+	switch {
+	case strings.HasSuffix(name, "_seconds"):
+		duration, err := time.ParseDuration(raw)
+		if err != nil || duration%time.Second != 0 {
+			return 0, errors.New("use whole seconds or a duration such as 90m")
+		}
+		return int64(duration / time.Second), nil
+	case strings.HasSuffix(name, "_bytes"):
+		for _, unit := range []struct {
+			suffix string
+			factor int64
+		}{{"KiB", 1 << 10}, {"MiB", 1 << 20}, {"GiB", 1 << 30}, {"TiB", 1 << 40}} {
+			amount, found := strings.CutSuffix(raw, unit.suffix)
+			if !found {
+				continue
+			}
+			number, err := strconv.ParseInt(strings.TrimSpace(amount), 10, 64)
+			// Check the amount before multiplying so it cannot overflow.
+			if err != nil || number < 0 || number > math.MaxInt64/unit.factor {
+				return 0, errors.New("use bytes or a whole number of KiB, MiB, GiB or TiB")
+			}
+			return number * unit.factor, nil
+		}
+		return 0, errors.New("use bytes or a whole number of KiB, MiB, GiB or TiB")
+	}
+	return 0, errors.New("use a whole number")
+}
+
+// importConfigure changes the connection options and limits of a source.
+// The address, mode and consents stay.
+func importConfigure(arguments []string) error {
+	flags := newCommandFlagSet("import configure")
+	remote := addImportFlags(flags)
+	options := addImportOptionFlags(flags)
+	asJSON := flags.Bool("json", false, "print JSON")
+	if err := parseImportFlags(flags, arguments); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return cliProblem("invalid_arguments", "import configure requires <name>.")
+	}
+	body := options.body(flags)
+	if len(body) == 0 {
+		return cliProblem("invalid_arguments", "import configure needs at least one source option; see owngit import --help.")
+	}
+	path, err := importRepositoryPath(flags.Arg(0))
+	if err != nil {
+		return err
+	}
+	client, err := remote.client()
+	if err != nil {
+		return err
+	}
+	content, err := client.Do(context.Background(), http.MethodPatch, path, body)
+	if err != nil {
+		return err
+	}
+	var response struct {
+		URL     string                    `json:"url"`
+		Options *importsync.OptionsStatus `json:"options"`
+	}
+	if err := json.Unmarshal(content, &response); err != nil || response.Options == nil {
+		return cliProblem("invalid_response", "The changed import source could not be read.")
+	}
+	if *asJSON {
+		return printIndentedJSON(content)
+	}
+	fmt.Printf("Saved the source options of %s. Changes apply from the next run.\n", flags.Arg(0))
+	printImportOptions(response.Options)
+	return nil
+}
+
+// printImportOptions describes a source's options and limits in words.
+func printImportOptions(options *importsync.OptionsStatus) {
+	if options == nil {
+		return
+	}
+	if options.Problem != "" {
+		fmt.Println("Problem: " + options.Problem)
+	}
+	if options.AllowPlainHTTP {
+		fmt.Println("Plain HTTP: allowed; the source's code and credentials can be read or changed in transit")
+	}
+	switch options.Redirects {
+	case state.ImportRedirectSameOrigin:
+		fmt.Println("Redirects: followed within the source origin")
+	case state.ImportRedirectApproved:
+		fmt.Printf("Redirects: followed within the source origin and to %s, which never receives the source's credentials\n", options.ApprovedRedirectOrigin)
+	default:
+		fmt.Println("Redirects: refused")
+	}
+	if options.AllowReservedAddresses {
+		fmt.Println("Exceptional destination: allowed")
+	}
+	if len(options.ChangedLimits) == 0 {
+		fmt.Println("Limits: defaults")
+		return
+	}
+	var changed []string
+	for _, name := range options.ChangedLimits {
+		if value, known := options.Limits.Field(name); known {
+			changed = append(changed, fmt.Sprintf("%s=%d", name, *value))
+		}
+	}
+	fmt.Println("Changed limits: " + strings.Join(changed, ", "))
+}
+
+func printIndentedJSON(content []byte) error {
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, content, "", "  "); err != nil {
+		return cliProblem("invalid_response", "The response could not be read.")
+	}
+	fmt.Println(indented.String())
+	return nil
+}
+
 func parseNamedImport(name string, arguments []string) (string, *importFlags, error) {
 	flags := newCommandFlagSet(name)
 	remote := addImportFlags(flags)
@@ -604,7 +840,8 @@ func splitImportArgs(arguments []string) (positionals, flagArgs []string) {
 
 func isImportBoolFlag(arg string) bool {
 	switch arg {
-	case "--git-only-consent", "--allow-private-network", "--accept-insecure-http", "--enable", "--disable", "--clear", "-h", "--help":
+	case "--git-only-consent", "--allow-private-network", "--accept-insecure-http", "--enable", "--disable", "--clear", "-h", "--help",
+		"--allow-plain-http", "--allow-exceptional-destination", "--json":
 		return true
 	default:
 		return false
