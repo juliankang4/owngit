@@ -203,7 +203,8 @@ func printNetworkUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  network show [--json]                 saved settings and, when OwnGit runs, the values it uses")
 	fmt.Fprintln(writer, "  network set [--listen ADDR] [--base-url URL] [--allowed-host HOST ...] [--remove-allowed-host HOST ...]")
 	fmt.Fprintln(writer, "              [--trusted-proxy ADDR_OR_CIDR ...] [--remove-trusted-proxy ADDR_OR_CIDR ...]")
-	fmt.Fprintln(writer, "  network reset [--clear-allowed-hosts] [--clear-trusted-proxies]  remove the saved listen address and base URL")
+	fmt.Fprintln(writer, "              [--accept-insecure-http] [--json]")
+	fmt.Fprintln(writer, "  network reset [--clear-allowed-hosts] [--clear-trusted-proxies] [--json]  remove the saved listen address and base URL")
 	fmt.Fprintln(writer, "Saved settings apply at the next start. A serve flag overrides one for that run only.")
 }
 
@@ -266,6 +267,12 @@ func savedNetworkReport(stateDir string) (networkReport, error) {
 		return networkReport{}, err
 	}
 	defer store.Close()
+	return networkReportOf(ctx, store)
+}
+
+// networkReportOf reads the saved network settings of store and what a
+// running server uses.
+func networkReportOf(ctx context.Context, store *state.Store) (networkReport, error) {
 	saved, err := store.NetworkSettings(ctx)
 	if err != nil {
 		return networkReport{}, err
@@ -350,63 +357,68 @@ func networkSet(arguments []string) error {
 	flags.Var(&addProxies, "trusted-proxy", "trust forwarded headers from this reverse proxy `address` or CIDR range (repeatable)")
 	flags.Var(&removeProxies, "remove-trusted-proxy", "stop trusting this proxy `address` or CIDR range (repeatable)")
 	acceptPlain := flags.Bool("accept-insecure-http", false, "accept that other computers reach OwnGit over plain HTTP, which is not encrypted; needed once for a listen address beyond this computer")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print the saved settings as JSON")
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
+	invalid := func(err error) error { return jsonFailure(*asJSON, "invalid_arguments", err) }
+	unavailable := func(err error) error { return jsonFailure(*asJSON, "state_unavailable", err) }
 	if flags.NArg() != 0 {
-		return errors.New("network set accepts no positional arguments")
+		return invalid(errors.New("network set accepts no positional arguments"))
 	}
 	set := map[string]bool{}
 	flags.Visit(func(entry *flag.Flag) { set[entry.Name] = true })
 	if !set["listen"] && !set["base-url"] && len(addHosts) == 0 && len(removeHosts) == 0 && len(addProxies) == 0 && len(removeProxies) == 0 {
-		printNetworkUsage(os.Stderr)
-		return errors.New("network set needs --listen, --base-url, --allowed-host, --remove-allowed-host, --trusted-proxy, or --remove-trusted-proxy")
+		if !*asJSON {
+			printNetworkUsage(os.Stderr)
+		}
+		return invalid(errors.New("network set needs --listen, --base-url, --allowed-host, --remove-allowed-host, --trusted-proxy, or --remove-trusted-proxy"))
 	}
 	// Every value is checked before anything is saved.
 	if set["listen"] && *listen != "" {
 		if err := server.ValidateListenAddress(*listen); err != nil {
-			return err
+			return invalid(err)
 		}
 	}
 	if set["base-url"] && *baseURL != "" {
 		canonical, err := server.ValidateBaseURL(*baseURL)
 		if err != nil {
-			return err
+			return invalid(err)
 		}
 		*baseURL = canonical
 	}
 	add, err := normalizeHostArguments(addHosts)
 	if err != nil {
-		return err
+		return invalid(err)
 	}
 	remove, err := normalizeHostArguments(removeHosts)
 	if err != nil {
-		return err
+		return invalid(err)
 	}
 	for _, host := range add {
 		if slices.Contains(remove, host) {
-			return fmt.Errorf("%s is both allowed and removed", host)
+			return invalid(fmt.Errorf("%s is both allowed and removed", host))
 		}
 	}
 	trust, err := canonicalProxies(addProxies)
 	if err != nil {
-		return err
+		return invalid(err)
 	}
 	distrust := removableProxies(removeProxies)
 	for _, proxy := range trust {
 		if slices.Contains(distrust, proxy) {
-			return fmt.Errorf("%s is both trusted and removed", proxy)
+			return invalid(fmt.Errorf("%s is both trusted and removed", proxy))
 		}
 	}
 	ctx := context.Background()
 	store, err := openLiveState(ctx, *stateDir)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	defer store.Close()
 	update := state.NetworkUpdate{AddHosts: add, AddProxies: trust, RemoveProxies: distrust}
 	if update.Settings, err = store.NetworkSettings(ctx); err != nil {
-		return err
+		return unavailable(err)
 	}
 	if set["listen"] {
 		update.Settings.Listen = *listen
@@ -419,26 +431,28 @@ func networkSet(arguments []string) error {
 	// anything is saved.
 	settings, err := store.Settings(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	if server.PlainHTTPAcknowledgementNeeded(update.Settings.Listen, settings.InsecureHTTPAccepted) {
 		if !*acceptPlain {
-			return fmt.Errorf("listening on %s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or listen on a loopback address", update.Settings.Listen)
+			return jsonFailure(*asJSON, "acknowledgement_required", fmt.Errorf("listening on %s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or listen on a loopback address", update.Settings.Listen))
 		}
 		update.AcknowledgeInsecureHTTP = true
 	}
+	// notes are said before the result, warnings after it.
+	var notes, warnings []string
 	savedProxies, err := store.TrustedProxies(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	for _, proxy := range distrust {
 		if !slices.Contains(savedProxies, proxy) {
-			fmt.Printf("%s was not a trusted proxy.\n", proxy)
+			notes = append(notes, proxy+" was not a trusted proxy.")
 		}
 	}
 	stored, err := store.TrustedHosts(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	// Stored names may predate normalization, so removal compares the
 	// normalized form and removes the stored spelling.
@@ -450,36 +464,68 @@ func networkSet(arguments []string) error {
 			}
 		}
 		if !found {
-			fmt.Printf("%s was not an allowed Host.\n", host)
+			notes = append(notes, host+" was not an allowed Host.")
 		}
 	}
 	if err := store.UpdateNetwork(ctx, update); err != nil {
-		return err
+		return unavailable(err)
 	}
-	fmt.Println("Network settings saved. They apply at the next start of OwnGit; a serve flag still overrides one for that run.")
 	if set["listen"] && *listen != "" {
 		host, _, _ := net.SplitHostPort(*listen)
 		if !server.IsLoopbackHost(host) {
-			fmt.Println("Note: other devices will reach OwnGit over plain HTTP, which is not encrypted. A reverse proxy with HTTPS or Tailscale HTTPS gives an encrypted connection.")
+			warnings = append(warnings, "Other devices will reach OwnGit over plain HTTP, which is not encrypted. A reverse proxy with HTTPS or Tailscale HTTPS gives an encrypted connection.")
 		}
 		// Listening on every interface accepts no new name by itself, so
 		// other devices would be refused until a name is allowed.
 		allowed, err := store.TrustedHosts(ctx)
 		if err != nil {
-			return err
+			return unavailable(err)
 		}
 		if (host == "" || net.ParseIP(host).IsUnspecified()) && update.Settings.BaseURL == "" && len(allowed) == 0 {
-			fmt.Println("Note: other devices must use a name OwnGit accepts. Save it with --base-url or --allowed-host.")
+			warnings = append(warnings, "Other devices must use a name OwnGit accepts. Save it with --base-url or --allowed-host.")
 		}
 	}
 	proxies, err := store.TrustedProxies(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	if strings.HasPrefix(update.Settings.BaseURL, "https:") && len(proxies) == 0 {
-		fmt.Println("Note: the base URL uses https but no reverse proxy is trusted. Name the proxy with --trusted-proxy so that OwnGit treats requests through it as HTTPS.")
+		warnings = append(warnings, "The base URL uses https but no reverse proxy is trusted. Name the proxy with --trusted-proxy so that OwnGit treats requests through it as HTTPS.")
+	}
+	if *asJSON {
+		return printNetworkChange(ctx, store, append(notes, warnings...))
+	}
+	for _, note := range notes {
+		fmt.Println(note)
+	}
+	fmt.Println("Network settings saved. They apply at the next start of OwnGit; a serve flag still overrides one for that run.")
+	for _, warning := range warnings {
+		fmt.Println("Note: " + warning)
 	}
 	return nil
+}
+
+// printNetworkChange prints the JSON result of "network set" and "network
+// reset": the network report as saved now, which applies at the next start,
+// whether the plain HTTP acknowledgement is recorded, and warnings.
+func printNetworkChange(ctx context.Context, store *state.Store, warnings []string) error {
+	report, err := networkReportOf(ctx, store)
+	if err != nil {
+		return jsonFailure(true, "state_unavailable", err)
+	}
+	settings, err := store.Settings(ctx)
+	if err != nil {
+		return jsonFailure(true, "state_unavailable", err)
+	}
+	return printJSON(struct {
+		OK bool `json:"ok"`
+		networkReport
+		// AppliesAtNextStart says that saved settings take effect when
+		// OwnGit starts next; a serve flag still overrides one for a run.
+		AppliesAtNextStart bool     `json:"applies_at_next_start"`
+		PlainHTTPAccepted  bool     `json:"plain_http_accepted"`
+		Warnings           []string `json:"warnings,omitempty"`
+	}{true, report, true, settings.InsecureHTTPAccepted, warnings})
 }
 
 // removableProxies returns the stored text to remove for each argument: the
@@ -518,28 +564,30 @@ func networkReset(arguments []string) error {
 	flags, stateDir := newNetworkFlags("network reset")
 	clearHosts := flags.Bool("clear-allowed-hosts", false, "also remove every allowed Host name")
 	clearProxies := flags.Bool("clear-trusted-proxies", false, "also remove every trusted proxy")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print the saved settings as JSON")
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("network reset accepts no positional arguments")
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("network reset accepts no positional arguments"))
 	}
+	unavailable := func(err error) error { return jsonFailure(*asJSON, "state_unavailable", err) }
 	if err := state.RequireExisting(*stateDir); err != nil {
-		return err
+		return unavailable(err)
 	}
 	ctx := context.Background()
 	store, err := openLiveState(ctx, *stateDir)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	defer store.Close()
 	hosts, err := store.TrustedHosts(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	proxies, err := store.TrustedProxies(ctx)
 	if err != nil {
-		return err
+		return unavailable(err)
 	}
 	update := state.NetworkUpdate{}
 	if *clearHosts {
@@ -549,7 +597,10 @@ func networkReset(arguments []string) error {
 		update.RemoveProxies, proxies = proxies, nil
 	}
 	if err := store.UpdateNetwork(ctx, update); err != nil {
-		return err
+		return unavailable(err)
+	}
+	if *asJSON {
+		return printNetworkChange(ctx, store, nil)
 	}
 	fmt.Printf("Saved listen address and base URL removed. At the next start OwnGit listens on %s, unless a serve flag says otherwise.\n", server.DefaultListenAddress)
 	if *clearHosts {

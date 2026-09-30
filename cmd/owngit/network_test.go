@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -464,5 +466,90 @@ func TestTheTailscaleCommandSetupPrintsIsAccepted(t *testing.T) {
 	noErr(t, err)
 	if network.Listen != "100.64.0.7:7654" || !settings.InsecureHTTPAccepted {
 		t.Fatalf("saved %+v accepted=%v", network, settings.InsecureHTTPAccepted)
+	}
+}
+
+// network set --json and network reset --json print one JSON result: the
+// settings as saved, which apply at the next start, the plain HTTP
+// acknowledgement and warnings. A refusal is a JSON error and saves nothing.
+func TestNetworkSetAndResetPrintJSON(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	type change struct {
+		OK    bool `json:"ok"`
+		Saved struct {
+			Listen         string   `json:"listen"`
+			BaseURL        string   `json:"base_url"`
+			AllowedHosts   []string `json:"allowed_hosts"`
+			TrustedProxies []string `json:"trusted_proxies"`
+		} `json:"saved"`
+		AppliesAtNextStart bool     `json:"applies_at_next_start"`
+		PlainHTTPAccepted  bool     `json:"plain_http_accepted"`
+		Warnings           []string `json:"warnings"`
+	}
+	decode := func(output string) change {
+		t.Helper()
+		var result change
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("output %q: %v", output, err)
+		}
+		return result
+	}
+	jsonError := func(err error) string {
+		t.Helper()
+		var output bytes.Buffer
+		if reportError(&output, err) != 1 {
+			t.Fatalf("exit status for %v", err)
+		}
+		var envelope struct {
+			OK    bool `json:"ok"`
+			Error struct {
+				Code string `json:"code"`
+			} `json:"error"`
+		}
+		if json.Unmarshal(output.Bytes(), &envelope) != nil || envelope.OK {
+			t.Fatalf("not a JSON error: %q", output.String())
+		}
+		return envelope.Error.Code
+	}
+
+	if _, err := runNetwork(t, "reset", "--state-dir", stateDir, "--json"); jsonError(err) != "state_unavailable" {
+		t.Fatalf("reset before any state: %v", err)
+	}
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--json"); jsonError(err) != "invalid_arguments" {
+		t.Fatalf("set without a setting: %v", err)
+	}
+	result := decode(noErrOutput(t)(runNetwork(t, "set", "--state-dir", stateDir, "--listen", "127.0.0.1:7730", "--allowed-host", "gitbox.internal", "--remove-trusted-proxy", "10.0.0.1", "--json")))
+	if !result.OK || result.Saved.Listen != "127.0.0.1:7730" || !slices.Contains(result.Saved.AllowedHosts, "gitbox.internal") ||
+		!result.AppliesAtNextStart || result.PlainHTTPAccepted || len(result.Warnings) != 1 || !strings.Contains(result.Warnings[0], "10.0.0.1 was not a trusted proxy") {
+		t.Fatalf("set printed %+v", result)
+	}
+	if _, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7730", "--json"); jsonError(err) != "acknowledgement_required" {
+		t.Fatalf("an address beyond this computer without the acknowledgement: %v", err)
+	}
+	result = decode(noErrOutput(t)(runNetwork(t, "set", "--state-dir", stateDir, "--trusted-proxy", "10.0.0.2", "--json")))
+	if result.Saved.Listen != "127.0.0.1:7730" || result.PlainHTTPAccepted {
+		t.Fatalf("the refused change was saved: %+v", result)
+	}
+	result = decode(noErrOutput(t)(runNetwork(t, "set", "--state-dir", stateDir, "--listen", "0.0.0.0:7730", "--accept-insecure-http", "--json")))
+	if result.Saved.Listen != "0.0.0.0:7730" || !result.PlainHTTPAccepted || len(result.Warnings) == 0 || !strings.Contains(result.Warnings[0], "plain HTTP") {
+		t.Fatalf("set with the acknowledgement printed %+v", result)
+	}
+
+	result = decode(noErrOutput(t)(runNetwork(t, "reset", "--state-dir", stateDir, "--json")))
+	if result.Saved.Listen != "" || len(result.Saved.AllowedHosts) == 0 || len(result.Saved.TrustedProxies) != 1 || !result.PlainHTTPAccepted {
+		t.Fatalf("reset printed %+v", result)
+	}
+	result = decode(noErrOutput(t)(runNetwork(t, "reset", "--state-dir", stateDir, "--clear-allowed-hosts", "--clear-trusted-proxies", "--json")))
+	if len(result.Saved.AllowedHosts) != 0 || len(result.Saved.TrustedProxies) != 0 {
+		t.Fatalf("reset with clears printed %+v", result)
+	}
+}
+
+// noErrOutput fails the test on an error and returns the output.
+func noErrOutput(t *testing.T) func(string, error) string {
+	return func(output string, err error) string {
+		t.Helper()
+		noErr(t, err)
+		return output
 	}
 }
