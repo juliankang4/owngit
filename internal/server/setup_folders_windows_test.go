@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"golang.org/x/sys/windows"
+
+	"owngit/internal/webui"
 )
 
 func TestFolderChooserWindowsDrivesAndHiddenAttributes(t *testing.T) {
@@ -31,7 +34,7 @@ func TestFolderChooserWindowsDrivesAndHiddenAttributes(t *testing.T) {
 	if got != mask || mask == 0 || result.Path != "" {
 		t.Fatalf("drives=%+v mask=%x", result, mask)
 	}
-	root := folderFixture(t)
+	root := t.TempDir()
 	noErr(t, os.Mkdir(filepath.Join(root, "visible"), 0o700))
 	hidden := filepath.Join(root, "hidden-attribute")
 	noErr(t, os.Mkdir(hidden, 0o700))
@@ -68,6 +71,10 @@ func TestFolderChooserWindowsJunctions(t *testing.T) {
 	for _, path := range []string{root, target, gone, filepath.Join(root, "real"), filepath.Join(target, "inside")} {
 		noErr(t, os.Mkdir(path, 0o700))
 	}
+	targetPointer, err := windows.UTF16PtrFromString(target)
+	noErr(t, err)
+	noErr(t, windows.SetFileAttributes(targetPointer, windows.FILE_ATTRIBUTE_HIDDEN))
+	t.Cleanup(func() { _ = windows.SetFileAttributes(targetPointer, windows.FILE_ATTRIBUTE_NORMAL) })
 	makeFolderJunction(t, filepath.Join(root, "junction"), target)
 	makeFolderJunction(t, filepath.Join(root, "broken"), gone)
 	noErr(t, os.Rename(gone, filepath.Join(base, "gone-moved")))
@@ -77,8 +84,12 @@ func TestFolderChooserWindowsJunctions(t *testing.T) {
 		t.Fatalf("junction listing: %d %s", response.Code, response.Body.String())
 	}
 	result := readFolderResult(t, response)
-	if len(result.Folders) != 2 || result.Folders[0].Name != "junction" || result.Folders[0].Path != filepath.Join(root, "junction") || result.Folders[1].Name != "real" {
+	if len(result.Folders) != 3 || result.Folders[0].Name != "broken" || result.Folders[1].Name != "junction" || result.Folders[1].Path != filepath.Join(root, "junction") || result.Folders[2].Name != "real" {
 		t.Fatalf("junction listing=%+v", result)
+	}
+	response = folderRequest(t, app, setupFoldersPath, filepath.Join(root, "broken"), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != http.StatusNotFound || readFolderResult(t, response).Error != webui.MsgFolderMissing {
+		t.Fatalf("open broken junction: %d %s", response.Code, response.Body.String())
 	}
 	response = folderRequest(t, app, setupFoldersPath, filepath.Join(root, "junction"), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
 	if response.Code != 200 || len(readFolderResult(t, response).Folders) != 1 {

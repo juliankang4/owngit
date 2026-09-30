@@ -116,16 +116,17 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 		}
 		path := filepath.Clean(path)
 		if create {
-			existing, _, err := nearestFolder(ctx, path)
-			if err != nil {
-				return folderResult{}, err
-			}
-			if existing != path {
-				return folderResult{}, fs.ErrNotExist
-			}
-			parent, err := os.OpenRoot(path)
-			if err != nil {
-				return folderResult{}, err
+			parent, openErr := os.OpenRoot(path)
+			if openErr != nil {
+				// Classify only a failed open; this branch can never write.
+				existing, _, err := nearestFolder(ctx, path)
+				if err != nil {
+					return folderResult{}, err
+				}
+				if existing != path {
+					return folderResult{}, fs.ErrNotExist
+				}
+				return folderResult{}, openErr
 			}
 			defer parent.Close()
 			return app.createFolder(ctx, parent, name)
@@ -272,9 +273,6 @@ func listFolders(ctx context.Context, path string, showHidden, start bool) (fold
 				return folderResult{}, err
 			}
 			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return folderResult{}, err
-				}
 				result.SkippedFolders = true
 				continue
 			}
@@ -286,25 +284,7 @@ func listFolders(ctx context.Context, path string, showHidden, start bool) (fold
 			result.SkippedFolders = true
 			continue
 		}
-		if !entry.IsDir() {
-			info, err := os.Stat(child)
-			if err := ctx.Err(); err != nil {
-				return folderResult{}, err
-			}
-			if errors.Is(err, fs.ErrNotExist) || folderLinkLoop(err) || folderNotDirectory(err) {
-				continue
-			}
-			if err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return folderResult{}, err
-				}
-				result.SkippedFolders = true
-				continue
-			}
-			if !info.IsDir() {
-				continue
-			}
-		}
+		// Link and reparse targets are resolved only on explicit navigation.
 		result.Folders = append(result.Folders, folderEntry{Name: name, Path: child})
 	}
 	sort.Slice(result.Folders, func(i, j int) bool { return result.Folders[i].Name < result.Folders[j].Name })

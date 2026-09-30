@@ -18,6 +18,7 @@ func chooserHidden(path, name string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	// GetFileAttributes returns the link's own attributes, not its target's.
 	attributes, err := windows.GetFileAttributes(pointer)
 	return attributes&windows.FILE_ATTRIBUTE_HIDDEN != 0, err
 }
@@ -44,8 +45,6 @@ func platformFolderName(name string) bool {
 func folderNotDirectory(err error) bool {
 	return errors.Is(err, windows.ERROR_DIRECTORY)
 }
-
-func folderLinkLoop(err error) bool { return errors.Is(err, windows.ERROR_CANT_RESOLVE_FILENAME) }
 
 func folderParent(path string) (string, bool) {
 	parent := filepath.Dir(path)

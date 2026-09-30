@@ -20,11 +20,6 @@ import (
 	"owngit/internal/webui"
 )
 
-func folderFixture(t *testing.T) string {
-	t.Helper()
-	return t.TempDir()
-}
-
 func folderRequest(t *testing.T, app *App, route, path, name, token, csrf, host, origin string) *httptest.ResponseRecorder {
 	t.Helper()
 	values := url.Values{"path": {path}, "name": {name}, "csrf": {csrf}}
@@ -52,7 +47,7 @@ func readFolderResult(t *testing.T, response *httptest.ResponseRecorder) folderR
 
 func TestSetupFoldersRequireOwner(t *testing.T) {
 	app, store, _ := newTestApp(t)
-	root := folderFixture(t)
+	root := t.TempDir()
 	noErr(t, os.Mkdir(filepath.Join(root, "private-child"), 0o700))
 	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
 	noErr(t, store.CreateSession(context.Background(), "admin-session", "admin", "owner-csrf", 1, time.Now().Add(time.Hour)))
@@ -120,7 +115,7 @@ func TestSetupFoldersRequireOwner(t *testing.T) {
 
 func TestSetupFoldersListAndCreate(t *testing.T) {
 	app, store, _ := newTestApp(t)
-	root := folderFixture(t)
+	root := t.TempDir()
 	app.SuggestedRepositoryRoot = root
 	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
 	for _, name := range []string{"zeta", "Alpha", "한글", ".hidden"} {
@@ -202,7 +197,7 @@ func TestSetupFoldersListAndCreate(t *testing.T) {
 
 func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 	app, store, _ := newTestApp(t)
-	root := folderFixture(t)
+	root := t.TempDir()
 	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
 	noErr(t, os.WriteFile(filepath.Join(root, "file"), []byte("fixture"), 0o600))
 	denied := filepath.Join(root, "denied")
@@ -257,7 +252,7 @@ func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 
 func TestSetupFoldersUnavailableAnswersLogTheirCause(t *testing.T) {
 	app, store, _ := newTestApp(t)
-	root := folderFixture(t)
+	root := t.TempDir()
 	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
 	serverLog := captureServerLog(t)
 	app.folderBusy.Store(true)
@@ -404,7 +399,7 @@ func TestFolderChooserFileAncestorIsNotDirectory(t *testing.T) {
 	}
 }
 
-func TestFolderChooserLinksToFoldersAreListed(t *testing.T) {
+func TestFolderChooserLinkCandidatesResolveOnlyWhenOpened(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("junction coverage is Windows-specific")
 	}
@@ -424,12 +419,30 @@ func TestFolderChooserLinksToFoldersAreListed(t *testing.T) {
 		t.Fatalf("list: %d %s", response.Code, response.Body.String())
 	}
 	result := readFolderResult(t, response)
-	if !reflect.DeepEqual(result.Folders, []folderEntry{{Name: "linked", Path: filepath.Join(root, "linked")}, {Name: "real", Path: filepath.Join(root, "real")}}) {
+	var want []folderEntry
+	for _, name := range []string{"broken", "broken-through-file", "cycle", "file-link", "linked", "real"} {
+		want = append(want, folderEntry{Name: name, Path: filepath.Join(root, name)})
+	}
+	if !reflect.DeepEqual(result.Folders, want) {
 		t.Fatalf("linked folders=%+v", result.Folders)
 	}
 	response = folderRequest(t, app, setupFoldersPath, filepath.Join(root, "linked"), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
 	if response.Code != http.StatusOK || len(readFolderResult(t, response).Folders) != 1 {
 		t.Fatalf("open link: %d %s", response.Code, response.Body.String())
+	}
+	for _, test := range []struct {
+		name string
+		code webui.MessageCode
+	}{
+		{"broken", webui.MsgFolderMissing},
+		{"broken-through-file", webui.MsgFolderNotDirectory},
+		{"cycle", webui.MsgFolderFailed},
+		{"file-link", webui.MsgFolderNotDirectory},
+	} {
+		response := folderRequest(t, app, setupFoldersPath, filepath.Join(root, test.name), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+		if response.Code == http.StatusOK || readFolderResult(t, response).Error != test.code {
+			t.Errorf("open %s: %d %s", test.name, response.Code, response.Body.String())
+		}
 	}
 }
 
@@ -464,24 +477,6 @@ func TestFolderChooserUnsupportedNameDoesNotHideOtherFolders(t *testing.T) {
 		noErr(t, err)
 		if partial.SkippedFolders != showHidden {
 			t.Errorf("hidden=%v skipped=%v", showHidden, partial.SkippedFolders)
-		}
-	}
-}
-
-func TestFolderFixtureUsesTestCleanupWithoutTrash(t *testing.T) {
-	sandbox := t.TempDir()
-	home, temp := filepath.Join(sandbox, "home"), filepath.Join(sandbox, "temp")
-	noErr(t, os.MkdirAll(filepath.Join(home, ".Trash"), 0o700))
-	noErr(t, os.Mkdir(temp, 0o700))
-	for key, value := range map[string]string{"HOME": home, "USERPROFILE": home, "TMPDIR": temp, "TMP": temp, "TEMP": temp} {
-		t.Setenv(key, value)
-	}
-	t.Run("fixture lifetime", func(t *testing.T) { noErr(t, os.Mkdir(filepath.Join(folderFixture(t), "child"), 0o700)) })
-	for _, path := range []string{temp, filepath.Join(home, ".Trash")} {
-		entries, err := os.ReadDir(path)
-		noErr(t, err)
-		if len(entries) != 0 {
-			t.Errorf("fixture left entries in %s: %v", path, entries)
 		}
 	}
 }
@@ -523,16 +518,17 @@ func TestFolderChooserSelectedSymlinkParentCreatesInTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("junction coverage is Windows-specific")
 	}
-	app, _, _ := newTestApp(t)
+	app, store, _ := newTestApp(t)
 	base := t.TempDir()
 	target, link := filepath.Join(base, "target"), filepath.Join(base, "linked")
 	noErr(t, os.Mkdir(target, 0o700))
 	noErr(t, os.Symlink(target, link))
-	parent, err := os.OpenRoot(link)
-	noErr(t, err)
-	defer parent.Close()
-	result, err := app.createFolder(context.Background(), parent, "made")
-	noErr(t, err)
+	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
+	response := folderRequest(t, app, setupFolderCreatePath, link, "made", "owner-session", "owner-csrf", "localhost", "http://localhost")
+	if response.Code != http.StatusOK {
+		t.Fatalf("selected symlink creation: %d %s", response.Code, response.Body.String())
+	}
+	result := readFolderResult(t, response)
 	if result.Path != filepath.Join(link, "made") {
 		t.Errorf("link path not preserved: %+v", result)
 	}
@@ -540,6 +536,32 @@ func TestFolderChooserSelectedSymlinkParentCreatesInTarget(t *testing.T) {
 	noErr(t, err)
 	if !info.IsDir() || info.Mode().Perm() != 0o700 {
 		t.Errorf("created mode=%v", info.Mode())
+	}
+}
+
+func TestFolderChooserCreateMissingAndFileParents(t *testing.T) {
+	app, store, _ := newTestApp(t)
+	root := t.TempDir()
+	noErr(t, os.WriteFile(filepath.Join(root, "file"), []byte("fixture"), 0o600))
+	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
+	for _, test := range []struct {
+		path   string
+		status int
+		code   webui.MessageCode
+	}{
+		{filepath.Join(root, "missing"), http.StatusNotFound, webui.MsgFolderMissing},
+		{filepath.Join(root, "file"), http.StatusUnprocessableEntity, webui.MsgFolderNotDirectory},
+		{filepath.Join(root, "file", "child"), http.StatusUnprocessableEntity, webui.MsgFolderNotDirectory},
+	} {
+		response := folderRequest(t, app, setupFolderCreatePath, test.path, "made", "owner-session", "owner-csrf", "localhost", "http://localhost")
+		if response.Code != test.status || readFolderResult(t, response).Error != test.code {
+			t.Errorf("create in %s: %d %s", test.path, response.Code, response.Body.String())
+		}
+	}
+	entries, err := os.ReadDir(root)
+	noErr(t, err)
+	if len(entries) != 1 || entries[0].Name() != "file" {
+		t.Fatalf("failed creation wrote entries: %v", entries)
 	}
 }
 
@@ -560,7 +582,7 @@ func TestFolderChooserControlNamesAreRefused(t *testing.T) {
 	}
 }
 
-func TestFolderChooserUnreadableLinkKeepsOtherFolders(t *testing.T) {
+func TestFolderChooserUnreadableLinkIsListedUntilOpened(t *testing.T) {
 	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
 		t.Skip("requires non-root POSIX permission enforcement")
 	}
@@ -596,16 +618,21 @@ func TestFolderChooserUnreadableLinkKeepsOtherFolders(t *testing.T) {
 					continue
 				}
 				result := readFolderResult(t, response)
-				var facts map[string]any
-				noErr(t, json.Unmarshal(response.Body.Bytes(), &facts))
-				wantSkipped := showHidden || !strings.HasPrefix(name, ".")
-				if len(result.Folders) != 1 || result.Folders[0].Name != "visible" || (facts["skipped_folders"] == true) != wantSkipped {
+				want := []folderEntry{{Name: "visible", Path: filepath.Join(root, "visible")}}
+				if showHidden || !strings.HasPrefix(name, ".") {
+					want = append([]folderEntry{{Name: name, Path: filepath.Join(root, name)}}, want...)
+				}
+				if !reflect.DeepEqual(result.Folders, want) || result.SkippedFolders {
 					t.Errorf("%s hidden=%v: %s", name, showHidden, response.Body.String())
 				}
 			}
 			response := folderStartRequest(t, app, "")
 			if response.Code != http.StatusOK || readFolderResult(t, response).Path != root {
 				t.Errorf("first open with %s: %d %s", name, response.Code, response.Body.String())
+			}
+			response = folderRequest(t, app, setupFoldersPath, filepath.Join(root, name), "", "owner-session", "owner-csrf", "localhost", "http://localhost")
+			if response.Code != http.StatusForbidden || readFolderResult(t, response).Error != webui.MsgFolderDenied {
+				t.Errorf("explicit open %s: %d %s", name, response.Code, response.Body.String())
 			}
 		})
 	}
