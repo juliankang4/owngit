@@ -17,12 +17,15 @@ import (
 )
 
 // commitSlowCheck commits a check that writes its shell's process ID to
-// markers/pid, sleeps, and would then write markers/done. The markers live
-// outside the work tree so they do not make it dirty.
+// markers/pid, sleeps, and writes markers/done only when the sleep ran to its
+// end. Cancellation signals the whole process group, and the shell may run
+// its next command between the sleep's death and its own, so the marker
+// depends on the sleep's success. The markers live outside the work tree so
+// they do not make it dirty.
 func commitSlowCheck(t *testing.T, work string) (markers string) {
 	t.Helper()
 	markers = t.TempDir()
-	command := "echo $$ > " + filepath.Join(markers, "pid") + "; sleep 30; echo done > " + filepath.Join(markers, "done")
+	command := "echo $$ > " + filepath.Join(markers, "pid") + "; sleep 30 && echo done > " + filepath.Join(markers, "done")
 	encoded, err := json.Marshal(command)
 	noErr(t, err)
 	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"slow","command":`+string(encoded)+`}]}`)
