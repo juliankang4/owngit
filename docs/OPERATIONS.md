@@ -518,7 +518,7 @@ Settings has five tabs. Each is its own address, so it works as an ordinary link
 - **General** (`/settings`): the display choices of this browser (language, appearance and repository list order), which apply at once and never ask for a password, and the new-release [update check](#new-release-notice) for the whole server.
 - **Access** (`/settings/access`): who can read and push (anyone who reaches OwnGit, or only people with the shared password), [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), the administrator password, and [how often it is asked](#administrator-password-check).
 - **Network** (`/settings/network`): the connection of this browser, the [network settings](#network-settings) and [sharing on your tailnet](#share-on-your-tailnet-over-https).
-- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
+- **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), the [check ceilings](#check-ceilings), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
 - **Storage & recovery** (`/settings/storage`): the repository folder and [backups](#backups-in-the-dashboard), both shown only to an administrator, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup).
 
 Each part of a tab has its own Save and Cancel, and Save sends only that part. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Network settings apply at the next start; everything else applies as soon as you save.
@@ -559,13 +559,14 @@ A new password never goes on the command line. `settings access` reads it from t
 
 In the dashboard, the saved values of these settings are shown only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup). Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
 
-In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, and the browsing limits, repository maintenance and unused object cleanup are `browse_limits`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others.
+In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, and the browsing limits, check ceilings, repository maintenance and unused object cleanup are `browse_limits`, `check_ceilings`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others.
 
 When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it. Meanwhile only what depends on that setting stops, and its message names the setting:
 
 - the server-wide kept history choice: pushes and imports to every repository that follows it are refused;
 - the Git transfer limits: Git requests are refused;
 - the browsing limits: files, diffs and comparisons are not shown;
+- the check ceilings: no check policy is saved and no new check is queued;
 - repository maintenance: no repository is maintained;
 - unused object cleanup: no object is removed, and maintenance goes on without it.
 
@@ -1889,6 +1890,29 @@ Browsing limits cap how much one page reads to show a file, a diff or a pull req
 - Raising any limit above its default warns that larger views use more memory and may delay other pages.
 - In the settings API, the group `browse_limits` has `raw_bytes`, `file_bytes`, `commit_patch_bytes`, `file_patch_bytes`, `commit_file_bytes`, `compare_bytes` and `compare_seconds`.
 
+## Check ceilings
+
+Check ceilings are this computer's upper bounds for what a repository's [check policy](AUTOMATIC_CHECKS.md) may choose. To change them, open Check ceilings on the Settings Repositories tab, or run `owngit settings set` with the options below. The defaults are the bounds earlier releases enforced.
+
+| Ceiling | Default | Range | Option |
+|---|---|---|---|
+| Time for one check | 24 hours | 1 second to 168 hours (7 days) | `--check-time` |
+| Output of one check | 64 MB | 1 KB to 1024 MB | `--check-output` |
+| Checks waiting per repository | 1000 | 1 to 10000 | `--check-queue` |
+| Checks running at once per repository | 100 | 1 to 1000 | `--check-active` |
+| Container CPUs | 64 | 0.1 to 1024 | `--check-cpus` |
+| Container memory | 64 GB | 64 MB to 1024 GB | `--check-memory` |
+| Container processes | 4096 | 16 to 65536 | `--check-processes` |
+| Container scratch space | 16 GB | 1 MB to 1024 GB | `--check-scratch` |
+| Source copied for a check | 4 GB | 1 byte to 1024 GB | `--check-source` |
+
+- A ceiling is checked when a check policy is saved and when a check is queued. The checks page states each field's range under the ceilings, and a value above a ceiling is refused with a note that an administrator can raise it.
+- Changing a ceiling never changes a saved policy or its consent. After a ceiling is lowered, a policy above it queues no new check until you raise the ceiling or lower the policy; Check ceilings lists those repositories, and their checks page says so. Checks already queued run with the limits they were queued with.
+- The output of a check is kept in memory while it runs, so a larger output ceiling lets a check use more memory.
+- Raising any ceiling above its default warns that repositories you enable can request more resources.
+- In the settings API, the group `check_ceilings` has `timeout_seconds`, `output_bytes`, `queue_limit`, `active_jobs`, `container_cpu_millis`, `container_memory_bytes`, `container_pids`, `container_scratch_bytes` and `source_total_bytes`. A `PATCH` that lowers a ceiling below a saved policy answers with a warning naming the repositories.
+- The ceilings belong to this computer and are not in backups. A policy saved under higher ceilings is backed up in format 11 and restores anywhere; on a computer with lower ceilings it queues nothing until they are raised there.
+
 ## Storage
 
 OwnGit keeps its own records in the state directory and the Git data in the repository folder. Both stay when you remove the program; delete them yourself when you no longer need them.
@@ -2161,7 +2185,7 @@ A backup holds a manifest and one Git bundle per nonempty repository. Together t
 - import sources and history, including each source's extra ref namespaces and refresh choices;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
 
-A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, repository maintenance, unused object cleanup and the raw log retention).
+A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, the check ceilings, repository maintenance, unused object cleanup and the raw log retention).
 
 A backup holds up to 1 GiB of OwnGit records, counted by the memory they take and not counting the repositories; backup refuses a larger state. Creating and restoring a backup hold its records in memory, so more records need more memory.
 
@@ -2231,7 +2255,7 @@ Start `owngit serve` with the restored state before you use it in other ways, so
 - Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again in Settings or with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
 - Raw logs are absent, and unsettled import publications are closed without being applied.
 - An import that follows upstream deletions deletes a ref only after a refresh has seen it again ([After a sign-in change or a restore](#after-a-sign-in-change-or-a-restore)).
-- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
+- Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, check ceilings, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
 
 ### When a backup or restore is interrupted
 

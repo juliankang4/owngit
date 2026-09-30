@@ -130,7 +130,9 @@ never turns checks on.
 
 Limits sit under **Advanced limits** with working values filled in. Times take
 seconds, minutes, or hours, and sizes take bytes, KB, MB, or GB (1 KB is 1024
-bytes). Each field shows its range and default. The time and output limits are
+bytes). Each field shows its range and default. The upper end of a range is
+this computer's [check ceiling](OPERATIONS.md#check-ceilings) for that field,
+which an administrator can raise. The time and output limits are
 maximums: a check gets 10 minutes and
 keeps 64 KiB of output unless its check file asks for a different value under
 `limits`, up to these maximums.
