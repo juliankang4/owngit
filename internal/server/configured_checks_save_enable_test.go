@@ -143,6 +143,18 @@ func TestBrowserContainerOptionsAreSavedAndShown(t *testing.T) {
 	if strings.Contains(page.body, `name="container_missing_enforcement" value="memory" checked`) {
 		t.Error("an unaccepted limit is shown as accepted")
 	}
+	// The registry sentence carries both languages' words, so the page can
+	// name the registry of an image as it is typed, and a refused form names
+	// the registry of the image it submitted, not the saved one.
+	if !strings.Contains(page.body, `data-registry-en="For this image, the registry is %s."`) {
+		t.Error("the registry sentence cannot follow an edited image")
+	}
+	values.Set("container_image", "second.example/checks:2")
+	values.Set("container_network_name", "host")
+	if refused := browserForm(t, client, policyURL, values, server.URL); !strings.Contains(refused.body, "the registry is second.example.") ||
+		strings.Contains(refused.body, "the registry is registry.example:5000.") {
+		t.Errorf("a refused form does not name the submitted image's registry")
+	}
 
 	// Leaving the container mode refuses nothing: the options belong to it
 	// and are simply not sent.

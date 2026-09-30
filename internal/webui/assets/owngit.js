@@ -744,6 +744,36 @@
     });
   });
 
+  /* Name the registry a missing image is downloaded from as the image
+   * field is edited. The rule is state.ContainerImageRegistry's: the first
+   * path part names the registry when it holds "." or ":" or is
+   * "localhost"; otherwise the registry is docker.io. The words come from
+   * the server in both languages. */
+
+  all('[data-pull-registry]').forEach(function (note) {
+    var form = note.closest('form');
+    var image = form && form.querySelector('[name="container_image"]');
+    if (!image) { return; }
+    function registry(value) {
+      var name = value.split('@')[0];
+      var slash = name.indexOf('/');
+      var first = slash < 0 ? '' : name.slice(0, slash);
+      return slash >= 0 && (/[.:]/.test(first) || first === 'localhost') ? first : 'docker.io';
+    }
+    function update() {
+      var value = image.value.trim();
+      note.hidden = value === '';
+      if (value === '') { return; }
+      var name = registry(value);
+      var en = (note.getAttribute('data-registry-en') || '').replace('%s', name);
+      var ko = (note.getAttribute('data-registry-ko') || '').replace('%s', name);
+      note.setAttribute('data-en', en);
+      note.setAttribute('data-ko', ko);
+      note.textContent = root.getAttribute('data-lang') === 'ko' ? ko : en;
+    }
+    image.addEventListener('input', update);
+  });
+
   /* Copy an example to the clipboard.
    *
    * The button is rendered hidden and shown only here, because without a

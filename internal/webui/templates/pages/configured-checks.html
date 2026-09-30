@@ -265,7 +265,11 @@
           <label class="check"{{template "fieldInvalid" dict "Notices" $fn "Scope" $act "Field" "container_pull_missing"}}>
             <input type="checkbox" name="container_pull_missing" value="1"{{if $f.ContainerPullMissing}} checked{{end}}>
             <span class="check__t">{{bi $lang "cc.policy.container.pull_missing"}}</span>
-            <span class="check__d">{{bi $lang "cc.policy.container.pull_missing_warn"}}{{with $f.DownloadRegistry}} {{biF $lang "cc.policy.container.pull_missing_from" .}}{{end}}</span>
+            {{/* The registry sentence follows the image field as it is edited
+                 (owngit.js, data-pull-registry); the server renders it for
+                 the submitted image, so it is right without a script too. */}}
+            <span class="check__d">{{bi $lang "cc.policy.container.pull_missing_warn"}}
+              <span data-pull-registry data-registry-en="{{t "en" (code "cc.policy.container.pull_missing_from")}}" data-registry-ko="{{t "ko" (code "cc.policy.container.pull_missing_from")}}"{{if not $f.DownloadRegistry}} hidden{{end}}>{{with $f.DownloadRegistry}}{{biF $lang "cc.policy.container.pull_missing_from" .}}{{end}}</span></span>
           </label>
           {{template "fieldNotice" dict "Lang" $lang "Notices" $fn "Scope" $act "Field" "container_pull_missing"}}
           <div class="f">
