@@ -819,10 +819,12 @@ func parseRunnerToken(token string) (string, int64, string, bool) {
 // RunnerCredentialByToken resolves a live credential and records its use. The
 // encoded local epoch makes every pre-restore token unverifiable. A token that
 // is live for another repository returns ErrRunnerCredentialOtherRepository,
-// so only its holder learns that the repository, not the token, is wrong.
+// so only its holder learns that the repository, not the token, is wrong. An
+// empty repositoryID, an address that reaches no repository, is no
+// repository's, so a live token is another repository's.
 func (s *Store) RunnerCredentialByToken(ctx context.Context, repositoryID, token string, now time.Time) (RunnerCredential, bool, error) {
 	epoch, generation, id, valid := parseRunnerToken(token)
-	if repositoryID == "" || !valid || now.IsZero() {
+	if !valid || now.IsZero() {
 		return RunnerCredential{}, false, nil
 	}
 	tokenHash := sha256.Sum256([]byte(token))

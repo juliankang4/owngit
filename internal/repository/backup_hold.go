@@ -92,6 +92,19 @@ func (m *Manager) heldForBackup(id string) bool {
 	return s.held[id]
 }
 
+// unlessHeldForBackup runs change unless a backup holds id, and refuses it
+// with ErrBackupReading otherwise. A backup cannot start holding id while
+// change runs, so it either sees the repository before change or after it.
+func (m *Manager) unlessHeldForBackup(id string, change func() error) error {
+	s := &m.backup
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.held[id] {
+		return ErrBackupReading
+	}
+	return change()
+}
+
 // NoteUnsettledRefWriter records that a Git process that writes refs of id
 // could not be stopped and may still change them. A backup refuses the
 // repository until OwnGit restarts, when reconciliation settles it.

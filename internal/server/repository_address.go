@@ -6,23 +6,21 @@ import (
 	"net/url"
 	"strings"
 
-	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
 // Repository addresses. A page or API path names a repository by its
 // address (see state.ResolveRepositoryName). serveHTTP resolves that name
 // once and attaches the result to the request; the routes use the resolved
-// ID. An alias of a renamed repository, and the ID of a renamed repository
-// that no alias keeps, are answered only after the route has accepted the
-// caller's credential, so the answer never tells an unauthenticated caller
-// about a repository: an alias redirects to the same request at the current
-// address, and the ID is not found.
+// ID. An alias, and a name that reaches no repository, are answered only
+// after the route has accepted the caller's credential, so the answer never
+// tells an unauthenticated caller about a repository: an alias redirects to
+// the same request at the current address, and anything else is not found.
 
 // repositoryAddress is what the repository name in a request path reached.
 type repositoryAddress struct {
-	// id is the repository ID the name stands for, or "" when it stands
-	// for none, such as the ID of a renamed repository that no alias keeps.
+	// id is the repository ID the name reaches, or "" when it reaches none,
+	// such as an expired alias.
 	id string
 	// current is where that repository answers now.
 	current string
@@ -59,16 +57,6 @@ func (app *App) resolveRepositoryAddress(request *http.Request) *http.Request {
 	}
 	var address repositoryAddress
 	resolved, found, err := app.Store.ResolveRepositoryName(request.Context(), name, app.now())
-	if err == nil && !found {
-		// A name that reaches no repository still names a repository that
-		// does not exist yet, such as the destination of a first import, and
-		// the route decides what that means. The ID of a renamed repository
-		// that no alias keeps reaches nothing at all.
-		var renamed bool
-		if _, renamed, err = app.Store.Repository(request.Context(), name); err == nil && !renamed {
-			resolved, found = state.RepositoryAddress{RepositoryID: name, Current: name}, true
-		}
-	}
 	switch {
 	case err != nil:
 		address.err = err
@@ -81,7 +69,26 @@ func (app *App) resolveRepositoryAddress(request *http.Request) *http.Request {
 	default:
 		address.id, address.current = resolved.RepositoryID, resolved.Current
 	}
+	return withRepositoryAddress(request, address)
+}
+
+func withRepositoryAddress(request *http.Request, address repositoryAddress) *http.Request {
 	return request.WithContext(context.WithValue(request.Context(), repositoryAddressKey{}, address))
+}
+
+// firstImportDestination lets an import route name a repository that does
+// not exist yet: a first import names the repository it is to create, and
+// its cancel and credential routes name it until then. Any other route
+// answers such a name as not found. The import service refuses a name that
+// is already taken, including the ID of a renamed repository.
+func firstImportDestination(request *http.Request) *http.Request {
+	address, named := repositoryAddressOf(request)
+	if !named || address.err != nil || address.id != "" {
+		return request
+	}
+	_, name, _ := repositoryNameInPath(request.URL.Path)
+	address.id, address.current = name, name
+	return withRepositoryAddress(request, address)
 }
 
 // repositoryAddressOf returns what resolveRepositoryAddress attached. A

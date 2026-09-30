@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -67,5 +68,37 @@ func TestRenameRefusesBusyRepositoriesAndTakenNames(t *testing.T) {
 		if _, err := manager.Create(ctx, name, ""); !errors.Is(err, ErrNameTaken) {
 			t.Fatalf("create %q err=%v", name, err)
 		}
+	}
+}
+
+// A backup that starts holding the repository while a rename waits for the
+// lock of the new name refuses the rename; it cannot slip in after the
+// rename checked for backups.
+func TestRenameRefusesABackupThatStartsWhileItWaits(t *testing.T) {
+	ctx := context.Background()
+	manager, _, _ := newTestRepository(t)
+	addressLock := manager.Locks.For("renamed")
+	addressLock.Lock()
+	done := make(chan error, 1)
+	go func() {
+		_, err := manager.Rename(ctx, "sample", "renamed", time.Now())
+		done <- err
+	}()
+	// The rename holds the repository and now waits for the new name.
+	for !manager.InUse("sample") {
+		runtime.Gosched()
+	}
+	hold, err := manager.HoldForBackup()
+	noErr(t, err)
+	defer hold.Close()
+	hold.Set("sample")
+	addressLock.Unlock()
+	if err := <-done; !errors.Is(err, ErrBackupReading) {
+		t.Fatalf("rename while a backup started holding the repository err=%v", err)
+	}
+	stored, _, err := manager.Store.Repository(ctx, "sample")
+	noErr(t, err)
+	if stored.Address != "sample" {
+		t.Fatalf("refused rename changed the repository: %+v", stored)
 	}
 }

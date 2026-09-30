@@ -31,9 +31,6 @@ func (m *Manager) Rename(ctx context.Context, id, name string, now time.Time) (s
 		return state.Repository{}, err
 	}
 	defer lock.Unlock()
-	if m.heldForBackup(id) {
-		return state.Repository{}, ErrBackupReading
-	}
 	// Creating or importing a repository holds the lock of its ID from its
 	// name check until it is recorded, so a rename to that name waits for it.
 	if address := strings.ToLower(name); address != id {
@@ -43,8 +40,14 @@ func (m *Manager) Rename(ctx context.Context, id, name string, now time.Time) (s
 		}
 		defer addressLock.Unlock()
 	}
-	renamed, err := m.Store.RenameRepository(ctx, id, name, now)
+	var renamed state.Repository
+	err := m.unlessHeldForBackup(id, func() (err error) {
+		renamed, err = m.Store.RenameRepository(ctx, id, name, now)
+		return err
+	})
 	switch {
+	case errors.Is(err, ErrBackupReading):
+		return state.Repository{}, err
 	case errors.Is(err, state.ErrRepositoryNotFound):
 		return state.Repository{}, ErrRepositoryNotFound
 	case errors.Is(err, state.ErrRepositoryNameTaken):

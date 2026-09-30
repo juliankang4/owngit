@@ -299,8 +299,8 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoRenameAddress: {en: "Address now:", ko: "지금 주소:"},
 	MsgRepoRenameLabel:   {en: "New name", ko: "새 이름"},
 	MsgRepoRenameAliasNote: {
-		en: "For 90 days the old address sends pages, the API and Git to the new one, so existing clones keep fetching and pushing. After that the old address stops working and another repository can take the name. Point clones at the new address with git remote set-url before then.",
-		ko: "90일 동안은 예전 주소로 들어온 화면, API, Git 요청을 새 주소로 보내므로 기존 클론에서 계속 가져오고 푸시할 수 있습니다. 그 뒤로는 예전 주소가 더 이상 동작하지 않고 다른 저장소가 그 이름을 쓸 수 있습니다. 그 전에 git remote set-url로 클론의 주소를 새 주소로 바꾸세요.",
+		en: "For 90 days the old address sends pages, the API and Git to the new one, so existing clones keep fetching and pushing. After that the old address stops working, and another repository can take the name unless it is this repository's first name, which stays its ID. Point clones at the new address with git remote set-url before then.",
+		ko: "90일 동안은 예전 주소로 들어온 화면, API, Git 요청을 새 주소로 보내므로 기존 클론에서 계속 가져오고 푸시할 수 있습니다. 그 뒤로는 예전 주소가 더 이상 동작하지 않고, 저장소 ID로 남는 처음 이름이 아니라면 다른 저장소가 그 이름을 쓸 수 있습니다. 그 전에 git remote set-url로 클론의 주소를 새 주소로 바꾸세요.",
 	},
 	MsgRepoRenameAliases: {en: "Earlier addresses that still lead here", ko: "아직 이곳으로 안내하는 예전 주소"},
 	// Value: the time the alias stops leading here.

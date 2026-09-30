@@ -90,7 +90,9 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			app.handleHelperCredentialAPI(writer, request, repositoryID, remainder)
 			return
 		case "import":
-			app.handleImportAPI(writer, request, repositoryID, remainder)
+			request = firstImportDestination(request)
+			address, _ := repositoryAddressOf(request)
+			app.handleImportAPI(writer, request, address.id, remainder)
 			return
 		case "settings":
 			app.handleRepositorySettingsAPI(writer, request, repositoryID, remainder)

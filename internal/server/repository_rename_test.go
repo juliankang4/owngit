@@ -183,3 +183,39 @@ func TestRenameIsForTheAdministratorAndAliasesAnswerOnlyAcceptedCallers(t *testi
 		t.Fatalf("old Git address with the password status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
 	}
 }
+
+// Runner and helper credentials reach their repository at its current name
+// and at every unexpired alias. An alias that has expired reaches nothing:
+// with a live credential it is not found, never a credential for another
+// repository.
+func TestScopedCredentialsFollowAliasesUntilTheyExpire(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	base, helper := helperAPI(t, fixture, "helper", time.Now())
+	origin := strings.TrimSuffix(base, "/api/v1/repositories/project")
+	setRunnerPolicy(t, fixture.store)
+	_, runner, _, err := fixture.store.IssueCheckRunnerToken(context.Background(), "project", "runner", "", time.Now())
+	noErr(t, err)
+	for _, name := range []string{"middle", "current"} {
+		_, err = fixture.app.Repositories.Rename(context.Background(), "project", name, time.Now())
+		noErr(t, err)
+	}
+	requests := []struct{ method, path, token string }{
+		{http.MethodGet, "/tasks", helper},
+		{http.MethodPost, "/runner/claim", runner},
+	}
+	for _, name := range []string{"project", "middle", "current"} {
+		for _, request := range requests {
+			if status, code := checkStatus(t, checkRequest(t, request.method, origin+"/api/v1/repositories/"+name+request.path, nil, request.token)); status != http.StatusOK {
+				t.Fatalf("%s at %s status=%d code=%s", request.path, name, status, code)
+			}
+		}
+	}
+	noErr(t, fixture.store.Exec(context.Background(), `UPDATE repository_names SET alias_until=? WHERE kind='alias'`, time.Now().Add(-time.Second).Unix()))
+	for _, name := range []string{"project", "middle"} {
+		for _, request := range requests {
+			if status, code := checkStatus(t, checkRequest(t, request.method, origin+"/api/v1/repositories/"+name+request.path, nil, request.token)); status != http.StatusNotFound || code != "repository_not_found" {
+				t.Fatalf("%s at expired %s status=%d code=%s", request.path, name, status, code)
+			}
+		}
+	}
+}
