@@ -206,7 +206,7 @@ On Linux, memory is the resident set size that `/proc` and `ps` report. On macOS
 ## Status and limits
 
 - By default, a force-push, an import, or a branch deletion leaves the old commits in kept history, so a secret you committed stays in OwnGit and its backups. Choosing Do not keep only stops keeping later history and removes nothing already kept. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it. Rotate any secret you push by mistake.
-- Kept history is not a backup. Scheduled backups start only after you choose a backup folder with `owngit backup schedule set`.
+- Kept history is not a backup. Scheduled backups start only after you choose a backup folder in Settings, on the Storage & recovery tab, or with `owngit backup schedule set`.
 - Host and runner check commands run with their account's permissions and are not sandboxes.
 - OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents.
 - Git LFS objects are not hosted or imported.

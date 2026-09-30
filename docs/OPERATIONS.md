@@ -519,7 +519,7 @@ Settings has five tabs. Each is its own address, so it works as an ordinary link
 - **Access** (`/settings/access`): who can read and push (anyone who reaches OwnGit, or only people with the shared password), [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), the administrator password, and [how often it is asked](#administrator-password-check).
 - **Network** (`/settings/network`): the connection of this browser, the [network settings](#network-settings) and [sharing on your tailnet](#share-on-your-tailnet-over-https).
 - **Repositories** (`/settings/repositories`): the [branch new repositories start on](#changing-the-default-branch), whether overwritten and deleted history is [kept](#kept-history), the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, and a link to the settings of each repository.
-- **Storage & recovery** (`/settings/storage`): the repository folder, shown only to an administrator, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup).
+- **Storage & recovery** (`/settings/storage`): the repository folder and [backups](#backups-in-the-dashboard), both shown only to an administrator, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup).
 
 Each part of a tab has its own Save and Cancel, and Save sends only that part. Save asks for the administrator password unless this browser is confirmed as administrator or the check is off. Network settings apply at the next start; everything else applies as soon as you save.
 
@@ -1947,15 +1947,26 @@ On start, OwnGit upgrades a database from any earlier release in place, in one t
 
 ## Backups
 
-While OwnGit runs, it can make backups itself: on a schedule that you set, or at once when you run `owngit backup now`. To back up a stopped OwnGit, use [`owngit backup --output`](#backing-up-a-stopped-owngit). Every backup is a folder that [`owngit restore`](#restoring-a-backup) restores and [`owngit backup verify`](#verifying-a-backup) checks. The [backup before an upgrade](#backup-before-an-upgrade) is separate and has its own switch.
+While OwnGit runs, it can make backups itself: on a schedule that you set, or at once when you ask. The administrator manages them [in the dashboard](#backups-in-the-dashboard) or with the `owngit backup` commands. To back up a stopped OwnGit, use [`owngit backup --output`](#backing-up-a-stopped-owngit). Every backup is a folder that [`owngit restore`](#restoring-a-backup) restores and [`owngit backup verify`](#verifying-a-backup) checks, and OwnGit can hand one over as a single `.tar` file for [download](#downloading-a-backup). The [backup before an upgrade](#backup-before-an-upgrade) is separate and has its own switch.
 
 Kept history protects against force-pushes and deletions, but it is not a backup.
 
 A secret that was ever pushed stays in the repository's Git data, even after a force-push or branch deletion and even with kept history off, and anyone who can read the repository and has its commit ID can still open it in the browser. While the repository keeps history, it also stays in kept history and in every later backup. Only [deleting the repository](#deleting-a-repository) with its files removes it for certain, and earlier backups still contain it. [Unused object cleanup](#unused-object-cleanup) keeps anything that kept history or another ref still reaches, so do not rely on it. Rotate any secret you push by mistake.
 
+### Backups in the dashboard
+
+The administrator manages backups in Settings, on the Storage & recovery tab (`/settings/storage`). Only a browser confirmed as administrator sees the backup parts; anyone else sees what backups do and a button to confirm as administrator.
+
+- **Backups** holds the schedule and has its own Save: the backup folder, Scheduled backups on or off, Back up every (12 hours, Day or 7 days), Backups to keep (1 to 1000) and Verify each new backup on or off. They mean the same as the options of [`owngit backup schedule set`](#scheduled-backups). Turning scheduled backups or verification off shows a warning at once that says what you give up, and the warning shows again after you save. Until a folder is saved, the part says that OwnGit makes no backups.
+- **Current state** shows whether scheduled backups are on, off or not configured, the backup running now, the last backup with its result and time, the last verified backup and the next scheduled backup. It also shows the result of the last [verification you asked for](#verifying-a-kept-backup-again), and a warning when a restore cannot write to the backup folder's disk (see [Where backups can be written](#where-backups-can-be-written)). Back up now is here and works as [`owngit backup now`](#backing-up-now) does.
+- **Recorded backups** lists every recorded backup, newest first, with its result, start time, kind (Scheduled or Back up now), verification (Passed, Failed or Not verified), longest Git write wait, message and folder. A backup that OwnGit still keeps has three actions: Verify again, Download and Restore this backup. For a run whose backup is gone, the list says that OwnGit keeps no backup of it.
+- **Restore from a backup file** takes back a backup file that OwnGit downloaded; see [Restoring from a backup file](#restoring-from-a-backup-file).
+
+Each button asks for the administrator password when Settings would ask for it; see [Administrator password check](#administrator-password-check). Back up now, Verify again and an upload return at once; reload the page to see when they end.
+
 ### Scheduled backups
 
-Choose a folder for the backups and turn scheduled backups on:
+Choose a folder for the backups and turn scheduled backups on, in the Backups part of the dashboard or with this command:
 
 ```sh
 owngit backup schedule set \
@@ -1964,7 +1975,7 @@ owngit backup schedule set \
   --password-file /path/to/owner-only-admin-password
 ```
 
-The first backup starts as soon as the schedule is saved. The commands `owngit backup schedule`, `now`, `status` and `runs` talk to the running server. They take the same `--server`, `--accept-insecure-http` and `--password-file` flags as the [import commands](#imports-on-the-command-line), need the administrator password, and print JSON. The flags are omitted below. [`owngit backup --output`](#backing-up-a-stopped-owngit) and [`owngit backup verify`](#verifying-a-backup) work on this computer instead, without the server or its password.
+The first backup starts as soon as the schedule is saved. The commands `owngit backup schedule`, `now`, `status`, `runs`, `check`, `download` and `upload` talk to the running server. They take the same `--server`, `--accept-insecure-http` and `--password-file` flags as the [import commands](#imports-on-the-command-line), need the administrator password, and print JSON. The flags are omitted below. [`owngit backup --output`](#backing-up-a-stopped-owngit) and [`owngit backup verify`](#verifying-a-backup) work on this computer instead, without the server or its password.
 
 - `--destination` is a folder on the computer that runs OwnGit, given as an absolute path. It must not be inside OwnGit's state directory or repository folder, and it follows the rules in [Where backups can be written](#where-backups-can-be-written). When it is missing, OwnGit creates it so that only the account that runs OwnGit can use it.
 - `--interval` is `12h`, `1d` (the default) or `7d`.
@@ -1980,6 +1991,8 @@ The next scheduled backup is due one interval after the last scheduled one start
 
 ### Backing up now
 
+Choose Back up now in the dashboard, or run:
+
 ```sh
 owngit backup now
 ```
@@ -1987,17 +2000,20 @@ owngit backup now
 The command starts a backup into the folder of the schedule, also while scheduled backups are off, and returns without waiting for it. Follow it with `owngit backup status`. The backup is verified and older backups are removed as for a scheduled one.
 
 - Before a folder is set, the command answers `Choose a backup folder first.`
-- Only one backup runs at a time. While another runs, it answers `A backup is already running. Wait for it to finish.`
+- OwnGit runs one backup, verification or upload at a time. While a backup runs, starting another backup, a verification or an upload answers `A backup is already running. Wait for it to finish.` While a verification or an upload runs, starting any of them answers `A backup, a verification or an upload is running. Wait for it to finish.` A scheduled backup that falls due during a verification or an upload starts as soon as it ends.
 
 ### Checking backups
 
-`owngit backup status` shows the state of backups:
+`owngit backup status` shows the state of backups, as Current state in the dashboard does:
 
 - `schedule`: its `state` is `not_configured` before a folder is set, then `on` or `off`, with the folder, interval, keep count and verification choice.
 - `running`: the backup that runs now, or null.
 - `last_run`: the last backup that ended.
 - `last_verified`: the newest backup that passed verification and that OwnGit still keeps.
 - `next_run`: when the next scheduled backup is due. A time already past means as soon as the running backup ends.
+- `check`: the last [verification you asked for](#verifying-a-kept-backup-again), or null.
+- `upload`: the [uploaded backup](#restoring-from-a-backup-file), or null. Once it passes verification, `upload_restore_command` holds the command that restores it.
+- `restore_limit`: present when a restore cannot write to the backup folder's disk, with the `destination` and the `file_system`.
 
 `owngit backup runs` lists every recorded backup, the newest first. Each one shows:
 
@@ -2015,6 +2031,20 @@ The server log has one line for each backup that ends, with its folder and resul
 ### Verification of new backups
 
 With verification on, OwnGit checks each new backup as [`owngit backup verify`](#verifying-a-backup) does. It rehearses a restore in the system's temporary folder, whose disk needs room for the repositories. A verification that has not finished within 2 hours fails with that reason. A backup that fails verification is recorded as `failed`, and OwnGit removes no older backup after it.
+
+### Verifying a kept backup again
+
+A backup that OwnGit keeps can be verified again at any time, for example one made while verification was off. Choose Verify again on it under Recorded backups, or run:
+
+```sh
+owngit backup check --run ID
+```
+
+`ID` is the 32 character `id` that `owngit backup runs` lists. The check is the same as for a new backup, with the same 2 hour limit. It starts in the background, and the command prints it with `status` `running`. Current state in the dashboard and `check` in `owngit backup status` then show it as `running`, `passed` or `failed`, with a message when it failed, until OwnGit stops.
+
+OwnGit records the result with the backup, so `verification` in `owngit backup runs` changes too. A backup that fails no longer counts as verified, and OwnGit no longer keeps it as the newest verified backup.
+
+When the backup is no longer in its folder, or its folder holds something else, the check answers that the backup is gone and does nothing.
 
 ### Which backups OwnGit keeps
 
@@ -2050,9 +2080,38 @@ A backup is refused, and the refusal names the repository, when:
 - the repository borrows objects from another repository (`objects/info/alternates`) or is a partial clone;
 - the Git process with which an import writes the repository's refs could not be stopped. Restart OwnGit first.
 
+### Downloading a backup
+
+Download, on a backup under Recorded backups, gives a backup that OwnGit keeps as one `.tar` file, named after the backup, such as `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX.tar`. The page stays as it is. On the command line:
+
+```sh
+owngit backup download --run ID --output /path/to/new-file.tar
+```
+
+The file holds the backup's folder with its `manifest.json` and the repository bundles the manifest names, and nothing else.
+
+**The file holds every repository, OwnGit's records and the password hashes of the administrator and shared passwords.** Keep it as private as the backup folder.
+
+- To check the file on another computer, unpack it with `tar -xf FILE` and run [`owngit backup verify`](#verifying-a-backup) on the folder it makes. To restore it, see [Restoring from a backup file](#restoring-from-a-backup-file).
+- There is no size limit. A download stops when the receiving side takes nothing for 1 minute.
+- When a download fails after it started, OwnGit breaks off the connection, so the browser or the command reports the download as failed and a shortened file never passes for a whole one.
+- The command refuses an output file that already exists, removes its partial file when the download fails, and prints JSON with the `path` and size in `bytes` of the file.
+- OwnGit does not remove a backup while it is being downloaded. When that backup is due for removal, it stays until the next backup, and the new backup's message says so.
+
 ### Who can see backup status
 
-`owngit backup schedule`, `now`, `status` and `runs` need the administrator password, because their answers name folders and repositories and carry error messages. `owngit backup --output` and `owngit backup verify` need no server password; they run on this computer and need only access to the state directory or to the backup. Coding tools get a summary instead, through the [`backup_status` MCP tool](CODING_TOOLS.md#tools), with general access (the shared password, or none when access is open). The summary says whether scheduled backups are `not_configured`, `off` or `on`, how and when the last backup ended, when the newest verified backup finished and when the next one is due. It names no folder, repository or error.
+The backup parts of the dashboard show only to a browser confirmed as administrator. `owngit backup schedule`, `now`, `status`, `runs`, `check`, `download` and `upload` need the administrator password, because their answers name folders and repositories and carry error messages, and a downloaded backup holds every repository and the password hashes. `owngit backup --output` and `owngit backup verify` need no server password; they run on this computer and need only access to the state directory or to the backup. Coding tools get a summary instead, through the [`backup_status` MCP tool](CODING_TOOLS.md#tools), with general access (the shared password, or none when access is open). The summary says whether scheduled backups are `not_configured`, `off` or `on`, how and when the last backup ended, when the newest verified backup finished and when the next one is due. It names no folder, repository or error.
+
+The backup commands use the administrator API, which takes the administrator password as HTTP Basic authentication with the user name `admin` and refuses the shared password and helper and runner credentials:
+
+- `GET /api/v1/backups`: the status, as `owngit backup status` prints it.
+- `GET /api/v1/backups/runs` lists the recorded backups, and `POST` backs up now.
+- `GET /api/v1/backups/schedule` shows the schedule, and `PATCH` changes it.
+- `POST /api/v1/backups/runs/ID/verify` verifies a kept backup again.
+- `GET /api/v1/backups/runs/ID/archive` answers the backup as a `.tar` file.
+- `PUT /api/v1/backups/upload` takes a `.tar` file as the body, with a `Content-Length` header.
+
+A refusal answers JSON with a code such as `backup_running`, `backup_busy`, `backup_not_found`, `backup_gone`, `invalid_backup_archive` or `length_required`.
 
 ### Backing up a stopped OwnGit
 
@@ -2100,9 +2159,47 @@ Restore checks every bundle, ref, object and record before it publishes the new 
 - Ctrl+C stops a restore, which then removes what it made, says that nothing was restored and exits with status 130. If both folders are already in place, it completes instead.
 - Git file names are kept exactly, so a name Git accepts but Windows does not, such as one with a backslash, may not check out there.
 
-After a restore, start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records. Then set up again what a backup does not carry:
+### Restore steps in the dashboard
 
-- Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
+OwnGit never restores from the browser. Restore this backup, on each backup that OwnGit keeps under Recorded backups, shows the steps with this installation's folders filled in:
+
+1. Stop OwnGit: `owngit service stop` when it runs as a service, or otherwise end the `owngit serve` process, for example with Ctrl+C in its terminal.
+2. Rename the current state folder and repository folder by adding `.before-restore` to their names. A restore never writes into a folder that exists.
+3. Run the command shown, which has a Copy button. It has the form `owngit restore --input BACKUP --state-dir STATE --repository-root REPOSITORIES --verify`, so it verifies the backup first and restores only one that passes. When OwnGit runs as a Linux system service, the command starts with `sudo -u owngit`.
+4. Start OwnGit again: `owngit service start`, or the way you started it before.
+
+When the restore finishes, it lists what the backup did not bring back, as described [after a restore](#after-a-restore). The renamed folders stay until you remove them.
+
+### Restoring from a backup file
+
+To restore a `.tar` file that OwnGit [downloaded](#downloading-a-backup), upload it under Restore from a backup file on the Storage & recovery tab, or run:
+
+```sh
+owngit backup upload --input /path/to/backup.tar
+```
+
+OwnGit verifies the uploaded backup as it verifies a new one. Once it passes, the page shows the same [restore steps](#restore-steps-in-the-dashboard), and `owngit backup status` gives the command as `upload_restore_command`. In that command, `--input` already points to where the backup will be after you rename the state folder in step 2. Nothing is replaced until you run the command.
+
+OwnGit keeps one uploaded backup, in the folder `backup-uploads` inside its state folder:
+
+- A new upload replaces it.
+- OwnGit removes it 24 hours after it arrived, whenever OwnGit starts, and at once when its verification fails. So run the restore before you start OwnGit again. The page shows when it will be removed.
+- `owngit backup upload` prints the upload with `status` `verifying`. `upload` in `owngit backup status` then shows `status` (`verifying`, `passed` or `failed`), a `message` when it failed, and `removes_at`.
+
+OwnGit refuses an upload in these cases, and then keeps nothing of it:
+
+- The disk of the state folder has less free space than the file's size plus 1 GiB. OwnGit checks this before it reads the file.
+- The upload does not declare its size. Browsers and `owngit backup upload` always declare it.
+- No data arrives for 1 minute.
+- The file holds anything besides one top folder with `manifest.json` and `repositories/*.bundle`, such as an absolute path, `..`, a link or another file.
+
+When OwnGit refuses an upload before the browser has sent the whole file, for example for lack of free space, some browsers show a connection error instead of the reason. `owngit backup upload` prints the reason.
+
+### After a restore
+
+Start `owngit serve` with the restored state before you use it in other ways, so that startup can settle interrupted records. Then set up again what a backup does not carry:
+
+- Sessions, setup links, approved Hosts, network settings, credentials, schedules and every consent are gone. Sign in again, create new helper and runner credentials, store import credentials again, enable automatic checks again, and set up scheduled backups again in Settings or with `owngit backup schedule set`. Unfinished jobs are marked `interrupted`.
 - Raw logs are absent, and unsettled import publications are closed without being applied.
 - An import that follows upstream deletions deletes a ref only after a refresh has seen it again ([After a sign-in change or a restore](#after-a-sign-in-change-or-a-restore)).
 - Server-wide settings start at their defaults, as on a new installation, whether the backed-up installation chose stricter or looser ones: a sign-in lasts 12 hours, new repositories start on `main`, repositories that follow the server keep overwritten and deleted history, a Git transfer may move 4 GB and take 30 minutes, raw check logs are kept 30 days, deleting a repository asks for its name, 4 wrong passwords within 10 minutes pause an address for 15 minutes, and a link from another site opens without the shared sign-in. Transfer slots and waits, browsing limits, repository maintenance, the administrator password check and the new release check are back at their defaults, and unused object cleanup is off. Each repository's own choices under its Settings tab come back with it. `owngit restore` lists them when it finishes; set them again under Settings or with `owngit settings set`.
@@ -2140,6 +2237,8 @@ Two kinds of file system need care:
 Backups work on both. On a file system that cannot rename without replacing, OwnGit creates the backup's folder, which fails when anything is at that name, and moves the finished backup into it with the manifest last, writing each part to disk on the way. A folder left without a manifest by a stop in the middle is not a backup, and OwnGit neither counts nor removes it. When OwnGit removes an old backup, it also removes the `._` files that macOS keeps beside the backup's files. Any other file in the backup's folder, including one only named like a `._` file, still keeps the backup in place. `owngit backup verify` rehearses in the system's temporary folder, so it can check a backup stored on either kind of disk.
 
 Restoring repositories works on neither. On macOS and Linux, `owngit restore` checks the target folders before any work. It stops, names the file system (for example `exfat` or `msdos`) and changes nothing when the repository folder's file system cannot rename without replacing, or when macOS keeps attributes there in `._` files, which Git would read as part of the restored repositories. Restore the repositories to a folder on another disk.
+
+When the backup folder is on a disk where a restore of repositories would stop like this, Current state in the dashboard says so with the file system's name, and `owngit backup status` shows it as `restore_limit`.
 
 The restored state directory needs only the rename without replacing. It can be on a FAT16 or FAT32 volume on macOS while the repositories go to another disk, but not on exFAT.
 
