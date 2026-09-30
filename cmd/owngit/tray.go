@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -42,6 +43,8 @@ func trayAvailable(stateDir string) bool {
 // that does the same. "icon" runs the icon itself on Windows and Linux;
 // "read" prints what its panel shows and "open" opens the dashboard after
 // the server proves it answers, for panels drawn by other programs.
+// "notifications" shows or changes which desktop notifications the icon
+// shows.
 func trayCommand(arguments []string) error {
 	flags := flag.NewFlagSet("tray", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -56,11 +59,15 @@ func trayCommand(arguments []string) error {
 		return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 	}
 	operation := "status"
-	if len(operands) == 1 {
+	if len(operands) > 0 {
 		operation = operands[0]
 	}
-	if len(operands) > 1 || !slices.Contains([]string{"on", "off", "status", "icon", "read", "open"}, operation) {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open or nothing"))
+	switch {
+	case operation == "notifications" && len(operands) != 1 && len(operands) != 3:
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray notifications takes nothing, or a setting and on or off"))
+	case operation != "notifications" && len(operands) > 1,
+		!slices.Contains([]string{"on", "off", "status", "icon", "read", "open", "notifications"}, operation):
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open, notifications or nothing"))
 	}
 	switch operation {
 	case "icon":
@@ -103,6 +110,9 @@ func trayCommand(arguments []string) error {
 		return jsonFailure(*asJSON, "state_unavailable", err)
 	}
 	defer held.Close()
+	if operation == "notifications" {
+		return trayNotificationsCommand(held, dir, operands[1:], *asJSON)
+	}
 	if operation != "status" {
 		if err := state.SetTrayHidden(held, operation == "off"); err != nil {
 			return jsonFailure(*asJSON, "state_unavailable", err)
@@ -126,6 +136,60 @@ func trayCommand(arguments []string) error {
 		fmt.Println("The OwnGit icon is not hidden, but it cannot show on this computer: " + problem + ".")
 	default:
 		fmt.Println("The OwnGit icon shows on this computer. \"owngit tray off\" hides it; OwnGit keeps running.")
+	}
+	return nil
+}
+
+// trayNotificationsCommand prints the notification settings of this
+// computer, after changing one when change names a setting and on or off:
+// "all", "only_others" or one of state.NotifyKinds.
+func trayNotificationsCommand(held *os.File, dir string, change []string, asJSON bool) error {
+	choice, err := state.ReadTrayNotifications(held)
+	if err != nil {
+		return jsonFailure(asJSON, "state_unavailable", err)
+	}
+	if len(change) == 2 {
+		setting, value := change[0], change[1]
+		if value != "on" && value != "off" {
+			return jsonFailure(asJSON, "invalid_arguments", errors.New("a notification setting is on or off"))
+		}
+		switch {
+		case setting == "all":
+			choice.Off = value == "off"
+		case setting == "only_others":
+			choice.OnlyOthers = value == "on"
+		case slices.Contains(state.NotifyKinds, setting):
+			choice.KindsOff = slices.DeleteFunc(choice.KindsOff, func(kind string) bool { return kind == setting })
+			if value == "off" {
+				choice.KindsOff = append(choice.KindsOff, setting)
+			}
+		default:
+			return jsonFailure(asJSON, "invalid_arguments", fmt.Errorf("the notification settings are all, only_others, %s", strings.Join(state.NotifyKinds, ", ")))
+		}
+		if err := state.WriteTrayNotifications(held, choice); err != nil {
+			return jsonFailure(asJSON, "state_unavailable", err)
+		}
+	}
+	kinds := map[string]bool{}
+	for _, kind := range state.NotifyKinds {
+		kinds[kind] = !slices.Contains(choice.KindsOff, kind)
+	}
+	if asJSON {
+		return writeJSONValue(struct {
+			All        bool            `json:"all"`
+			OnlyOthers bool            `json:"only_others"`
+			Kinds      map[string]bool `json:"kinds"`
+			StateDir   string          `json:"state_dir"`
+		}{!choice.Off, choice.OnlyOthers, kinds, dir})
+	}
+	onOff := map[bool]string{true: "on", false: "off"}
+	fmt.Printf("all: %s\n", onOff[!choice.Off])
+	fmt.Printf("only_others: %s\n", onOff[choice.OnlyOthers])
+	for _, kind := range state.NotifyKinds {
+		fmt.Printf("%s: %s\n", kind, onOff[kinds[kind]])
+	}
+	if choice.Off {
+		fmt.Println("All notifications are off; the kinds keep their own choice for when they are on again.")
 	}
 	return nil
 }

@@ -145,43 +145,66 @@ func (client *Client) Dashboard(ctx context.Context, lang string) (string, error
 	return dashboard, nil
 }
 
-// status asks the server once, and once more with the access file read
-// again when the token is refused. A token is kept only while it works.
+// status asks the server for its status.
 func (client *Client) status(ctx context.Context, lang string) (server.TrayStatus, string, error) {
+	var status server.TrayStatus
+	dashboard, err := client.get(ctx, server.TrayStatusPath, url.Values{"lang": {lang}}, func(body []byte) error {
+		if err := json.Unmarshal(body, &status); err != nil {
+			return fmt.Errorf("read the status answer: %w", err)
+		}
+		if !status.OK || status.State != "running" && status.State != "attention" {
+			return errors.New("the status answer is not OwnGit's tray status")
+		}
+		return nil
+	})
+	if err != nil {
+		return server.TrayStatus{}, "", err
+	}
+	return status, dashboard, nil
+}
+
+// get asks the server for path with query once, and once more with the
+// access file read again when the token is refused, and hands the proven
+// answer to read. It returns the dashboard's address. A token is kept only
+// while it works.
+func (client *Client) get(ctx context.Context, path string, query url.Values, read func([]byte) error) (string, error) {
 	for attempt := 0; ; attempt++ {
 		if client.access == nil {
 			access, err := readAccess(filepath.Join(client.StateDir, state.TrayAccessFile))
 			if err != nil {
-				return server.TrayStatus{}, "", fmt.Errorf("%w: %w", errNoConnection, err)
+				return "", fmt.Errorf("%w: %w", errNoConnection, err)
 			}
 			client.access = &access
 		}
 		access := *client.access
-		status, code, err := client.ask(ctx, access, lang)
+		body, code, err := client.ask(ctx, access, path, query)
+		if err == nil {
+			err = read(body)
+		}
 		if err != nil || code != http.StatusOK {
 			client.access = nil
 		}
 		if code == http.StatusUnauthorized && attempt == 0 {
 			continue
 		}
-		return status, strings.TrimSuffix(access.URL, "/"), err
+		return strings.TrimSuffix(access.URL, "/"), err
 	}
 }
 
-// ask sends one status request and checks that the answer is the status
-// the contract describes. Anything else is an error.
-func (client *Client) ask(ctx context.Context, access state.TrayAccess, lang string) (server.TrayStatus, int, error) {
-	address, err := statusURL(access.URL, lang)
+// ask sends one request and returns the answer once it proves that this
+// server sent it and is JSON. Anything else is an error.
+func (client *Client) ask(ctx context.Context, access state.TrayAccess, path string, query url.Values) ([]byte, int, error) {
+	address, err := trayURL(access.URL, path, query)
 	if err != nil {
-		return server.TrayStatus{}, 0, err
+		return nil, 0, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
-		return server.TrayStatus{}, 0, err
+		return nil, 0, err
 	}
 	nonce, err := state.NewTrayNonce()
 	if err != nil {
-		return server.TrayStatus{}, 0, err
+		return nil, 0, err
 	}
 	request.Header.Set("Authorization", "Bearer "+access.Token)
 	request.Header.Set(state.TrayNonceHeader, nonce)
@@ -190,40 +213,33 @@ func (client *Client) ask(ctx context.Context, access state.TrayAccess, lang str
 	if err != nil {
 		var operation *net.OpError
 		if errors.As(err, &operation) && operation.Op == "dial" {
-			return server.TrayStatus{}, 0, fmt.Errorf("%w: %w", errNoConnection, err)
+			return nil, 0, fmt.Errorf("%w: %w", errNoConnection, err)
 		}
-		return server.TrayStatus{}, 0, err
+		return nil, 0, err
 	}
 	defer response.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
 	if err != nil {
-		return server.TrayStatus{}, response.StatusCode, err
+		return nil, response.StatusCode, err
 	}
 	if response.StatusCode != http.StatusOK {
-		return server.TrayStatus{}, response.StatusCode, fmt.Errorf("the status answered %s", response.Status)
+		return nil, response.StatusCode, fmt.Errorf("the tray read answered %s", response.Status)
 	}
 	// Nothing of an answer is used before it proves that this server, which
 	// holds the secret of the access file, answered this request.
 	proof := state.TrayProof(access.Proof, nonce, body)
 	if !hmac.Equal([]byte(response.Header.Get(state.TrayProofHeader)), []byte(proof)) {
-		return server.TrayStatus{}, response.StatusCode, errors.New("the status answer does not prove that OwnGit sent it")
+		return nil, response.StatusCode, errors.New("the answer does not prove that OwnGit sent it")
 	}
 	if kind, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type")); kind != "application/json" {
-		return server.TrayStatus{}, response.StatusCode, errors.New("the status answer is not JSON")
+		return nil, response.StatusCode, errors.New("the answer is not JSON")
 	}
-	var status server.TrayStatus
-	if err := json.Unmarshal(body, &status); err != nil {
-		return server.TrayStatus{}, response.StatusCode, fmt.Errorf("read the status answer: %w", err)
-	}
-	if !status.OK || status.State != "running" && status.State != "attention" {
-		return server.TrayStatus{}, response.StatusCode, errors.New("the status answer is not OwnGit's tray status")
-	}
-	return status, response.StatusCode, nil
+	return body, response.StatusCode, nil
 }
 
-// statusURL is the status address of the server at base, which must be a
-// plain loopback address as the server writes it.
-func statusURL(base, lang string) (string, error) {
+// trayURL is the address of path with query on the server at base, which
+// must be a plain loopback address as the server writes it.
+func trayURL(base, path string, query url.Values) (string, error) {
 	parsed, err := url.Parse(base)
 	if err != nil || parsed.Scheme != "http" || parsed.User != nil || parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("the tray access file names %q, which is not a loopback address", base)
@@ -233,7 +249,7 @@ func statusURL(base, lang string) (string, error) {
 	if (err != nil || !address.IsLoopback()) && !strings.EqualFold(host, "localhost") {
 		return "", fmt.Errorf("the tray access file names %q, which is not a loopback address", base)
 	}
-	return strings.TrimSuffix(base, "/") + server.TrayStatusPath + "?lang=" + url.QueryEscape(lang), nil
+	return strings.TrimSuffix(base, "/") + path + "?" + query.Encode(), nil
 }
 
 // readAccess reads the tray access file.

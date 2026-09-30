@@ -1,7 +1,6 @@
 package githttp
 
 import (
-	"context"
 	"crypto/rand"
 	"io"
 	"net/http"
@@ -25,9 +24,9 @@ func TestOnPushReportsTheRefsEachPushUpdated(t *testing.T) {
 	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
 	var mu sync.Mutex
 	var pushes [][]RefUpdate
-	handler.OnPush = func(ctx context.Context, repositoryID string, updates []RefUpdate) {
-		if repositoryID != "sample" || ctx.Err() != nil {
-			t.Errorf("OnPush for %q with context error %v", repositoryID, ctx.Err())
+	handler.OnPush = func(request *http.Request, repositoryID string, updates []RefUpdate) {
+		if repositoryID != "sample" || request.Context().Err() != nil || request.Method != http.MethodPost {
+			t.Errorf("OnPush for %q with %s and context error %v", repositoryID, request.Method, request.Context().Err())
 		}
 		mu.Lock()
 		pushes = append(pushes, updates)

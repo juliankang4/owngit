@@ -20,7 +20,8 @@ func pushAt(at time.Time) PushEvent {
 func TestRecordPushKeepsTheNewestHundred(t *testing.T) {
 	store, ctx, now := newProjectStore(t)
 	for index := range PushEventsKept + 1 {
-		noErr(t, store.RecordPush(ctx, pushAt(now.Add(time.Duration(index)*time.Second))))
+		_, err := store.RecordPush(ctx, pushAt(now.Add(time.Duration(index)*time.Second)))
+		noErr(t, err)
 	}
 	events, err := store.RecentPushes(ctx, 1000)
 	noErr(t, err)
@@ -51,7 +52,8 @@ func TestConcurrentPushesKeepTheBound(t *testing.T) {
 		go func() {
 			defer group.Done()
 			for index := range 20 {
-				errs <- store.RecordPush(ctx, pushAt(now.Add(time.Duration(worker*20+index)*time.Second)))
+				_, err := store.RecordPush(ctx, pushAt(now.Add(time.Duration(worker*20+index)*time.Second)))
+				errs <- err
 			}
 		}()
 	}
@@ -79,7 +81,7 @@ func TestRecordPushRefusesAnIncompleteEvent(t *testing.T) {
 	} {
 		event := pushAt(now)
 		change(&event)
-		if err := store.RecordPush(ctx, event); err == nil {
+		if _, err := store.RecordPush(ctx, event); err == nil {
 			t.Errorf("%s: recorded", name)
 		}
 	}
@@ -151,7 +153,7 @@ func TestPublishTrayAccess(t *testing.T) {
 	entries, err := os.ReadDir(directory)
 	noErr(t, err)
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".tray-access-") {
+		if strings.HasPrefix(entry.Name(), "."+TrayAccessFile+"-") {
 			t.Fatalf("temporary file %s left behind", entry.Name())
 		}
 	}

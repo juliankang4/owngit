@@ -87,8 +87,67 @@ func TestTrayCommand(t *testing.T) {
 	}
 
 	output, err = captureStdout(func() error { return runCommand("tray", []string{"hide", "--state-dir", stateDir, "--json"}) })
-	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status, icon, read, open or nothing") {
+	if err == nil || !strings.Contains(err.Error(), "tray takes on, off, status, icon, read, open, notifications or nothing") {
 		t.Fatalf("unknown operation: %q err=%v", output, err)
+	}
+}
+
+// "tray notifications" shows every kind on by default and turns all, one
+// kind or "only what I did not do" on and off, and the choice stays.
+func TestTrayNotificationsCommand(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	store, err := state.Open(context.Background(), stateDir)
+	noErr(t, err)
+	store.Close()
+	type settings struct {
+		All        bool            `json:"all"`
+		OnlyOthers bool            `json:"only_others"`
+		Kinds      map[string]bool `json:"kinds"`
+		StateDir   string          `json:"state_dir"`
+	}
+	read := func(arguments ...string) settings {
+		t.Helper()
+		output, err := captureStdout(func() error {
+			return runCommand("tray", append(append([]string{"notifications"}, arguments...), "--state-dir", stateDir, "--json"))
+		})
+		if err != nil {
+			t.Fatalf("tray notifications %v: %v", arguments, err)
+		}
+		var got settings
+		noErr(t, json.Unmarshal([]byte(output), &got))
+		return got
+	}
+	got := read()
+	if !got.All || got.OnlyOthers || len(got.Kinds) != len(state.NotifyKinds) || got.StateDir != stateDir {
+		t.Fatalf("default %+v", got)
+	}
+	for kind, on := range got.Kinds {
+		if !on {
+			t.Fatalf("%s is off by default", kind)
+		}
+	}
+	read("push", "off")
+	read("only_others", "on")
+	if got := read("all", "off"); got.All || !got.OnlyOthers || got.Kinds[state.NotifyPush] || !got.Kinds[state.NotifyUpdate] {
+		t.Fatalf("after changes %+v", got)
+	}
+	if got := read("all", "on"); !got.All || got.Kinds[state.NotifyPush] {
+		t.Fatalf("all on again keeps the kind's own choice: %+v", got)
+	}
+	if got := read("push", "on"); !got.Kinds[state.NotifyPush] {
+		t.Fatalf("push on %+v", got)
+	}
+	for _, arguments := range [][]string{{"webhook", "off"}, {"push", "maybe"}, {"push"}} {
+		_, err := captureStdout(func() error {
+			return runCommand("tray", append(append([]string{"notifications"}, arguments...), "--state-dir", stateDir, "--json"))
+		})
+		if err == nil {
+			t.Errorf("tray notifications %v succeeded", arguments)
+		}
+	}
+	output, err := captureStdout(func() error { return runCommand("tray", []string{"notifications", "--state-dir", stateDir}) })
+	if err != nil || !strings.Contains(output, "only_others: on") || !strings.Contains(output, "push: on") {
+		t.Fatalf("text output %q err=%v", output, err)
 	}
 }
 

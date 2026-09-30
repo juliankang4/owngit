@@ -120,7 +120,8 @@ func seedRepositoryRecords(t *testing.T, fixture *checkJobFixture) {
 		Name: "run-" + strings.Repeat("e", 32), RepositoryID: "project", RunID: run.ID, Token: strings.Repeat("f", 32),
 		State: ImportStagingActive, CreatedAt: testImportNow(),
 	}))
-	noErr(t, store.RecordPush(ctx, PushEvent{RepositoryID: "project", Ref: "refs/heads/main", NewOID: strings.Repeat("a", 40), RefsUpdated: 1, Actor: Actor{Kind: ActorAccess}, PushedAt: testImportNow()}))
+	_, err = store.RecordPush(ctx, PushEvent{RepositoryID: "project", Ref: "refs/heads/main", NewOID: strings.Repeat("a", 40), RefsUpdated: 1, Actor: Actor{Kind: ActorAccess}, PushedAt: testImportNow()})
+	noErr(t, err)
 	noErr(t, store.RegisterImportInitialDestination(ctx, ImportInitialDestination{
 		Name: ".owngit-create-" + strings.Repeat("1", 32), RepositoryID: "project", RunID: run.ID, RootID: strings.Repeat("2", 32),
 		Token: strings.Repeat("3", 32), DisplayName: "project", State: ImportInitialPublished, CreatedAt: testImportNow(),

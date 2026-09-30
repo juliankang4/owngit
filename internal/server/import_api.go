@@ -155,6 +155,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		limits := app.sourceRunLimits(saved.RunSeconds)
 		request = app.beginImportRun(writer, request, limits.RunTimeout)
 		run, runErr := app.Imports.Refresh(request.Context(), repositoryID, limits)
+		app.noteImportOrigin(request, run)
 		app.writeImportRunResult(writer, request, repositoryID, run, runErr)
 		return
 	}
@@ -186,6 +187,7 @@ func (app *App) handleImportRunAPI(writer http.ResponseWriter, request *http.Req
 		GitOnlyConsent: input.GitOnlyConsent, AllowPrivateNetwork: input.AllowPrivateNetwork, Credentials: credential,
 		Options: input.change(), Limits: limits,
 	})
+	app.noteImportOrigin(request, result.Run)
 	app.writeImportRunResult(writer, request, result.RepositoryID, result.Run, runErr)
 }
 

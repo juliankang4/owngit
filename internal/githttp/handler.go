@@ -49,8 +49,9 @@ type Handler struct {
 	// failed to receive its end, and must never change the response. A push
 	// that changed no ref does not run it, and neither does one whose
 	// client left before OwnGit read the whole report, although Git may
-	// have changed refs for it.
-	OnPush func(ctx context.Context, repositoryID string, updates []RefUpdate)
+	// have changed refs for it. The request it gets is the push's, with a
+	// context that the end of the push does not cancel.
+	OnPush func(request *http.Request, repositoryID string, updates []RefUpdate)
 	// Limits returns the limits of a transfer that starts now. New reads
 	// the ones the owner saved (state.GitTransferLimits), so a change
 	// applies to the next transfer. A transfer whose limits cannot be read
@@ -423,7 +424,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		// Deferred, so it runs after the response is complete and before
 		// the repository lock is released.
 		if updates := report.updates(commands); len(updates) > 0 && h.OnPush != nil {
-			defer h.OnPush(context.WithoutCancel(request.Context()), route.repositoryID, updates)
+			defer h.OnPush(request.WithContext(context.WithoutCancel(request.Context())), route.repositoryID, updates)
 		}
 	}
 	if err == nil {

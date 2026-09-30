@@ -116,29 +116,8 @@ type trayCheckup struct {
 }
 
 func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Request) {
-	if app.TrayToken == "" || app.TrayProof == "" {
-		writeAPIError(writer, http.StatusNotFound, "not_found", "Not found.", nil)
-		return
-	}
-	if request.Method != http.MethodGet {
-		writer.Header().Set("Allow", "GET")
-		writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET.", nil)
-		return
-	}
-	if !fromThisComputer(request) {
-		writeAPIError(writer, http.StatusForbidden, "not_local", "The tray status answers only programs on the computer that runs OwnGit.", nil)
-		return
-	}
-	token, found := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
-	sent, want := sha256.Sum256([]byte(token)), sha256.Sum256([]byte(app.TrayToken))
-	if !found || subtle.ConstantTimeCompare(sent[:], want[:]) != 1 {
-		writer.Header().Set("WWW-Authenticate", `Bearer realm="OwnGit tray"`)
-		writeAPIError(writer, http.StatusUnauthorized, "unauthorized", "Send the token of the tray access file.", nil)
-		return
-	}
-	nonce := request.Header.Get(state.TrayNonceHeader)
-	if !state.ValidTrayNonce(nonce) {
-		writeAPIError(writer, http.StatusBadRequest, "invalid_nonce", "Send a new nonce in "+state.TrayNonceHeader+".", nil)
+	nonce, ok := app.trayRequest(writer, request)
+	if !ok {
 		return
 	}
 	status, err := app.trayStatus(request)
@@ -146,7 +125,45 @@ func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Reque
 		writeAPIError(writer, unavailable(request, "tray status read", err), "status_unavailable", "OwnGit runs but could not read its status. The OwnGit log says why.", nil)
 		return
 	}
-	code, body := encodeAPIJSON(http.StatusOK, status)
+	app.writeTrayAnswer(writer, nonce, status)
+}
+
+// trayRequest answers a request for the tray that this server does not
+// answer, and otherwise returns its nonce. Only a GET straight from this
+// computer with the token of the tray access file is answered.
+func (app *App) trayRequest(writer http.ResponseWriter, request *http.Request) (string, bool) {
+	if app.TrayToken == "" || app.TrayProof == "" {
+		writeAPIError(writer, http.StatusNotFound, "not_found", "Not found.", nil)
+		return "", false
+	}
+	if request.Method != http.MethodGet {
+		writer.Header().Set("Allow", "GET")
+		writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET.", nil)
+		return "", false
+	}
+	if !fromThisComputer(request) {
+		writeAPIError(writer, http.StatusForbidden, "not_local", "The tray icon's reads answer only programs on the computer that runs OwnGit.", nil)
+		return "", false
+	}
+	token, found := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
+	sent, want := sha256.Sum256([]byte(token)), sha256.Sum256([]byte(app.TrayToken))
+	if !found || subtle.ConstantTimeCompare(sent[:], want[:]) != 1 {
+		writer.Header().Set("WWW-Authenticate", `Bearer realm="OwnGit tray"`)
+		writeAPIError(writer, http.StatusUnauthorized, "unauthorized", "Send the token of the tray access file.", nil)
+		return "", false
+	}
+	nonce := request.Header.Get(state.TrayNonceHeader)
+	if !state.ValidTrayNonce(nonce) {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_nonce", "Send a new nonce in "+state.TrayNonceHeader+".", nil)
+		return "", false
+	}
+	return nonce, true
+}
+
+// writeTrayAnswer answers a tray request with value and the proof of its
+// nonce and body.
+func (app *App) writeTrayAnswer(writer http.ResponseWriter, nonce string, value any) {
+	code, body := encodeAPIJSON(http.StatusOK, value)
 	writer.Header().Set(state.TrayProofHeader, state.TrayProof(app.TrayProof, nonce, body))
 	writeEncodedAPIJSON(writer, code, body)
 }
@@ -253,10 +270,11 @@ func actorLabel(actor state.Actor, lang webui.Lang) string {
 }
 
 // RecordPush records a push that updated refs, for the tray. It is the Git
-// handler's OnPush. Every push is authorized by general access. The push has
+// handler's OnPush. Every push is authorized by general access; whether it
+// came from this computer is remembered for the event feed. The push has
 // already succeeded, so a failure to record it is logged and changes
 // nothing else.
-func (app *App) RecordPush(ctx context.Context, repositoryID string, updates []githttp.RefUpdate) {
+func (app *App) RecordPush(request *http.Request, repositoryID string, updates []githttp.RefUpdate) {
 	shown := updates[0]
 	for _, update := range updates {
 		if strings.HasPrefix(update.Ref, "refs/heads/") {
@@ -264,15 +282,17 @@ func (app *App) RecordPush(ctx context.Context, repositoryID string, updates []g
 			break
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
-	err := app.Store.RecordPush(ctx, state.PushEvent{
+	sequence, err := app.Store.RecordPush(ctx, state.PushEvent{
 		RepositoryID: repositoryID, Ref: shown.Ref, OldOID: shown.Old, NewOID: shown.New,
 		RefsUpdated: len(updates), Actor: generalAccessActor, PushedAt: app.now(),
 	})
 	if err != nil {
 		log.Printf("push to repository %q was not recorded for the tray: %s", repositoryID, logtext.Cause(err))
+		return
 	}
+	app.trayOrigins.note(request, pushOrigin(sequence))
 }
 
 // trayInfo is the icon block of the Settings page. A choice that cannot be

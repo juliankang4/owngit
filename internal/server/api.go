@@ -136,6 +136,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		var view *pullrequest.View
 		view, err = app.PullRequests.Create(request.Context(), input)
 		if err == nil {
+			app.trayOrigins.note(request, originKey(state.NotifyPullRequest, pullRequestID(repositoryID, view.Number)))
 			result = pullrequest.SuccessEnvelope{OK: true, PullRequest: view}
 		}
 	case "show":

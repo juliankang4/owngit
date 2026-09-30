@@ -178,6 +178,7 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 			[]webui.Notice{notice}, status)
 		return
 	}
+	app.trayOrigins.note(request, originKey(state.NotifyPullRequest, pullRequestID(stored.ID, created.Number)))
 	writer.Header().Set("Cache-Control", "no-store")
 	app.noticeRedirect(writer, request, pullRequestURL(stored.ID, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
 }

@@ -1,0 +1,344 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"owngit/internal/githttp"
+	"owngit/internal/pullrequest"
+	"owngit/internal/state"
+)
+
+// feedClock is the clock of a feed test; pushes read it on the server's
+// goroutines.
+type feedClock struct{ unix atomic.Int64 }
+
+func (clock *feedClock) set(at time.Time)         { clock.unix.Store(at.Unix()) }
+func (clock *feedClock) now() time.Time           { return time.Unix(clock.unix.Load(), 0) }
+func (clock *feedClock) add(offset time.Duration) { clock.set(clock.now().Add(offset)) }
+
+// feedRead reads the event feed of app after cursor with the kinds, the
+// "only what I did not do" choice and the language of query.
+func feedRead(t *testing.T, app *App, cursor string, query url.Values) TrayEvents {
+	t.Helper()
+	if query == nil {
+		query = url.Values{}
+	}
+	if !query.Has("kinds") {
+		query.Set("kinds", strings.Join(state.NotifyKinds, ","))
+	}
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	code, body, errorCode := trayRead(t, app.Handler(), TrayEventsPath, trayTestToken, func(request *http.Request) {
+		request.URL.RawQuery = query.Encode()
+	})
+	if code != http.StatusOK {
+		t.Fatalf("event feed: %d %q", code, errorCode)
+	}
+	var events TrayEvents
+	noErr(t, json.Unmarshal(body, &events))
+	if !events.OK || !state.ValidTrayCursor(events.Cursor) || events.Notifications == nil {
+		t.Fatalf("event feed answered %s", body)
+	}
+	return events
+}
+
+// feedApp is an installation with the repositories notes and site, a clock
+// the test sets, and a work tree that pushes to it.
+func feedApp(t *testing.T) (*App, *feedClock, string, string) {
+	t.Helper()
+	app, _, _, server := releaseApp(t, "v1.0.2")
+	app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
+	app.GitHTTP.OnPush = app.RecordPush
+	clock := &feedClock{}
+	clock.set(time.Unix(1_900_000_000, 0))
+	app.Now, app.PullRequests.Now = clock.now, clock.now
+	for _, name := range []string{"notes", "site"} {
+		_, err := app.Repositories.Create(context.Background(), name, "")
+		noErr(t, err)
+	}
+	work := filepath.Join(t.TempDir(), "work")
+	apiRunGit(t, "", "init", "--initial-branch=main", work)
+	apiRunGit(t, work, "config", "user.name", "Feed Test")
+	apiRunGit(t, work, "config", "user.email", "feed@example.invalid")
+	return app, clock, server.URL, work
+}
+
+func commit(t *testing.T, work, message string) string {
+	t.Helper()
+	noErr(t, os.WriteFile(filepath.Join(work, "file.txt"), []byte(message+"\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", message)
+	return apiGitOutput(t, work, "rev-parse", "HEAD")
+}
+
+// onlyNotification returns the one notification of events.
+func onlyNotification(t *testing.T, events TrayEvents) TrayNotification {
+	t.Helper()
+	if len(events.Notifications) != 1 {
+		t.Fatalf("notifications %+v, want one", events.Notifications)
+	}
+	return events.Notifications[0]
+}
+
+// A push is reported once, a minute after OwnGit received it, with its
+// commits, and pushes within that minute of the first are reported
+// together. A cursor that was not kept gets the same answer again.
+func TestTrayEventsReportPushesOnceAMinuteLater(t *testing.T) {
+	app, clock, address, work := feedApp(t)
+	start := feedRead(t, app, "", nil)
+	if !start.Started || len(start.Notifications) != 0 {
+		t.Fatalf("first read: %+v", start)
+	}
+
+	commit(t, work, "first")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	clock.add(time.Minute)
+	created := feedRead(t, app, start.Cursor, nil)
+	if got := onlyNotification(t, created); got.Title != "New branch main in notes" || got.Body != "first" {
+		t.Fatalf("new branch %+v", got)
+	}
+
+	commit(t, work, "Monthly budget")
+	commit(t, work, "Add weekly review template")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	clock.add(59 * time.Second)
+	waiting := feedRead(t, app, created.Cursor, nil)
+	if len(waiting.Notifications) != 0 || waiting.Started {
+		t.Fatalf("within the minute: %+v", waiting)
+	}
+	clock.add(time.Second)
+	report := feedRead(t, app, waiting.Cursor, nil)
+	if got := onlyNotification(t, report); got != (TrayNotification{
+		ID: "push:2-2", Kind: state.NotifyPush, Title: "2 new commits in notes", Body: "main: Add weekly review template and 1 more",
+		Path: "/repositories/notes/commits?ref=main",
+	}) {
+		t.Fatalf("push notification %+v", got)
+	}
+	if again := feedRead(t, app, waiting.Cursor, nil); len(again.Notifications) != 1 || again.Notifications[0].ID != "push:2-2" {
+		t.Fatalf("a cursor that was not kept: %+v", again)
+	}
+	if after := feedRead(t, app, report.Cursor, nil); len(after.Notifications) != 0 {
+		t.Fatalf("reported twice: %+v", after)
+	}
+	korean := feedRead(t, app, waiting.Cursor, url.Values{"lang": {"ko"}})
+	if got := onlyNotification(t, korean); got.Title != "notes에 새 커밋 2개" || got.Body != "main: Add weekly review template 외 1개" {
+		t.Fatalf("Korean notification %+v", got)
+	}
+
+	// Three pushes within a minute, and one after it.
+	cursor := report.Cursor
+	commit(t, work, "third")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	clock.add(20 * time.Second)
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/work")
+	clock.add(20 * time.Second)
+	apiRunGit(t, work, "push", address+"/git/site.git", "HEAD:refs/heads/main")
+	clock.add(30 * time.Second)
+	commit(t, work, "September expenses")
+	apiRunGit(t, work, "push", address+"/git/site.git", "HEAD:refs/heads/main")
+	clock.add(30 * time.Second)
+	grouped := feedRead(t, app, cursor, nil)
+	if got := onlyNotification(t, grouped); got.ID != "push:3-5" || got.Title != "3 pushes" || got.Path != "/activity" ||
+		got.Body != "notes 2, site 1. Latest: site main, third" {
+		t.Fatalf("grouped notification %+v", got)
+	}
+	clock.add(30 * time.Second)
+	last := feedRead(t, app, grouped.Cursor, nil)
+	if got := onlyNotification(t, last); got.ID != "push:6-6" || got.Title != "1 new commit in site" || got.Body != "main: September expenses" {
+		t.Fatalf("the push after the minute %+v", got)
+	}
+
+	// A new branch and a deleted one say so, as a tag does.
+	cursor = last.Cursor
+	apiRunGit(t, work, "push", address+"/git/site.git", "HEAD:refs/heads/feature")
+	clock.add(time.Minute)
+	branches := feedRead(t, app, cursor, nil)
+	if got := onlyNotification(t, branches); got.Title != "New branch feature in site" || got.Body != "September expenses" {
+		t.Fatalf("new branch %+v", got)
+	}
+	apiRunGit(t, work, "push", address+"/git/site.git", ":refs/heads/feature")
+	clock.add(time.Minute)
+	deleted := feedRead(t, app, branches.Cursor, nil)
+	if got := onlyNotification(t, deleted); got.Title != "feature deleted in site" || got.Path != "/repositories/site" {
+		t.Fatalf("deleted branch %+v", got)
+	}
+	apiRunGit(t, work, "tag", "v1")
+	apiRunGit(t, work, "push", address+"/git/site.git", "refs/tags/v1")
+	clock.add(time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, deleted.Cursor, nil)); got.Title != "New tag v1 in site" || got.Path != "/repositories/site/commits?ref=v1" {
+		t.Fatalf("new tag %+v", got)
+	}
+}
+
+// With "only what I did not do", pushes from this computer are dropped and
+// the rest say where they came from. What this process did not see, such
+// as a push before a restart, counts as from elsewhere and is shown.
+func TestTrayEventsDropWhatThisComputerDid(t *testing.T) {
+	app, clock, address, work := feedApp(t)
+	start := feedRead(t, app, "", nil)
+	first := commit(t, work, "first")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	second := commit(t, work, "second")
+	// The commit arrives without a push event, as if another computer
+	// pushed it.
+	app.GitHTTP.OnPush = nil
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/elsewhere")
+	app.GitHTTP.OnPush = app.RecordPush
+	elsewhere := httptest.NewRequest(http.MethodPost, "http://owngit.example:7654/git/notes.git/git-receive-pack", nil)
+	elsewhere.RemoteAddr = "192.0.2.10:50000"
+	app.RecordPush(elsewhere, "notes", []githttp.RefUpdate{{Ref: "refs/heads/main", Old: first, New: second}})
+	clock.add(time.Minute)
+
+	others := url.Values{"only_others": {"1"}}
+	got := onlyNotification(t, feedRead(t, app, start.Cursor, others))
+	if got.ID != "push:2-2" || got.Subtitle != "Pushed from another computer" || got.Title != "1 new commit in notes" || got.Body != "main: second" {
+		t.Fatalf("only others %+v", got)
+	}
+	if got := onlyNotification(t, feedRead(t, app, start.Cursor, nil)); got.Title != "2 pushes" || got.Subtitle != "" {
+		t.Fatalf("every push %+v", got)
+	}
+	korean := url.Values{"only_others": {"1"}, "lang": {"ko"}}
+	if got := onlyNotification(t, feedRead(t, app, start.Cursor, korean)); got.Subtitle != "다른 컴퓨터에서 푸시" {
+		t.Fatalf("Korean origin %+v", got)
+	}
+	app.trayOrigins = trayOrigins{}
+	if got := feedRead(t, app, start.Cursor, others); len(got.Notifications) != 1 || got.Notifications[0].Title != "2 pushes" {
+		t.Fatalf("after a restart %+v", got.Notifications)
+	}
+}
+
+// A kind that is off is dropped for good, a cursor of records this server
+// does not have starts over, and a malformed request is refused.
+func TestTrayEventsCursorRules(t *testing.T) {
+	app, clock, address, work := feedApp(t)
+	start := feedRead(t, app, "", nil)
+	commit(t, work, "first")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	clock.add(time.Minute)
+	off := feedRead(t, app, start.Cursor, url.Values{"kinds": {""}})
+	if len(off.Notifications) != 0 {
+		t.Fatalf("all off: %+v", off)
+	}
+	if later := feedRead(t, app, off.Cursor, nil); len(later.Notifications) != 0 {
+		t.Fatalf("turned on again, the push was reported: %+v", later)
+	}
+
+	replaced := trayCursor{Push: 99, Time: clock.now().Unix(), Update: ""}.encode()
+	if again := feedRead(t, app, replaced, nil); !again.Started || len(again.Notifications) != 0 {
+		t.Fatalf("a cursor past the last push %+v", again)
+	}
+	if again := feedRead(t, app, "e30", nil); !again.Started {
+		t.Fatalf("a cursor without a time %+v", again)
+	}
+
+	for name, query := range map[string]url.Values{
+		"unknown kind":         {"kinds": {"push,webhook"}},
+		"only others":          {"only_others": {"yes"}},
+		"cursor not base64url": {"cursor": {"not a cursor"}},
+	} {
+		code, _, errorCode := trayRead(t, app.Handler(), TrayEventsPath, trayTestToken, func(request *http.Request) { request.URL.RawQuery = query.Encode() })
+		if code != http.StatusBadRequest || errorCode != "invalid_request" {
+			t.Errorf("%s: %d %q", name, code, errorCode)
+		}
+	}
+}
+
+// Pull requests, failed checks, imports and backups are reported a minute
+// after their records were written, one by one or counted when there are
+// many, and a newer release once, with its command.
+func TestTrayEventsReportOtherKinds(t *testing.T) {
+	app, clock, address, work := feedApp(t)
+	app.UpdateCommand = func(version string) (string, string, bool) { return "brew upgrade owngit", "", false }
+	commit(t, work, "first")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main", "HEAD:refs/heads/feature", "HEAD:refs/heads/draft")
+	commit(t, work, "second")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/feature", "HEAD:refs/heads/draft")
+	start := feedRead(t, app, "", url.Values{"kinds": {"pull_request,import_failed,update"}})
+	clock.add(time.Second)
+
+	// Opened from this computer through the API, and by a request OwnGit
+	// did not see.
+	created := apiRequest(t, http.MethodPost, address+"/api/v1/repositories/notes/pull-requests", map[string]any{
+		"title": "Weekly review", "source_branch": "feature", "target_branch": "main", "review": "skip",
+	}, "", "")
+	if created.StatusCode != http.StatusOK {
+		t.Fatalf("create status=%d", created.StatusCode)
+	}
+	created.Body.Close()
+	_, err := app.PullRequests.Create(context.Background(), pullrequest.CreateInput{
+		Repository: "notes", Title: "Draft notes", SourceBranch: "draft", TargetBranch: "main", ReviewChoice: "skip", Actor: generalAccessActor,
+	})
+	noErr(t, err)
+	noErr(t, app.Store.Exec(context.Background(), `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,message,created_at) VALUES('run-1','site',1,1,'scheduled','failed',?,?,'the source did not answer',?)`,
+		clock.now().Unix(), clock.now().Unix(), clock.now().Unix()))
+	query := url.Values{"kinds": {"pull_request,import_failed,update"}}
+	if early := feedRead(t, app, start.Cursor, query); len(early.Notifications) != 0 {
+		t.Fatalf("before a minute passed: %+v", early.Notifications)
+	}
+	clock.add(time.Minute)
+	report := feedRead(t, app, start.Cursor, query)
+	want := []TrayNotification{
+		{ID: "pull_request:notes/1", Kind: state.NotifyPullRequest, Title: "Pull request #1 opened in notes", Body: "Weekly review", Path: "/repositories/notes/pull-requests/1"},
+		{ID: "pull_request:notes/2", Kind: state.NotifyPullRequest, Title: "Pull request #2 opened in notes", Body: "Draft notes", Path: "/repositories/notes/pull-requests/2"},
+		{ID: "import_failed:run-1", Kind: state.NotifyImportFailed, Title: "Import did not finish in site", Body: "the source did not answer", Path: "/repositories/site/import"},
+	}
+	if len(report.Notifications) != len(want) {
+		t.Fatalf("notifications %+v", report.Notifications)
+	}
+	for index, notification := range report.Notifications {
+		if notification != want[index] {
+			t.Errorf("notification %d = %+v, want %+v", index, notification, want[index])
+		}
+	}
+	others := url.Values{"kinds": {"pull_request"}, "only_others": {"1"}, "lang": {"ko"}}
+	if got := onlyNotification(t, feedRead(t, app, start.Cursor, others)); got.Title != "notes에 풀 리퀘스트 #2 열림" || got.Subtitle != "다른 컴퓨터에서 열림" {
+		t.Fatalf("only others %+v", got)
+	}
+	if again := feedRead(t, app, report.Cursor, query); len(again.Notifications) != 0 {
+		t.Fatalf("reported twice: %+v", again.Notifications)
+	}
+
+	// More than a few of one kind become one notification.
+	for index := range 4 {
+		noErr(t, app.Store.Exec(context.Background(), `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,created_at) VALUES(?,'site',1,1,'scheduled','interrupted',?,?,?)`,
+			"run-many-"+string(rune('a'+index)), clock.now().Unix(), clock.now().Unix(), clock.now().Unix()))
+	}
+	clock.add(time.Minute)
+	many := feedRead(t, app, report.Cursor, query)
+	if got := onlyNotification(t, many); got.Title != "4 imports did not finish" || got.Path != "/activity" {
+		t.Fatalf("many imports %+v", got)
+	}
+
+	// A newer release, once.
+	app.Releases.URL = newReleaseURL(t, "v1.0.3")
+	noErr(t, app.Releases.Check(context.Background()))
+	update := feedRead(t, app, many.Cursor, query)
+	if got := onlyNotification(t, update); got.ID != "update:1.0.3" || got.Title != "OwnGit 1.0.3 is available" || got.Body != "To update, run this command: brew upgrade owngit" || got.Path != "/" {
+		t.Fatalf("update %+v", got)
+	}
+	if again := feedRead(t, app, update.Cursor, query); len(again.Notifications) != 0 {
+		t.Fatalf("update reported twice: %+v", again.Notifications)
+	}
+	// A feed that starts while a release is known does not report it.
+	if fresh := feedRead(t, app, "", query); len(fresh.Notifications) != 0 || len(feedRead(t, app, fresh.Cursor, query).Notifications) != 0 {
+		t.Fatal("a known release was reported to a feed that started after it")
+	}
+}
+
+// newReleaseURL is the address of a release endpoint that answers tag.
+func newReleaseURL(t *testing.T, tag string) string {
+	t.Helper()
+	_, address := newReleaseEndpoint(t, tag)
+	return address
+}

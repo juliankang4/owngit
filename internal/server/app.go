@@ -103,6 +103,9 @@ type App struct {
 	TrayDesktop func() bool
 	// trayCheckup is the checkup the tray status reuses.
 	trayCheckup trayCheckup
+	// trayOrigins remembers which records the event feed reports came
+	// from this computer.
+	trayOrigins trayOrigins
 	HTTPTimeout time.Duration
 	// ImportRunTimeout is the deadline of an import run started by this
 	// server. The request itself keeps ImportResponseMargin more, so a run
@@ -371,8 +374,12 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 		app.Renderer.Assets().ServeHTTP(writer, cloneWithPath(request, strings.TrimPrefix(request.URL.Path, "/assets")))
 		return
 	}
-	if request.URL.Path == TrayStatusPath {
+	switch request.URL.Path {
+	case TrayStatusPath:
 		app.handleTrayStatus(writer, request)
+		return
+	case TrayEventsPath:
+		app.handleTrayEvents(writer, request)
 		return
 	}
 

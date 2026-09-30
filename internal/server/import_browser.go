@@ -86,6 +86,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		GitOnlyConsent: page.GitOnlyConsent, AllowPrivateNetwork: page.PrivateNetwork, Credentials: credential,
 		Options: options, Limits: limits,
 	})
+	app.noteImportOrigin(request, result.Run)
 	notice := "import_started"
 	if err != nil {
 		// A cancelled run may have added the repository before it stopped.
@@ -224,7 +225,9 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		}
 		limits := app.sourceRunLimits(saved.RunSeconds)
 		request = app.beginImportRun(writer, request, limits.RunTimeout)
-		_, err = app.Imports.Refresh(request.Context(), stored.ID, limits)
+		var run state.ImportRun
+		run, err = app.Imports.Refresh(request.Context(), stored.ID, limits)
+		app.noteImportOrigin(request, run)
 		refresh = true
 		notice = "import_refreshed"
 		if importsyncProblemCode(err) == importsync.CodeCancelled {

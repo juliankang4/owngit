@@ -479,6 +479,30 @@ func (m *Manager) CommitsAt(ctx context.Context, id, commitOID string, limit int
 	return parseCommits(result.data)
 }
 
+// CommitsBetween counts the commits reachable from newOID that are not
+// reachable from oldOID: the commits a push that moved a ref from oldOID to
+// newOID brought. The answer never changes for the two IDs, so it is cached.
+func (m *Manager) CommitsBetween(ctx context.Context, id, oldOID, newOID string) (int, error) {
+	if !isOID(oldOID) || !isOID(newOID) {
+		return 0, errInvalidCommitID
+	}
+	result, err := m.cachedRead(ctx, id, "count", oldOID+"\x00"+newOID, func(repositoryPath string) (cachedResult, bool, error) {
+		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "rev-list", "--count", newOID, "^"+oldOID)
+		if err != nil {
+			return cachedResult{}, false, err
+		}
+		return cachedResult{data: bytes.TrimSpace(output.Stdout)}, true, nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	count, err := strconv.Atoi(string(result.data))
+	if err != nil || count < 0 {
+		return 0, fmt.Errorf("Git counted %q commits", result.data)
+	}
+	return count, nil
+}
+
 // CommitReachableFrom reports whether commitOID is rootOID or one of its
 // ancestors. The answer never changes for the two IDs, so it is cached. A
 // commitOID that names no commit wraps ErrNotFound.

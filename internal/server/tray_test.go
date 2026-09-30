@@ -29,7 +29,20 @@ const trayNonce = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 // would, with token, and decodes the answer.
 func trayGET(t *testing.T, handler http.Handler, token string, change func(*http.Request)) (int, TrayStatus, string) {
 	t.Helper()
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7654"+TrayStatusPath, nil)
+	var status TrayStatus
+	code, body, errorCode := trayRead(t, handler, TrayStatusPath, token, change)
+	if code == http.StatusOK {
+		noErr(t, json.Unmarshal(body, &status))
+	}
+	return code, status, errorCode
+}
+
+// trayRead asks path of handler as a program on this computer would, with
+// token, and checks the proof of an answer. It returns the body and, for a
+// refusal, its error code.
+func trayRead(t *testing.T, handler http.Handler, path, token string, change func(*http.Request)) (int, []byte, string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7654"+path, nil)
 	request.RemoteAddr = "127.0.0.1:50000"
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
@@ -40,20 +53,18 @@ func trayGET(t *testing.T, handler http.Handler, token string, change func(*http
 	}
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
-	var status TrayStatus
 	var failure struct {
 		Error struct{ Code string } `json:"error"`
 	}
 	body := recorder.Body.Bytes()
 	if recorder.Code == http.StatusOK {
-		noErr(t, json.Unmarshal(body, &status))
 		if proof := recorder.Header().Get(state.TrayProofHeader); proof != state.TrayProof(trayTestProof, request.Header.Get(state.TrayNonceHeader), body) {
 			t.Fatalf("the answer carries the proof %q", proof)
 		}
 	} else {
 		noErr(t, json.Unmarshal(body, &failure))
 	}
-	return recorder.Code, status, failure.Error.Code
+	return recorder.Code, body, failure.Error.Code
 }
 
 // Git pushes through the server become the tray's recent pushes, newest
@@ -126,44 +137,47 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	}
 }
 
-// Only a program on this computer with the token reads the status, and
-// the liveness check stays empty.
+// Only a program on this computer with the token reads the status or the
+// event feed, and the liveness check stays empty.
 func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
 	app := newConfiguredApp(t)
 	noErr(t, app.Hosts.Add("owngit.example"))
 	handler := app.Handler()
-	if code, _, _ := trayGET(t, handler, trayTestToken, nil); code != http.StatusNotFound {
-		t.Fatalf("without a published token: %d, want 404", code)
-	}
-	app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
-	for name, test := range map[string]struct {
-		token  string
-		change func(*http.Request)
-		code   int
-		error  string
-	}{
-		"no token":    {"", nil, http.StatusUnauthorized, "unauthorized"},
-		"wrong token": {"another-token", nil, http.StatusUnauthorized, "unauthorized"},
-		"basic auth": {"", func(request *http.Request) { request.SetBasicAuth("owngit", trayTestToken) },
-			http.StatusUnauthorized, "unauthorized"},
-		"another device": {trayTestToken, func(request *http.Request) {
-			request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.10:50000"
-		}, http.StatusForbidden, "not_local"},
-		"forwarded by a proxy here": {trayTestToken, func(request *http.Request) {
-			request.Header.Set("X-Forwarded-For", "192.0.2.10")
-		}, http.StatusForbidden, "not_local"},
-		"post":        {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
-		"no nonce":    {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) }, http.StatusBadRequest, "invalid_nonce"},
-		"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") }, http.StatusBadRequest, "invalid_nonce"},
-		"this computer by its own address": {trayTestToken, func(request *http.Request) {
-			request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.5:50000"
-			local := &net.TCPAddr{IP: net.ParseIP("192.0.2.5"), Port: 7654}
-			*request = *request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, local))
-		}, http.StatusOK, ""},
-	} {
-		code, _, errorCode := trayGET(t, handler, test.token, test.change)
-		if code != test.code || errorCode != test.error {
-			t.Errorf("%s: %d %q, want %d %q", name, code, errorCode, test.code, test.error)
+	for _, path := range []string{TrayStatusPath, TrayEventsPath} {
+		app.TrayToken, app.TrayProof = "", ""
+		if code, _, _ := trayRead(t, handler, path, trayTestToken, nil); code != http.StatusNotFound {
+			t.Fatalf("%s without a published token: %d, want 404", path, code)
+		}
+		app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
+		for name, test := range map[string]struct {
+			token  string
+			change func(*http.Request)
+			code   int
+			error  string
+		}{
+			"no token":    {"", nil, http.StatusUnauthorized, "unauthorized"},
+			"wrong token": {"another-token", nil, http.StatusUnauthorized, "unauthorized"},
+			"basic auth": {"", func(request *http.Request) { request.SetBasicAuth("owngit", trayTestToken) },
+				http.StatusUnauthorized, "unauthorized"},
+			"another device": {trayTestToken, func(request *http.Request) {
+				request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.10:50000"
+			}, http.StatusForbidden, "not_local"},
+			"forwarded by a proxy here": {trayTestToken, func(request *http.Request) {
+				request.Header.Set("X-Forwarded-For", "192.0.2.10")
+			}, http.StatusForbidden, "not_local"},
+			"post":        {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
+			"no nonce":    {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) }, http.StatusBadRequest, "invalid_nonce"},
+			"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") }, http.StatusBadRequest, "invalid_nonce"},
+			"this computer by its own address": {trayTestToken, func(request *http.Request) {
+				request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.5:50000"
+				local := &net.TCPAddr{IP: net.ParseIP("192.0.2.5"), Port: 7654}
+				*request = *request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, local))
+			}, http.StatusOK, ""},
+		} {
+			code, _, errorCode := trayRead(t, handler, path, test.token, test.change)
+			if code != test.code || errorCode != test.error {
+				t.Errorf("%s %s: %d %q, want %d %q", path, name, code, errorCode, test.code, test.error)
+			}
 		}
 	}
 	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7654"+HealthPath, nil)

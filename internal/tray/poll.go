@@ -4,6 +4,7 @@ package tray
 
 import (
 	"context"
+	"log"
 	"sync/atomic"
 	"time"
 
@@ -37,12 +38,16 @@ type poller struct {
 	lang      webui.Lang
 	refresh   chan struct{}
 	panelOpen atomic.Bool
+	// notifier shows desktop notifications after each reading that shows
+	// a server that answered, once the icon sets its show.
+	notifier notifier
 }
 
 func newPoller(options Options, lang webui.Lang) *poller {
+	client := NewClient(options.StateDir, options.Diagnose)
 	return &poller{
-		stateDir: options.StateDir, client: NewClient(options.StateDir, options.Diagnose),
-		lang: lang, refresh: make(chan struct{}, 1),
+		stateDir: options.StateDir, client: client, lang: lang, refresh: make(chan struct{}, 1),
+		notifier: notifier{stateDir: options.StateDir, client: client, lang: lang},
 	}
 }
 
@@ -75,6 +80,12 @@ func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 			return
 		}
 		deliver(next)
+		switch {
+		case next.show && next.report.Status != nil && p.notifier.show != nil:
+			p.notifier.notify(ctx)
+		case !next.show:
+			p.forgetCursor()
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -94,6 +105,23 @@ func (p *poller) mayShow() bool {
 	defer held.Close()
 	hidden, err := state.TrayHidden(held)
 	return err == nil && !hidden
+}
+
+// forgetCursor removes the notification cursor while the owner hides the
+// icon, as hiding does, so that a notification read that ended just after
+// the owner hid the icon cannot keep a cursor: shown again, the icon shows
+// only what happens from then on.
+func (p *poller) forgetCursor() {
+	held, err := state.OpenStateDirectory(p.stateDir)
+	if err != nil {
+		return
+	}
+	defer held.Close()
+	if hidden, err := state.TrayHidden(held); err == nil && hidden {
+		if err := state.RemoveTrayCursor(held); err != nil {
+			log.Printf("OwnGit icon notifications: %v", err)
+		}
+	}
 }
 
 // askAgain makes the poller read now instead of after its wait.
