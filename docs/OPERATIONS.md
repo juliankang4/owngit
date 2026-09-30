@@ -85,7 +85,7 @@ owngit serve
 
 The default address is `http://127.0.0.1:7654`. Setup asks for three things:
 
-- the repository folder;
+- the repository folder, typed as a path or, in the browser, [chosen from a list](#choose-the-repository-folder-in-the-browser);
 - whether general access is open, or protected by one shared password;
 - a separate administrator password, which the dashboard asks for before administrator changes ([how often](#administrator-password-check)).
 
@@ -163,6 +163,21 @@ OwnGit counts a computer as headless in these cases:
 - on a Mac, the user who runs OwnGit is not logged in on the screen. A Mac where you are logged in on the screen counts as having one, even over SSH.
 
 A service passes `--headless=true` or `false` from its install, so it does not decide again at boot.
+
+### Choose the repository folder in the browser
+
+On the setup page in a browser, "Choose folder" beside the "Repository folder" field opens a list of folders, so you can pick one instead of typing its path. The folders are on the computer that runs OwnGit, as the account running OwnGit sees them, not on the device with the browser. Typing a path still works. Without JavaScript the button does not appear.
+
+The chooser opens at the path in the field. With the field empty, it opens at the suggested folder, `OwnGit-Repositories` in that account's home folder. If that folder does not exist yet, the chooser opens its nearest existing parent and puts the missing name in "New folder name".
+
+- The list shows folders and symbolic links by name, and no files. "Parent folder" goes up one level. "Show hidden folders" adds hidden ones, such as folders whose names start with a dot.
+- Links are listed without being followed. A broken link, a link to a file, or a link to a folder the account cannot read shows its error when you open it.
+- "Create folder" makes one folder inside the open folder and opens it. It never replaces something that already exists.
+- A missing folder, a path that is not a folder, a folder the account cannot read, or a folder that does not answer within 3 seconds shows an error, never an empty list. Go to the parent folder or type another path.
+- In a very large folder, only the folders among the first 2,000 entries are listed, with a notice saying so.
+- "Use this folder" only fills in the field. Setup checks the path when you submit the form, as it does for a typed one.
+
+Only the browser that is running setup can use the chooser, and only until setup finishes. OwnGit refuses it to anyone else, and after setup it is gone.
 
 ## Run as a service
 
