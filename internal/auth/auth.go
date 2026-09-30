@@ -240,22 +240,11 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 		return 0, errors.New("invalid authentication kind")
 	}
 	address := clientAddress(remoteAddress)
-	// Only wrong passwords count toward the limit. Checks from one address
-	// take turns, so parallel guesses cannot pass the limit before their
-	// failures are recorded, while parallel correct requests are never
-	// refused for being parallel.
-	release, err := m.takeTurn(ctx, kind+"\x00"+address)
+	release, err := m.startCountedCheck(ctx, kind, address)
 	if err != nil {
 		return 0, err
 	}
 	defer release()
-	remaining, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
-	if err != nil {
-		return 0, err
-	}
-	if remaining > 0 {
-		return 0, &RateLimitedError{Remaining: remaining}
-	}
 	encoded, version, err := m.Store.PasswordCredential(ctx, kind)
 	if errors.Is(err, state.ErrAccessChanged) {
 		return 0, ErrInvalidCredentials
@@ -278,8 +267,60 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 			return version, m.Store.ClearAttempts(ctx, kind, address)
 		}
 	}
-	if err := m.acquireCheck(ctx); err != nil {
+	if err := m.countedCheck(ctx, kind, address, encoded, password); err != nil {
 		return 0, err
+	}
+	m.remembered.add(remembered, m.now())
+	return version, nil
+}
+
+// ShareAttempts is the kind under which wrong share link passwords are
+// counted, apart from sign-in passwords, so a visitor's guesses never pause
+// the owner's sign-in.
+const ShareAttempts = "share"
+
+// VerifySharePassword checks the extra password of a share link, stored as
+// encoded, under the same per-address limit as sign-in passwords, counted
+// as ShareAttempts. It fails as verifyPassword does.
+func (m *Manager) VerifySharePassword(ctx context.Context, encoded, password, remoteAddress string) error {
+	address := clientAddress(remoteAddress)
+	release, err := m.startCountedCheck(ctx, ShareAttempts, address)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if err := ValidatePasswordHash(encoded); err != nil {
+		return fmt.Errorf("stored share link password: %w", err)
+	}
+	return m.countedCheck(ctx, ShareAttempts, address, encoded, password)
+}
+
+// startCountedCheck starts a password check of kind from address. Only
+// wrong passwords count toward the limit. Checks from one address take
+// turns, so parallel guesses cannot pass the limit before their failures
+// are recorded, while parallel correct requests are never refused for
+// being parallel. The caller runs countedCheck and then release.
+func (m *Manager) startCountedCheck(ctx context.Context, kind, address string) (func(), error) {
+	release, err := m.takeTurn(ctx, kind+"\x00"+address)
+	if err != nil {
+		return nil, err
+	}
+	remaining, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
+	if err == nil && remaining > 0 {
+		err = &RateLimitedError{Remaining: remaining}
+	}
+	if err != nil {
+		release()
+		return nil, err
+	}
+	return release, nil
+}
+
+// countedCheck compares password with encoded, records a wrong one against
+// address and clears the count after a right one.
+func (m *Manager) countedCheck(ctx context.Context, kind, address, encoded, password string) error {
+	if err := m.acquireCheck(ctx); err != nil {
+		return err
 	}
 	defer func() { <-m.checkSlots }()
 	check := m.passwordCheck
@@ -293,15 +334,11 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 		// the right password still passes then, so an administrator can set
 		// them again.
 		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now()); err != nil {
-			return 0, err
+			return err
 		}
-		return 0, ErrInvalidCredentials
+		return ErrInvalidCredentials
 	}
-	if err := m.Store.ClearAttempts(ctx, kind, address); err != nil {
-		return 0, err
-	}
-	m.remembered.add(remembered, m.now())
-	return version, nil
+	return m.Store.ClearAttempts(ctx, kind, address)
 }
 
 // takeTurn waits until no other check of key runs and returns the release
