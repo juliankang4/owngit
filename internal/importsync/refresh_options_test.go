@@ -711,3 +711,19 @@ func TestDeletionKeepsARefRenamedIntoAnotherCase(t *testing.T) {
 		t.Fatalf("preview = %+v", effects)
 	}
 }
+
+// Repository storage that cannot be read gives no plan: the preview is
+// unknown, not empty.
+func TestPreviewIsUnknownWhenStorageCannotBeRead(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	obstruction := filepath.Join(f.root, "not-a-directory")
+	noErr(t, os.WriteFile(obstruction, []byte("synthetic\n"), 0o600))
+	f.manager.SetRoot(obstruction)
+	status, err := f.service.Status(context.Background(), "project")
+	noErr(t, err)
+	if !status.RefreshEffectsUnknown || len(status.RefreshEffects) != 0 {
+		t.Fatalf("status = %+v", status)
+	}
+}

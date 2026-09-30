@@ -1294,6 +1294,9 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 	var destination map[string]string
 	path, _, exists, err := s.Repositories.ExistingPath(ctx, source.RepositoryID)
 	status.RepositoryExists = err == nil && exists
+	// Storage that cannot be read gives no plan, so the effects are unknown;
+	// only a destination that does not exist has none.
+	status.RefreshEffectsUnknown = err != nil
 	// Status never waits for a writer such as an import publication or a
 	// push. While one holds the repository lock, local refs are reported as
 	// unknown instead of a possibly half-applied view, and the active run
