@@ -1257,18 +1257,18 @@ After you create a link, OwnGit shows its address once, such as `https://HOST/sh
 
 OwnGit warns, without refusing, when a link has no expiry, when it allows cloning (a copy cannot be taken back by revoking the link) and when it has no extra password.
 
-**What a visitor sees.** Opening the address sets a cookie for that link in the browser and moves to `/share/ID`, so the secret leaves the address bar. The visitor sees the repository's overview, files, README, commits of its branches and tags, and raw files, within the browsing limits. A visitor never sees other repositories, the dashboard, activity, pull requests, checks and their logs, kept history, import details, settings or any control that changes something. A commit that only kept history holds is not found. An unknown, expired or revoked link answers *not found*. With an extra password, a wrong password says so, and wrong passwords are counted per address under the [login attempt limits](#login-attempt-limits), apart from sign-in, so they never pause your own sign-in.
+**What a visitor sees.** Opening the address sets a cookie for that link in the browser and moves to `/share/ID`, so the secret leaves the address bar. The visitor sees the repository's overview, files, README, commits of its branches and tags, and raw files, within the browsing limits. A visitor never sees other repositories, the dashboard, activity, pull requests, checks and their logs, kept history, import details, settings or any control that changes something. A commit that only kept history or a ref outside branches and tags holds is not found. An unknown, expired or revoked link answers *not found*. With an extra password, a wrong password says so, and wrong passwords are counted per address under the [login attempt limits](#login-attempt-limits), apart from sign-in, so they never pause your own sign-in.
 
 **Cloning.** A clone link's page shows its Git address, `https://HOST/share/ID.git`. Git asks for a user name and password:
 
 - without an extra password, the password is the part of the share link after `/share/`, and any user name works;
 - with an extra password, the user name is the part after `/share/`, and the password is the extra password.
 
-Clone and fetch work; a push is refused. A wrong credential gets the same answer as any failed Git sign-in.
+Clone and fetch get branches and tags only, never refs in [other ref namespaces](#other-ref-namespaces) or kept history, whatever the repository's own Git configuration allows. A push is refused. A wrong credential gets the same answer as any failed Git sign-in.
 
 **Renames, deletion and backups.** A link names its repository, not its address, so it keeps working after a rename. Deleting the repository deletes its links. Share links are not in backups: after a restore there are none, so create new ones.
 
-**Where the secret can appear.** Only the first request, `/share/SECRET`, carries the secret in its path. OwnGit does not log it and answers with a redirect to `/share/ID`; no later page, link or `Referer` header carries it (share pages send `Referrer-Policy: no-referrer`). A reverse proxy in front of OwnGit may still log that first path, so check its access log settings before sending links through it. For Git, the secret is the password, which Git's credential helper may store like any other password.
+**Where the secret can appear.** Only the first request, `/share/SECRET`, carries the secret in its path. OwnGit does not log it and answers with a redirect to `/share/ID`; no later page, link or `Referer` header carries it (answers under `/share/` send `Referrer-Policy: no-referrer`, also refusals and errors; the extra password form, whose address holds no secret, sends `same-origin`). A reverse proxy in front of OwnGit may still log that first path, so check its access log settings before sending links through it. For Git, the secret is the password, which Git's credential helper may store like any other password.
 
 On the command line, with the administrator password in `--password-file`:
 
