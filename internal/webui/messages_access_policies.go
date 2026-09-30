@@ -133,7 +133,7 @@ var accessPoliciesCatalog = map[MessageCode]message{
 	},
 	MsgLoginLimitsUnreadable: {
 		en: "The password was not accepted, and the attempt could not be counted, because the saved login attempt limits cannot be read. An administrator can set all three again under Settings, Access, or with owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m (the defaults).",
-		ko: "저장된 로그인 시도 한도를 읽을 수 없어 비밀번호를 받아들이지 않았고 이번 시도도 세지 못했습니다. 관리자가 설정의 접근 탭에서 세 값을 모두 다시 정하거나 owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m(기본값)을 실행하면 됩니다.",
+		ko: "저장된 로그인 시도 한도를 읽을 수 없어 비밀번호를 받아들이지 않았고 이번 시도도 세지 못했습니다. 관리자가 설정의 접근 권한 탭에서 세 값을 모두 다시 정하거나 owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m(기본값)을 실행하면 됩니다.",
 	},
 
 	MsgCrossSiteTitle: {en: "Links from other sites", ko: "다른 사이트의 링크"},
