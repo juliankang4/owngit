@@ -24,7 +24,8 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 		t.Fatal("settings set without a setting was accepted")
 	}
 	if _, err := captureStdout(func() error {
-		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h", "--transfer-per-repository", "2", "--transfer-queue", "2m", "--check-logs", "indefinite", "--kept-history", "off"}, remote...))
+		return settingsCommand(append([]string{"set", "--session", "7d", "--initial-branch", "trunk", "--transfer-size", "512MB", "--transfer-time", "2h", "--transfer-per-repository", "2", "--transfer-queue", "2m", "--check-logs", "indefinite", "--kept-history", "off",
+			"--browse-file", "4MB", "--browse-compare-time", "30s", "--maintenance-window", "22-6", "--maintenance-packs", "40", "--unused-object-cleanup", "on", "--cleanup-grace-days", "30"}, remote...))
 	}); err != nil {
 		t.Fatalf("settings set: %v", err)
 	}
@@ -52,6 +53,20 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	}
 	if saved, err := fixture.store.KeptHistory(context.Background()); err != nil || saved {
 		t.Fatalf("saved kept history=%v err=%v", saved, err)
+	}
+	if saved, err := fixture.store.BrowseLimits(context.Background()); err != nil || saved.FileBytes != 4<<20 || saved.CompareTime != 30*time.Second || saved.RawBytes != 10<<20 {
+		t.Fatalf("saved browsing limits=%+v err=%v", saved, err)
+	}
+	if saved, err := fixture.store.Maintenance(context.Background()); err != nil || saved.WindowStart != 22 || saved.WindowEnd != 6 || saved.PackThreshold != 40 || !saved.Enabled {
+		t.Fatalf("saved maintenance=%+v err=%v", saved, err)
+	}
+	if saved, err := fixture.store.UnusedObjectCleanup(context.Background()); err != nil || !saved.Enabled || saved.Grace != 30*24*time.Hour {
+		t.Fatalf("saved cleanup=%+v err=%v", saved, err)
+	}
+	for _, refused := range [][]string{{"--maintenance-window", "3"}, {"--maintenance", "yes"}, {"--browse-raw", "10"}} {
+		if err := settingsCommand(append(append([]string{"set"}, refused...), remote...)); err == nil {
+			t.Fatalf("settings set %v was accepted", refused)
+		}
 	}
 	if err := settingsCommand(append([]string{"set", "--transfer-size", "4gb"}, remote...)); err == nil {
 		t.Fatal("a size without a known unit was accepted")

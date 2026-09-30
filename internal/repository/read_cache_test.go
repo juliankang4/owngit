@@ -298,7 +298,10 @@ func TestCompareLimits(t *testing.T) {
 	runGit(t, work, "checkout", "-q", "main")
 	target := commitTree(t, manager, work, "main", map[string]string{"shared.txt": "moved\n", "main.txt": "main\n"})
 
-	full, err := manager.Compare(context.Background(), "sample", target, source)
+	compare := func(limit int64, timeout time.Duration) (Comparison, error) {
+		return manager.Compare(context.Background(), "sample", target, source, limit, timeout)
+	}
+	full, err := compare(8<<20, 20*time.Second)
 	noErr(t, err)
 	if full.Bases != 1 || full.Base != base || len(full.Files) != 20 || full.PatchTruncated || full.FilesTruncated || strings.Count(full.Patch, "diff --git ") != 20 {
 		t.Fatalf("full comparison: bases=%d files=%d cut=%v/%v", full.Bases, len(full.Files), full.PatchTruncated, full.FilesTruncated)
@@ -306,33 +309,30 @@ func TestCompareLimits(t *testing.T) {
 	count, _, slowPath := countGitProcesses(t, manager, "diff")
 
 	// A limit inside the patches keeps the whole file list.
-	setForTest(t, &compareOutputLimit, int64(len(full.Patch)/2))
+	half := int64(len(full.Patch) / 2)
 	before := count()
-	cut, err := manager.Compare(context.Background(), "sample", target, source)
+	cut, err := compare(half, 20*time.Second)
 	noErr(t, err)
 	if !cut.PatchTruncated || cut.FilesTruncated || cut.TimedOut || len(cut.Files) != 20 || len(cut.Patch) >= len(full.Patch) || count()-before != 1 {
 		t.Fatalf("patch cut: files=%d cut=%v/%v patch=%d processes=%d", len(cut.Files), cut.PatchTruncated, cut.FilesTruncated, len(cut.Patch), count()-before)
 	}
 	before = count()
-	if again, err := manager.Compare(context.Background(), "sample", target, source); err != nil || !again.PatchTruncated || count() != before {
+	if again, err := compare(half, 20*time.Second); err != nil || !again.PatchTruncated || count() != before {
 		t.Fatalf("a comparison cut by its output limit was not cached: %v processes=%d", err, count()-before)
 	}
 
 	// A limit inside the file records keeps only the files read in full.
-	setForTest(t, &compareOutputLimit, 300)
-	short, err := manager.Compare(context.Background(), "sample", target, source)
+	short, err := compare(300, 20*time.Second)
 	noErr(t, err)
 	if !short.FilesTruncated || len(short.Files) >= 20 || short.Patch != "" {
 		t.Fatalf("list cut: files=%d cut=%v", len(short.Files), short.FilesTruncated)
 	}
 
 	// The time limit shows what was read as incomplete and caches nothing.
-	setForTest(t, &compareOutputLimit, 8<<20-1)
-	setForTest(t, &compareTimeLimit, 300*time.Millisecond)
 	noErr(t, os.WriteFile(slowPath, nil, 0o600))
 	for attempt := 0; attempt < 2; attempt++ {
 		before = count()
-		slow, err := manager.Compare(context.Background(), "sample", target, source)
+		slow, err := compare(8<<20-1, 300*time.Millisecond)
 		if err != nil || !slow.FilesTruncated || !slow.PatchTruncated || !slow.TimedOut || count()-before != 1 {
 			t.Fatalf("attempt %d past the time limit: %+v %v processes=%d", attempt, slow, err, count()-before)
 		}

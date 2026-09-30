@@ -126,9 +126,9 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 		if err != nil {
 			// Every failed comparison is shown as unavailable, and makes the
 			// page's answer unavailable unless it already has another status.
-			comparison := unavailable(request, "pull request comparison", err)
+			var comparison int
+			comparison, page.ChangesReason = comparisonFailure(request, err)
 			page.ChangesUnavailable = true
-			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {
 				status = comparison
 			}
@@ -409,9 +409,9 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		if err != nil {
 			// Every failed comparison is shown as unavailable, and makes the
 			// page's answer unavailable unless it already has another status.
-			comparison := unavailable(request, "pull request comparison", err)
+			var comparison int
+			comparison, page.ChangesReason = comparisonFailure(request, err)
 			page.ChangesUnavailable = true
-			page.ChangesReason = webui.MsgErrUnavailable
 			if status == http.StatusOK {
 				status = comparison
 			}
@@ -848,6 +848,17 @@ type pullRequestChanges struct {
 	FilesIncomplete bool
 }
 
+// comparisonFailure logs a comparison that failed and returns the status
+// and the reason the page gives: the browsing limits when they cannot be
+// read, and otherwise that the changes are unavailable.
+func comparisonFailure(request *http.Request, err error) (int, webui.MessageCode) {
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "pull request comparison", err)
+		return http.StatusConflict, webui.MsgBrowseUnreadable
+	}
+	return unavailable(request, "pull request comparison", err), webui.MsgErrUnavailable
+}
+
 // comparePullRequestRevisions reads what the source adds since it branched
 // from the target: the changes from the merge base of the two recorded
 // revisions to the source, as a three-dot diff shows them. Without a merge
@@ -858,7 +869,11 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 	if !validOID(sourceOID) || !validOID(targetOID) {
 		return pullRequestChanges{}, errors.New("invalid pull request revision")
 	}
-	comparison, err := app.Repositories.Compare(ctx, repositoryID, targetOID, sourceOID)
+	limits, err := app.Store.BrowseLimits(ctx)
+	if err != nil {
+		return pullRequestChanges{}, err
+	}
+	comparison, err := app.Repositories.Compare(ctx, repositoryID, targetOID, sourceOID, limits.CompareBytes, limits.CompareTime)
 	if err != nil {
 		return pullRequestChanges{}, fmt.Errorf("read pull request changes: %w", err)
 	}
@@ -868,7 +883,7 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 	case comparison.Bases > 1:
 		return pullRequestChanges{Unavailable: webui.MsgPRChangesManyBases}, nil
 	}
-	files, notLoaded := diffFileItems(comparison.Files, comparison.Patch, comparison.PatchTruncated, nil, nil)
+	files, notLoaded := diffFileItems(comparison.Files, comparison.Patch, comparison.PatchTruncated, nil, nil, limits.CommitFileBytes)
 	return pullRequestChanges{
 		Files: files, Base: comparison.Base,
 		PatchesIncomplete: notLoaded || comparison.PatchTruncated,

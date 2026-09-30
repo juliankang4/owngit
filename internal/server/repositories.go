@@ -537,6 +537,12 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 	case errors.Is(cause, repository.ErrRepositoryInUse):
 		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse
 		writer.Header().Set("Retry-After", "10")
+	case errors.As(cause, new(*state.PolicyError)):
+		// A saved setting stops the read; the page names it.
+		logFailure(request, "repository read", cause)
+		page.Repo.UnreadableReason = webui.MsgBrowseUnreadable
+		app.render(writer, request, http.StatusConflict, page)
+		return
 	}
 	app.render(writer, request, unavailable(request, "repository read", cause), page)
 }
@@ -910,7 +916,11 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		return err
 	}
 	if !lookup.Folder {
-		blob, err := app.Repositories.BlobAt(request.Context(), page.Repo.ID, lookup.File, 2<<20)
+		limits, err := app.Store.BrowseLimits(request.Context())
+		if err != nil {
+			return err
+		}
+		blob, err := app.Repositories.BlobAt(request.Context(), page.Repo.ID, lookup.File, limits.FileBytes)
 		if err != nil {
 			return err
 		}
@@ -953,7 +963,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		if parent != "" {
 			view.UpURL = codeURL(page.Repo.ID, selectedRef, path.Dir(parent))
 		}
-		file.RawTooLarge = file.Size > maximumRawBytes
+		file.RawTooLarge = file.Size > limits.RawBytes
 		// A picture loads through the raw endpoint, so it is shown only
 		// when that endpoint would serve it.
 		if binary && !file.RawTooLarge {
@@ -1102,8 +1112,12 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		return nil
 	}
 	fileURL := func(filePath string) string { return commitURL(page.Repo.ID, selectedRef, openedOID, filePath) }
+	limits, err := app.Store.BrowseLimits(request.Context())
+	if err != nil {
+		return err
+	}
 	if requestedPath != "" {
-		patch, truncated, err := app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, maximumSingleFilePatchBytes)
+		patch, truncated, err := app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, limits.FilePatchBytes)
 		if err != nil {
 			return err
 		}
@@ -1135,33 +1149,29 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	var patch string
 	var truncated bool
 	if len(excluded) < len(files) {
-		patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, "", excluded, maximumCommitPatchBytes)
+		patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, "", excluded, limits.CommitPatchBytes)
 		if err != nil {
 			return err
 		}
 	}
 	view.Truncated = truncated
-	view.Files, _ = diffFileItems(files, patch, truncated, deferred, fileURL)
+	view.Files, _ = diffFileItems(files, patch, truncated, deferred, fileURL, limits.CommitFileBytes)
 	page.Commits.Detail = &view
 	return nil
 }
 
-// Bounds for one commit or pull request diff. A commit's diff read stops at
-// maximumCommitPatchBytes of text and a single file's diff at
-// maximumSingleFilePatchBytes; a comparison has the repository package's own
-// limit. A page shows at most maximumCommitDiffLines diff lines, because each
-// line becomes a table row and short lines would otherwise make a page many
-// times larger than the diff, and no file whose diff text is larger than
-// maximumCommitFileBytes. Files left out for any of these reasons are listed
-// and marked as not loaded, with a link to their diff alone where the page
-// has one. A commit leaves at most maximumDeferredFiles large files out of
-// its diff read by name, which keeps the Git command line short.
+// Bounds for one commit or pull request diff. The sizes of the diff reads,
+// and of one file's diff shown, are the owner's browsing limits
+// (state.BrowseLimits). A page shows at most maximumCommitDiffLines diff
+// lines, because each line becomes a table row and short lines would
+// otherwise make a page many times larger than the diff. Files left out for
+// any of these reasons are listed and marked as not loaded, with a link to
+// their diff alone where the page has one. A commit leaves at most
+// maximumDeferredFiles large files out of its diff read by name, which
+// keeps the Git command line short.
 const (
-	maximumCommitPatchBytes     = 2 << 20
-	maximumSingleFilePatchBytes = 8 << 20
-	maximumCommitFileBytes      = 256 << 10
-	maximumCommitDiffLines      = 10000
-	maximumDeferredFiles        = 100
+	maximumCommitDiffLines = 10000
+	maximumDeferredFiles   = 100
 )
 
 // diffFileItem is the list row of one changed file, without its diff.
@@ -1179,9 +1189,10 @@ func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webu
 // diffFileItems pairs changed files with their parts of patch, a diff read
 // without rename detection, within the page's limits. A file in deferred was
 // left out of patch on purpose. When truncated, the patch stopped early, so
-// a file with changed lines and no complete part is not loaded. notLoaded
-// reports whether any file's changes are missing from the page.
-func diffFileItems(files []repository.ChangedFile, patch string, truncated bool, deferred map[string]bool, fileURL func(string) string) (items []webui.DiffFile, notLoaded bool) {
+// a file with changed lines and no complete part is not loaded, and so is
+// one whose part is larger than fileBytes. notLoaded reports whether any
+// file's changes are missing from the page.
+func diffFileItems(files []repository.ChangedFile, patch string, truncated bool, deferred map[string]bool, fileURL func(string) string, fileBytes int64) (items []webui.DiffFile, notLoaded bool) {
 	sections := splitPatchByFile(patch, truncated)
 	shownLines := 0
 	for _, file := range files {
@@ -1190,7 +1201,7 @@ func diffFileItems(files []repository.ChangedFile, patch string, truncated bool,
 			section, ok := sections[file.Path]
 			lines := strings.Count(section, "\n")
 			switch {
-			case ok && len(section) <= maximumCommitFileBytes && shownLines+lines <= maximumCommitDiffLines:
+			case ok && int64(len(section)) <= fileBytes && shownLines+lines <= maximumCommitDiffLines:
 				item.Hunks = parsePatch(section)
 				shownLines += lines
 			case ok || deferred[file.Path] || truncated && file.Additions+file.Deletions > 0:

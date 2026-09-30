@@ -448,6 +448,18 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgInitialBranchSaved)}
 	case "transfer_saved":
 		return []webui.Notice{webui.Success(webui.MsgTransferSaved)}
+	case "browse_saved":
+		return []webui.Notice{webui.Success(webui.MsgBrowseSaved)}
+	case "browse_looser":
+		return []webui.Notice{webui.Success(webui.MsgBrowseSaved), {Kind: webui.NoticeWarning, Code: webui.MsgBrowseWarning}}
+	case "maintenance_saved":
+		return []webui.Notice{webui.Success(webui.MsgMaintenanceSaved)}
+	case "maintenance_looser":
+		return []webui.Notice{webui.Success(webui.MsgMaintenanceSaved), {Kind: webui.NoticeWarning, Code: webui.MsgMaintenanceWarning}}
+	case "cleanup_off":
+		return []webui.Notice{webui.Success(webui.MsgCleanupSavedOff)}
+	case "cleanup_on":
+		return []webui.Notice{webui.Success(webui.MsgCleanupSavedOn), {Kind: webui.NoticeWarning, Code: webui.MsgCleanupWarning}}
 	case "transfer_looser":
 		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgTransferSavedLooser}}
 	case "check_logs_saved":

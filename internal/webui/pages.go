@@ -232,6 +232,20 @@ const (
 	// shared sign-in. Fields: admin_password, cross_site_links (one of
 	// CrossSiteChoices).
 	ActionSaveCrossSite = "save_cross_site"
+	// ActionSaveBrowseLimits saves the browsing limits. Fields:
+	// admin_password, browse_raw, browse_file, browse_commit_patch,
+	// browse_file_patch, browse_commit_file, browse_compare and
+	// browse_compare_time, each with its _unit (see LimitInput).
+	ActionSaveBrowseLimits = "save_browse_limits"
+	// ActionSaveMaintenance saves the repository maintenance choices.
+	// Fields: admin_password, maintenance_enabled ("on" or "off"),
+	// maintenance_window_start and maintenance_window_end (hours 0 to 23),
+	// maintenance_pack_threshold, and maintenance_idle,
+	// maintenance_command and maintenance_full_repack, each with its _unit.
+	ActionSaveMaintenance = "save_maintenance"
+	// ActionSaveCleanup saves the unused object cleanup choice. Fields:
+	// admin_password, cleanup_enabled ("on" or "off"), cleanup_grace (days).
+	ActionSaveCleanup = "save_cleanup"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -287,22 +301,25 @@ func SettingsTabOfPath(path string) (string, bool) {
 // The Settings groups. A group is one form with its own Save: saving it
 // never sends or resets another group's fields.
 const (
-	GroupUpdate     = "update"
-	GroupTray       = "tray"
-	GroupAccess     = "access"
-	GroupAdmin      = "admin"
-	GroupConfirm    = "confirm"
-	GroupSession    = "session"
-	GroupBranch     = "branch"
-	GroupTransfer   = "transfer"
-	GroupHistory    = "history"
-	GroupDeleteName = "delete_name"
-	GroupLogin      = "login"
-	GroupCrossSite  = "cross_site"
-	GroupLogs       = "logs"
-	GroupConnection = "connection"
-	GroupNetwork    = "network"
-	GroupTailscale  = "tailscale"
+	GroupUpdate      = "update"
+	GroupTray        = "tray"
+	GroupAccess      = "access"
+	GroupAdmin       = "admin"
+	GroupConfirm     = "confirm"
+	GroupSession     = "session"
+	GroupBranch      = "branch"
+	GroupTransfer    = "transfer"
+	GroupHistory     = "history"
+	GroupDeleteName  = "delete_name"
+	GroupLogin       = "login"
+	GroupCrossSite   = "cross_site"
+	GroupLogs        = "logs"
+	GroupConnection  = "connection"
+	GroupNetwork     = "network"
+	GroupTailscale   = "tailscale"
+	GroupBrowse      = "browse"
+	GroupMaintenance = "maintenance"
+	GroupCleanup     = "cleanup"
 )
 
 // settingsGroupTabs names the tab of each group.
@@ -312,8 +329,8 @@ var settingsGroupTabs = map[string]string{
 	GroupCrossSite: SettingsAccess, GroupLogin: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories, GroupHistory: SettingsRepositories,
-	GroupDeleteName: SettingsRepositories,
-	GroupLogs:       SettingsStorage,
+	GroupDeleteName: SettingsRepositories, GroupBrowse: SettingsRepositories,
+	GroupLogs: SettingsStorage, GroupMaintenance: SettingsStorage, GroupCleanup: SettingsStorage,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -350,6 +367,12 @@ func SettingsActionGroup(action string) string {
 		return GroupCrossSite
 	case ActionSaveCheckLogs:
 		return GroupLogs
+	case ActionSaveBrowseLimits:
+		return GroupBrowse
+	case ActionSaveMaintenance:
+		return GroupMaintenance
+	case ActionSaveCleanup:
+		return GroupCleanup
 	case ActionAcknowledgeInsecure:
 		return GroupConnection
 	case ActionSaveNetwork:
@@ -484,12 +507,35 @@ type Policies struct {
 	LoginWindow, LoginPause LimitInput
 	// CrossSiteLinks is one of CrossSiteChoices.
 	CrossSiteLinks string
+	// Browse, Maintenance and Cleanup are the browsing limits, repository
+	// maintenance and unused object cleanup.
+	Browse      BrowsePolicies
+	Maintenance MaintenancePolicies
+	Cleanup     CleanupPolicies
 	// Visible is true for a confirmed administrator. Otherwise no saved
 	// value is read or shown, and each group says where to confirm.
 	Visible bool
 	// Unreadable holds the groups whose saved value could not be read.
 	// Such a group says so and shows the default as a change to save.
 	Unreadable map[string]bool
+}
+
+// BrowsePolicies are the browsing limits as the form shows them.
+type BrowsePolicies struct {
+	Raw, File, CommitPatch, FilePatch, CommitFile, Compare, CompareTime LimitInput
+}
+
+// MaintenancePolicies are the maintenance choices as the form shows them.
+// Enabled is "on" or "off"; the window hours are 0 to 23.
+type MaintenancePolicies struct {
+	Enabled, WindowStart, WindowEnd, PackThreshold string
+	Idle, Command, FullRepack                      LimitInput
+}
+
+// CleanupPolicies are the unused object cleanup choice as the form shows
+// it. Enabled is "on" or "off", GraceDays a number of days.
+type CleanupPolicies struct {
+	Enabled, GraceDays string
 }
 
 func (SettingsPage) page() string     { return "settings" }

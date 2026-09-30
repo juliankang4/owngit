@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"owngit/internal/state"
 )
 
 // maintenanceFixture is a repository whose history exercises everything that
@@ -714,4 +716,69 @@ func TestMaintenanceNightWindow(t *testing.T) {
 			t.Errorf("%s: night %q until %s, want %q and %s", test.now.Format(time.TimeOnly), night, until, test.night, test.until)
 		}
 	}
+}
+
+// A window that passes midnight belongs to the date it started.
+func TestMaintenanceNightWindowPassesMidnight(t *testing.T) {
+	schedule := MaintenanceSchedule{}.following(state.Maintenance{WindowStart: 22, WindowEnd: 6})
+	at := func(hour int) time.Time { return time.Date(2026, 9, 24, hour, 0, 0, 0, time.UTC) }
+	for _, test := range []struct {
+		now   time.Time
+		night string
+	}{{at(21), ""}, {at(22), "2026-09-24"}, {at(23), "2026-09-24"}, {at(0), "2026-09-23"}, {at(5), "2026-09-23"}, {at(6), ""}} {
+		if night := schedule.nightOf(test.now); night != test.night {
+			t.Errorf("%s: night %q, want %q", test.now.Format(time.TimeOnly), night, test.night)
+		}
+	}
+}
+
+// Maintenance follows the owner's saved choices before each job: off, a
+// repository written to is not maintained; turned on, it is, and the
+// nightly consolidation check runs only inside the chosen window. Choices
+// that cannot be read pause maintenance and are logged once.
+func TestMaintenanceFollowsTheSavedChoices(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	ctx := context.Background()
+	off := state.DefaultMaintenance
+	off.Enabled = false
+	noErr(t, manager.Store.SavePolicies(ctx, state.PolicyChange{Maintenance: &off}))
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{Idle: time.Millisecond, Retry: time.Millisecond, Now: shiftedClock(12)})
+	manager.NoteRepositoryWrite("sample")
+	waitFor(t, "the off log", func() bool { return len(log.matching("turned off in Settings")) == 1 })
+	time.Sleep(200 * time.Millisecond)
+	if lines := log.matching(`"sample" maintenance`); len(lines) != 0 {
+		t.Fatalf("maintenance ran while off: %v", lines)
+	}
+
+	noErr(t, manager.Store.Exec(ctx, `UPDATE metadata SET value='{"window_start_hour":25}' WHERE key='maintenance'`))
+	manager.WakeMaintenance()
+	waitFor(t, "the unreadable log", func() bool { return len(log.matching("maintenance paused: the saved maintenance")) == 1 })
+
+	// Noon is outside a window of 13 to 15: only the small maintenance of
+	// the write runs.
+	later := state.DefaultMaintenance
+	later.WindowStart, later.WindowEnd = 13, 15
+	noErr(t, manager.Store.SavePolicies(ctx, state.PolicyChange{Maintenance: &later}))
+	manager.WakeMaintenance()
+	waitFor(t, "maintenance once on", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+	if manager.maintenanceNight("sample") != "" {
+		t.Fatal("the nightly check ran outside the chosen window")
+	}
+	// A window of 11 to 13 holds noon, so the nightly check runs.
+	around := state.DefaultMaintenance
+	around.WindowStart, around.WindowEnd = 11, 13
+	noErr(t, manager.Store.SavePolicies(ctx, state.PolicyChange{Maintenance: &around}))
+	manager.WakeMaintenance()
+	waitFor(t, "the nightly check inside the chosen window", func() bool { return manager.maintenanceNight("sample") != "" })
+}
+
+func (m *Manager) maintenanceNight(id string) string {
+	s := &m.maintenance
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if entry := s.entries[id]; entry != nil {
+		return entry.night
+	}
+	return ""
 }

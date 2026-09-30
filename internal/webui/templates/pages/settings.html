@@ -897,6 +897,35 @@
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
+{{/* The browsing limits, an advanced change collapsed unless a save was
+     refused or the saved limits cannot be read. */}}
+{{$gn := forAction $p.Group "browse" $p.Notices}}{{$focus := firstError $gn "browse_raw" "browse_file" "browse_commit_patch" "browse_file_patch" "browse_commit_file" "browse_compare" "browse_compare_time" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "browse"}}{{$b := $p.Policies.Browse}}
+<section class="grp" id="grp-browse" aria-labelledby="grp-browse-h" data-group="browse"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "browse" "Title" (bi $lang "browse.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "browse.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_browse_limits">
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "browse.change"}}</summary>
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-raw" "Field" "browse_raw" "Units" (limitUnits "size") "Saved" $b.Raw "Label" (code "browse.raw") "Help" (code "browse.raw_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-file" "Field" "browse_file" "Units" (limitUnits "size") "Saved" $b.File "Label" (code "browse.file") "Help" (code "browse.file_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-commit-patch" "Field" "browse_commit_patch" "Units" (limitUnits "size") "Saved" $b.CommitPatch "Label" (code "browse.commit_patch") "Help" (code "browse.commit_patch_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-file-patch" "Field" "browse_file_patch" "Units" (limitUnits "size") "Saved" $b.FilePatch "Label" (code "browse.file_patch") "Help" (code "browse.file_patch_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-commit-file" "Field" "browse_commit_file" "Units" (limitUnits "size") "Saved" $b.CommitFile "Label" (code "browse.commit_file") "Help" (code "browse.commit_file_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-compare" "Field" "browse_compare" "Units" (limitUnits "size") "Saved" $b.Compare "Label" (code "browse.compare") "Help" (code "browse.compare_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "browse" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "browse-compare-time" "Field" "browse_compare_time" "Units" (limitUnits "duration") "Saved" $b.CompareTime "Label" (code "browse.compare_time") "Help" (code "browse.compare_time_help")}}
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "browse.warning"}}</span></p>
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "browse" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+    </details>
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
 <section class="grp" id="grp-repositories" aria-labelledby="grp-repositories-h">
   <div class="grp__h"><h2 id="grp-repositories-h">{{bi $lang "settings.repositories.title"}}</h2></div>
   {{if $nav.Repositories}}
@@ -957,6 +986,59 @@
   </form>
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
+
+{{/* Repository maintenance, an advanced change collapsed unless a save was
+     refused or the saved choices cannot be read. */}}
+{{$gn := forAction $p.Group "maintenance" $p.Notices}}{{$focus := firstError $gn "maintenance_enabled" "maintenance_window_start" "maintenance_window_end" "maintenance_idle" "maintenance_command" "maintenance_full_repack" "maintenance_pack_threshold" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "maintenance"}}{{$m := $p.Policies.Maintenance}}
+<section class="grp" id="grp-maintenance" aria-labelledby="grp-maintenance-h" data-group="maintenance"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "maintenance" "Title" (bi $lang "maintenance.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "maintenance.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_maintenance">
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "maintenance.change"}}</summary>
+      {{template "setChoice" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-enabled" "Field" "maintenance_enabled" "Saved" $m.Enabled "Menu" maintenanceMenu "Label" (code "maintenance.enabled") "Help" (code "maintenance.enabled_help")}}
+      {{template "setHour" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-window-start" "Field" "maintenance_window_start" "Saved" $m.WindowStart "Label" (code "maintenance.window_start") "Help" (code "maintenance.window_help")}}
+      {{template "setHour" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-window-end" "Field" "maintenance_window_end" "Saved" $m.WindowEnd "Label" (code "maintenance.window_end") "Help" (code "maintenance.window_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-idle" "Field" "maintenance_idle" "Units" (limitUnits "duration") "Saved" $m.Idle "Label" (code "maintenance.idle") "Help" (code "maintenance.idle_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-command" "Field" "maintenance_command" "Units" (limitUnits "duration") "Saved" $m.Command "Label" (code "maintenance.command") "Help" (code "maintenance.command_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-full-repack" "Field" "maintenance_full_repack" "Units" (limitUnits "duration") "Saved" $m.FullRepack "Label" (code "maintenance.full_repack") "Help" (code "maintenance.full_repack_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "maintenance" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "maintenance-pack-threshold" "Field" "maintenance_pack_threshold" "Saved" $m.PackThreshold "Label" (code "maintenance.pack_threshold") "Help" (code "maintenance.pack_threshold_help")}}
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "maintenance.warning"}}</span></p>
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "maintenance" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
+    </details>
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
+{{/* Unused object cleanup, off by default. */}}
+{{$gn := forAction $p.Group "cleanup" $p.Notices}}{{$focus := firstError $gn "cleanup_enabled" "cleanup_grace" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "cleanup"}}{{$c := $p.Policies.Cleanup}}
+<section class="grp" id="grp-cleanup" aria-labelledby="grp-cleanup-h" data-group="cleanup"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "cleanup" "Title" (bi $lang "cleanup.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "cleanup.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_cleanup">
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad (eq $c.Enabled "on")}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "maintenance.change"}}</summary>
+      {{template "setChoice" dict "Lang" $lang "Page" $p "Group" "cleanup" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "cleanup-enabled" "Field" "cleanup_enabled" "Saved" $c.Enabled "Menu" cleanupMenu "Label" (code "cleanup.enabled") "Help" (code "cleanup.enabled_help")}}
+      {{template "setCount" dict "Lang" $lang "Page" $p "Group" "cleanup" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "cleanup-grace" "Field" "cleanup_grace" "Saved" $c.GraceDays "Label" (code "cleanup.grace") "Help" (code "cleanup.grace_help")}}
+      <p class="wn" data-show-if="cleanup_enabled=on">{{icon "warning"}}<span>{{bi $lang "cleanup.warning"}}</span></p>
+      <p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "cleanup.not_purge"}}</span></p>
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "cleanup" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
+    </details>
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
 {{end}}
 
 {{/* ------------------------------------------------------------------ */}}
@@ -981,6 +1063,37 @@
       {{end}}
     </select>
   </div>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
+  <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
+</div>
+{{end}}
+
+{{/* A choice from Menu (PolicyChoice values), and an hour of the day. */}}
+{{define "setChoice"}}{{$lang := .Lang}}{{$p := .Page}}{{$help := print .ID "-help"}}
+{{$value := draft $p.Group $p.Draft .Group .Field .Saved}}
+<div class="f f--row">
+  <label for="{{.ID}}">{{bi $lang .Label}}</label>
+  <select id="{{.ID}}" name="{{.Field}}" data-saved="{{if not .Bad}}{{.Saved}}{{end}}"
+          {{template "netDescribed" dict "Notices" .Notices "Scope" .Group "Field" .Field "Help" $help}}{{if eq .Focus .Field}} autofocus{{end}}>
+    {{range .Menu}}
+      <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $value}} selected{{end}}>{{t $lang .Label}}</option>
+    {{end}}
+  </select>
+  {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
+  <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
+</div>
+{{end}}
+
+{{define "setHour"}}{{$lang := .Lang}}{{$p := .Page}}{{$help := print .ID "-help"}}
+{{$value := draft $p.Group $p.Draft .Group .Field .Saved}}
+<div class="f f--row">
+  <label for="{{.ID}}">{{bi $lang .Label}}</label>
+  <select id="{{.ID}}" name="{{.Field}}" class="mono" data-saved="{{if not .Bad}}{{.Saved}}{{end}}"
+          {{template "netDescribed" dict "Notices" .Notices "Scope" .Group "Field" .Field "Help" $help}}{{if eq .Focus .Field}} autofocus{{end}}>
+    {{range hourMenu}}
+      <option value="{{.}}"{{if eq . $value}} selected{{end}}>{{if lt (len .) 2}}0{{end}}{{.}}:00</option>
+    {{end}}
+  </select>
   {{template "fieldNotice" dict "Lang" $lang "Notices" .Notices "Scope" .Group "Field" .Field}}
   <p class="f__help" id="{{$help}}">{{bi $lang .Help}}</p>
 </div>

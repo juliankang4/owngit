@@ -110,6 +110,19 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 			ask = true
 		}
 		policies.DeleteRequiresName = onOff(ask)
+		browse, err := app.Store.BrowseLimits(request.Context())
+		if err = unreadable(webui.GroupBrowse, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupBrowse] {
+			browse = state.DefaultBrowseLimits
+		}
+		size := func(bytes int64) webui.LimitInput { return webui.FormatLimit(webui.LimitSize, bytes, "") }
+		policies.Browse = webui.BrowsePolicies{
+			Raw: size(browse.RawBytes), File: size(browse.FileBytes), CommitPatch: size(browse.CommitPatchBytes),
+			FilePatch: size(browse.FilePatchBytes), CommitFile: size(browse.CommitFileBytes), Compare: size(browse.CompareBytes),
+			CompareTime: webui.FormatLimit(webui.LimitDuration, browse.CompareTime.Milliseconds(), ""),
+		}
 	}
 	if tab == webui.SettingsStorage {
 		retention, err := app.Store.CheckLogRetention(request.Context())
@@ -120,6 +133,29 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 			retention = state.DefaultCheckLogRetention
 		}
 		policies.CheckLogs = string(retention)
+		choices, err := app.Store.Maintenance(request.Context())
+		if err = unreadable(webui.GroupMaintenance, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupMaintenance] {
+			choices = state.DefaultMaintenance
+		}
+		duration := func(d time.Duration) webui.LimitInput {
+			return webui.FormatLimit(webui.LimitDuration, d.Milliseconds(), "")
+		}
+		policies.Maintenance = webui.MaintenancePolicies{
+			Enabled: onOff(choices.Enabled), WindowStart: strconv.Itoa(choices.WindowStart), WindowEnd: strconv.Itoa(choices.WindowEnd),
+			Idle: duration(choices.Idle), Command: duration(choices.CommandTime), FullRepack: duration(choices.FullRepackTime),
+			PackThreshold: strconv.Itoa(choices.PackThreshold),
+		}
+		cleanup, err := app.Store.UnusedObjectCleanup(request.Context())
+		if err = unreadable(webui.GroupCleanup, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupCleanup] {
+			cleanup = state.DefaultUnusedObjectCleanup
+		}
+		policies.Cleanup = webui.CleanupPolicies{Enabled: onOff(cleanup.Enabled), GraceDays: strconv.FormatInt(int64(cleanup.Grace/(24*time.Hour)), 10)}
 	}
 	return policies, nil
 }
@@ -137,6 +173,56 @@ func transferLimitsForm(request *http.Request) (state.GitTransferLimits, []webui
 		QueueWait:     form.duration("transfer_queue", state.MinimumTransferQueue, state.MaximumTransferQueue),
 	}
 	return limits, form.notices
+}
+
+// browseLimitsForm reads the browsing limits a Settings form sent, or the
+// notices that refuse them.
+func browseLimitsForm(request *http.Request) (state.BrowseLimits, []webui.Notice) {
+	form := &limitsForm{request: request}
+	view := func(field string) int64 { return form.size(field, state.MinimumBrowseBytes, state.MaximumBrowseBytes) }
+	limits := state.BrowseLimits{
+		RawBytes:  form.size("browse_raw", state.MinimumRawBytes, state.MaximumRawBytes),
+		FileBytes: view("browse_file"), CommitPatchBytes: view("browse_commit_patch"), FilePatchBytes: view("browse_file_patch"),
+		CommitFileBytes: form.size("browse_commit_file", state.MinimumCommitFileBytes, state.MaximumCommitFileBytes),
+		CompareBytes:    view("browse_compare"),
+		CompareTime:     form.duration("browse_compare_time", state.MinimumCompareTime, state.MaximumCompareTime),
+	}
+	return limits, form.notices
+}
+
+// maintenanceForm reads the maintenance choices a Settings form sent, or
+// the notices that refuse them.
+func maintenanceForm(request *http.Request) (state.Maintenance, []webui.Notice) {
+	form := &limitsForm{request: request}
+	enabled, valid := parseOnOff(postValue(request, "maintenance_enabled"))
+	if !valid {
+		form.notices = append(form.notices, webui.Error("maintenance_enabled", webui.MsgSettingsUnknownAct))
+	}
+	choices := state.Maintenance{
+		Enabled:        enabled,
+		WindowStart:    form.count("maintenance_window_start", 0, 23),
+		WindowEnd:      form.count("maintenance_window_end", 0, 23),
+		Idle:           form.duration("maintenance_idle", state.MinimumMaintenanceTime, state.MaximumMaintenanceTime),
+		CommandTime:    form.duration("maintenance_command", state.MinimumMaintenanceTime, state.MaximumMaintenanceTime),
+		FullRepackTime: form.duration("maintenance_full_repack", state.MinimumMaintenanceTime, state.MaximumMaintenanceTime),
+		PackThreshold:  form.count("maintenance_pack_threshold", state.MinimumPackThreshold, state.MaximumPackThreshold),
+	}
+	if len(form.notices) == 0 && choices.WindowStart == choices.WindowEnd {
+		form.notices = append(form.notices, webui.Error("maintenance_window_end", webui.MsgMaintenanceWindowSame))
+	}
+	return choices, form.notices
+}
+
+// cleanupForm reads the unused object cleanup choice a Settings form sent,
+// or the notices that refuse it.
+func cleanupForm(request *http.Request) (state.UnusedObjectCleanup, []webui.Notice) {
+	form := &limitsForm{request: request}
+	enabled, valid := parseOnOff(postValue(request, "cleanup_enabled"))
+	if !valid {
+		form.notices = append(form.notices, webui.Error("cleanup_enabled", webui.MsgSettingsUnknownAct))
+	}
+	days := form.count("cleanup_grace", int(state.MinimumCleanupGrace/(24*time.Hour)), int(state.MaximumCleanupGrace/(24*time.Hour)))
+	return state.UnusedObjectCleanup{Enabled: enabled, Grace: time.Duration(days) * 24 * time.Hour}, form.notices
 }
 
 // limitsForm reads the numeric fields of a Settings form, each checked
@@ -208,6 +294,12 @@ type settingsJSON struct {
 	// CrossSiteLinks is "strict" or "lax": whether a link from another site
 	// keeps the shared sign-in.
 	CrossSiteLinks *string `json:"cross_site_links,omitempty"`
+	// BrowseLimits, Maintenance and UnusedObjectCleanup are the browsing
+	// limits, repository maintenance and unused object cleanup. A PATCH may
+	// name some fields of each; the others keep their saved values.
+	BrowseLimits        *state.BrowseFields      `json:"browse_limits,omitempty"`
+	Maintenance         *state.MaintenanceFields `json:"maintenance,omitempty"`
+	UnusedObjectCleanup *state.CleanupFields     `json:"unused_object_cleanup,omitempty"`
 }
 
 type settingsResponse struct {
@@ -338,9 +430,57 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCrossSiteSavedLax))
 			}
 		}
+		if change.BrowseLimits != nil {
+			limits, problem, err := changedGroup(request.Context(), "browse_limits", *change.BrowseLimits, app.Store.BrowseLimits)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.Browse = &limits
+			if limits.Looser() {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgBrowseWarning))
+			}
+		}
+		if change.Maintenance != nil {
+			choices, problem, err := changedGroup(request.Context(), "maintenance", *change.Maintenance, app.Store.Maintenance)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.Maintenance = &choices
+			if choices.Looser() {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgMaintenanceWarning))
+			}
+		}
+		if change.UnusedObjectCleanup != nil {
+			cleanup, problem, err := changedGroup(request.Context(), "unused_object_cleanup", *change.UnusedObjectCleanup, app.Store.UnusedObjectCleanup)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.Cleanup = &cleanup
+			if cleanup.Enabled {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCleanupWarning))
+			}
+		}
 		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
+		}
+		if policies.Maintenance != nil || policies.Cleanup != nil {
+			app.Repositories.WakeMaintenance()
 		}
 	}
 	current, unreadable, err := app.savedSettings(request.Context())
@@ -396,6 +536,15 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	}
 	if links, readErr := app.Store.CrossSiteLinks(ctx); keep(readErr) {
 		current.CrossSiteLinks = pointer(string(links))
+	}
+	if limits, readErr := app.Store.BrowseLimits(ctx); keep(readErr) {
+		current.BrowseLimits = pointer(limits.Fields())
+	}
+	if choices, readErr := app.Store.Maintenance(ctx); keep(readErr) {
+		current.Maintenance = pointer(choices.Fields())
+	}
+	if cleanup, readErr := app.Store.UnusedObjectCleanup(ctx); keep(readErr) {
+		current.UnusedObjectCleanup = pointer(cleanup.Fields())
 	}
 	return current, unreadable, err
 }

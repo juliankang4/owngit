@@ -11,13 +11,17 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/state"
 )
 
 // OwnGit turns off Git's automatic maintenance (see repositoryConfig) because
 // gc may prune history that retention keeps. Without maintenance, every push
 // leaves loose objects and refs behind and reads slow down, most of all on
-// network storage. The maintenance here never deletes an object or a ref: it
-// only packs loose refs and objects and writes a commit-graph.
+// network storage. The maintenance here never deletes a ref, and never an
+// object unless the owner turned unused object cleanup on: it packs loose
+// refs and objects and writes a commit-graph. With cleanup on, the nightly
+// run also removes objects that no ref reaches and that are older than the
+// chosen grace period (see MaintenanceCleanup).
 //
 // One scheduler goroutine runs every maintenance, so at most one repository is
 // maintained at a time. A repository is maintained only while nobody uses it:
@@ -28,6 +32,10 @@ import (
 //   - full consolidation runs once per night between NightStartHour and
 //     NightEndHour, server local time, on an idle repository with more than
 //     PackThreshold packs.
+//
+// The owner chooses these, and turns maintenance off, under Settings
+// (state.Maintenance). The scheduler reads the choices before each job, so
+// a change applies from the next job on and never stops a running one.
 //
 // Each command takes the repository write lock with TryLock and releases it
 // right after. Before each command, the run stops when the repository had a
@@ -48,36 +56,50 @@ const (
 	// MaintenanceFull also rewrites every pack into one, keeping unreachable
 	// objects.
 	MaintenanceFull MaintenanceKind = "full"
+	// MaintenanceCleanup rewrites every pack into one like full maintenance,
+	// but removes the objects that no ref reaches and that are older than
+	// the cleanup grace period, packed and loose. Unreachable objects
+	// younger than that stay in a separate cruft pack with their times, and
+	// packs with a .keep file stay as they are. It runs only at night, while
+	// the owner has turned cleanup on.
+	MaintenanceCleanup MaintenanceKind = "cleanup"
 )
 
-// MaintenanceSchedule configures repository maintenance. A zero field keeps
-// its default.
+// MaintenanceSchedule configures repository maintenance. A zero field
+// follows the owner's saved choices (state.Maintenance), read before each
+// job; Retry, FailureRetry and Now are fixed.
 type MaintenanceSchedule struct {
 	// Idle is how long a repository must go without requests before
-	// maintenance starts. Default 5 minutes.
+	// maintenance starts.
 	Idle time.Duration
 	// Retry is the wait after the repository was in use. Default 1 minute.
 	Retry time.Duration
-	// FailureRetry is the wait after a failed maintenance. Default 1 hour.
+	// FailureRetry is the wait after a failed maintenance, and the longest
+	// wait while maintenance is off or its choices cannot be read. Default
+	// 1 hour.
 	FailureRetry time.Duration
 	// NightStartHour and NightEndHour bound the local-time window for full
-	// consolidation. Defaults 3 and 5.
+	// consolidation. It passes midnight when the start is later than the
+	// end.
 	NightStartHour, NightEndHour int
 	// PackThreshold is the pack count above which the night consolidates.
-	// Default 20.
 	PackThreshold int
-	// CommandTimeout bounds each command except the full repack. Default 30
-	// minutes.
+	// CommandTimeout bounds each command except the full repack.
 	CommandTimeout time.Duration
-	// FullRepackTimeout bounds the full repack. Default 2 hours.
+	// FullRepackTimeout bounds the full repack.
 	FullRepackTimeout time.Duration
 	// Now replaces the clock in tests.
 	Now func() time.Time
+	// cleanupGrace is the unused object cleanup grace period the nightly
+	// run follows, or zero while cleanup is off or its choice cannot be
+	// read.
+	cleanupGrace time.Duration
 }
 
-func (schedule MaintenanceSchedule) withDefaults() MaintenanceSchedule {
+// following fills the zero fields of schedule from the owner's choices.
+func (schedule MaintenanceSchedule) following(choices state.Maintenance) MaintenanceSchedule {
 	if schedule.Idle <= 0 {
-		schedule.Idle = 5 * time.Minute
+		schedule.Idle = choices.Idle
 	}
 	if schedule.Retry <= 0 {
 		schedule.Retry = time.Minute
@@ -86,16 +108,16 @@ func (schedule MaintenanceSchedule) withDefaults() MaintenanceSchedule {
 		schedule.FailureRetry = time.Hour
 	}
 	if schedule.NightStartHour == 0 && schedule.NightEndHour == 0 {
-		schedule.NightStartHour, schedule.NightEndHour = 3, 5
+		schedule.NightStartHour, schedule.NightEndHour = choices.WindowStart, choices.WindowEnd
 	}
 	if schedule.PackThreshold <= 0 {
-		schedule.PackThreshold = 20
+		schedule.PackThreshold = choices.PackThreshold
 	}
 	if schedule.CommandTimeout <= 0 {
-		schedule.CommandTimeout = 30 * time.Minute
+		schedule.CommandTimeout = choices.CommandTime
 	}
 	if schedule.FullRepackTimeout <= 0 {
-		schedule.FullRepackTimeout = 2 * time.Hour
+		schedule.FullRepackTimeout = choices.FullRepackTime
 	}
 	if schedule.Now == nil {
 		schedule.Now = time.Now
@@ -103,14 +125,30 @@ func (schedule MaintenanceSchedule) withDefaults() MaintenanceSchedule {
 	return schedule
 }
 
-// maintenanceCommands lists the Git commands of kind. None of them deletes an
-// object: repack -d removes only loose objects that the new pack holds, and
-// -a without --keep-unreachable, -A, gc, prune and --expire are never used.
-// Packs with a .keep file are never removed.
-func maintenanceCommands(kind MaintenanceKind) [][]string {
+// withDefaults fills the zero fields of schedule with the default choices.
+func (schedule MaintenanceSchedule) withDefaults() MaintenanceSchedule {
+	return schedule.following(state.DefaultMaintenance)
+}
+
+// maintenanceCommands lists the Git commands of kind. Only cleanup deletes
+// an object: repack -d removes only loose objects that the new pack holds,
+// full maintenance keeps unreachable objects, and gc and --prune=now are
+// never used. Cleanup removes unreachable objects older than grace with
+// the cruft expiration and prune, both counting from each object's own
+// time. Packs with a .keep file are never removed.
+func maintenanceCommands(kind MaintenanceKind, grace time.Duration) [][]string {
 	repack := []string{"repack", "-d"}
-	if kind == MaintenanceFull {
+	switch kind {
+	case MaintenanceFull:
 		repack = []string{"repack", "-a", "-d", "--keep-unreachable"}
+	case MaintenanceCleanup:
+		expire := fmt.Sprintf("%d.days.ago", int64(grace/(24*time.Hour)))
+		return [][]string{
+			{"pack-refs", "--all"},
+			{"repack", "-a", "-d", "--cruft", "--cruft-expiration=" + expire},
+			{"prune", "--expire=" + expire},
+			{"commit-graph", "write", "--reachable", "--split"},
+		}
 	}
 	return [][]string{
 		{"pack-refs", "--all"},
@@ -137,6 +175,10 @@ type maintenanceState struct {
 	// listedNight is the night whose repository list was read.
 	listedNight string
 	running     *runningMaintenance
+	// choicesProblem and cleanupProblem are the last reasons the saved
+	// maintenance and cleanup choices could not be used, each logged once
+	// until it changes.
+	choicesProblem, cleanupProblem string
 }
 
 type maintenanceEntry struct {
@@ -238,7 +280,7 @@ func (m *Manager) StartMaintenance(ctx context.Context, schedule MaintenanceSche
 	if s.started {
 		return errors.New("repository maintenance has already started")
 	}
-	s.started, s.schedule, s.logf = true, schedule.withDefaults(), logf
+	s.started, s.schedule, s.logf = true, schedule, logf
 	for _, stored := range repositories {
 		s.entryLocked(stored.ID)
 	}
@@ -295,6 +337,17 @@ type maintenanceJob struct {
 	id string
 	// night is set for the nightly consolidation check.
 	night string
+	// schedule is what the job follows, read when it was chosen.
+	schedule MaintenanceSchedule
+}
+
+// WakeMaintenance makes the scheduler read the saved maintenance choices
+// again now, after they were changed.
+func (m *Manager) WakeMaintenance() {
+	s := &m.maintenance
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.signalLocked()
 }
 
 func (m *Manager) maintenanceLoop(ctx context.Context, wake <-chan struct{}, done chan<- struct{}) {
@@ -325,7 +378,45 @@ func (m *Manager) maintenanceLoop(ctx context.Context, wake <-chan struct{}, don
 func (m *Manager) nextMaintenance(ctx context.Context) (*maintenanceJob, time.Duration) {
 	s := &m.maintenance
 	s.mu.Lock()
-	now, schedule := s.nowLocked(), s.schedule
+	now, base, logf := s.nowLocked(), s.schedule, s.logf
+	s.mu.Unlock()
+	choices, err := m.Store.Maintenance(ctx)
+	problem := ""
+	switch {
+	case err != nil:
+		problem = fmt.Sprintf("repository maintenance paused: %v", err)
+	case !choices.Enabled:
+		problem = "repository maintenance is turned off in Settings"
+	}
+	s.mu.Lock()
+	if problem != s.choicesProblem {
+		s.choicesProblem = problem
+		if problem != "" {
+			logf("%s", problem)
+		}
+	}
+	s.mu.Unlock()
+	if problem != "" {
+		// Saving the choices wakes the scheduler (WakeMaintenance).
+		return nil, base.withDefaults().FailureRetry
+	}
+	schedule := base.following(choices)
+	cleanup, err := m.Store.UnusedObjectCleanup(ctx)
+	cleanupProblem := ""
+	if err != nil {
+		cleanupProblem = fmt.Sprintf("unused object cleanup paused: %v", err)
+	} else if cleanup.Enabled {
+		schedule.cleanupGrace = cleanup.Grace
+	}
+	s.mu.Lock()
+	if cleanupProblem != s.cleanupProblem {
+		s.cleanupProblem = cleanupProblem
+		if cleanupProblem != "" {
+			logf("%s", cleanupProblem)
+		}
+	}
+	s.mu.Unlock()
+	s.mu.Lock()
 	night := schedule.nightOf(now)
 	listed := s.listedNight
 	s.mu.Unlock()
@@ -369,7 +460,7 @@ func (m *Manager) nextMaintenance(ctx context.Context) (*maintenanceJob, time.Du
 			wait = min(wait, ready.Sub(now))
 			continue
 		}
-		job := &maintenanceJob{id: id}
+		job := &maintenanceJob{id: id, schedule: schedule}
 		if nightDue {
 			job.night = night
 		}
@@ -378,13 +469,18 @@ func (m *Manager) nextMaintenance(ctx context.Context) (*maintenanceJob, time.Du
 	return nil, wait
 }
 
-// nightOf returns the local date of now when now is inside the consolidation
-// window, and "" otherwise.
+// nightOf returns the local date the consolidation window started on when
+// now is inside it, and "" otherwise. A window that passes midnight belongs
+// to the date it started.
 func (schedule MaintenanceSchedule) nightOf(now time.Time) string {
-	if hour := now.Hour(); hour < schedule.NightStartHour || hour >= schedule.NightEndHour {
-		return ""
+	start, end, hour := schedule.NightStartHour, schedule.NightEndHour, now.Hour()
+	switch {
+	case start < end && hour >= start && hour < end, start > end && hour >= start:
+		return now.Format(time.DateOnly)
+	case start > end && hour < end:
+		return now.AddDate(0, 0, -1).Format(time.DateOnly)
 	}
-	return now.Format(time.DateOnly)
+	return ""
 }
 
 // untilNight returns the time until the next consolidation window starts,
@@ -406,7 +502,7 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 		s.mu.Unlock()
 		return
 	}
-	schedule, logf := s.schedule, s.logf
+	schedule, logf := job.schedule, s.logf
 	wasPending := entry.pending
 	entry.pending = false
 	jobContext, cancel := context.WithCancel(ctx)
@@ -418,7 +514,10 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 	started := schedule.Now()
 	var steps int
 	var err error
-	if job.night != "" {
+	switch {
+	case job.night != "" && schedule.cleanupGrace > 0:
+		kind = MaintenanceCleanup
+	case job.night != "":
 		var consolidate bool
 		consolidate, err = m.needsConsolidation(jobContext, job.id, schedule.PackThreshold)
 		if consolidate {
@@ -458,17 +557,18 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 	if !current && err == nil {
 		err = errors.New("the repository was deleted")
 	}
+	total := len(maintenanceCommands(kind, schedule.cleanupGrace))
 	switch {
 	case kind == "" || (steps == 0 && (errors.Is(err, errMaintenanceBusy) || errors.Is(err, ErrRepositoryNotFound))):
 		// Nothing ran; a deferral is retried without a log line.
 	case err == nil:
 		logf("repository %q maintenance (%s) completed in %s", job.id, kind, elapsed)
 	case errors.Is(err, errMaintenanceBusy):
-		logf("repository %q maintenance (%s) paused after %s and %d of 3 steps: %v; the rest runs later", job.id, kind, elapsed, steps, err)
+		logf("repository %q maintenance (%s) paused after %s and %d of %d steps: %v; the rest runs later", job.id, kind, elapsed, steps, total, err)
 	case jobContext.Err() != nil:
-		logf("repository %q maintenance (%s) stopped after %s and %d of 3 steps: OwnGit is stopping or the repository is being deleted", job.id, kind, elapsed, steps)
+		logf("repository %q maintenance (%s) stopped after %s and %d of %d steps: OwnGit is stopping or the repository is being deleted", job.id, kind, elapsed, steps, total)
 	default:
-		logf("repository %q maintenance (%s) failed after %s and %d of 3 steps: %v", job.id, kind, elapsed, steps, err)
+		logf("repository %q maintenance (%s) failed after %s and %d of %d steps: %v", job.id, kind, elapsed, steps, total, err)
 	}
 }
 
@@ -500,7 +600,8 @@ func (m *Manager) needsConsolidation(ctx context.Context, id string, threshold i
 func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind, schedule MaintenanceSchedule) (int, error) {
 	lock := m.Locks.For(id)
 	uses := m.repositoryUses(id)
-	for index, args := range maintenanceCommands(kind) {
+	commands := maintenanceCommands(kind, schedule.cleanupGrace)
+	for index, args := range commands {
 		if err := ctx.Err(); err != nil {
 			return index, err
 		}
@@ -514,14 +615,14 @@ func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind,
 			return index, errMaintenanceBusy
 		}
 		timeout := schedule.CommandTimeout
-		if kind == MaintenanceFull && args[0] == "repack" {
+		if kind != MaintenanceSmall && args[0] == "repack" {
 			timeout = schedule.FullRepackTimeout
 		}
 		if err := m.maintenanceStep(ctx, id, lock, timeout, args); err != nil {
 			return index, err
 		}
 	}
-	return len(maintenanceCommands(kind)), nil
+	return len(commands), nil
 }
 
 // maintenanceStep runs one command with the write lock held. repack and

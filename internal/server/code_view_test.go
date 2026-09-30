@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/state"
 	"owngit/internal/testfixture"
 )
 
@@ -446,7 +447,7 @@ func TestRawFilesAnswerHeadAndRefuseLargeFilesInWords(t *testing.T) {
 	app := newConfiguredApp(t)
 	seedRepository(t, app, "raw-sizes", map[string]string{
 		"small.txt": "small\n",
-		"big.bin":   strings.Repeat("\x00\x01", maximumRawBytes/2+1),
+		"big.bin":   strings.Repeat("\x00\x01", int(state.DefaultBrowseLimits.RawBytes)/2+1),
 	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
 	server := serve(t, app.Handler())
 	client := &http.Client{}
@@ -461,7 +462,7 @@ func TestRawFilesAnswerHeadAndRefuseLargeFilesInWords(t *testing.T) {
 	}
 
 	big := browserGET(t, client, raw+"big.bin")
-	if big.status != http.StatusForbidden || !strings.Contains(big.body, "Files over 10 MB cannot be downloaded") || !strings.Contains(big.body, "10MB가 넘는 파일은") {
+	if big.status != http.StatusForbidden || !strings.Contains(big.body, "larger than the raw file download limit") || !strings.Contains(big.body, "원본 파일 내려받기 한도") {
 		t.Errorf("a file over the limit got status %d without the explanation", big.status)
 	}
 	missing := browserGET(t, client, raw+"nothing.txt")
@@ -469,7 +470,7 @@ func TestRawFilesAnswerHeadAndRefuseLargeFilesInWords(t *testing.T) {
 		t.Errorf("a missing file got status %d, %s", missing.status, missing.header.Get("Content-Type"))
 	}
 	view, _ := dashboardGET(t, client, server.URL+"/repositories/raw-sizes/code?ref=refs%2Fheads%2Fmain&path=big.bin")
-	if strings.Contains(view, "/raw?") || !strings.Contains(view, "Files over 10 MB cannot be downloaded") {
+	if strings.Contains(view, "/raw?") || !strings.Contains(view, "larger than the raw file download limit") {
 		t.Error("the file view offers a download it cannot serve")
 	}
 }

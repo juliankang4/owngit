@@ -29,6 +29,63 @@ const (
 	MsgNamespacesInvalid           MessageCode = "repoadmin.namespaces.invalid"
 	MsgNamespacesUnreadable        MessageCode = "repoadmin.namespaces.unreadable"
 	MsgNamespacesChoicesUnreadable MessageCode = "repoadmin.namespaces.choices_unreadable"
+
+	MsgBrowseUnreadable MessageCode = "browse.unreadable_view"
+
+	MsgBrowseTitle           MessageCode = "browse.title"
+	MsgBrowseScope           MessageCode = "browse.scope"
+	MsgBrowseChange          MessageCode = "browse.change"
+	MsgBrowseRaw             MessageCode = "browse.raw"
+	MsgBrowseRawHelp         MessageCode = "browse.raw_help"
+	MsgBrowseFile            MessageCode = "browse.file"
+	MsgBrowseFileHelp        MessageCode = "browse.file_help"
+	MsgBrowseCommitPatch     MessageCode = "browse.commit_patch"
+	MsgBrowseCommitPatchHelp MessageCode = "browse.commit_patch_help"
+	MsgBrowseFilePatch       MessageCode = "browse.file_patch"
+	MsgBrowseFilePatchHelp   MessageCode = "browse.file_patch_help"
+	MsgBrowseCommitFile      MessageCode = "browse.commit_file"
+	MsgBrowseCommitFileHelp  MessageCode = "browse.commit_file_help"
+	MsgBrowseCompare         MessageCode = "browse.compare"
+	MsgBrowseCompareHelp     MessageCode = "browse.compare_help"
+	MsgBrowseCompareTime     MessageCode = "browse.compare_time"
+	MsgBrowseCompareTimeHelp MessageCode = "browse.compare_time_help"
+	MsgBrowseWarning         MessageCode = "browse.warning"
+	MsgBrowseSaved           MessageCode = "browse.saved"
+
+	MsgMaintenanceTitle       MessageCode = "maintenance.title"
+	MsgMaintenanceScope       MessageCode = "maintenance.scope"
+	MsgMaintenanceChange      MessageCode = "maintenance.change"
+	MsgMaintenanceEnabled     MessageCode = "maintenance.enabled"
+	MsgMaintenanceEnabledHelp MessageCode = "maintenance.enabled_help"
+	MsgMaintenanceOn          MessageCode = "maintenance.choice.on"
+	MsgMaintenanceOff         MessageCode = "maintenance.choice.off"
+	MsgMaintenanceStart       MessageCode = "maintenance.window_start"
+	MsgMaintenanceEnd         MessageCode = "maintenance.window_end"
+	MsgMaintenanceWindowHelp  MessageCode = "maintenance.window_help"
+	MsgMaintenanceIdle        MessageCode = "maintenance.idle"
+	MsgMaintenanceIdleHelp    MessageCode = "maintenance.idle_help"
+	MsgMaintenanceCommand     MessageCode = "maintenance.command"
+	MsgMaintenanceCommandHelp MessageCode = "maintenance.command_help"
+	MsgMaintenanceFull        MessageCode = "maintenance.full_repack"
+	MsgMaintenanceFullHelp    MessageCode = "maintenance.full_repack_help"
+	MsgMaintenancePacks       MessageCode = "maintenance.pack_threshold"
+	MsgMaintenancePacksHelp   MessageCode = "maintenance.pack_threshold_help"
+	MsgMaintenanceWarning     MessageCode = "maintenance.warning"
+	MsgMaintenanceSaved       MessageCode = "maintenance.saved"
+	MsgMaintenanceWindowSame  MessageCode = "maintenance.window_same"
+
+	MsgCleanupTitle       MessageCode = "cleanup.title"
+	MsgCleanupScope       MessageCode = "cleanup.scope"
+	MsgCleanupEnabled     MessageCode = "cleanup.enabled"
+	MsgCleanupEnabledHelp MessageCode = "cleanup.enabled_help"
+	MsgCleanupOn          MessageCode = "cleanup.choice.on"
+	MsgCleanupOff         MessageCode = "cleanup.choice.off"
+	MsgCleanupGrace       MessageCode = "cleanup.grace"
+	MsgCleanupGraceHelp   MessageCode = "cleanup.grace_help"
+	MsgCleanupWarning     MessageCode = "cleanup.warning"
+	MsgCleanupNotPurge    MessageCode = "cleanup.not_purge"
+	MsgCleanupSavedOn     MessageCode = "cleanup.saved_on"
+	MsgCleanupSavedOff    MessageCode = "cleanup.saved_off"
 )
 
 var gitStorageCatalog = map[MessageCode]message{
@@ -98,6 +155,120 @@ var gitStorageCatalog = map[MessageCode]message{
 		en: "Nothing was saved because the repository's kept history and default branch protection cannot be read. Save them above first.",
 		ko: "저장소의 기록 보관과 기본 브랜치 보호 설정을 읽을 수 없어 저장하지 않았습니다. 위에서 먼저 그 설정을 저장해 주세요.",
 	},
+
+	MsgBrowseUnreadable: {
+		en: "This view is not shown because the saved browsing limits cannot be read. An administrator can set them again under Settings, Repositories, or with owngit settings set and the --browse- options.",
+		ko: "저장된 보기 한도를 읽을 수 없어 이 화면을 보여 주지 않습니다. 관리자가 설정의 저장소 탭이나 owngit settings set의 --browse- 옵션으로 다시 정하면 됩니다.",
+	},
+
+	MsgBrowseTitle: {en: "Browsing limits", ko: "보기 한도"},
+	MsgBrowseScope: {
+		en: "How much of a file, a diff or a pull request comparison one page reads. New limits apply to pages opened after you save; a page still stops at its own time limit.",
+		ko: "한 페이지가 파일, 차이(diff), 풀 리퀘스트 비교를 얼마나 읽을지 정합니다. 저장한 뒤 여는 페이지부터 새 한도를 쓰며, 페이지는 여전히 자체 시간 한도에서 멈춥니다.",
+	},
+	MsgBrowseChange:      {en: "Change the limits", ko: "한도 바꾸기"},
+	MsgBrowseRaw:         {en: "Raw file download", ko: "원본 파일 내려받기"},
+	MsgBrowseRawHelp:     {en: "A larger file is not downloaded from the file view; clone the repository to get it. From 1 MB to 256 MB; the default is 10 MB.", ko: "이보다 큰 파일은 파일 화면에서 내려받을 수 없으니 저장소를 클론해서 받으세요. 1 MB부터 256 MB까지 정할 수 있고 기본값은 10 MB입니다."},
+	MsgBrowseFile:        {en: "File view", ko: "파일 보기"},
+	MsgBrowseFileHelp:    {en: "How much of one file the file view shows; the rest is offered as a download. From 64 KB to 64 MB; the default is 2 MB.", ko: "파일 화면에 한 파일을 얼마나 보여 줄지 정합니다. 나머지는 내려받기로 제공합니다. 64 KB부터 64 MB까지 정할 수 있고 기본값은 2 MB입니다."},
+	MsgBrowseCommitPatch: {en: "Commit diff", ko: "커밋 차이"},
+	MsgBrowseCommitPatchHelp: {
+		en: "How much diff text a commit page reads for all its files. From 64 KB to 64 MB; the default is 2 MB.",
+		ko: "커밋 페이지가 모든 파일의 차이를 합쳐 얼마나 읽을지 정합니다. 64 KB부터 64 MB까지 정할 수 있고 기본값은 2 MB입니다.",
+	},
+	MsgBrowseFilePatch: {en: "One file's diff alone", ko: "한 파일만의 차이"},
+	MsgBrowseFilePatchHelp: {
+		en: "How much diff text the page of one changed file reads. From 64 KB to 64 MB; the default is 8 MB.",
+		ko: "바뀐 파일 하나만 여는 페이지가 차이를 얼마나 읽을지 정합니다. 64 KB부터 64 MB까지 정할 수 있고 기본값은 8 MB입니다.",
+	},
+	MsgBrowseCommitFile: {en: "One file within a commit", ko: "커밋 안의 파일 하나"},
+	MsgBrowseCommitFileHelp: {
+		en: "A file whose diff is larger is listed on the commit page with a link to its diff alone. From 16 KB to 16 MB; the default is 256 KB.",
+		ko: "차이가 이보다 큰 파일은 커밋 페이지에 목록으로만 나오고, 그 파일만의 차이로 가는 링크가 붙습니다. 16 KB부터 16 MB까지 정할 수 있고 기본값은 256 KB입니다.",
+	},
+	MsgBrowseCompare: {en: "Pull request comparison", ko: "풀 리퀘스트 비교"},
+	MsgBrowseCompareHelp: {
+		en: "How much diff text a pull request page reads. From 64 KB to 64 MB; the default is 8 MB.",
+		ko: "풀 리퀘스트 페이지가 차이를 얼마나 읽을지 정합니다. 64 KB부터 64 MB까지 정할 수 있고 기본값은 8 MB입니다.",
+	},
+	MsgBrowseCompareTime: {en: "Comparison time", ko: "비교 시간"},
+	MsgBrowseCompareTimeHelp: {
+		en: "How long reading that comparison may take before the page shows what it read as incomplete. From 5 seconds to 1 minute; the default is 20 seconds.",
+		ko: "비교를 읽는 데 쓸 수 있는 시간입니다. 넘으면 읽은 데까지를 불완전한 결과로 보여 줍니다. 5초부터 1분까지 정할 수 있고 기본값은 20초입니다.",
+	},
+	MsgBrowseWarning: {
+		en: "Larger views use more memory and may delay other pages.",
+		ko: "보기 한도를 키우면 메모리를 더 쓰고 다른 페이지가 늦어질 수 있습니다.",
+	},
+	MsgBrowseSaved: {en: "Saved. Pages opened from now on use the new limits.", ko: "저장했습니다. 이제부터 여는 페이지에 새 한도가 적용됩니다."},
+
+	MsgMaintenanceTitle: {en: "Repository maintenance", ko: "저장소 유지 관리"},
+	MsgMaintenanceScope: {
+		en: "OwnGit packs a repository's loose objects and refs once it has been idle after a change, and consolidates repositories with many packs in a daily window. It never removes history. A change applies from the next maintenance on; one already running finishes.",
+		ko: "OwnGit은 저장소가 바뀐 뒤 한동안 쓰이지 않으면 흩어진 객체와 ref를 묶고, 팩이 많은 저장소는 매일 정한 시간대에 하나로 합칩니다. 기록은 지우지 않습니다. 바꾼 설정은 다음 유지 관리부터 적용되고, 이미 진행 중인 작업은 그대로 끝납니다.",
+	},
+	MsgMaintenanceChange:      {en: "Change maintenance", ko: "유지 관리 설정 바꾸기"},
+	MsgMaintenanceEnabled:     {en: "Maintenance", ko: "유지 관리"},
+	MsgMaintenanceEnabledHelp: {en: "The default is On.", ko: "기본값은 켬입니다."},
+	MsgMaintenanceOn:          {en: "On", ko: "켬"},
+	MsgMaintenanceOff:         {en: "Off", ko: "끔"},
+	MsgMaintenanceStart:       {en: "Daily window from", ko: "매일 시작 시각"},
+	MsgMaintenanceEnd:         {en: "until", ko: "끝 시각"},
+	MsgMaintenanceWindowHelp: {
+		en: "Local time of the computer that runs OwnGit, in whole hours; a window may pass midnight. The default is 03:00 until 05:00.",
+		ko: "OwnGit을 실행하는 컴퓨터의 현지 시각이며 한 시간 단위입니다. 자정을 넘겨도 됩니다. 기본값은 03:00부터 05:00까지입니다.",
+	},
+	MsgMaintenanceIdle: {en: "Idle time before it starts", ko: "시작 전 대기 시간"},
+	MsgMaintenanceIdleHelp: {
+		en: "How long a repository must go unused before it is maintained. From 1 minute to 24 hours; the default is 5 minutes.",
+		ko: "저장소가 이만큼 쓰이지 않아야 유지 관리를 시작합니다. 1분부터 24시간까지 정할 수 있고 기본값은 5분입니다.",
+	},
+	MsgMaintenanceCommand: {en: "Time for each step", ko: "단계별 시간"},
+	MsgMaintenanceCommandHelp: {
+		en: "How long each ordinary maintenance step may take. From 1 minute to 24 hours; the default is 30 minutes.",
+		ko: "보통 유지 관리의 각 단계에 쓸 수 있는 최대 시간입니다. 1분부터 24시간까지 정할 수 있고 기본값은 30분입니다.",
+	},
+	MsgMaintenanceFull: {en: "Time for consolidation", ko: "합치기 시간"},
+	MsgMaintenanceFullHelp: {
+		en: "How long rewriting all of a repository's packs into one may take. From 1 minute to 24 hours; the default is 2 hours.",
+		ko: "저장소의 모든 팩을 하나로 다시 쓰는 데 쓸 수 있는 최대 시간입니다. 1분부터 24시간까지 정할 수 있고 기본값은 2시간입니다.",
+	},
+	MsgMaintenancePacks: {en: "Packs before consolidation", ko: "합치기 전 팩 수"},
+	MsgMaintenancePacksHelp: {
+		en: "The daily window consolidates a repository with more packs than this. From 2 to 1000; the default is 20.",
+		ko: "팩이 이보다 많은 저장소를 매일 시간대에 하나로 합칩니다. 2부터 1000까지 정할 수 있고 기본값은 20입니다.",
+	},
+	MsgMaintenanceWarning: {
+		en: "Turning maintenance off can slow Git and use more space; a wider window can keep the computer busy while you work.",
+		ko: "유지 관리를 끄면 Git이 느려지고 공간을 더 쓸 수 있습니다. 시간대를 넓히면 작업하는 동안 컴퓨터가 바쁠 수 있습니다.",
+	},
+	MsgMaintenanceSaved:      {en: "Saved. The next maintenance follows the new choices.", ko: "저장했습니다. 다음 유지 관리부터 새 설정을 따릅니다."},
+	MsgMaintenanceWindowSame: {en: "Choose an end that differs from the start.", ko: "시작 시각과 다른 끝 시각을 고르세요."},
+
+	MsgCleanupTitle: {en: "Unused object cleanup", ko: "쓰지 않는 객체 정리"},
+	MsgCleanupScope: {
+		en: "Removes Git objects that no branch, tag or other ref reaches, such as leftovers of rewritten pushes that were not kept. It runs once a night in the maintenance window while maintenance is on, and rewrites each repository's packs.",
+		ko: "어떤 브랜치, 태그, 다른 ref로도 닿지 않는 Git 객체를 지웁니다. 예를 들어 덮어쓴 푸시에서 보관하지 않은 나머지입니다. 유지 관리가 켜져 있으면 매일 유지 관리 시간대에 한 번 돌며, 저장소마다 팩을 다시 씁니다.",
+	},
+	MsgCleanupEnabled:     {en: "Cleanup", ko: "정리"},
+	MsgCleanupEnabledHelp: {en: "The default is Off, which removes nothing.", ko: "기본값은 끔이며, 끄면 아무것도 지우지 않습니다."},
+	MsgCleanupOn:          {en: "On", ko: "켬"},
+	MsgCleanupOff:         {en: "Off", ko: "끔"},
+	MsgCleanupGrace:       {en: "Grace period in days", ko: "유예 기간(일)"},
+	MsgCleanupGraceHelp: {
+		en: "Only unreachable objects older than this are removed. From 2 to 365 days; the default is 14.",
+		ko: "이보다 오래된 닿지 않는 객체만 지웁니다. 2일부터 365일까지 정할 수 있고 기본값은 14일입니다.",
+	},
+	MsgCleanupWarning: {
+		en: "Unreachable objects older than this may be removed for good. Kept history and other refs still keep their objects.",
+		ko: "이보다 오래된 닿지 않는 객체는 영구히 지워질 수 있습니다. 보관된 기록과 다른 ref가 가리키는 객체는 그대로 남습니다.",
+	},
+	MsgCleanupNotPurge: {
+		en: "This does not remove kept history or anything a ref still reaches, so it cannot take a pushed secret out of a repository.",
+		ko: "보관된 기록이나 ref가 아직 가리키는 것은 지우지 않으므로, 이미 푸시한 비밀 정보를 저장소에서 없애는 용도로는 쓸 수 없습니다.",
+	},
+	MsgCleanupSavedOn:  {en: "Saved. The next nightly maintenance removes unreachable objects older than the grace period.", ko: "저장했습니다. 다음 유지 관리 시간대부터 유예 기간보다 오래된 닿지 않는 객체를 지웁니다."},
+	MsgCleanupSavedOff: {en: "Saved. Cleanup is off and removes nothing.", ko: "저장했습니다. 정리를 껐으며 아무것도 지우지 않습니다."},
 }
 
 func init() {

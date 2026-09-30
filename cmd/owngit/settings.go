@@ -75,6 +75,18 @@ func settingsSet(arguments []string) error {
 	loginAttempts := flags.Int("login-attempts", 0, "how many wrong passwords from one address within the login window pause it, from 1 to 100")
 	loginWindow := flags.String("login-window", "", "how long wrong passwords are counted together, such as 10m, from 1m to 24h")
 	loginPause := flags.String("login-pause", "", "how long an address that reached the attempts is paused, such as 15m, from 1m to 24h")
+	browse := map[string]*string{}
+	for _, option := range browseOptions {
+		browse[option.flag] = flags.String(option.flag, "", option.usage)
+	}
+	maintenance := flags.String("maintenance", "", "whether OwnGit maintains repositories: on or off")
+	maintenanceWindow := flags.String("maintenance-window", "", "the daily consolidation window in local whole hours, START-END such as 3-5; it may pass midnight, such as 22-6")
+	maintenanceIdle := flags.String("maintenance-idle", "", "how long a repository goes unused before maintenance, such as 5m, from 1m to 24h")
+	maintenanceStep := flags.String("maintenance-step-time", "", "how long each ordinary maintenance step may take, such as 30m, from 1m to 24h")
+	maintenanceFull := flags.String("maintenance-consolidation-time", "", "how long consolidating a repository's packs may take, such as 2h, from 1m to 24h")
+	maintenancePacks := flags.Int("maintenance-packs", 0, "the pack count above which the daily window consolidates a repository, from 2 to 1000")
+	cleanup := flags.String("unused-object-cleanup", "", "whether nightly maintenance removes objects no ref reaches that are older than the grace period: on or off")
+	cleanupGrace := flags.Int("cleanup-grace-days", 0, "the unused object cleanup grace period in days, from 2 to 365")
 	crossSite := flags.String("cross-site-links", "", "whether a link from another site keeps the shared sign-in: strict (open it again from OwnGit) or lax (keep the sign-in)")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
@@ -121,10 +133,9 @@ func settingsSet(arguments []string) error {
 	}
 	transfer := map[string]int64{}
 	if given["transfer-size"] {
-		amount := strings.TrimRight(*transferSize, "BKMG")
-		bytes, err := webui.ParseLimit(webui.LimitSize, webui.LimitInput{Amount: amount, Unit: strings.TrimPrefix(*transferSize, amount)})
-		if err != nil || amount == *transferSize {
-			return cliProblem("invalid_arguments", "--transfer-size takes an amount with B, KB, MB or GB, such as 4GB.")
+		bytes, err := byteSize("transfer-size", *transferSize)
+		if err != nil {
+			return err
 		}
 		transfer["maximum_bytes"] = bytes
 	}
@@ -149,6 +160,72 @@ func settingsSet(arguments []string) error {
 	if len(transfer) > 0 {
 		change["git_transfer"] = transfer
 	}
+	browseChange := map[string]int64{}
+	for _, option := range browseOptions {
+		if !given[option.flag] {
+			continue
+		}
+		var value int64
+		var err error
+		if option.field == "compare_seconds" {
+			value, err = wholeSeconds(option.flag, *browse[option.flag])
+		} else {
+			value, err = byteSize(option.flag, *browse[option.flag])
+		}
+		if err != nil {
+			return err
+		}
+		browseChange[option.field] = value
+	}
+	if len(browseChange) > 0 {
+		change["browse_limits"] = browseChange
+	}
+	maintenanceChange := map[string]any{}
+	if given["maintenance"] {
+		maintenanceChange["enabled"] = *maintenance == "on"
+		if *maintenance != "on" && *maintenance != "off" {
+			return cliProblem("invalid_arguments", "--maintenance takes on or off.")
+		}
+	}
+	if given["maintenance-window"] {
+		var start, end int
+		if _, err := fmt.Sscanf(*maintenanceWindow, "%d-%d", &start, &end); err != nil || fmt.Sprintf("%d-%d", start, end) != *maintenanceWindow {
+			return cliProblem("invalid_arguments", "--maintenance-window takes START-END in whole hours, such as 3-5.")
+		}
+		maintenanceChange["window_start_hour"], maintenanceChange["window_end_hour"] = start, end
+	}
+	for _, option := range []struct{ flag, field, value string }{
+		{"maintenance-idle", "idle_seconds", *maintenanceIdle}, {"maintenance-step-time", "command_seconds", *maintenanceStep},
+		{"maintenance-consolidation-time", "full_repack_seconds", *maintenanceFull},
+	} {
+		if !given[option.flag] {
+			continue
+		}
+		seconds, err := wholeSeconds(option.flag, option.value)
+		if err != nil {
+			return err
+		}
+		maintenanceChange[option.field] = seconds
+	}
+	if given["maintenance-packs"] {
+		maintenanceChange["pack_threshold"] = *maintenancePacks
+	}
+	if len(maintenanceChange) > 0 {
+		change["maintenance"] = maintenanceChange
+	}
+	cleanupChange := map[string]any{}
+	if given["unused-object-cleanup"] {
+		if *cleanup != "on" && *cleanup != "off" {
+			return cliProblem("invalid_arguments", "--unused-object-cleanup takes on or off.")
+		}
+		cleanupChange["enabled"] = *cleanup == "on"
+	}
+	if given["cleanup-grace-days"] {
+		cleanupChange["grace_days"] = *cleanupGrace
+	}
+	if len(cleanupChange) > 0 {
+		change["unused_object_cleanup"] = cleanupChange
+	}
 	if len(change) == 0 {
 		return cliProblem("invalid_arguments", "Name at least one setting to change, such as --session 7d.")
 	}
@@ -171,4 +248,27 @@ func wholeSeconds(option, value string) (int64, error) {
 		return 0, cliProblem("invalid_arguments", "--"+option+" takes a time in whole seconds, such as 90s, 10m or 2h.")
 	}
 	return int64(duration / time.Second), nil
+}
+
+// browseOptions are the options of the browsing limits and their fields in
+// the settings API.
+var browseOptions = []struct{ flag, field, usage string }{
+	{"browse-raw", "raw_bytes", "the largest raw file download, such as 10MB, from 1MB to 256MB"},
+	{"browse-file", "file_bytes", "how much of one file the file view shows, such as 2MB, from 64KB to 64MB"},
+	{"browse-commit-diff", "commit_patch_bytes", "how much diff a commit page reads, such as 2MB, from 64KB to 64MB"},
+	{"browse-file-diff", "file_patch_bytes", "how much diff the page of one changed file reads, such as 8MB, from 64KB to 64MB"},
+	{"browse-commit-file", "commit_file_bytes", "the largest diff of one file shown within a commit page, such as 256KB, from 16KB to 16MB"},
+	{"browse-compare", "compare_bytes", "how much diff a pull request page reads, such as 8MB, from 64KB to 64MB"},
+	{"browse-compare-time", "compare_seconds", "how long reading a pull request comparison may take, such as 20s, from 5s to 1m"},
+}
+
+// byteSize reads the amount an option names with its unit, such as 4GB or
+// 256KB, in bytes.
+func byteSize(option, value string) (int64, error) {
+	amount := strings.TrimRight(value, "BKMG")
+	bytes, err := webui.ParseLimit(webui.LimitSize, webui.LimitInput{Amount: amount, Unit: strings.TrimPrefix(value, amount)})
+	if err != nil || amount == value {
+		return 0, cliProblem("invalid_arguments", "--"+option+" takes an amount with B, KB, MB or GB, such as 4GB.")
+	}
+	return bytes, nil
 }

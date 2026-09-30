@@ -34,6 +34,19 @@ func templateFuncs() template.FuncMap {
 		"logsMenu":     CheckLogChoices,
 		"keptMenu":     KeptHistoryChoices,
 		"deleteMenu":   DeleteNameChoices,
+		"maintenanceMenu": func() []PolicyChoice {
+			return []PolicyChoice{{"on", MsgMaintenanceOn}, {"off", MsgMaintenanceOff}}
+		},
+		"cleanupMenu": func() []PolicyChoice {
+			return []PolicyChoice{{"off", MsgCleanupOff}, {"on", MsgCleanupOn}}
+		},
+		"hourMenu": func() []string {
+			hours := make([]string, 24)
+			for hour := range hours {
+				hours[hour] = strconv.Itoa(hour)
+			}
+			return hours
+		},
 		"crossMenu":    CrossSiteChoices,
 		"loginSummary": biLoginLimits,
 		"confirmAfter": confirmAfter,

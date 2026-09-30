@@ -274,6 +274,45 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if limits.Looser() {
 			notice = "transfer_looser"
 		}
+	case webui.ActionSaveBrowseLimits:
+		limits, notices := browseLimitsForm(request)
+		if len(notices) > 0 {
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{Browse: &limits})
+		notice = "browse_saved"
+		if limits.Looser() {
+			notice = "browse_looser"
+		}
+	case webui.ActionSaveMaintenance:
+		choices, notices := maintenanceForm(request)
+		if len(notices) > 0 {
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{Maintenance: &choices})
+		if err == nil {
+			app.Repositories.WakeMaintenance()
+		}
+		notice = "maintenance_saved"
+		if choices.Looser() {
+			notice = "maintenance_looser"
+		}
+	case webui.ActionSaveCleanup:
+		cleanup, notices := cleanupForm(request)
+		if len(notices) > 0 {
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{Cleanup: &cleanup})
+		if err == nil {
+			app.Repositories.WakeMaintenance()
+		}
+		notice = "cleanup_off"
+		if cleanup.Enabled {
+			notice = "cleanup_on"
+		}
 	case webui.ActionSaveCheckLogs:
 		retention, valid := state.ParseCheckLogRetention(postValue(request, "check_logs"))
 		if !valid {
@@ -422,6 +461,12 @@ var settingsNoticeGroups = map[string]string{
 	"initial_branch_saved":   webui.GroupBranch,
 	"transfer_saved":         webui.GroupTransfer,
 	"transfer_looser":        webui.GroupTransfer,
+	"browse_saved":           webui.GroupBrowse,
+	"browse_looser":          webui.GroupBrowse,
+	"maintenance_saved":      webui.GroupMaintenance,
+	"maintenance_looser":     webui.GroupMaintenance,
+	"cleanup_off":            webui.GroupCleanup,
+	"cleanup_on":             webui.GroupCleanup,
 	"check_logs_saved":       webui.GroupLogs,
 	"kept_history_on":        webui.GroupHistory,
 	"kept_history_off":       webui.GroupHistory,
@@ -546,6 +591,14 @@ var settingsDraftFields = map[string]bool{
 	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false,
 	"delete_requires_name": false, "login_attempts": false, "login_window": false, "login_window_unit": false, "login_pause": false, "login_pause_unit": false, "cross_site_links": false,
 	"update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "tailscale_port": false, "tailscale_https_port": false, "insecure_ack": true,
+	"transfer_per_repository": false, "transfer_extra_slots": false, "transfer_idle": false, "transfer_idle_unit": false, "transfer_queue": false,
+	"transfer_queue_unit": false, "browse_raw": false, "browse_raw_unit": false, "browse_file": false, "browse_file_unit": false,
+	"browse_commit_patch": false, "browse_commit_patch_unit": false, "browse_file_patch": false, "browse_file_patch_unit": false,
+	"browse_commit_file": false, "browse_commit_file_unit": false, "browse_compare": false, "browse_compare_unit": false, "browse_compare_time": false,
+	"browse_compare_time_unit": false, "maintenance_idle": false, "maintenance_idle_unit": false, "maintenance_command": false,
+	"maintenance_command_unit": false, "maintenance_full_repack": false, "maintenance_full_repack_unit": false, "maintenance_enabled": false,
+	"maintenance_window_start": false, "maintenance_window_end": false, "maintenance_pack_threshold": false, "cleanup_enabled": false,
+	"cleanup_grace": false,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

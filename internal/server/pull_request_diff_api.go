@@ -7,6 +7,7 @@ import (
 
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
+	"owngit/internal/state"
 )
 
 // maximumDiffResponse bounds an encoded diff response. A variable so tests
@@ -40,7 +41,11 @@ func (app *App) pullRequestDiff(ctx context.Context, repositoryID string, number
 	if err != nil {
 		return nil, err
 	}
-	comparison, err := app.Repositories.Compare(ctx, repositoryID, revisions.Target.OID, revisions.Source.OID)
+	// The API answer keeps its own fixed read budget, the default of the
+	// browsing limits, and fits its answer to maximumDiffResponse; the
+	// owner's browsing limits apply to pages.
+	fixed := state.DefaultBrowseLimits
+	comparison, err := app.Repositories.Compare(ctx, repositoryID, revisions.Target.OID, revisions.Source.OID, fixed.CompareBytes, fixed.CompareTime)
 	if err != nil {
 		return nil, &pullrequest.Problem{Code: "repository_unavailable", Message: "The pull request changes could not be read.", Cause: err}
 	}

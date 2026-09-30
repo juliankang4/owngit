@@ -1148,6 +1148,7 @@ func restoredSettingsNotice() string {
 		"new repositories start on %s, one Git transfer may move %d GB and take %s, raw check logs are kept %s, "+
 		"repositories that follow the server keep overwritten and deleted history, deleting a repository asks for its name, "+
 		"%d wrong passwords within %s pause an address for %s, and a link from another site opens without the shared sign-in. "+
+		"Git transfer slots and waits, browsing limits and repository maintenance are at their defaults, and unused object cleanup is off. "+
 		"Each repository's own kept history choice and default branch protection come back with it. "+
 		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
 		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,

@@ -195,5 +195,7 @@ func TestCompareTimeLimitRefusesACleanupFailure(t *testing.T) {
 	source := repo.commit(t, map[string]string{"shared.txt": "shared\n", "a.txt": "a\n"}, base)
 	target := repo.commit(t, map[string]string{"shared.txt": "moved\n"}, base)
 	repo.holdGit(t, "diff")
-	refusesCleanupFailureAtLimit(t, repo.git, func() (any, error) { return repo.manager.Compare(ctx, repo.id, target, source) })
+	refusesCleanupFailureAtLimit(t, repo.git, func() (any, error) {
+		return repo.manager.Compare(ctx, repo.id, target, source, state.DefaultBrowseLimits.CompareBytes, state.DefaultBrowseLimits.CompareTime)
+	})
 }

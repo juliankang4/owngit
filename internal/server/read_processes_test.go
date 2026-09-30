@@ -14,6 +14,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/pullrequest"
+	"owngit/internal/state"
 	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
@@ -424,9 +425,9 @@ func TestDiffPatchBoundariesFollowGit(t *testing.T) {
 
 	commit, changed, err := app.Repositories.CommitFiles(context.Background(), "bounds", source)
 	noErr(t, err)
-	patch, truncated, err := app.Repositories.CommitPatch(context.Background(), "bounds", source, "", nil, maximumCommitPatchBytes)
+	patch, truncated, err := app.Repositories.CommitPatch(context.Background(), "bounds", source, "", nil, state.DefaultBrowseLimits.CommitPatchBytes)
 	noErr(t, err)
-	items, notLoaded := diffFileItems(changed, patch, truncated, nil, nil)
+	items, notLoaded := diffFileItems(changed, patch, truncated, nil, nil, state.DefaultBrowseLimits.CommitFileBytes)
 	if commit.OID != source || truncated || notLoaded {
 		t.Fatalf("commit %s truncated=%v not loaded=%v", commit.OID, truncated, notLoaded)
 	}

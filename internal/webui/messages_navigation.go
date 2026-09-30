@@ -119,8 +119,8 @@ var navigationCatalog = map[MessageCode]message{
 		ko: "이 README를 읽을 수 없습니다. 열어서 다시 시도하세요.",
 	},
 	MsgCodeRawTooLarge: {
-		en: "Files over 10 MB cannot be downloaded from the browser. Clone the repository to get this file.",
-		ko: "10MB가 넘는 파일은 브라우저에서 내려받을 수 없습니다. 저장소를 클론해서 받으세요.",
+		en: "This file is larger than the raw file download limit (10 MB by default, under Settings, Repositories, Browsing limits), so it cannot be downloaded from the browser. Clone the repository to get this file.",
+		ko: "이 파일은 원본 파일 내려받기 한도(기본 10 MB, 설정의 저장소 탭, 보기 한도)보다 커서 브라우저에서 내려받을 수 없습니다. 저장소를 클론해서 받으세요.",
 	},
 	MsgCommitsToList: {en: "Commits", ko: "커밋 목록"},
 

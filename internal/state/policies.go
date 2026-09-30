@@ -47,6 +47,9 @@ var policyNames = map[string]struct{ field, advice string }{
 	generalSessionKey:        {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
 	initialBranchKey:         {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
 	gitTransferLimitsKey:     {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size, --transfer-time, --transfer-per-repository, --transfer-extra-slots, --transfer-idle and --transfer-queue."},
+	maintenanceKey:           {"maintenance", "The saved repository maintenance choices cannot be read, so no repository is maintained. Set them again under Settings, Storage & recovery, or with owngit settings set --maintenance and the other --maintenance- options."},
+	browseLimitsKey:          {"browse_limits", "The saved browsing limits cannot be read, so files, diffs and comparisons are not shown. Set them again under Settings, Repositories, or with owngit settings set and the --browse- options."},
+	unusedObjectCleanupKey:   {"unused_object_cleanup", "The saved unused object cleanup choice cannot be read, so no object is removed. Set it again under Settings, Storage & recovery, or with owngit settings set --unused-object-cleanup."},
 	checkLogRetentionKey:     {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
 	keptHistoryKey:           {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
 	deleteRequiresNameKey:    {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
@@ -72,6 +75,9 @@ type PolicyChange struct {
 	Session       *GeneralSession
 	InitialBranch *string
 	GitTransfer   *GitTransferLimits
+	Maintenance   *Maintenance
+	Browse        *BrowseLimits
+	Cleanup       *UnusedObjectCleanup
 	CheckLogs     *CheckLogRetention
 	KeptHistory   *bool
 	// DeleteRequiresName, LoginLimits and CrossSiteLinks are the access
@@ -97,15 +103,15 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 		}
 		values[initialBranchKey] = *change.InitialBranch
 	}
-	if change.GitTransfer != nil {
-		if err := change.GitTransfer.Validate(); err != nil {
-			return err
-		}
-		stored, err := storedGroup(change.GitTransfer.Fields())
+	for _, err := range []error{
+		addGroup(values, gitTransferLimitsKey, change.GitTransfer),
+		addGroup(values, maintenanceKey, change.Maintenance),
+		addGroup(values, browseLimitsKey, change.Browse),
+		addGroup(values, unusedObjectCleanupKey, change.Cleanup),
+	} {
 		if err != nil {
 			return err
 		}
-		values[gitTransferLimitsKey] = stored
 	}
 	if change.CheckLogs != nil {
 		if _, valid := ParseCheckLogRetention(string(*change.CheckLogs)); !valid {

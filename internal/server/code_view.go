@@ -22,10 +22,6 @@ import (
 	"owngit/internal/webui"
 )
 
-// maximumRawBytes bounds one raw file response. A larger file is refused
-// rather than cut, since a cut download would look complete.
-const maximumRawBytes = 10 << 20
-
 // rawURL is the address that downloads one file at ref. Relative images in a
 // rendered document load through it too.
 func rawURL(repositoryID, ref, filePath string) string {
@@ -203,7 +199,18 @@ func webpSize(head []byte) (int, int) {
 func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, stored state.Repository) {
 	query := request.URL.Query()
 	filePath := query.Get("path")
-	_, blob, err := app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, maximumRawBytes)
+	// A file larger than the raw file limit is refused rather than cut,
+	// since a cut download would look complete.
+	limits, err := app.Store.BrowseLimits(request.Context())
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "browsing limits read", err)
+		app.renderError(writer, request, http.StatusConflict, webui.MsgBrowseUnreadable, "")
+		return
+	}
+	var blob repository.Blob
+	if err == nil {
+		_, blob, err = app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, limits.RawBytes)
+	}
 	if err != nil {
 		if downloadNotFound(err) {
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)

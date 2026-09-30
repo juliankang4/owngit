@@ -71,7 +71,7 @@ func TestBackupHoldStopsRunningMaintenance(t *testing.T) {
 	}
 	finished := make(chan struct{})
 	go func() {
-		manager.runMaintenance(context.Background(), maintenanceJob{id: "sample"})
+		manager.runMaintenance(context.Background(), maintenanceJob{id: "sample", schedule: MaintenanceSchedule{}.withDefaults()})
 		close(finished)
 	}()
 	<-started

@@ -34,21 +34,16 @@ type Comparison struct {
 	TimedOut bool
 }
 
-// Bounds for one comparison. Variables so tests can lower them.
-var (
-	compareOutputLimit int64 = 8 << 20
-	compareTimeLimit         = 20 * time.Second
-)
-
 // Compare reads what sourceOID changes since it branched from targetOID. It
 // finds their merge bases with one Git process and, with exactly one base,
 // reads the changed files, their line counts and the patch with a second:
 // two processes, and none when both are cached. Renames are not detected.
 //
-// The diff output is bounded by size and time. A diff cut by its size limit
-// is cached with the limit, like a complete one. A diff cut by the time limit
-// is returned as incomplete and not cached, since another attempt may finish.
-func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string) (Comparison, error) {
+// The diff output is bounded by outputLimit bytes and timeLimit, and by ctx.
+// A diff cut by its size limit is cached with the limit, like a complete
+// one, so a different limit reads again. A diff cut by the time limit is
+// returned as incomplete and not cached, since another attempt may finish.
+func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string, outputLimit int64, timeLimit time.Duration) (Comparison, error) {
 	if !isOID(targetOID) || !isOID(sourceOID) {
 		return Comparison{}, errors.New("invalid commit ID")
 	}
@@ -63,10 +58,10 @@ func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string) 
 	comparison.Base = bases[0]
 	args := []string{"--git-dir", ".", "diff", "--raw", "--numstat", "--patch", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
 		"--unified=3", "--src-prefix=a/", "--dst-prefix=b/", comparison.Base, sourceOID}
-	limit := compareOutputLimit
+	limit := outputLimit
 	key := strings.Join(args[3:], "\x00") + "\x00" + strconv.FormatInt(limit, 10)
 	result, err := m.cachedRead(ctx, id, "compare", key, func(repositoryPath string) (cachedResult, bool, error) {
-		limits := gitexec.CommandLimits{OutputLimit: limit, Timeout: compareTimeLimit, StopAtOutputLimit: true}
+		limits := gitexec.CommandLimits{OutputLimit: limit, Timeout: timeLimit, StopAtOutputLimit: true}
 		output, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, args...)
 		var limitErr *gitexec.LimitError
 		switch {
