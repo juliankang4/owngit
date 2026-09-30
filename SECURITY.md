@@ -26,4 +26,6 @@ What OwnGit does at the network boundary:
 - On its own address it refuses requests that Tailscale Funnel forwards from the Internet, and ignores `Tailscale-User-*` identity headers. The public address for share links is a separate listener, which the owner may connect to Funnel.
 - It believes the `X-Forwarded-Proto`, `X-Forwarded-For`, and `X-Forwarded-Host` headers only from proxy addresses the owner configures, and from none by default.
 
+An administrator can create a [share link](docs/OPERATIONS.md#share-links) that lets anyone who holds it, and its extra password when it has one, read one repository without the shared password until the link expires or is revoked. Treat a share link like a password.
+
 Host and runner check commands run with their account's permissions and are not a sandbox.
