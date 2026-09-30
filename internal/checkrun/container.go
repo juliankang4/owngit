@@ -163,9 +163,10 @@ const (
 )
 
 // pullContainerImage downloads image from its registry. The Docker client
-// reads its settings from an empty private folder inside the job envelope,
-// so no stored registry login or credential helper is used: only images the
-// registry serves anonymously can be downloaded.
+// reads its settings from an empty private folder inside the job envelope
+// and gets no DOCKER_AUTH_CONFIG, which Docker CLI 28.3 and later read as
+// credentials, so no stored registry login or credential helper is used:
+// only images the registry serves anonymously can be downloaded.
 func pullContainerImage(ctx context.Context, docker, dockerHost, envelope, image string) error {
 	configDir := filepath.Join(envelope, "docker-config")
 	if err := os.Mkdir(configDir, 0o700); err != nil {
@@ -173,7 +174,9 @@ func pullContainerImage(ctx context.Context, docker, dockerHost, envelope, image
 	}
 	environment := make([]string, 0, len(os.Environ())+1)
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "DOCKER_CONFIG=") {
+		// Windows environment names ignore case.
+		name, _, _ := strings.Cut(entry, "=")
+		if !strings.EqualFold(name, "DOCKER_CONFIG") && !strings.EqualFold(name, "DOCKER_AUTH_CONFIG") {
 			environment = append(environment, entry)
 		}
 	}
