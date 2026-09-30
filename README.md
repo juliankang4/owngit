@@ -30,7 +30,7 @@ To try it, pick an [install](#install) route and follow the [Quickstart](#quicks
 - Open, review, and merge pull requests in the browser or from JSON CLI commands. A merge uses the exact revisions on screen, and a plain `git push` works without a pull request.
 - Reach OwnGit from your other devices over HTTPS through Tailscale Serve (turned on in Settings or with `owngit tailscale on`) or a reverse proxy such as Caddy, nginx, or Traefik. See [Share on your tailnet over HTTPS](docs/OPERATIONS.md#share-on-your-tailnet-over-https) and [Behind a reverse proxy](docs/OPERATIONS.md#behind-a-reverse-proxy).
 - Keep the history that a force-push, an import, or a deletion replaces (on by default, and adjustable per repository), and restore a whole tree or selected files from the browser after previewing every change. You can also protect the default branch from rewrites and deletion.
-- Create and restore offline backups of repositories, pull request, check, and import records, and portable settings.
+- Back up repositories, pull request, check, and import records, and portable settings on a schedule while OwnGit runs, or on demand, and restore them. See [Backups](docs/OPERATIONS.md#backups).
 - Import a repository from another HTTPS Git host and refresh it on demand or on a schedule, without writing to the source.
 - Record checks that the `owngit` command runs in your own environment, and run owner-enabled checks on the host, in restricted local Docker, or on a separate runner. See [Automatic checks](docs/AUTOMATIC_CHECKS.md). Checks and reviews are advisory and never hold a merge.
 - Connect coding tools: `owngit repo`, `owngit pr`, and `owngit check` print JSON, and `owngit mcp` offers the same commands to tools that support MCP. See [Coding tool integration](docs/CODING_TOOLS.md).
@@ -204,7 +204,7 @@ On Linux, memory is the resident set size that `/proc` and `ps` report. On macOS
 ## Status and limits
 
 - By default, a force-push, an import, or a branch deletion leaves the old commits in kept history, so a secret you committed stays in OwnGit and its backups. Choosing Do not keep only stops keeping later history and removes nothing already kept. Deleting the whole repository with its files is the only way to remove that history, and earlier backups still contain it. Rotate any secret you push by mistake.
-- Kept history is not a backup. Backups run only when you start them.
+- Kept history is not a backup. Scheduled backups start only after you choose a backup folder with `owngit backup schedule set`.
 - Host and runner check commands run with their account's permissions and are not sandboxes.
 - OwnGit records review labels and check results that other tools supply, but it never runs reviewers or coding agents.
 - Git LFS objects are not hosted or imported.
