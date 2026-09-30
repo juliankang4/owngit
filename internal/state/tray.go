@@ -121,6 +121,26 @@ func (choice TrayNotifications) Kinds() []string {
 	return kinds
 }
 
+// With returns the choice with setting turned on or off: "all",
+// "only_others" or one of NotifyKinds. A kind keeps its own choice while
+// all notifications are off.
+func (choice TrayNotifications) With(setting string, on bool) (TrayNotifications, error) {
+	switch {
+	case setting == "all":
+		choice.Off = !on
+	case setting == "only_others":
+		choice.OnlyOthers = on
+	case slices.Contains(NotifyKinds, setting):
+		choice.KindsOff = slices.DeleteFunc(slices.Clone(choice.KindsOff), func(kind string) bool { return kind == setting })
+		if !on {
+			choice.KindsOff = append(choice.KindsOff, setting)
+		}
+	default:
+		return choice, fmt.Errorf("the notification settings are all, only_others, %s", strings.Join(NotifyKinds, ", "))
+	}
+	return choice, nil
+}
+
 // trayNotificationsLimit bounds TrayNotificationsFile.
 const trayNotificationsLimit = 4 << 10
 

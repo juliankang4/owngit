@@ -20,6 +20,7 @@ import (
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
 
+	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -35,6 +36,7 @@ const (
 	wmTray    = wmApp + 1 // the notification area icon's events
 	wmReading = wmApp + 2 // the poller has a new reading
 	wmOpen    = wmApp + 3 // the dashboard's address was proven, or not
+	wmNotify  = wmApp + 4 // show the notification that lParam points to
 )
 
 // Control IDs. Open is IDOK, so Enter outside a button opens the
@@ -45,7 +47,10 @@ const (
 	idCopyClone   = 12
 	idHide        = 13
 	idQuit        = 14
-	idEdit        = 100
+	idNotify      = 15
+	// The notification settings menu's items are idSetting and after.
+	idSetting = 200
+	idEdit    = 100
 )
 
 // palette holds the panel's colors (COLORREF).
@@ -87,6 +92,9 @@ type app struct {
 	// address; openTarget is the proven address, or "".
 	opening    bool
 	openTarget string
+	// notifyPage is the dashboard page of the last notification shown,
+	// which a click on a notification opens.
+	notifyPage string
 }
 
 type panelControls struct {
@@ -96,6 +104,7 @@ type panelControls struct {
 	recent, noPushes                        uintptr
 	pushes                                  [3][3]uintptr
 	open, section, hide, quit, keepsRunning uintptr
+	notify                                  uintptr
 	buttons                                 []uintptr
 }
 
@@ -129,6 +138,7 @@ func Run(options Options) error {
 	call(procSetProcessDpiAwarenessContext, perMonitorAwareV2)
 
 	a := &app{poller: newPoller(options, userLanguage()), brushes: map[uint32]uintptr{}, texts: map[uintptr]string{}}
+	a.notifier.show = a.showNotification
 	current = a
 	if err := a.createWindow(); err != nil {
 		return err
@@ -235,6 +245,7 @@ func (a *app) createControls() {
 	}
 	c.open = button(idOpen)
 	c.section = static(ssLeft)
+	c.notify = button(idNotify)
 	c.hide = button(idHide)
 	c.quit = button(idQuit)
 	c.keepsRunning = static(ssLeft)
@@ -247,6 +258,7 @@ func (a *app) createControls() {
 	a.setText(c.recent, text(webui.MsgTrayRecent))
 	a.setText(c.open, text(webui.MsgTrayOpen))
 	a.setText(c.section, text(webui.MsgTrayThisComputer))
+	a.setText(c.notify, text(webui.MsgNotifySettings))
 	a.setText(c.hide, text(webui.MsgTrayHide))
 	a.setText(c.quit, text(webui.MsgTrayQuit))
 	a.setText(c.keepsRunning, text(webui.MsgTrayKeepsRunning))
@@ -282,6 +294,11 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		a.mu.Unlock()
 		a.apply()
 		return 0
+	case wmNotify:
+		if a.notify(fromAddress[server.TrayNotification](lParam)) {
+			return 1
+		}
+		return 0
 	case wmOpen:
 		a.opening = false
 		a.mu.Lock()
@@ -306,6 +323,10 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			a.primary()
 		case wmContextMenu:
 			a.togglePanel()
+		case ninBalloonClick:
+			if a.notifyPage != "" {
+				a.openPage(a.notifyPage)
+			}
 		}
 		return 0
 	case wmCommand:
@@ -398,12 +419,17 @@ func (a *app) primary() {
 // status again. The browser brings the owner's OwnGit sign-in along, so a
 // program that took the address after an earlier reading must not get it.
 func (a *app) openDashboard() {
+	a.openPage("/")
+}
+
+// openPage opens path on the dashboard in the same way.
+func (a *app) openPage(path string) {
 	if a.opening {
 		return
 	}
 	a.opening = true
 	go func() {
-		target, err := NewClient(a.stateDir, nil).Dashboard(context.Background(), string(a.lang))
+		target, err := NewClient(a.stateDir, nil).DashboardPage(context.Background(), string(a.lang), path)
 		if err != nil {
 			target = ""
 		}
@@ -492,6 +518,8 @@ func (a *app) command(id int) {
 		a.copy(a.controls.copyCmd, idCopyCommand, a.view.Command)
 	case idCopyClone:
 		a.copy(a.controls.copyClone, idCopyClone, a.view.CloneAddress)
+	case idNotify:
+		a.notificationMenu()
 	case idHide:
 		a.hideIcon()
 	case idQuit:
@@ -515,6 +543,85 @@ func (a *app) hideIcon() {
 	a.current.show = false
 	a.apply()
 	a.askAgain()
+}
+
+// notificationMenu shows the notification settings as a menu of check
+// marks under the Notifications button, and saves the one chosen.
+func (a *app) notificationMenu() {
+	settings := readNotificationPanel(a.stateDir, a.lang)
+	if settings.Error != "" {
+		windows.MessageBox(windows.HWND(a.hwnd), utf16(settings.Error), utf16("OwnGit"), windows.MB_OK|windows.MB_ICONWARNING)
+		return
+	}
+	menu := call(procCreatePopupMenu)
+	if menu == 0 {
+		return
+	}
+	defer call(procDestroyMenu, menu)
+	for index, setting := range settings.Settings {
+		flags := uintptr(mfString)
+		if setting.On {
+			flags |= mfChecked
+		}
+		if !setting.Enabled {
+			flags |= mfGrayed
+		}
+		label := setting.Label
+		if setting.Setting != "all" && setting.Setting != "only_others" {
+			label = "    " + label
+		}
+		call(procAppendMenu, menu, flags, uintptr(idSetting+index), uintptr(unsafe.Pointer(utf16(label))))
+		if index == 1 {
+			call(procAppendMenu, menu, mfSeparator, 0, 0)
+		}
+	}
+	var button rect
+	call(procGetWindowRect, a.controls.notify, uintptr(unsafe.Pointer(&button)))
+	chosen := int(call(procTrackPopupMenuEx, menu, tpmReturnCmd|tpmTopAlign, uintptr(button.left), uintptr(button.bottom), a.hwnd, 0)) - idSetting
+	if chosen < 0 || chosen >= len(settings.Settings) {
+		return
+	}
+	setting := settings.Settings[chosen]
+	if err := setNotification(a.stateDir, setting.Setting, !setting.On); err != nil {
+		text := fmt.Sprintf(webui.Text(a.lang, webui.MsgNotifySettingsFailed), err)
+		windows.MessageBox(windows.HWND(a.hwnd), utf16(text), utf16("OwnGit"), windows.MB_OK|windows.MB_ICONWARNING)
+	}
+}
+
+// showNotification shows a notification from the icon's window thread,
+// which owns the icon, and waits until Windows took it.
+func (a *app) showNotification(notification server.TrayNotification) error {
+	shown := call(procSendMessage, a.hwnd, wmNotify, 0, uintptr(unsafe.Pointer(&notification)))
+	runtime.KeepAlive(&notification)
+	if shown == 0 {
+		return errors.New("Windows did not take the notification")
+	}
+	return nil
+}
+
+// notify shows notification as the icon's notification, which Windows
+// shows as a toast, and keeps its page for a click. Its title and text are
+// cut to the lengths Windows takes.
+func (a *app) notify(notification *server.TrayNotification) bool {
+	if !a.iconAdded {
+		return false
+	}
+	data := a.iconData()
+	data.flags = nifInfo
+	data.infoFlags = niifRespectQuiet
+	body := notification.Body
+	if notification.Subtitle != "" {
+		body = notification.Subtitle + "\n" + body
+	}
+	title, _ := windows.UTF16FromString(strings.ReplaceAll(notification.Title, "\x00", ""))
+	text, _ := windows.UTF16FromString(strings.ReplaceAll(body, "\x00", ""))
+	copy(data.infoTitle[:len(data.infoTitle)-1], title)
+	copy(data.info[:len(data.info)-1], text)
+	if call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) == 0 {
+		return false
+	}
+	a.notifyPage = notification.Path
+	return true
 }
 
 // copy puts text on the clipboard and says on the button whether it did.
@@ -896,6 +1003,8 @@ func (a *app) layout() (int32, int32) {
 	y += s(14)
 	place(c.section, pad, y, inner, lineSemibold)
 	y += lineSemibold + s(8)
+	place(c.notify, pad, y, buttonWidth(a.texts[c.notify]), buttonHeight)
+	y += buttonHeight + s(8)
 	hideWidth, quitWidth := buttonWidth(a.texts[c.hide]), buttonWidth(a.texts[c.quit])
 	place(c.hide, pad, y, hideWidth, buttonHeight)
 	if hideWidth+s(8)+quitWidth <= inner {

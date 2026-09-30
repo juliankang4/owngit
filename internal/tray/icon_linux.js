@@ -14,11 +14,18 @@
 //                                     open: show the panel too
 //   {"type":"opened"}                 the dashboard opened; close the panel
 //   {"type":"notice","text":TEXT}     something failed; show it in the panel
+//   {"type":"notify","notification":{"id":ID,"title":TEXT,"subtitle":TEXT,"body":TEXT,"action":TEXT}}
+//                                     show a desktop notification
+// The state message also carries "notifications": the notification
+// settings, {"heading","hint","error","settings":[{"setting","label","on","enabled"}]}.
 // To owngit:
 //   {"type":"ready"}
 //   {"type":"error","code":"already_running"|"no_display"|"toolkit","message":TEXT}
 //   {"type":"open"} {"type":"hide"} {"type":"quit"}
 //   {"type":"panel","open":BOOL}
+//   {"type":"notified","id":ID,"message":TEXT}  shown, or why not
+//   {"type":"notification_clicked","id":ID}
+//   {"type":"notification_setting","setting":NAME,"on":BOOL}
 
 let Gtk, Gdk, Pango, Adw = null;
 const {Gio, GLib} = imports.gi;
@@ -54,6 +61,7 @@ let icons = '';
 let iconName = 'owngit-unavailable-symbolic';
 let symbolName = 'owngit-state-unavailable-symbolic';
 let panel = null;
+let notifications = null;
 let notice = '';
 let activationToken = '';
 let menuRevision = 1;
@@ -246,6 +254,74 @@ function register(itemName) {
         () => printerr('The desktop shows no StatusNotifierItem icons now. On GNOME, turn on the AppIndicator extension.'));
 }
 
+// Desktop notifications, through the desktop's notification service. Each
+// notification's text is shown as text: where the service reads markup, it
+// is escaped.
+
+const notifyService = 'org.freedesktop.Notifications';
+const notifyPath = '/org/freedesktop/Notifications';
+let bodyMarkup = null;
+// shownIDs maps the service's notification IDs to owngit's.
+const shownIDs = new Map();
+
+function escapeMarkup(value) {
+    return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function withCapabilities(next) {
+    if (bodyMarkup !== null) {
+        next();
+        return;
+    }
+    bus.call(notifyService, notifyPath, notifyService, 'GetCapabilities', null, new GLib.VariantType('(as)'),
+        Gio.DBusCallFlags.NONE, 10000, null, (connection, result) => {
+            try {
+                const [capabilities] = connection.call_finish(result).deepUnpack();
+                bodyMarkup = capabilities.includes('body-markup');
+            } catch (e) {
+                // The service is away; Notify says so for the notification.
+            }
+            next();
+        });
+}
+
+function notify(notification) {
+    const id = String(notification.id);
+    withCapabilities(() => {
+        let body = String(notification.body);
+        if (notification.subtitle)
+            body = `${notification.subtitle}\n${body}`;
+        if (bodyMarkup)
+            body = escapeMarkup(body);
+        const parameters = new GLib.Variant('(susssasa{sv}i)', ['OwnGit', 0, `${icons}/owngit-tile.svg`,
+            String(notification.title), body, ['default', String(notification.action)],
+            {'urgency': new GLib.Variant('y', 1)}, -1]);
+        bus.call(notifyService, notifyPath, notifyService, 'Notify', parameters, new GLib.VariantType('(u)'),
+            Gio.DBusCallFlags.NONE, 10000, null, (connection, result) => {
+                try {
+                    const [serviceID] = connection.call_finish(result).deepUnpack();
+                    shownIDs.set(serviceID, id);
+                    send({type: 'notified', id});
+                } catch (e) {
+                    send({type: 'notified', id, message: e.message || String(e)});
+                }
+            });
+    });
+}
+
+function watchNotifications() {
+    bus.signal_subscribe(notifyService, notifyService, 'ActionInvoked', notifyPath, null, Gio.DBusSignalFlags.NONE,
+        (connection, sender, path, iface, signal, parameters) => {
+            const [serviceID, action] = parameters.deepUnpack();
+            if (action === 'default' && shownIDs.has(serviceID))
+                send({type: 'notification_clicked', id: shownIDs.get(serviceID)});
+        });
+    bus.signal_subscribe(notifyService, notifyService, 'NotificationClosed', notifyPath, null, Gio.DBusSignalFlags.NONE,
+        (connection, sender, path, iface, signal, parameters) => {
+            shownIDs.delete(parameters.deepUnpack()[0]);
+        });
+}
+
 // The panel.
 
 function text(value, classes = []) {
@@ -354,6 +430,25 @@ function panelContent() {
     if (panel.can_open)
         box.append(button(labels.open, 'open', ['suggested-action'], () => send({type: 'open'})));
 
+    if (notifications) {
+        box.append(new Gtk.Separator());
+        box.append(text(notifications.heading, ['heading']));
+        if (notifications.error)
+            box.append(text(notifications.error, ['error']));
+        const list = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 2});
+        for (const setting of notifications.settings) {
+            const check = new Gtk.CheckButton({label: setting.label, active: setting.on,
+                sensitive: setting.enabled, name: `notify-${setting.setting}`});
+            if (setting.setting !== 'all')
+                check.set_margin_start(setting.setting === 'only_others' ? 0 : 12);
+            check.connect('toggled', () =>
+                send({type: 'notification_setting', setting: setting.setting, on: check.get_active()}));
+            list.append(check);
+        }
+        box.append(list);
+        box.append(text(notifications.hint, ['dim-label', 'caption']));
+    }
+
     box.append(new Gtk.Separator());
     box.append(text(labels.this_computer, ['heading']));
     const choices = new Gtk.Box({spacing: 8, homogeneous: true});
@@ -454,11 +549,12 @@ function receive(message) {
     case 'state': {
         // The panel is drawn again only when what it shows changed, so the
         // focus, a selection and a "Copied" stay while nothing changes.
-        const changed = JSON.stringify([message.icon, message.symbol, message.panel]) !==
-            JSON.stringify([iconName, symbolName, panel]);
+        const changed = JSON.stringify([message.icon, message.symbol, message.panel, message.notifications]) !==
+            JSON.stringify([iconName, symbolName, panel, notifications]);
         iconName = String(message.icon);
         symbolName = String(message.symbol);
         panel = message.panel;
+        notifications = message.notifications || null;
         if (changed) {
             announce();
             renderPanel();
@@ -469,6 +565,10 @@ function receive(message) {
     }
     case 'opened':
         hidePanel();
+        break;
+    case 'notify':
+        if (message.notification && typeof message.notification === 'object')
+            notify(message.notification);
         break;
     case 'notice':
         notice = String(message.text);
@@ -505,6 +605,7 @@ function start(instanceName) {
             item.export(bus, '/StatusNotifierItem');
             menu.export(bus, '/MenuBar');
             Gio.bus_own_name_on_connection(bus, itemName, Gio.BusNameOwnerFlags.NONE, () => register(itemName), null);
+            watchNotifications();
             send({type: 'ready'});
         },
         () => {

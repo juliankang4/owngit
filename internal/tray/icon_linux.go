@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"owngit/internal/bootstrap"
+	"owngit/internal/server"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -86,17 +87,49 @@ func protectedProgram(path string) (string, error) {
 // panelMessage is a message between this program and the panel program.
 // Only the fields of its type are set.
 type panelMessage struct {
-	Type    string `json:"type"`
-	Name    string `json:"name,omitempty"`
-	Icons   string `json:"icons,omitempty"`
-	Icon    string `json:"icon,omitempty"`
-	Symbol  string `json:"symbol,omitempty"`
-	Panel   *Panel `json:"panel,omitempty"`
-	Text    string `json:"text,omitempty"`
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
-	Open    bool   `json:"open,omitempty"`
+	Type          string             `json:"type"`
+	Name          string             `json:"name,omitempty"`
+	Icons         string             `json:"icons,omitempty"`
+	Icon          string             `json:"icon,omitempty"`
+	Symbol        string             `json:"symbol,omitempty"`
+	Panel         *Panel             `json:"panel,omitempty"`
+	Notifications *NotificationPanel `json:"notifications,omitempty"`
+	Notification  *panelNotification `json:"notification,omitempty"`
+	Text          string             `json:"text,omitempty"`
+	Code          string             `json:"code,omitempty"`
+	Message       string             `json:"message,omitempty"`
+	Open          bool               `json:"open,omitempty"`
+	// ID names a notification; Setting and On are a notification setting
+	// the owner changed.
+	ID      string `json:"id,omitempty"`
+	Setting string `json:"setting,omitempty"`
+	On      bool   `json:"on,omitempty"`
 }
+
+// panelNotification is a desktop notification the panel program shows. It
+// holds no address: a click comes back as its ID, and this program opens
+// the page it kept for that ID.
+type panelNotification struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Body     string `json:"body"`
+	// Action names the click on the notification.
+	Action string `json:"action"`
+}
+
+// notifyRequest asks the icon's loop to show a notification and to say
+// whether the desktop showed it.
+type notifyRequest struct {
+	notification server.TrayNotification
+	shown        chan error
+}
+
+// notifyTimeout bounds the wait for the desktop to show a notification.
+const notifyTimeout = 15 * time.Second
+
+// pagesKept bounds the pages of shown notifications a click can open.
+const pagesKept = 100
 
 // panelProcess is a running panel program. messages closes when the
 // program ends, and ended then holds why.
@@ -129,6 +162,35 @@ func Run(options Options) error {
 	icon := &linuxIcon{poller: newPoller(options, DesktopLanguage()), icons: icons}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	requests := make(chan notifyRequest)
+	icon.notifier.show = func(notification server.TrayNotification) error {
+		request := notifyRequest{notification: notification, shown: make(chan error, 1)}
+		select {
+		case requests <- request:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case err := <-request.shown:
+			return err
+		case <-time.After(notifyTimeout):
+			return errors.New("the desktop did not show the notification in time")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	// pending are the notifications the panel program was asked to show;
+	// pages are the pages of shown ones, in the order they were shown.
+	pending := map[string]chan error{}
+	pages, pageOrder := map[string]string{}, []string{}
+	failPending := func(err error) {
+		for id, shown := range pending {
+			shown <- err
+			delete(pending, id)
+		}
+	}
+	defer failPending(errors.New("the OwnGit icon ended"))
+	var last reading
 	readings := make(chan reading)
 	go icon.poll(ctx, func(next reading) {
 		select {
@@ -151,9 +213,11 @@ func Run(options Options) error {
 		case <-options.Stop:
 			return nil
 		case next := <-readings:
+			last = next
 			if !next.show {
 				current.stop()
 				current = nil
+				failPending(errors.New("the OwnGit icon is hidden"))
 				continue
 			}
 			if current == nil {
@@ -169,6 +233,25 @@ func Run(options Options) error {
 				return fmt.Errorf("the OwnGit icon's panel program ended: %w", err)
 			}
 			switch message.Type {
+			case "notified":
+				if shown, found := pending[message.ID]; found {
+					delete(pending, message.ID)
+					if message.Message != "" {
+						shown <- fmt.Errorf("the desktop did not show the notification: %s", message.Message)
+						continue
+					}
+					shown <- nil
+				}
+			case "notification_clicked":
+				if page, found := pages[message.ID]; found && !opening {
+					opening = true
+					go func() { opened <- icon.openPage(page) }()
+				}
+			case "notification_setting":
+				if err := setNotification(icon.stateDir, message.Setting, message.On); err != nil {
+					current.send(panelMessage{Type: "notice", Text: fmt.Sprintf(webui.Text(icon.lang, webui.MsgNotifySettingsFailed), err)})
+				}
+				current.send(icon.stateMessage(last.report, false))
 			case "open":
 				if !opening {
 					opening = true
@@ -190,6 +273,25 @@ func Run(options Options) error {
 					icon.askAgain()
 				}
 			}
+		case request := <-requests:
+			if current == nil {
+				request.shown <- errors.New("the OwnGit icon does not show now")
+				continue
+			}
+			notification := request.notification
+			pending[notification.ID] = request.shown
+			if _, known := pages[notification.ID]; !known {
+				if len(pageOrder) == pagesKept {
+					delete(pages, pageOrder[0])
+					pageOrder = pageOrder[1:]
+				}
+				pageOrder = append(pageOrder, notification.ID)
+			}
+			pages[notification.ID] = notification.Path
+			current.send(panelMessage{Type: "notify", Notification: &panelNotification{
+				ID: notification.ID, Title: notification.Title, Subtitle: notification.Subtitle, Body: notification.Body,
+				Action: webui.Text(icon.lang, webui.MsgNotifyOpen),
+			}})
 		case err := <-opened:
 			opening = false
 			switch {
@@ -212,8 +314,9 @@ func Run(options Options) error {
 // open the panel when open is set.
 func (icon *linuxIcon) stateMessage(report Report, open bool) panelMessage {
 	panel := NewPanel(report, icon.lang, time.Now())
+	notifications := readNotificationPanel(icon.stateDir, icon.lang)
 	name := conditionNames[report.Condition]
-	return panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel, Open: open}
+	return panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel, Notifications: &notifications, Open: open}
 }
 
 // startPanel starts the panel program and waits until its item is on the
@@ -310,7 +413,12 @@ var errNotProven = errors.New("the dashboard's address was not proven")
 // sign-in along, so a program that took the address after an earlier
 // reading must not get it.
 func (icon *linuxIcon) openDashboard() error {
-	target, err := NewClient(icon.stateDir, nil).Dashboard(context.Background(), string(icon.lang))
+	return icon.openPage("/")
+}
+
+// openPage opens path on the dashboard in the same way.
+func (icon *linuxIcon) openPage(path string) error {
+	target, err := NewClient(icon.stateDir, nil).DashboardPage(context.Background(), string(icon.lang), path)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errNotProven, err)
 	}

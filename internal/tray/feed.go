@@ -134,3 +134,80 @@ func hidden(held *os.File) bool {
 	hidden, err := state.TrayHidden(held)
 	return err != nil || hidden
 }
+
+// NotificationPanel is the notification settings of this computer as the
+// panel shows them.
+type NotificationPanel struct {
+	Heading string `json:"heading"`
+	Hint    string `json:"hint"`
+	// Error says why the settings could not be read, or ""; Settings is
+	// then empty.
+	Error    string                `json:"error"`
+	Settings []NotificationSetting `json:"settings"`
+}
+
+// NotificationSetting is one switch: "all", "only_others" or a kind.
+type NotificationSetting struct {
+	Setting string `json:"setting"`
+	Label   string `json:"label"`
+	On      bool   `json:"on"`
+	// Enabled is false for the other switches while all notifications
+	// are off; they keep their own choice.
+	Enabled bool `json:"enabled"`
+}
+
+var settingLabels = map[string]webui.MessageCode{
+	"all": webui.MsgNotifySettingAll, "only_others": webui.MsgNotifySettingOthers,
+	state.NotifyPush: webui.MsgNotifySettingPush, state.NotifyPullRequest: webui.MsgNotifySettingPR,
+	state.NotifyCheckFailed: webui.MsgNotifySettingCheck, state.NotifyImportFailed: webui.MsgNotifySettingImport,
+	state.NotifyBackupFailed: webui.MsgNotifySettingBackup, state.NotifyUpdate: webui.MsgNotifySettingUpdate,
+}
+
+// readNotificationPanel reads the notification settings in stateDir for
+// the panel, in lang.
+func readNotificationPanel(stateDir string, lang webui.Lang) NotificationPanel {
+	panel := NotificationPanel{
+		Heading: webui.Text(lang, webui.MsgNotifySettings), Hint: webui.Text(lang, webui.MsgNotifySettingsHint),
+		Settings: []NotificationSetting{},
+	}
+	choice, err := readNotifications(stateDir)
+	if err != nil {
+		panel.Error = fmt.Sprintf(webui.Text(lang, webui.MsgNotifySettingsFailed), err)
+		return panel
+	}
+	add := func(setting string, on, enabled bool) {
+		panel.Settings = append(panel.Settings, NotificationSetting{Setting: setting, Label: webui.Text(lang, settingLabels[setting]), On: on, Enabled: enabled})
+	}
+	add("all", !choice.Off, true)
+	add("only_others", choice.OnlyOthers, !choice.Off)
+	for _, kind := range state.NotifyKinds {
+		add(kind, !slices.Contains(choice.KindsOff, kind), !choice.Off)
+	}
+	return panel
+}
+
+func readNotifications(stateDir string) (state.TrayNotifications, error) {
+	held, err := state.OpenStateDirectory(stateDir)
+	if err != nil {
+		return state.TrayNotifications{}, err
+	}
+	defer held.Close()
+	return state.ReadTrayNotifications(held)
+}
+
+// setNotification turns one notification setting of stateDir on or off.
+func setNotification(stateDir, setting string, on bool) error {
+	held, err := state.OpenStateDirectory(stateDir)
+	if err != nil {
+		return err
+	}
+	defer held.Close()
+	choice, err := state.ReadTrayNotifications(held)
+	if err != nil {
+		return err
+	}
+	if choice, err = choice.With(setting, on); err != nil {
+		return err
+	}
+	return state.WriteTrayNotifications(held, choice)
+}

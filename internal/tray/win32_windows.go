@@ -59,6 +59,11 @@ var (
 	procGetSysColor                   = user32.NewProc("GetSysColor")
 	procMoveWindow                    = user32.NewProc("MoveWindow")
 	procFrameRect                     = user32.NewProc("FrameRect")
+	procGetWindowRect                 = user32.NewProc("GetWindowRect")
+	procCreatePopupMenu               = user32.NewProc("CreatePopupMenu")
+	procAppendMenu                    = user32.NewProc("AppendMenuW")
+	procTrackPopupMenuEx              = user32.NewProc("TrackPopupMenuEx")
+	procDestroyMenu                   = user32.NewProc("DestroyMenu")
 
 	shell32                      = windows.NewLazySystemDLL("shell32.dll")
 	procShellNotifyIcon          = shell32.NewProc("Shell_NotifyIconW")
@@ -116,6 +121,7 @@ const (
 	bmClick            = 0x00F5
 	ninSelect          = 0x0400
 	ninKeySelect       = 0x0401
+	ninBalloonClick    = 0x0405
 	waInactive         = 0
 	vkReturn           = 0x0D
 	idOK               = 1
@@ -160,6 +166,14 @@ const (
 	nifIcon            = 0x02
 	nifTip             = 0x04
 	nifShowTip         = 0x80
+	nifInfo            = 0x10
+	niifRespectQuiet   = 0x80
+	mfString           = 0x0000
+	mfGrayed           = 0x0001
+	mfChecked          = 0x0008
+	mfSeparator        = 0x0800
+	tpmReturnCmd       = 0x0100
+	tpmTopAlign        = 0x0000
 	notifyIconVersion4 = 4
 	hwndTopmost        = ^uintptr(0)
 	swpNoActivate      = 0x0010

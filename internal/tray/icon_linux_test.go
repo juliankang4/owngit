@@ -32,6 +32,19 @@ fi
 echo '{"type":"ready"}'
 read -r reading
 printf '%s\n' "$reading" > "$FAKE_DIR/state"
+if [ "$FAKE_MODE" = notify ]; then
+	while read -r line; do
+		case "$line" in
+		*'"type":"notify"'*)
+			printf '%s\n' "$line" >> "$FAKE_DIR/notify"
+			id=${line#*\"id\":\"}
+			id=${id%%\"*}
+			echo "{\"type\":\"notified\",\"id\":\"$id\"}"
+			echo '{"type":"notification_setting","setting":"push","on":false}' ;;
+		esac
+	done
+	exit 0
+fi
 if [ "$FAKE_MODE" = open ]; then
 	echo '{"type":"open"}'
 	while read -r line; do printf '%s\n' "$line" >> "$FAKE_DIR/after"; done
@@ -172,6 +185,50 @@ func TestLinuxIconShowsAnUnprovenOpen(t *testing.T) {
 			t.Fatalf("no answer to Open:\n%s", after)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	close(stop)
+	if err := <-result; err != nil {
+		t.Fatalf("the icon ended with %v", err)
+	}
+}
+
+// A notification of the feed goes to the panel program without its page,
+// the cursor is kept once the program says the desktop showed it, and a
+// setting changed in the panel is saved.
+func TestLinuxIconShowsNotifications(t *testing.T) {
+	fakeDir := useFakeGJS(t, "notify")
+	fake := newFakeServer(t)
+	fake.stateDir = newStateDir(t)
+	fake.publish(t, fake.URL, fake.token)
+	fake.events = answerEvents("c1", pushNotification("push:1-1"))
+	stop := make(chan struct{})
+	result := make(chan error, 1)
+	go func() { result <- Run(Options{StateDir: fake.stateDir, Stop: stop}) }()
+	held, err := state.OpenStateDirectory(fake.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		cursor, _ := state.ReadTrayCursor(held)
+		choice, _ := state.ReadTrayNotifications(held)
+		if cursor == "c1" && !choice.Shows(state.NotifyPush) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("cursor %q, choice %+v", cursor, choice)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	sent, _ := os.ReadFile(filepath.Join(fakeDir, "notify"))
+	if !strings.Contains(string(sent), `"id":"push:1-1"`) || !strings.Contains(string(sent), `"title":"2 new commits in notes"`) ||
+		strings.Contains(string(sent), "/repositories") {
+		t.Errorf("the panel program was sent %s", sent)
+	}
+	reading, _ := os.ReadFile(filepath.Join(fakeDir, "state"))
+	if !strings.Contains(string(reading), `"notifications":{"heading":"Notifications"`) {
+		t.Errorf("the state carries no notification settings: %s", reading)
 	}
 	close(stop)
 	if err := <-result; err != nil {

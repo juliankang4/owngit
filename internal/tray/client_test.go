@@ -24,9 +24,11 @@ type fakeServer struct {
 	token    string
 	// proof is the secret the server proves its answers with; sign
 	// computes the proof header of an answer from it.
-	proof    string
-	sign     func(secret, nonce string, body []byte) string
-	answer   func(http.ResponseWriter)
+	proof  string
+	sign   func(secret, nonce string, body []byte) string
+	answer func(http.ResponseWriter)
+	// events, when set, answers the event feed; answer answers the rest.
+	events   func(http.ResponseWriter)
 	requests []string
 }
 
@@ -42,7 +44,11 @@ func newFakeServer(t *testing.T) *fakeServer {
 			return
 		}
 		recorder := httptest.NewRecorder()
-		fake.answer(recorder)
+		if fake.events != nil && request.URL.Path == server.TrayEventsPath {
+			fake.events(recorder)
+		} else {
+			fake.answer(recorder)
+		}
 		for name, values := range recorder.Header() {
 			writer.Header()[name] = values
 		}

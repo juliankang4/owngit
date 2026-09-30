@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -153,18 +152,8 @@ func trayNotificationsCommand(held *os.File, dir string, change []string, asJSON
 		if value != "on" && value != "off" {
 			return jsonFailure(asJSON, "invalid_arguments", errors.New("a notification setting is on or off"))
 		}
-		switch {
-		case setting == "all":
-			choice.Off = value == "off"
-		case setting == "only_others":
-			choice.OnlyOthers = value == "on"
-		case slices.Contains(state.NotifyKinds, setting):
-			choice.KindsOff = slices.DeleteFunc(choice.KindsOff, func(kind string) bool { return kind == setting })
-			if value == "off" {
-				choice.KindsOff = append(choice.KindsOff, setting)
-			}
-		default:
-			return jsonFailure(asJSON, "invalid_arguments", fmt.Errorf("the notification settings are all, only_others, %s", strings.Join(state.NotifyKinds, ", ")))
+		if choice, err = choice.With(setting, value == "on"); err != nil {
+			return jsonFailure(asJSON, "invalid_arguments", err)
 		}
 		if err := state.WriteTrayNotifications(held, choice); err != nil {
 			return jsonFailure(asJSON, "state_unavailable", err)

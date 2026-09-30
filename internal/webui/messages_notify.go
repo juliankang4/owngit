@@ -26,6 +26,20 @@ const (
 	MsgNotifyBackupFailed     MessageCode = "notify.backup_failed"
 	MsgNotifyBackupsFailed    MessageCode = "notify.backups_failed"
 	MsgNotifyUpdate           MessageCode = "notify.update"
+	MsgNotifyOpen             MessageCode = "notify.open"
+
+	// The notification settings of the icon's panel.
+	MsgNotifySettings       MessageCode = "notify.settings"
+	MsgNotifySettingsHint   MessageCode = "notify.settings_hint"
+	MsgNotifySettingsFailed MessageCode = "notify.settings_failed"
+	MsgNotifySettingAll     MessageCode = "notify.setting.all"
+	MsgNotifySettingOthers  MessageCode = "notify.setting.only_others"
+	MsgNotifySettingPush    MessageCode = "notify.setting.push"
+	MsgNotifySettingPR      MessageCode = "notify.setting.pull_request"
+	MsgNotifySettingCheck   MessageCode = "notify.setting.check_failed"
+	MsgNotifySettingImport  MessageCode = "notify.setting.import_failed"
+	MsgNotifySettingBackup  MessageCode = "notify.setting.backup_failed"
+	MsgNotifySettingUpdate  MessageCode = "notify.setting.update"
 )
 
 var notifyCatalog = map[MessageCode]message{
@@ -52,6 +66,21 @@ var notifyCatalog = map[MessageCode]message{
 	MsgNotifyBackupFailed:     {en: "Backup did not finish", ko: "백업이 끝나지 않음"},
 	MsgNotifyBackupsFailed:    {en: "%d backups did not finish", ko: "끝나지 않은 백업 %d건"},
 	MsgNotifyUpdate:           {en: "OwnGit %s is available", ko: "OwnGit %s 버전이 나왔습니다"},
+	MsgNotifyOpen:             {en: "Open", ko: "열기"},
+	MsgNotifySettings:         {en: "Notifications", ko: "알림"},
+	MsgNotifySettingsHint: {
+		en: "The notification settings of this computer apply too.",
+		ko: "이 컴퓨터의 알림 설정도 함께 적용됩니다.",
+	},
+	MsgNotifySettingsFailed: {en: "The notification settings could not be read or saved: %s", ko: "알림 설정을 읽거나 저장하지 못했습니다: %s"},
+	MsgNotifySettingAll:     {en: "Show notifications", ko: "알림 보기"},
+	MsgNotifySettingOthers:  {en: "Only what I did not do", ko: "내가 하지 않은 일만 알림"},
+	MsgNotifySettingPush:    {en: "Pushes", ko: "푸시"},
+	MsgNotifySettingPR:      {en: "Pull requests opened", ko: "새 풀 리퀘스트"},
+	MsgNotifySettingCheck:   {en: "Failed checks", ko: "실패한 체크"},
+	MsgNotifySettingImport:  {en: "Imports that did not finish", ko: "끝나지 않은 가져오기"},
+	MsgNotifySettingBackup:  {en: "Backups that did not finish", ko: "끝나지 않은 백업"},
+	MsgNotifySettingUpdate:  {en: "New OwnGit versions", ko: "새 OwnGit 버전"},
 }
 
 func init() {
