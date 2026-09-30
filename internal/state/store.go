@@ -1516,7 +1516,11 @@ var schemaSteps = []schemaStep{
 			verification TEXT NOT NULL DEFAULT 'not_run' CHECK (verification IN ('not_run','passed','failed')),
 			message TEXT NOT NULL DEFAULT '' CHECK (length(CAST(message AS BLOB)) <= 500),
 			started_at INTEGER NOT NULL,
-			finished_at INTEGER
+			finished_at INTEGER,
+			-- The longest time the backup kept one repository's Git writes
+			-- waiting and that repository, once its capture finished.
+			longest_hold_ms INTEGER CHECK (longest_hold_ms IS NULL OR longest_hold_ms >= 0),
+			longest_hold_repository TEXT CHECK (longest_hold_repository IS NULL OR length(longest_hold_repository) BETWEEN 1 AND 100)
 		)`,
 		`CREATE UNIQUE INDEX backup_runs_running ON backup_runs(status) WHERE status = 'running'`,
 		`CREATE INDEX backup_runs_recent ON backup_runs(started_at,id)`,
