@@ -369,7 +369,12 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 	if hasStart && job.StartedAt.Before(*job.ClaimedAt) {
 		return errors.New("check job start precedes its claim")
 	}
-	if hasFinish && (job.FinishedAt.Before(job.AdmittedAt) || (hasClaim && job.FinishedAt.Before(*job.ClaimedAt)) ||
+	// Before OwnGit recorded the finish of a job that its attempt's
+	// completion ends, it kept the finish time the runner reported, from the
+	// runner's clock, so such a finish is not ordered against the server's
+	// times. A cancellation that completion recorded has the same time.
+	reportedFinish := hasFinish && hasAttempt && job.Status != CheckJobInterrupted
+	if hasFinish && !reportedFinish && (job.FinishedAt.Before(job.AdmittedAt) || (hasClaim && job.FinishedAt.Before(*job.ClaimedAt)) ||
 		(hasStart && job.FinishedAt.Before(*job.StartedAt))) {
 		return errors.New("check job finish precedes its execution")
 	}
@@ -382,7 +387,7 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 		job.LeaseLostAt.Before(*job.ClaimedAt) || (hasStart && job.LeaseLostAt.Before(*job.StartedAt))) {
 		return errors.New("check job lease loss does not match its execution or expiry")
 	}
-	if job.CancelRequestedAt != nil && job.CancelRequestedAt.Before(job.AdmittedAt) {
+	if job.CancelRequestedAt != nil && !(reportedFinish && job.CancelRequestedAt.Equal(*job.FinishedAt)) && job.CancelRequestedAt.Before(job.AdmittedAt) {
 		return errors.New("check job cancellation precedes admission")
 	}
 	return nil

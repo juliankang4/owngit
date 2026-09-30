@@ -159,3 +159,82 @@ func restoredRunner(t *testing.T, stateRoot string) *gitexec.Runner {
 	noErr(t, err)
 	return runner
 }
+
+// An installation whose runner's clock was behind kept job finishes, and
+// cancellations that completions recorded, from before the job started.
+// Its backup is made, verified and restored.
+func TestBackupKeepsJobsFinishedByARunnerWithAnEarlierClock(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	now := time.Unix(1_800_000_000, 0)
+	repositoryPath, _, exists, err := manager.ExistingPath(ctx, "project")
+	if err != nil || !exists {
+		t.Fatalf("repository exists=%v err=%v", exists, err)
+	}
+	sourceOID := strings.TrimSpace(gitOutput(t, repositoryPath, "--git-dir", ".", "rev-parse", "refs/heads/main"))
+	_, err = store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+		MaxTimeoutMS: 120000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
+	}, now)
+	noErr(t, err)
+	_, err = store.GrantCheckConsent(ctx, "project", now)
+	noErr(t, err)
+	runner, _, _, err := store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
+	noErr(t, err)
+	behind := now.Add(-time.Hour)
+	jobs := []string{}
+	for index, cancelled := range []bool{false, true} {
+		request := state.CheckJobRequest{
+			RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/main@" + sourceOID + strings.Repeat("x", index),
+			SourceOID: sourceOID, TriggerRef: "main", WorkflowDigest: strings.Repeat("b", 64),
+			Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
+		}
+		job, _, err := store.AdmitCheckJob(ctx, request, now)
+		noErr(t, err)
+		claimed, _, err := store.ClaimCheckJob(ctx, "project", runner.ID, now)
+		noErr(t, err)
+		_, attempt, err := store.StartCheckJob(ctx, state.CheckJobStart{
+			RepositoryID: "project", JobID: job.ID, LeaseID: claimed.LeaseID,
+			CredentialID: runner.ID, CredentialGeneration: runner.Generation, AttemptID: strings.Repeat(string(rune('a'+index)), 32),
+		}, now)
+		noErr(t, err)
+		exit := 1
+		_, _, err = store.CompleteCheckJobAttempt(ctx, state.CheckCompletion{
+			AttemptID: attempt.ID, RepositoryID: "project", TaskID: job.TaskID, Cancelled: cancelled,
+			Results:    []state.CheckResult{{Name: "unit", Command: "go test ./...", Status: state.AttemptFailed, ExitCode: &exit, DurationMS: 5}},
+			FinishedAt: behind, WorktreeState: state.WorktreeClean, Log: "log",
+		}, state.CheckJobCompletionAuthority{
+			JobID: job.ID, LeaseID: claimed.LeaseID, CredentialID: runner.ID, CredentialGeneration: runner.Generation,
+		}, now.Add(time.Second))
+		noErr(t, err)
+		// What an earlier release recorded: the runner's time as the job's
+		// finish, and as its cancellation when the completion cancelled it.
+		noErr(t, store.Exec(ctx, `UPDATE check_jobs SET finished_at=? WHERE id=?`, behind.UnixNano(), job.ID))
+		if cancelled {
+			noErr(t, store.Exec(ctx, `UPDATE check_jobs SET cancel_requested_at=? WHERE id=?`, behind.UnixNano(), job.ID))
+		}
+		jobs = append(jobs, job.ID)
+	}
+
+	backup := filepath.Join(root, "backup")
+	noErr(t, Create(ctx, store, manager, backup))
+	temporary := filepath.Join(root, "temporary")
+	noErr(t, os.Mkdir(temporary, 0o700))
+	result, err := Verify(ctx, backup, temporary, "")
+	if err != nil || !result.Verified {
+		t.Fatalf("verify %+v err=%v", result, err)
+	}
+	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
+	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
+	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	restored, err := state.Open(ctx, restoredState)
+	noErr(t, err)
+	defer restored.Close()
+	for _, id := range jobs {
+		job, exists, err := restored.CheckJob(ctx, "project", id)
+		if err != nil || !exists || job.FinishedAt == nil || !job.FinishedAt.Equal(behind) {
+			t.Fatalf("restored job %+v exists=%v err=%v", job, exists, err)
+		}
+	}
+}

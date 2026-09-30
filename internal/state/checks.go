@@ -1760,8 +1760,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 		} else {
 			// An automatic attempt starts on the server's clock and keeps the
 			// finish time its runner reported, so only an attempt whose times
-			// both come from its helper must end after it started; its job
-			// holds the server's order.
+			// both come from its helper must end after it started.
 			if !validAttemptStatus(attempt.Status) || attempt.FinishedAt.IsZero() || attempt.JobID == "" && attempt.FinishedAt.Before(attempt.StartedAt) {
 				return errors.New("invalid check attempt contents")
 			}
