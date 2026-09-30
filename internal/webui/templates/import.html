@@ -120,7 +120,7 @@
           {{range $o.Effects}}
           <li><span class="mono" dir="auto">{{.Name}}</span>
             <span class="pill pill--off">{{if eq .Effect "replace"}}{{bi $lang "import.effect.replace"}}{{else}}{{bi $lang "import.effect.delete"}}{{end}}</span>
-            <span class="f__help">{{bi $lang .Needs}}; {{bi $lang .HistoryCode}}</span></li>
+            <span class="f__help">{{bi $lang .Needs}} {{bi $lang .HistoryCode}}</span></li>
           {{end}}
         </ul>
         {{else}}
