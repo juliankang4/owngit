@@ -29,6 +29,10 @@ type RefSnapshot struct {
 	HeadErr error
 	// ActivityKey equals the Key of an Activity observation of the same refs.
 	ActivityKey string
+	// activityRefs are the refs ActivityKey digests, in listing order: the
+	// current branches, retained branch history and its provenance. Activity
+	// walks history from them instead of listing the refs again.
+	activityRefs []activityKeyRef
 	// Stale is set when RefSnapshotWithin returned the last snapshot read
 	// because another Git operation held the repository. It is never cached.
 	Stale bool
@@ -96,7 +100,7 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 		}
 	}
 	summary.Empty = len(summary.Branches) == 0 && len(summary.Tags) == 0 && !hasRetained
-	snapshot.ActivityKey = activityKey(keyed)
+	snapshot.ActivityKey, snapshot.activityRefs = activityKey(keyed), keyed
 	if snapshot.HeadFound && !sameAsLog(snapshot.Head) {
 		// A failure here may be transient, so the snapshot is not cached.
 		metadata, err := commitMetadataByOID(ctx, m.Git, repositoryPath, []string{snapshot.Head.OID})

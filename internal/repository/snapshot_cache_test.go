@@ -139,6 +139,27 @@ func TestRefSnapshotCacheStartsNoGitWhileUnchanged(t *testing.T) {
 
 // TestRefSnapshotCacheReturnsIndependentCopies proves that a caller changing
 // a returned snapshot changes neither the cache nor another caller's copy.
+// TestActivityReusesTheRefSnapshot proves that counting activity after a
+// ref snapshot starts only the history walk, and that its key is the
+// snapshot's, so a dashboard lists each repository's refs once.
+func TestActivityReusesTheRefSnapshot(t *testing.T) {
+	if os.PathSeparator != '/' {
+		t.Skip("the command-counting wrapper is a POSIX-shell fixture")
+	}
+	manager, _, work := newTestRepository(t)
+	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	count, _, _ := countGitProcesses(t, manager, "*")
+	snapshot := mustSnapshot(t, manager)
+	before := count()
+	activity, err := manager.Activity(context.Background(), "sample", 10)
+	noErr(t, err)
+	if started := count() - before; started != 1 || activity.Key != snapshot.ActivityKey || activity.Commits != 1 {
+		t.Fatalf("activity started %d Git processes, key match %v, commits %d; want 1, true, 1",
+			started, activity.Key == snapshot.ActivityKey, activity.Commits)
+	}
+}
+
 func TestRefSnapshotCacheReturnsIndependentCopies(t *testing.T) {
 	manager, _, work := newTestRepository(t)
 	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")

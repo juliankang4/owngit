@@ -75,32 +75,27 @@ func (m *Manager) Activity(ctx context.Context, id string, maximumCommits int) (
 		return Activity{}, err
 	}
 	defer lock.RUnlock()
-	// One listing supplies the roots, the retained provenance, and the key, so
-	// the key describes exactly the refs this observation used.
-	refsResult, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", "refs/heads", "refs/owngit/retained/heads", "refs/owngit/provenance/heads")
+	// The ref snapshot supplies the roots, the retained provenance, and the
+	// key, so the key describes exactly the refs this observation used. A
+	// page that listed the repository's refs has cached it, so the history
+	// walk is the only Git process here.
+	snapshot, err := m.lockedRefSnapshot(ctx, id, repositoryPath, lock)
 	if err != nil {
 		return Activity{}, err
 	}
 	var current, retained []string
-	var keyed []activityKeyRef
-	for _, line := range bytes.Split(bytes.TrimSpace(refsResult.Stdout), []byte{'\n'}) {
-		oid, ref, ok := bytes.Cut(line, []byte{0})
-		if !ok {
-			continue
-		}
-		name := string(ref)
-		keyed = append(keyed, activityKeyRef{name: name, oid: string(oid)})
-		if strings.HasPrefix(name, "refs/heads/") {
-			current = append(current, name)
-		} else if strings.HasPrefix(name, "refs/owngit/retained/heads/") {
-			retained = append(retained, name)
+	for _, ref := range snapshot.activityRefs {
+		if strings.HasPrefix(ref.name, "refs/heads/") {
+			current = append(current, ref.name)
+		} else if strings.HasPrefix(ref.name, "refs/owngit/retained/heads/") {
+			retained = append(retained, ref.name)
 		}
 	}
-	key := activityKey(keyed)
+	key := snapshot.ActivityKey
 	if len(current) == 0 && len(retained) == 0 {
 		return Activity{Key: key}, nil
 	}
-	provenance := parseRetainedProvenance(refsResult.Stdout, "heads")
+	provenance := parseRetainedProvenance(snapshot.activityRefs, "heads")
 
 	// Current history is scanned first. Retained history explicitly excludes
 	// every current root, so a reachable commit is never mislabeled as detached
@@ -202,22 +197,24 @@ func retainedProvenance(ctx context.Context, runner retainedRunner, repositoryPa
 	if err != nil {
 		return nil, err
 	}
-	return parseRetainedProvenance(result.Stdout, kind), nil
+	var refs []activityKeyRef
+	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
+		if oid, name, ok := bytes.Cut(line, []byte{0}); ok {
+			refs = append(refs, activityKeyRef{name: string(name), oid: string(oid)})
+		}
+	}
+	return parseRetainedProvenance(refs, kind), nil
 }
 
 // parseRetainedProvenance maps retained object IDs to the branch or tag they
-// were retained from. listing holds "objectname NUL refname" lines; refs
-// outside the kind's provenance namespace are ignored. An object retained from
-// more than one source maps to "" because its source is ambiguous.
-func parseRetainedProvenance(listing []byte, kind string) map[string]string {
+// were retained from. Refs outside the kind's provenance namespace are
+// ignored. An object retained from more than one source maps to "" because
+// its source is ambiguous.
+func parseRetainedProvenance(refs []activityKeyRef, kind string) map[string]string {
 	prefix := "refs/owngit/provenance/" + kind + "/"
 	provenance := make(map[string]string)
-	for _, line := range bytes.Split(bytes.TrimSpace(listing), []byte{'\n'}) {
-		parts := bytes.SplitN(line, []byte{0}, 2)
-		if len(parts) != 2 {
-			continue
-		}
-		oid, ref := string(parts[0]), string(parts[1])
+	for _, listed := range refs {
+		oid, ref := listed.oid, listed.name
 		if !strings.HasPrefix(ref, prefix) {
 			continue
 		}

@@ -82,6 +82,16 @@ func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration
 		return RefSnapshot{}, err
 	}
 	defer lock.RUnlock()
+	return m.lockedRefSnapshot(ctx, id, repositoryPath, lock)
+}
+
+// lockedRefSnapshot returns the snapshot of the refs as they are while the
+// caller holds the repository's read lock: the cached one when no writer
+// released the lock since it was read, and otherwise a new listing.
+func (m *Manager) lockedRefSnapshot(ctx context.Context, id, repositoryPath string, lock *gitexec.RepositoryLock) (RefSnapshot, error) {
+	if snapshot, ok := m.snapshots.lookup(id, repositoryPath, lock); ok {
+		return snapshot, nil
+	}
 	generation := lock.Generation()
 	snapshot, complete, err := m.readRefSnapshot(ctx, repositoryPath)
 	if err != nil {
@@ -183,5 +193,6 @@ func (snapshot RefSnapshot) clone() RefSnapshot {
 	snapshot.Summary.Branches = slices.Clone(snapshot.Summary.Branches)
 	snapshot.Summary.Tags = slices.Clone(snapshot.Summary.Tags)
 	snapshot.Head.Parents = slices.Clone(snapshot.Head.Parents)
+	snapshot.activityRefs = slices.Clone(snapshot.activityRefs)
 	return snapshot
 }

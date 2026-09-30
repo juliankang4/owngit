@@ -361,6 +361,7 @@ func TestActivityObservationReportsExactBoundaryAndRetainedCompleteness(t *testi
 	runGit(t, work, "rm", "-rf", ".")
 	commitFile(t, work, "replacement", "replacement", "2024-01-03T00:00:00Z")
 	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+	wroteRefs(manager, "sample")
 
 	// The current walk fills the budget exactly, so retained history was not
 	// observed and the observation must not claim completeness.
