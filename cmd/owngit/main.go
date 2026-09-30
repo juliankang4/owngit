@@ -635,6 +635,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		ImportRunTimeout: importsync.DefaultLimits().RunTimeout,
 		Releases:         releases,
 		UpdateCommand:    dashboardUpdateCommand(*asService),
+		RestoreGuide:     restoreGuide(mustAbs(*stateDir), *asService),
 		Diagnose: serverDiagnosis(mustAbs(*stateDir), listener.Addr().String(), *asService, func(ctx context.Context) (string, error) {
 			current, err := store.Settings(ctx)
 			return current.RepositoryRoot, err
@@ -1390,7 +1391,7 @@ func isHelpArgument(argument string) bool {
 // them, keyed by flag set name, for the usage line.
 var commandOperands = map[string]string{
 	"approve-host":       "<host>",
-	"backup":             "[now|status|runs|schedule|verify]",
+	"backup":             "[now|status|runs|schedule|check|download|upload|verify]",
 	"backup verify":      "<backup>",
 	"import add":         "<name> <url>",
 	"import refresh":     "<name>",

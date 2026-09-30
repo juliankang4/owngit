@@ -87,6 +87,10 @@ type App struct {
 	// starts afterwards when no service does: a program in a new place
 	// (start), or OwnGit where it runs (restart). Nil shows none.
 	UpdateCommand func(version string) (command, start string, restart bool)
+	// RestoreGuide is how to restore the backup at input into this
+	// OwnGit's state folder and repositoryRoot on this computer, as the
+	// Backups group shows it. Nil shows none.
+	RestoreGuide func(input, repositoryRoot string) *webui.BackupRestore
 	// Diagnose runs the checkup of this computer that "owngit doctor"
 	// runs, from this server's own facts. Nil shows no checkup.
 	Diagnose func(ctx context.Context) []webui.Finding

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -148,5 +149,74 @@ func TestServeRunsBackups(t *testing.T) {
 	noErr(t, json.Unmarshal([]byte(cliOutput(t, backupState, append([]string{"runs"}, remote...)...)), &runs))
 	if len(runs.Runs) != 2 || runs.Runs[1].ID != left.ID || runs.Runs[1].Status != "interrupted" {
 		t.Fatalf("runs: %+v", runs)
+	}
+
+	// The backup is verified again on request.
+	if output := cliOutput(t, backupState, append([]string{"check", "--run", started.Run.ID}, remote...)...); !strings.Contains(output, `"status":"running"`) {
+		t.Fatalf("check: %s", output)
+	}
+	instance.waitForLog("verification of backup "+started.Run.Path+" passed", 5*time.Minute)
+
+	// A downloaded backup, unpacked with tar, passes owngit backup verify
+	// on this computer, and uploaded again it is verified and comes with
+	// the command that restores it.
+	archive := filepath.Join(root, "backup.tar")
+	var downloaded struct {
+		Path  string `json:"path"`
+		Bytes int64  `json:"bytes"`
+	}
+	noErr(t, json.Unmarshal([]byte(cliOutput(t, backupState, append([]string{"download", "--run", started.Run.ID, "--output", archive}, remote...)...)), &downloaded))
+	if downloaded.Path != archive || downloaded.Bytes == 0 {
+		t.Fatalf("download: %+v", downloaded)
+	}
+	if _, err := captureStdout(func() error {
+		return backupState(append([]string{"download", "--run", started.Run.ID, "--output", archive}, remote...))
+	}); err == nil {
+		t.Fatal("a download replaced a file that exists")
+	}
+	unpacked := filepath.Join(root, "unpacked")
+	noErr(t, os.Mkdir(unpacked, 0o700))
+	untar, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if output, err := exec.CommandContext(untar, "tar", "-xf", archive, "-C", unpacked).CombinedOutput(); err != nil {
+		t.Fatalf("tar: %v %s", err, output)
+	}
+	if output := cliOutput(t, backupState, "verify", filepath.Join(unpacked, filepath.Base(started.Run.Path))); !strings.Contains(output, "passed") {
+		t.Fatalf("backup verify of the unpacked download: %s", output)
+	}
+	if output := cliOutput(t, backupState, append([]string{"upload", "--input", archive}, remote...)...); !strings.Contains(output, `"status":"verifying"`) {
+		t.Fatalf("upload: %s", output)
+	}
+	instance.waitForLog("the uploaded backup "+filepath.Base(started.Run.Path)+" passed verification", 5*time.Minute)
+	var uploaded struct {
+		Upload struct {
+			Status, Path string
+		} `json:"upload"`
+		Command string `json:"upload_restore_command"`
+	}
+	output = cliOutput(t, backupState, append([]string{"status"}, remote...)...)
+	noErr(t, json.Unmarshal([]byte(output), &uploaded))
+	moved := filepath.Join(stateDir+".before-restore", "backup-uploads", filepath.Base(started.Run.Path))
+	if uploaded.Upload.Status != "passed" || !strings.Contains(uploaded.Command, "owngit restore --input "+commandWord(moved)+" --state-dir "+commandWord(stateDir)) ||
+		!strings.HasSuffix(uploaded.Command, " --verify") {
+		t.Fatalf("status after the upload: %s", output)
+	}
+}
+
+// The restore steps name the folders that move aside, a restore command
+// that reads an uploaded backup where it is after that move, and the
+// service commands only for a service.
+func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
+	stateDir, repositories := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "repositories")
+	elsewhere := filepath.Join(t.TempDir(), "backups", "owngit-backup-1")
+	guide := restoreGuide(stateDir, false)(elsewhere, repositories)
+	if guide.Stop != "" || guide.Start != "" || guide.MovedState != stateDir+".before-restore" || guide.MovedRepositories != repositories+".before-restore" ||
+		guide.Command != "owngit restore --input "+commandWord(elsewhere)+" --state-dir "+commandWord(stateDir)+" --repository-root "+commandWord(repositories)+" --verify" {
+		t.Fatalf("guide: %+v", guide)
+	}
+	uploaded := restoreGuide(stateDir, true)(filepath.Join(stateDir, "backup-uploads", "b"), repositories)
+	if uploaded.Stop != "owngit service stop" || uploaded.Start != "owngit service start" ||
+		!strings.Contains(uploaded.Command, "--input "+commandWord(filepath.Join(stateDir+".before-restore", "backup-uploads", "b"))) {
+		t.Fatalf("uploaded guide: %+v", uploaded)
 	}
 }

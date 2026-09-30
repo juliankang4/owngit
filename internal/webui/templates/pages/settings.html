@@ -958,6 +958,8 @@
   {{end}}
 </section>
 
+{{template "setBackups" .}}
+
 {{/* How long raw check logs are kept. Results and excerpts always stay. */}}
 {{$gn := forAction $p.Group "logs" $p.Notices}}{{$focus := firstError $gn "check_logs" "admin_password"}}
 {{$bad := index $p.Policies.Unreadable "logs"}}

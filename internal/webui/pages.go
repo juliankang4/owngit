@@ -331,6 +331,7 @@ var settingsGroupTabs = map[string]string{
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories, GroupHistory: SettingsRepositories,
 	GroupDeleteName: SettingsRepositories, GroupBrowse: SettingsRepositories,
 	GroupLogs: SettingsStorage, GroupMaintenance: SettingsStorage, GroupCleanup: SettingsStorage,
+	GroupBackups: SettingsStorage, GroupBackupRuns: SettingsStorage,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -379,6 +380,10 @@ func SettingsActionGroup(action string) string {
 		return GroupNetwork
 	case ActionSaveTailscale, ActionTailscaleOn, ActionTailscaleOff:
 		return GroupTailscale
+	case ActionSaveBackupSchedule:
+		return GroupBackups
+	case ActionBackupNow, ActionBackupVerify, ActionBackupDownload, ActionBackupUpload:
+		return GroupBackupRuns
 	}
 	return ""
 }
@@ -422,6 +427,8 @@ type SettingsPage struct {
 	// Checkup is what the checkup found on this computer. Only an
 	// administrator's General tab shows it.
 	Checkup CheckupInfo
+	// Backups is the Backups group of Storage & recovery.
+	Backups BackupsInfo
 }
 
 // CheckupInfo is the checkup card of the General tab.

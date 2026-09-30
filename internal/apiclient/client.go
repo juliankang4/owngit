@@ -215,9 +215,25 @@ func (client *Client) send(request *http.Request) (*http.Response, func() error,
 	if limit <= 0 {
 		limit = DefaultTimeout
 	}
+	response, _, done, err := client.sendWithin(request, limit, false)
+	return response, done, err
+}
+
+// sendWithin is send with the time limit limit. For a transfer, the limit
+// starts again whenever data moves: while the request body is read, and
+// whenever the caller calls the returned touch as it reads the response,
+// so limit bounds only a pause.
+func (client *Client) sendWithin(request *http.Request, limit time.Duration, transfer bool) (*http.Response, func(), func() error, error) {
 	ctx, cancel := context.WithCancelCause(request.Context())
 	timer := time.AfterFunc(dialTimeout+TLSHandshakeTimeout+limit, func() { cancel(errRequestTimeout) })
-	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { timer.Reset(limit) }}
+	touch := func() { timer.Reset(limit) }
+	if transfer && request.Body != nil {
+		request.Body = struct {
+			io.Reader
+			io.Closer
+		}{progress{request.Body, touch}, request.Body}
+	}
+	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { touch() }}
 	done := func() error {
 		timer.Stop()
 		err := requestTimeoutError(ctx, request)
@@ -232,9 +248,9 @@ func (client *Client) send(request *http.Request) (*http.Response, func() error,
 		if timeoutErr := done(); timeoutErr != nil {
 			err = timeoutErr
 		}
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return response, done, nil
+	return response, touch, done, nil
 }
 
 func requestTimeoutError(ctx context.Context, request *http.Request) error {
@@ -321,13 +337,10 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		}
 		body = bytes.NewReader(encoded)
 	}
-	target := client.server.String() + apiPath
-	request, err := http.NewRequestWithContext(ctx, method, target, body)
+	request, err := client.newRequest(ctx, method, apiPath, "application/json", body)
 	if err != nil {
-		return nil, &Error{Code: "invalid_request", Message: "The API request could not be created.", Cause: err}
+		return nil, err
 	}
-	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "OwnGit-CLI/"+version.Version)
 	for name, value := range headers {
 		if !strings.EqualFold(name, "Authorization") {
 			request.Header.Set(name, value)
@@ -336,13 +349,15 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if client.authorize != nil {
-		client.authorize(request)
-	}
 	response, done, err := client.send(request)
 	if err != nil {
 		return nil, connectionFailed(err)
 	}
+	return client.answer(response, done)
+}
+
+// answer reads the JSON answer of an API request.
+func (client *Client) answer(response *http.Response, done func() error) ([]byte, error) {
 	defer done()
 	defer response.Body.Close()
 	responseLimit := client.MaximumResponse
@@ -381,6 +396,89 @@ func (client *Client) DoWithHeaders(ctx context.Context, method, apiPath string,
 		return nil, responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid success object."})
 	}
 	return content, nil
+}
+
+// TransferIdle stops a Download or an Upload that moves no data for this
+// long; they have no other time limit.
+const TransferIdle = time.Minute
+
+// newRequest is a request of the API at apiPath, authorized, accepting
+// accept.
+func (client *Client) newRequest(ctx context.Context, method, apiPath, accept string, body io.Reader) (*http.Request, error) {
+	if client == nil || client.server == nil || client.httpClient == nil {
+		return nil, &Error{Code: "client_unavailable", Message: "The OwnGit API client is not configured."}
+	}
+	request, err := http.NewRequestWithContext(ctx, method, client.server.String()+apiPath, body)
+	if err != nil {
+		return nil, &Error{Code: "invalid_request", Message: "The API request could not be created.", Cause: err}
+	}
+	request.Header.Set("Accept", accept)
+	request.Header.Set("User-Agent", "OwnGit-CLI/"+version.Version)
+	if client.authorize != nil {
+		client.authorize(request)
+	}
+	return request, nil
+}
+
+// progress calls touch whenever data moves through reader.
+type progress struct {
+	reader io.Reader
+	touch  func()
+}
+
+func (p progress) Read(content []byte) (int, error) {
+	n, err := p.reader.Read(content)
+	if n > 0 {
+		p.touch()
+	}
+	return n, err
+}
+
+// Download writes the body of a successful GET of apiPath, of media type
+// mediaType, to out. An error answer is read as JSON, as Do reads it.
+func (client *Client) Download(ctx context.Context, apiPath, mediaType string, out io.Writer) error {
+	request, err := client.newRequest(ctx, http.MethodGet, apiPath, mediaType+", application/json", nil)
+	if err != nil {
+		return err
+	}
+	response, touch, done, err := client.sendWithin(request, TransferIdle, true)
+	if err != nil {
+		return connectionFailed(err)
+	}
+	received, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	if response.StatusCode != http.StatusOK || received != mediaType {
+		_, err := client.answer(response, done)
+		if err == nil {
+			err = responseError(response, &Error{Code: "invalid_response", Message: "The OwnGit API did not send the file."})
+		}
+		return err
+	}
+	defer done()
+	defer response.Body.Close()
+	_, err = io.Copy(out, progress{response.Body, touch})
+	if timeoutErr := done(); timeoutErr != nil {
+		return connectionFailed(timeoutErr)
+	}
+	if err != nil {
+		return responseError(response, &Error{Code: "transfer_failed", Message: "The download ended before the whole file arrived.", Cause: err})
+	}
+	return nil
+}
+
+// Upload sends the size bytes of body with PUT to apiPath and returns the
+// JSON answer, as Do does.
+func (client *Client) Upload(ctx context.Context, apiPath string, body io.Reader, size int64) ([]byte, error) {
+	request, err := client.newRequest(ctx, http.MethodPut, apiPath, "application/json", io.NopCloser(body))
+	if err != nil {
+		return nil, err
+	}
+	request.ContentLength = size
+	request.Header.Set("Content-Type", "application/x-tar")
+	response, _, done, err := client.sendWithin(request, TransferIdle, true)
+	if err != nil {
+		return nil, connectionFailed(err)
+	}
+	return client.answer(response, done)
 }
 
 // GetBytes reads one bounded application/octet-stream response. It is used for

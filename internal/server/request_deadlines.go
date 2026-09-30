@@ -147,7 +147,8 @@ func (deadlines *requestDeadlines) finish() {
 	if began {
 		deadlines.cancel()
 	}
-	live := time.Now().Before(deadlines.current)
+	// A backup transfer has no connection deadline (beginTransfer).
+	live := deadlines.current.IsZero() || time.Now().Before(deadlines.current)
 	if live {
 		_ = deadlines.controller.SetWriteDeadline(time.Time{})
 	} else {

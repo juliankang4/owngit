@@ -1,0 +1,188 @@
+{{/* The Backups groups of Storage & recovery. Backups are administrator
+     information: an ordinary visitor sees what they do and where to
+     confirm.
+
+     "backups" is the schedule, one group form with its own Save. The state,
+     Back up now, the recorded backups and the upload are "backup_runs":
+     their buttons are ordinary POST forms, which ask for the administrator
+     password when a change does (Viewer.AdminAsks). A download answers with
+     the file, so the page stays. Nothing here restores: a restore is a
+     command for this computer while OwnGit is stopped. */}}
+{{define "setBackups"}}{{$p := .Page}}{{$lang := .Lang}}{{$b := $p.Backups}}{{$v := .Chrome.Viewer}}
+{{$gn := forAction $p.Group "backups" $p.Notices}}{{$focus := firstError $gn "backup_destination" "backup_interval" "backup_keep" "admin_password"}}
+<section class="grp" id="grp-backups" aria-labelledby="grp-backups-h" data-group="backups"{{if hasError $gn}} data-group-refused{{end}}{{if and $b.Visible (not $b.Configured)}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "backups" "Title" (bi $lang "backup.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "backup.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $b.Visible}}
+  {{if not $b.Configured}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "backup.not_configured"}}</span></p>{{end}}
+  {{$dest := draft $p.Group $p.Draft "backups" "backup_destination" $b.Destination}}
+  {{$interval := draft $p.Group $p.Draft "backups" "backup_interval" $b.Interval}}
+  {{$keep := draft $p.Group $p.Draft "backups" "backup_keep" (print $b.Keep)}}
+  {{$scheduled := draft $p.Group $p.Draft "backups" "backup_scheduled" (onOff $b.Scheduled)}}
+  {{$verify := draft $p.Group $p.Draft "backups" "backup_verify" (onOff $b.Verify)}}
+  {{$savedScheduled := ""}}{{$savedVerify := ""}}{{if $b.Configured}}{{$savedScheduled = onOff $b.Scheduled}}{{$savedVerify = onOff $b.Verify}}{{end}}
+  <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_backup_schedule">
+    <div class="f f--row">
+      <label for="backup-destination">{{bi $lang "backup.destination"}}</label>
+      <input id="backup-destination" name="backup_destination" type="text" class="mono" autocomplete="off" spellcheck="false" required dir="ltr"
+             value="{{$dest}}" data-saved="{{if $b.Configured}}{{$b.Destination}}{{end}}"
+             {{template "netDescribed" dict "Notices" $gn "Scope" "backups" "Field" "backup_destination" "Help" "backup-destination-help"}}{{if eq $focus "backup_destination"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "backups" "Field" "backup_destination"}}
+      <p class="f__help" id="backup-destination-help">{{bi $lang "backup.destination_help"}}</p>
+    </div>
+    {{template "switch" dict "Lang" $lang "ID" "backup-scheduled" "Name" "backup_scheduled" "On" (eq $scheduled "on") "Saved" $savedScheduled "Label" (bi $lang "backup.scheduled") "Help" (bi $lang "backup.scheduled_help")}}
+    <p class="wn" data-show-if="backup_scheduled=off"{{if eq $scheduled "on"}} hidden{{end}}>{{icon "warning"}}<span>{{bi $lang "backup.schedule_off_warning"}}</span></p>
+    <div class="f f--row">
+      <label for="backup-interval">{{bi $lang "backup.interval"}}</label>
+      <select id="backup-interval" name="backup_interval" data-saved="{{if $b.Configured}}{{$b.Interval}}{{end}}" aria-describedby="backup-interval-help">
+        {{range $b.Intervals}}
+          <option value="{{.}}"{{if eq . $interval}} selected{{end}}>{{backupEvery $lang .}}</option>
+        {{end}}
+      </select>
+      <p class="f__help" id="backup-interval-help">{{bi $lang "backup.interval_help"}}</p>
+    </div>
+    <div class="f f--row">
+      <label for="backup-keep">{{bi $lang "backup.keep"}}</label>
+      <input id="backup-keep" name="backup_keep" type="text" inputmode="numeric" autocomplete="off" required
+             value="{{$keep}}" data-saved="{{if $b.Configured}}{{$b.Keep}}{{end}}"
+             {{template "netDescribed" dict "Notices" $gn "Scope" "backups" "Field" "backup_keep" "Help" "backup-keep-help"}}{{if eq $focus "backup_keep"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "backups" "Field" "backup_keep"}}
+      <p class="f__help" id="backup-keep-help">{{bi $lang "backup.keep_help"}}</p>
+    </div>
+    {{template "switch" dict "Lang" $lang "ID" "backup-verify" "Name" "backup_verify" "On" (eq $verify "on") "Saved" $savedVerify "Label" (bi $lang "backup.verify") "Help" (bi $lang "backup.verify_help")}}
+    <p class="wn" data-show-if="backup_verify=off"{{if eq $verify "on"}} hidden{{end}}>{{icon "warning"}}<span>{{bi $lang "backup.verify_off_warning"}}</span></p>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $v "Group" "backups" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
+{{if $b.Visible}}
+{{$rn := forAction $p.Group "backup_runs" $p.Notices}}{{$rfocus := firstError $rn "admin_password"}}
+<section class="grp" id="grp-backup_runs" aria-labelledby="grp-backup_runs-h">
+  <div class="grp__h"><h2 id="grp-backup_runs-h">{{bi $lang "backup.state_title"}}</h2></div>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $rn "Focus" $rfocus}}
+  <dl class="kv">
+    <div><dt>{{bi $lang "backup.scheduled"}}</dt><dd>{{if not $b.Configured}}{{bi $lang "backup.state_not_configured"}}{{else if $b.Scheduled}}{{bi $lang "backup.state_on"}}{{else}}{{bi $lang "backup.state_off"}}{{end}}</dd></div>
+    <div><dt>{{bi $lang "backup.running_now"}}</dt><dd>{{with $b.Running}}{{biWhen $lang "backup.running_since" .StartedAt}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
+    <div><dt>{{bi $lang "backup.last_run"}}</dt><dd>{{with $b.LastRun}}{{template "backupWhat" dict "Lang" $lang "Run" .}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
+    <div><dt>{{bi $lang "backup.last_verified"}}</dt><dd>{{with $b.LastVerified}}{{biText $lang (dateTime "en" .FinishedAt) (dateTime "ko" .FinishedAt)}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
+    <div><dt>{{bi $lang "backup.next_run"}}</dt><dd>{{if $b.NextRunNow}}{{bi $lang "backup.next_run_soon"}}{{else if not $b.NextRun.IsZero}}{{biText $lang (dateTime "en" $b.NextRun) (dateTime "ko" $b.NextRun)}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
+  </dl>
+  {{with $b.RestoreLimit}}<p class="wn">{{icon "warning"}}<span>{{biF $lang "backup.restore_limit" .}}</span></p>{{end}}
+  {{with $b.Check}}
+    <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.check_title" .Name}}: {{backupWord $lang "check" .Status}}</span>{{with .Message}} <span class="mono bkmsg" dir="auto">{{.}}</span>{{end}}</p>
+  {{end}}
+  {{/* The one form every backup button sends, with the administrator
+       password when a change asks for it. Each run's buttons name it. */}}
+  <form class="bkact" id="backup-act" method="post" action="{{tabURL "storage"}}">
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    {{if $v.AdminAsks}}
+    <div class="f">
+      <label for="backup-act-admin">{{icon "lock"}}{{bi $lang "admin.field"}}</label>
+      <input id="backup-act-admin" name="admin_password" type="password" autocomplete="current-password"
+             {{template "netDescribed" dict "Notices" $rn "Scope" "backup_runs" "Field" "admin_password" "Help" "backup-act-admin-help"}}{{if eq $rfocus "admin_password"}} autofocus{{end}}>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $rn "Scope" "backup_runs" "Field" "admin_password"}}
+      <p class="f__help" id="backup-act-admin-help">{{with confirmAfter $v.AdminChoice}}{{bi $lang .}}{{end}}</p>
+    </div>
+    {{end}}
+    <div class="actions">
+      <button type="submit" class="btn btn--primary" name="action" value="backup_now"{{if or (not $b.Configured) $b.Busy}} disabled{{end}}>{{icon "kept"}}<span>{{bi $lang "backup.now"}}</span></button>
+    </div>
+  </form>
+</section>
+
+<section class="grp" id="grp-backup-list" aria-labelledby="grp-backup-list-h">
+  <div class="grp__h"><h2 id="grp-backup-list-h">{{bi $lang "backup.runs_title"}}</h2></div>
+  {{if $b.Runs}}
+  <ul class="bkruns">
+    {{range $b.Runs}}{{$id := .ID}}
+    <li class="bkrun">
+      <p class="bkrun__h">{{statusIcon (backupState .Status)}}<span><b>{{backupWord $lang "status" .Status}}</b> {{biText $lang (dateTime "en" .StartedAt) (dateTime "ko" .StartedAt)}}</span></p>
+      <dl class="kv kv--tight">
+        <div><dt>{{bi $lang "backup.kind"}}</dt><dd>{{backupWord $lang "kind" .Kind}}</dd></div>
+        <div><dt>{{bi $lang "backup.verification"}}</dt><dd>{{backupWord $lang "verification" .Verification}}</dd></div>
+        <div><dt>{{bi $lang "backup.hold"}}</dt><dd>{{if not .HoldKnown}}{{bi $lang "backup.none"}}{{else if .HoldRepository}}{{biF $lang "backup.hold_value" (print .HoldMS) .HoldRepository}}{{else}}{{bi $lang "backup.hold_none"}}{{end}}</dd></div>
+      </dl>
+      {{with .Message}}<p class="bkmsg mono" dir="auto">{{.}}</p>{{end}}
+      {{if .Path}}
+        <p class="bkpath mono" dir="ltr">{{.Path}}</p>
+        {{if ne .Status "running"}}
+        <div class="actions">
+          <button type="submit" class="btn" form="backup-act" formaction="{{tabURL "storage"}}?run={{.ID}}" name="action" value="backup_verify"{{if $b.Busy}} disabled{{end}}>{{icon "check"}}<span>{{bi $lang "backup.verify_again"}}</span></button>
+          <button type="submit" class="btn" form="backup-act" formaction="{{tabURL "storage"}}?run={{.ID}}" name="action" value="backup_download" aria-describedby="backup-download-help">{{bi $lang "backup.download"}}</button>
+        </div>
+        {{with .Restore}}{{template "backupRestore" dict "Lang" $lang "R" . "ID" (print "restore-" $id)}}{{end}}
+        {{end}}
+      {{else if ne .Status "running"}}
+        <p class="bkpath">{{bi $lang "backup.not_kept"}}</p>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  <p class="f__help" id="backup-download-help">{{bi $lang "backup.download_help"}}</p>
+  {{else}}
+  <p class="setblock__d">{{bi $lang "backup.runs_empty"}}</p>
+  {{end}}
+</section>
+
+<section class="grp" id="grp-backup-upload" aria-labelledby="grp-backup-upload-h">
+  <div class="grp__h"><h2 id="grp-backup-upload-h">{{bi $lang "backup.upload_title"}}</h2></div>
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "backup.upload_help"}}</span></p>
+  {{with $b.Upload}}
+    <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.upload_name" .Name (bytes .Size)}}: {{backupWord $lang "upload" .Status}}</span></p>
+    {{with .Message}}<p class="bkmsg mono" dir="auto">{{.}}</p>{{end}}
+    {{if not .RemovesAt.IsZero}}<p class="f__help">{{biWhen $lang "backup.upload_removes_at" .RemovesAt}}</p>{{end}}
+    {{with .Restore}}{{template "backupRestore" dict "Lang" $lang "R" . "ID" "restore-upload" "Open" true}}{{end}}
+  {{end}}
+  <form class="gform" method="post" action="{{tabURL "storage"}}" enctype="multipart/form-data">
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="backup_upload">
+    {{if $v.AdminAsks}}
+    <div class="f">
+      <label for="backup-upload-admin">{{icon "lock"}}{{bi $lang "admin.field"}}</label>
+      <input id="backup-upload-admin" name="admin_password" type="password" autocomplete="current-password" required>
+    </div>
+    {{end}}
+    <div class="f">
+      <label for="backup-file">{{bi $lang "backup.upload_file"}}</label>
+      <input id="backup-file" name="backup_file" type="file" accept=".tar,application/x-tar" required>
+    </div>
+    <div class="actions"><button type="submit" class="btn"{{if $b.Busy}} disabled{{end}}>{{bi $lang "backup.upload_send"}}</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}
+
+{{/* The result of a run and when it ended. */}}
+{{define "backupWhat"}}{{$lang := .Lang}}{{with .Run}}{{backupWord $lang "status" .Status}}, {{biText $lang (dateTime "en" .FinishedAt) (dateTime "ko" .FinishedAt)}}{{end}}{{end}}
+
+{{/* How to restore one backup on this computer. The command is selectable
+     text with a copy button, which the script shows. */}}
+{{define "backupRestore"}}{{$lang := .Lang}}{{$r := .R}}
+<details class="bkrestore"{{if .Open}} open{{end}}>
+  <summary>{{bi $lang "backup.restore_title"}}</summary>
+  <p>{{bi $lang "backup.restore_lead"}}</p>
+  <ol class="bksteps">
+    <li>{{if $r.Stop}}{{bi $lang "backup.restore_stop_service"}} <code>{{$r.Stop}}</code>{{else}}{{bi $lang "backup.restore_stop_process"}}{{end}}</li>
+    <li>{{biF $lang "backup.restore_move" $r.StateDir $r.MovedState $r.RepositoryRoot $r.MovedRepositories}}</li>
+    <li>{{bi $lang "backup.restore_run"}}
+      <div class="clonefield bkcmd" data-clone>
+        <label class="clonefield__l" for="{{.ID}}">{{bi $lang "backup.restore_command"}}</label>
+        <div class="clonefield__row">
+          <input id="{{.ID}}" class="clonefield__v mono" type="text" readonly value="{{$r.Command}}" spellcheck="false" autocomplete="off" data-select-on-focus dir="ltr">
+          <button type="button" class="btn clonefield__copy" data-copy="{{.ID}}" hidden>{{icon "copy"}}<span>{{bi $lang "repo.overview.copy"}}</span></button>
+        </div>
+        <p class="clonefield__note" role="status">
+          <span data-copy-done hidden>{{icon "check"}}{{bi $lang "repo.overview.copied"}}</span>
+          <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
+        </p>
+      </div>
+    </li>
+    <li>{{if $r.Start}}{{bi $lang "backup.restore_start_service"}} <code>{{$r.Start}}</code>{{else}}{{bi $lang "backup.restore_start_process"}}{{end}}</li>
+  </ol>
+  <p class="f__help">{{bi $lang "backup.restore_after"}}</p>
+</details>
+{{end}}

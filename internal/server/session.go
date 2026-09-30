@@ -564,6 +564,6 @@ func noticeFor(notice string) []webui.Notice {
 	case "history_saved_both_off":
 		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved), {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryKeptOff}, {Kind: webui.NoticeWarning, Code: webui.MsgRepoHistoryProtectOff}}
 	default:
-		return nil
+		return backupNotices[notice]
 	}
 }

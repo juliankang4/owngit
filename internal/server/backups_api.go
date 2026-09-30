@@ -25,7 +25,10 @@ type backupScheduleJSON struct {
 
 // handleBackupsAPI serves, with the administrator password,
 // /api/v1/backups (status), /api/v1/backups/runs (list, and POST to back up
-// now) and /api/v1/backups/schedule (GET, PATCH). Folders and messages are
+// now), /api/v1/backups/runs/ID/verify (POST: verify that backup again),
+// /api/v1/backups/runs/ID/archive (GET: download it as a tar file),
+// /api/v1/backups/upload (PUT: upload a backup archive to restore) and
+// /api/v1/backups/schedule (GET, PATCH). Folders and messages are
 // administrator information. /api/v1/backups/summary, which names neither,
 // is read with general access too, so that coding agents can check that
 // backups work.
@@ -59,10 +62,21 @@ func (app *App) handleBackupsAPI(writer http.ResponseWriter, request *http.Reque
 			}{true, backups.Summarize(status)})
 			return
 		}
+		// A verified upload comes with the command that restores it on
+		// this computer, as the dashboard shows it.
+		var restore *webui.BackupRestore
+		if upload := status.Upload; upload != nil && upload.Status == backups.UploadPassed && upload.Path != "" {
+			restore = app.restoreGuide(upload.Path, settings)
+		}
+		var command string
+		if restore != nil {
+			command = restore.Command
+		}
 		writeAPIJSON(writer, http.StatusOK, struct {
 			OK bool `json:"ok"`
 			backups.Status
-		}{true, status})
+			UploadRestoreCommand string `json:"upload_restore_command,omitempty"`
+		}{true, status, command})
 	case "/api/v1/backups/runs":
 		if request.Method != http.MethodGet && request.Method != http.MethodPost {
 			writeAPIMethodError(writer, "GET, POST")
@@ -93,26 +107,91 @@ func (app *App) handleBackupsAPI(writer http.ResponseWriter, request *http.Reque
 			return
 		}
 		app.backupSchedule(writer, request)
+	case "/api/v1/backups/upload":
+		if request.Method != http.MethodPut {
+			writeAPIMethodError(writer, http.MethodPut)
+			return
+		}
+		if !app.authorizeAdminAPI(writer, request) {
+			return
+		}
+		app.uploadBackup(writer, request)
 	default:
-		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+		id, operation, found := strings.Cut(strings.TrimPrefix(request.URL.Path, "/api/v1/backups/runs/"), "/")
+		if !found || !strings.HasPrefix(request.URL.Path, "/api/v1/backups/runs/") || (operation != "verify" && operation != "archive") {
+			writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+			return
+		}
+		method := map[string]string{"verify": http.MethodPost, "archive": http.MethodGet}[operation]
+		if request.Method != method {
+			writeAPIMethodError(writer, method)
+			return
+		}
+		if !app.authorizeAdminAPI(writer, request) {
+			return
+		}
+		if operation == "verify" {
+			app.checkBackup(writer, request, id)
+			return
+		}
+		download, err := app.Backups.OpenDownload(request.Context(), id)
+		if err != nil {
+			writeBackupAPIError(writer, request, err, "backup download")
+			return
+		}
+		app.writeBackupArchive(writer, request, download)
 	}
+}
+
+// writeBackupAPIError answers a backup operation that did not happen.
+func writeBackupAPIError(writer http.ResponseWriter, request *http.Request, err error, step string) {
+	if refusal, ok := backupRefused(err); ok {
+		writeAPIError(writer, refusal.status, refusal.code, refusal.apiMessage(), nil)
+		return
+	}
+	writeAPIError(writer, unavailable(request, step, err), "state_unavailable", "The backup operation could not be carried out. Try again later.", nil)
+}
+
+func (app *App) checkBackup(writer http.ResponseWriter, request *http.Request, id string) {
+	check, err := app.Backups.StartCheck(request.Context(), id)
+	if err != nil {
+		writeBackupAPIError(writer, request, err, "backup verification start")
+		return
+	}
+	writeAPIJSON(writer, http.StatusAccepted, struct {
+		OK    bool          `json:"ok"`
+		Check backups.Check `json:"check"`
+	}{true, check})
+}
+
+// uploadBackup receives a backup archive, which must declare its size.
+func (app *App) uploadBackup(writer http.ResponseWriter, request *http.Request) {
+	if request.ContentLength <= 0 {
+		writeAPIError(writer, http.StatusLengthRequired, "length_required", webui.Text(webui.LangEN, webui.MsgBackupUploadNoSize), nil)
+		return
+	}
+	request = app.beginTransfer(writer, request)
+	upload, err := app.Backups.ReceiveUpload(request.Context(), idleReader{request.Body, http.NewResponseController(writer)}, request.ContentLength)
+	if err != nil {
+		writeBackupAPIError(writer, request, err, "backup upload")
+		return
+	}
+	writeAPIJSON(writer, http.StatusAccepted, struct {
+		OK     bool           `json:"ok"`
+		Upload backups.Upload `json:"upload"`
+	}{true, upload})
 }
 
 func (app *App) startBackup(writer http.ResponseWriter, request *http.Request) {
 	run, err := app.Backups.StartNow()
-	switch {
-	case errors.Is(err, state.ErrBackupRunning):
-		writeAPIError(writer, http.StatusConflict, "backup_running", "A backup is already running. Wait for it to finish.", nil)
-	case errors.Is(err, backups.ErrNotConfigured):
-		writeAPIError(writer, http.StatusConflict, "backup_not_configured", "Choose a backup folder first.", nil)
-	case err != nil:
-		writeAPIError(writer, unavailable(request, "backup start", err), "state_unavailable", "The backup could not be started. Try again later.", nil)
-	default:
-		writeAPIJSON(writer, http.StatusAccepted, struct {
-			OK  bool             `json:"ok"`
-			Run *backups.RunView `json:"run"`
-		}{true, backups.ViewRun(run)})
+	if err != nil {
+		writeBackupAPIError(writer, request, err, "backup start")
+		return
 	}
+	writeAPIJSON(writer, http.StatusAccepted, struct {
+		OK  bool             `json:"ok"`
+		Run *backups.RunView `json:"run"`
+	}{true, backups.ViewRun(run)})
 }
 
 func (app *App) backupSchedule(writer http.ResponseWriter, request *http.Request) {

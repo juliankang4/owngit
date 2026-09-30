@@ -73,6 +73,10 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	if !ok {
 		return
 	}
+	if isMultipart(request) {
+		app.receiveBackupUpload(writer, request, settings, csrf)
+		return
+	}
 	if !app.parseForm(writer, request) {
 		return
 	}
@@ -348,6 +352,9 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	case webui.ActionSaveTailscale, webui.ActionTailscaleOn, webui.ActionTailscaleOff:
 		app.changeTailscale(writer, request, settings, csrf, action)
 		return
+	case webui.ActionSaveBackupSchedule, webui.ActionBackupNow, webui.ActionBackupVerify, webui.ActionBackupDownload:
+		app.backupAction(writer, request, settings, csrf, action)
+		return
 	default:
 		app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("action", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest)
 		return
@@ -558,7 +565,8 @@ var settingsDraftFields = map[string]bool{
 	"browse_compare_time_unit": false, "maintenance_idle": false, "maintenance_idle_unit": false, "maintenance_command": false,
 	"maintenance_command_unit": false, "maintenance_full_repack": false, "maintenance_full_repack_unit": false, "maintenance_enabled": false,
 	"maintenance_window_start": false, "maintenance_window_end": false, "maintenance_pack_threshold": false, "cleanup_enabled": false,
-	"cleanup_grace": false,
+	"cleanup_grace":      false,
+	"backup_destination": false, "backup_interval": false, "backup_keep": false, "backup_scheduled": true, "backup_verify": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.
@@ -606,7 +614,11 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	default:
 		// The result of a saved change, kept by its redirect, is shown in
 		// its group when that group is on this tab.
-		group := settingsNoticeGroups[request.URL.Query().Get("notice")]
+		notice := request.URL.Query().Get("notice")
+		group := settingsNoticeGroups[notice]
+		if group == "" {
+			group = backupNoticeGroup(notice)
+		}
 		if len(chrome.Notices) > 0 && group != "" && webui.SettingsGroupTab(group) == tab {
 			page.Group, page.Notices, page.Chrome.Notices = group, chrome.Notices, nil
 		}
@@ -642,6 +654,12 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 	if page.Policies, err = app.tabPolicies(request, tab, chrome.Viewer.AdminConfirmed || view.AdminVerified); err != nil {
 		app.answerUnavailable(writer, request, "settings read", err)
 		return
+	}
+	if tab == webui.SettingsStorage {
+		if page.Backups, err = app.backupsInfo(request, settings, chrome.Viewer.AdminConfirmed || view.AdminVerified); err != nil {
+			app.answerUnavailable(writer, request, "backup status read", err)
+			return
+		}
 	}
 	// Only the Network tab shows sharing on the tailnet, and reading it
 	// asks Tailscale, so the other tabs do not.
