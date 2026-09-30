@@ -523,7 +523,7 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 	if errors.Is(err, state.ErrRunnerCredentialOtherRepository) {
 		// Only the holder of a live token reaches this answer, and it names
 		// no repository.
-		if !answerRepositoryAddressAPI(writer, request, true) {
+		if !boundAddressReadable(writer, request) {
 			return state.RunnerCredential{}, false
 		}
 		writeAPIError(writer, http.StatusForbidden, "runner_credential_repository_mismatch", "This runner token belongs to another repository.", nil)
@@ -537,7 +537,7 @@ func (app *App) authorizeRunner(writer http.ResponseWriter, request *http.Reques
 		writeAPIError(writer, http.StatusUnauthorized, "invalid_runner_credential", "The runner token is unknown or revoked.", nil)
 		return state.RunnerCredential{}, false
 	}
-	return credential, answerRepositoryAddressAPI(writer, request, true)
+	return credential, boundAddressReadable(writer, request)
 }
 
 // jobJSON describes a job. checks are its captured commands when the answer

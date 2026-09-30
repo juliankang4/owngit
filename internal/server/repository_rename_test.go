@@ -186,9 +186,9 @@ func TestRenameIsForTheAdministratorAndAliasesAnswerOnlyAcceptedCallers(t *testi
 }
 
 // Runner and helper credentials reach their repository at its current name
-// and at every unexpired alias. An alias that has expired reaches nothing:
-// with a live credential it is not found, never a credential for another
-// repository.
+// and at every unexpired alias. At an alias that has expired they get the
+// same "another repository" refusal as at a name that reaches nothing, so a
+// credential never learns whether a name exists.
 func TestScopedCredentialsFollowAliasesUntilTheyExpire(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	base, helper := helperAPI(t, fixture, "helper", time.Now())
@@ -200,9 +200,9 @@ func TestScopedCredentialsFollowAliasesUntilTheyExpire(t *testing.T) {
 		_, err = fixture.app.Repositories.Rename(context.Background(), "project", name, time.Now())
 		noErr(t, err)
 	}
-	requests := []struct{ method, path, token string }{
-		{http.MethodGet, "/tasks", helper},
-		{http.MethodPost, "/runner/claim", runner},
+	requests := []struct{ method, path, token, refusal string }{
+		{http.MethodGet, "/tasks", helper, "helper_credential_scope"},
+		{http.MethodPost, "/runner/claim", runner, "runner_credential_repository_mismatch"},
 	}
 	for _, name := range []string{"project", "middle", "current"} {
 		for _, request := range requests {
@@ -212,9 +212,9 @@ func TestScopedCredentialsFollowAliasesUntilTheyExpire(t *testing.T) {
 		}
 	}
 	noErr(t, fixture.store.Exec(context.Background(), `UPDATE repository_names SET alias_until=? WHERE kind='alias'`, time.Now().Add(-time.Second).Unix()))
-	for _, name := range []string{"project", "middle"} {
+	for _, name := range []string{"project", "middle", "nosuchrepo"} {
 		for _, request := range requests {
-			if status, code := checkStatus(t, checkRequest(t, request.method, origin+"/api/v1/repositories/"+name+request.path, nil, request.token)); status != http.StatusNotFound || code != "repository_not_found" {
+			if status, code := checkStatus(t, checkRequest(t, request.method, origin+"/api/v1/repositories/"+name+request.path, nil, request.token)); status != http.StatusForbidden || code != request.refusal {
 				t.Fatalf("%s at expired %s status=%d code=%s", request.path, name, status, code)
 			}
 		}

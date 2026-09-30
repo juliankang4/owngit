@@ -285,7 +285,7 @@ var generalAccessActor = state.Actor{Kind: state.ActorAccess}
 
 func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings) bool {
 	if settings.AccessMode == "open" {
-		return answerRepositoryAddressAPI(writer, request, false)
+		return answerRepositoryAddressAPI(writer, request)
 	}
 	_, password, ok := request.BasicAuth()
 	if !ok {
@@ -294,7 +294,7 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 		return false
 	}
 	_, ok = app.checkAPIPassword(writer, request, "general", password)
-	return ok && answerRepositoryAddressAPI(writer, request, false)
+	return ok && answerRepositoryAddressAPI(writer, request)
 }
 
 // checkAPIPassword verifies an API request's password of kind ("general" or

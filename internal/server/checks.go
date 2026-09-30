@@ -440,7 +440,7 @@ func (app *App) authorizeHelper(writer http.ResponseWriter, request *http.Reques
 		writeAPIError(writer, http.StatusUnauthorized, "invalid_helper_credential", "The helper credential is unknown or revoked.", nil)
 		return state.HelperCredential{}, false
 	}
-	if !answerRepositoryAddressAPI(writer, request, true) {
+	if !boundAddressReadable(writer, request) {
 		return state.HelperCredential{}, false
 	}
 	if credential.RepositoryID != repositoryID {
@@ -471,7 +471,7 @@ func (app *App) adminAPIProof(writer http.ResponseWriter, request *http.Request)
 		return adminPasswordProof{}, false
 	}
 	version, ok := app.checkAPIPassword(writer, request, "admin", password)
-	return adminPasswordProof{password: password, version: version}, ok && answerRepositoryAddressAPI(writer, request, false)
+	return adminPasswordProof{password: password, version: version}, ok && answerRepositoryAddressAPI(writer, request)
 }
 
 func attemptFromRegistration(registration checkapi.AttemptRegistration, repositoryID, taskID, credentialID string, now time.Time) (state.CheckAttempt, *pullrequest.Problem) {

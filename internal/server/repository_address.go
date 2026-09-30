@@ -16,6 +16,9 @@ import (
 // after the route has accepted the caller's credential, so the answer never
 // tells an unauthenticated caller about a repository: an alias redirects to
 // the same request at the current address, and anything else is not found.
+// A runner or helper credential is the exception: it is bound to one
+// repository, so it answers by that binding instead (see
+// boundAddressReadable).
 
 // repositoryAddress is what the repository name in a request path reached.
 type repositoryAddress struct {
@@ -126,21 +129,17 @@ func (app *App) answerRepositoryAddressPage(writer http.ResponseWriter, request 
 	return "", false
 }
 
-// answerRepositoryAddressAPI answers an API request, after its credential is
+// answerRepositoryAddressAPI answers an API request, after its password is
 // accepted, whose address reaches no current repository, and reports whether
 // the request may continue. A request outside a repository continues.
-//
-// A runner or helper credential is bound to one repository by its ID, so
-// with such a credential (boundCredential) an alias keeps working until it
-// expires; the credential already proves which repository is meant.
-func answerRepositoryAddressAPI(writer http.ResponseWriter, request *http.Request, boundCredential bool) bool {
+func answerRepositoryAddressAPI(writer http.ResponseWriter, request *http.Request) bool {
 	address, named := repositoryAddressOf(request)
 	switch {
 	case !named:
 		return true
 	case address.err != nil:
-		writeAPIError(writer, unavailable(request, "repository record read", address.err), "state_unavailable", "OwnGit state is unavailable.", nil)
-	case address.movedTo != "" && !boundCredential:
+		answerRepositoryAddressFailure(writer, request, address.err)
+	case address.movedTo != "":
 		// The API client does not follow redirects, so the answer also says
 		// where the repository is now.
 		current, _ := url.Parse(address.movedTo)
@@ -153,6 +152,25 @@ func answerRepositoryAddressAPI(writer http.ResponseWriter, request *http.Reques
 		return true
 	}
 	return false
+}
+
+// boundAddressReadable answers a request with a runner or helper credential
+// whose address could not be read, and reports whether it may continue.
+// Such a credential is bound to one repository by its ID, so it works at
+// every address that reaches that ID, the current one and an unexpired
+// alias. Any other address, another repository's, an expired alias or a
+// name that reaches nothing, gets the credential's own "another repository"
+// refusal, so the credential never learns whether a name exists.
+func boundAddressReadable(writer http.ResponseWriter, request *http.Request) bool {
+	if address, _ := repositoryAddressOf(request); address.err != nil {
+		answerRepositoryAddressFailure(writer, request, address.err)
+		return false
+	}
+	return true
+}
+
+func answerRepositoryAddressFailure(writer http.ResponseWriter, request *http.Request, err error) {
+	writeAPIError(writer, unavailable(request, "repository record read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
 }
 
 // repositoryAddressCurrent returns where the repository the request names
