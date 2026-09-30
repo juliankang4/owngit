@@ -2044,7 +2044,7 @@ owngit backup check --run ID
 
 OwnGit records the result with the backup, so `verification` in `owngit backup runs` changes too. A backup that fails no longer counts as verified, and OwnGit no longer keeps it as the newest verified backup.
 
-When the backup is already gone from its folder, or its folder holds something else, the check does not start and says that the backup is gone. When the backup is moved, removed, changed or replaced while it is being checked, the check fails with a message that says so, records nothing, and the backup keeps its earlier `verification`.
+When the backup is already gone from its folder, or its folder holds something else, the check does not start and says that the backup is gone. When the backup's folder is moved, removed or replaced by another folder while it is being checked, or its manifest changes or can no longer be read, the check fails with a message that says so, records nothing, and the backup keeps its earlier `verification`. A bundle that is damaged while the folder and manifest stay the same is checked as usual, so the check fails and records the backup as failed.
 
 ### Which backups OwnGit keeps
 
