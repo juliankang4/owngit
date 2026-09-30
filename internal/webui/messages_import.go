@@ -220,7 +220,9 @@ const (
 	MsgImportEffectNeedsBoth      MessageCode = "import.effect.needs_both"
 	MsgImportEffectKept           MessageCode = "import.effect.kept"
 	MsgImportEffectNotKept        MessageCode = "import.effect.not_kept"
-	MsgImportEffectKeptUnknown    MessageCode = "import.effect.kept_unknown"
+	MsgImportEffectsUnknown       MessageCode = "import.effects_unknown"
+	MsgImportEffectRefused        MessageCode = "import.effect.refused"
+	MsgImportEffectRefusedHelp    MessageCode = "import.effect.refused_help"
 	MsgImportFactRefresh          MessageCode = "import.fact.refresh"
 	MsgImportFactExtraRefs        MessageCode = "import.fact.extra_refs"
 	MsgImportFactOverwrite        MessageCode = "import.fact.overwrite"
@@ -264,7 +266,9 @@ var importOptionsCatalog = map[MessageCode]message{
 	MsgImportEffectNeedsBoth:      {en: "Changed here since, so it changes only when both choices are on.", ko: "여기서 바뀐 ref라서 두 설정을 모두 켜야 바뀝니다."},
 	MsgImportEffectKept:           {en: "Kept history keeps its current commit.", ko: "지금 커밋은 보관된 기록에 남습니다."},
 	MsgImportEffectNotKept:        {en: "Its current commit is not kept.", ko: "지금 커밋은 보관된 기록에 남지 않습니다."},
-	MsgImportEffectKeptUnknown:    {en: "The kept history setting could not be read, so whether its current commit is kept is unknown.", ko: "보관된 기록 설정을 읽지 못해 지금 커밋이 남을지 알 수 없습니다."},
+	MsgImportEffectsUnknown:       {en: "Which refs would change could not be worked out now, for example because the repository is being written. Reload the page to check again.", ko: "지금은 바뀔 ref를 알아내지 못했습니다. 저장소에 쓰는 중일 수 있습니다. 페이지를 다시 불러와 확인하세요."},
+	MsgImportEffectRefused:        {en: "Refresh stops", ko: "새로고침 멈춤"},
+	MsgImportEffectRefusedHelp:    {en: "This protected default branch differs here. With Overwrite diverged branches on, a refresh stops at it and changes nothing until its protection is turned off.", ko: "보호된 기본 브랜치가 원본과 다릅니다. ‘원본과 달라진 브랜치 덮어쓰기’를 켜면 보호를 끌 때까지 새로고침이 여기서 멈추고 아무것도 바꾸지 않습니다."},
 	MsgImportFactRefresh:          {en: "Refresh", ko: "새로고침"},
 	MsgImportFactExtraRefs:        {en: "Extra refs", ko: "추가 ref"},
 	MsgImportFactOverwrite:        {en: "Overwrites diverged branches", ko: "달라진 브랜치 덮어씀"},

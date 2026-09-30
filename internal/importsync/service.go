@@ -1032,7 +1032,9 @@ type RefreshEffect struct {
 	// Effect is "replace" for a diverged ref that the source's value
 	// replaces, which needs overwrite_diverged, or "delete" for a ref the
 	// source deleted, which needs follow_upstream_deletions, and
-	// overwrite_diverged too when LocalChanged.
+	// overwrite_diverged too when LocalChanged. It is "refused" for the
+	// protected default branch when it differs here: with
+	// overwrite_diverged on, a refresh stops there and changes nothing.
 	Effect   string `json:"effect"`
 	LocalOID string `json:"local_oid"`
 	// LocalChanged reports that the local ref no longer holds the value the
@@ -1081,9 +1083,12 @@ type Status struct {
 	Options           *OptionsStatus  `json:"options,omitempty"`
 	Runtime           RuntimeStatus   `json:"runtime"`
 
-	// RefreshEffects lists, among Refs, the local refs that the choices to
-	// overwrite diverged refs and follow upstream deletions would change.
-	RefreshEffects []RefreshEffect `json:"refresh_effects,omitempty"`
+	// RefreshEffects lists the local refs that the choices to overwrite
+	// diverged refs and follow upstream deletions would change now.
+	// RefreshEffectsUnknown reports that they could not be worked out, for
+	// example while the repository is being written.
+	RefreshEffects        []RefreshEffect `json:"refresh_effects,omitempty"`
+	RefreshEffectsUnknown bool            `json:"refresh_effects_unknown,omitempty"`
 }
 
 // OptionsStatus reports a source's connection options and the limits its next
@@ -1287,8 +1292,6 @@ var errDestinationBusy = errors.New("destination repository is being written")
 
 func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source state.ImportSource) error {
 	var destination map[string]string
-	symbolic := map[string]bool{}
-	headTarget := ""
 	path, _, exists, err := s.Repositories.ExistingPath(ctx, source.RepositoryID)
 	status.RepositoryExists = err == nil && exists
 	// Status never waits for a writer such as an import publication or a
@@ -1298,19 +1301,19 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 	if err == nil && exists {
 		lock := s.Repositories.Locks.For(source.RepositoryID)
 		var records []repository.RefRecord
-		readErr := errDestinationBusy
+		readErr, effectsErr := errDestinationBusy, errDestinationBusy
 		if lock.TryRLock() {
 			records, _, readErr = s.Repositories.ReadRefs(ctx, path, 0, append([]string{"refs/heads", "refs/tags"}, extraRefNamespaces(source.ExtraRefPrefixes)...)...)
-			if readErr == nil {
-				headTarget, _, readErr = s.Repositories.ReadHead(ctx, path)
+			if readErr == nil && status.Options.Problem == "" {
+				status.RefreshEffects, effectsErr = s.refreshEffects(ctx, source, path)
 			}
 			lock.RUnlock()
 		}
+		status.RefreshEffectsUnknown = effectsErr != nil
 		if readErr == nil {
 			destination = make(map[string]string, len(records))
 			for _, record := range records {
 				destination[record.Name] = record.OID
-				symbolic[record.Name] = record.SymrefTarget != ""
 			}
 			if status.ObjectFormat == "" {
 				if format, formatErr := s.Repositories.ObjectFormat(ctx, path); formatErr == nil {
@@ -1353,14 +1356,7 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 			ref.State = "not_imported"
 		case latestRunID != "" && observation.RunID != latestRunID:
 			ref.State = "deleted_at_source"
-			if local, present := destination[observation.RefName]; present {
-				ref.LocalOID = local
-				if !keptLocalRef(observation.RefName, local, symbolic[observation.RefName], headTarget) {
-					status.RefreshEffects = append(status.RefreshEffects, RefreshEffect{
-						Name: observation.RefName, Effect: "delete", LocalOID: local, LocalChanged: local != observation.OID,
-					})
-				}
-			}
+			ref.LocalOID = destination[observation.RefName]
 		case destination == nil:
 			ref.State = "unknown_local"
 		default:
@@ -1373,32 +1369,9 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 				ref.State = "tracked"
 			default:
 				ref.State = "diverged"
-				if !symbolic[observation.RefName] {
-					status.RefreshEffects = append(status.RefreshEffects, RefreshEffect{
-						Name: observation.RefName, Effect: "replace", LocalOID: local, LocalChanged: true,
-					})
-				}
 			}
 		}
 		status.Refs = append(status.Refs, ref)
-	}
-	if len(status.RefreshEffects) == 0 {
-		return nil
-	}
-	history := "unknown"
-	writes, err := s.Store.RefWrites(ctx, source.RepositoryID)
-	if err == nil {
-		history = "not_kept"
-		if writes.KeepHistory {
-			history = "kept"
-		}
-	}
-	for index := range status.RefreshEffects {
-		effect := &status.RefreshEffects[index]
-		effect.History = history
-		if _, branchOrTag := refKind(effect.Name); !branchOrTag {
-			effect.History = "not_kept"
-		}
 	}
 	return nil
 }

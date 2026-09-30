@@ -115,12 +115,14 @@
       {{if $o.ForURL}}
       <div class="f">
         <p class="f__help"><strong>{{bi $lang "import.effects_heading"}}</strong></p>
-        {{if $o.Effects}}
+        {{if $o.EffectsUnknown}}
+        <p class="f__help">{{bi $lang "import.effects_unknown"}}</p>
+        {{else if $o.Effects}}
         <ul class="imp__effects">
           {{range $o.Effects}}
           <li><span class="mono" dir="auto">{{.Name}}</span>
-            <span class="pill pill--off">{{if eq .Effect "replace"}}{{bi $lang "import.effect.replace"}}{{else}}{{bi $lang "import.effect.delete"}}{{end}}</span>
-            <span class="f__help">{{bi $lang .Needs}} {{bi $lang .HistoryCode}}</span></li>
+            <span class="pill pill--off">{{bi $lang .EffectCode}}</span>
+            <span class="f__help">{{bi $lang .Needs}}{{if ne .Effect "refused"}} {{bi $lang .HistoryCode}}{{end}}</span></li>
           {{end}}
         </ul>
         {{else}}

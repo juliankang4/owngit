@@ -118,9 +118,9 @@ func keptLocalRef(name, local string, symbolic bool, headTargets ...string) bool
 // refresh follows the source once the protection is off or the source is a
 // fast-forward again.
 func (s *Service) planPublication(ctx context.Context, run *runState, repositoryPath string, dest, destSymrefs map[string]string, destHEAD headIdentity, observations priorObservations) (*publicationPlan, error) {
-	protected := ""
-	if run.writes.ProtectDefaultBranch && destHEAD.kind == headSymbolic {
-		protected = destHEAD.target
+	protected, err := s.protectedBranch(ctx, run, repositoryPath, destHEAD)
+	if err != nil {
+		return nil, err
 	}
 	plan := &publicationPlan{
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
@@ -270,6 +270,15 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	sort.Strings(plan.divergentRefs)
 	sort.Strings(plan.deletedRefs)
 	return plan, nil
+}
+
+// protectedBranch returns the branch that default branch protection keeps
+// from being rewritten, or "" when protection is off or HEAD is not symbolic.
+func (s *Service) protectedBranch(ctx context.Context, run *runState, repositoryPath string, destHEAD headIdentity) (string, error) {
+	if !run.writes.ProtectDefaultBranch || destHEAD.kind != headSymbolic {
+		return "", nil
+	}
+	return destHEAD.target, nil
 }
 
 func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) bool {

@@ -166,8 +166,9 @@ type ImportOptionsForm struct {
 	Follow           bool
 	// Effects lists, on the Import tab, the local refs those two choices
 	// would change on the next refresh, so the owner sees them before
-	// saving.
-	Effects []ImportRefreshEffect
+	// saving. EffectsUnknown says they could not be worked out.
+	Effects        []ImportRefreshEffect
+	EffectsUnknown bool
 	// Open shows the group expanded: an option differs from its default, so
 	// a changed URL is never saved without the owner seeing what applies to
 	// it, or a refusal points into the group. Refused names the refused
@@ -182,9 +183,10 @@ type ImportOptionsForm struct {
 }
 
 // ImportRefreshEffect is one local ref the refresh choices would change:
-// Effect is "replace" or "delete", LocalChanged says the local ref changed
-// since the source was observed, and History is "kept", "not_kept" or
-// "unknown".
+// Effect is "replace", "delete", or "refused" for the protected default
+// branch a refresh with overwriting stops at. LocalChanged says the local
+// ref changed since the source was observed, and History is "kept" or
+// "not_kept".
 type ImportRefreshEffect struct {
 	Name         string
 	Effect       string
@@ -196,6 +198,8 @@ type ImportRefreshEffect struct {
 // the ref.
 func (e ImportRefreshEffect) Needs() MessageCode {
 	switch {
+	case e.Effect == "refused":
+		return MsgImportEffectRefusedHelp
 	case e.Effect == "replace":
 		return MsgImportEffectNeedsOverwrite
 	case e.LocalChanged:
@@ -207,13 +211,21 @@ func (e ImportRefreshEffect) Needs() MessageCode {
 
 // HistoryCode says whether kept history keeps the local tip.
 func (e ImportRefreshEffect) HistoryCode() MessageCode {
-	switch e.History {
-	case "kept":
+	if e.History == "kept" {
 		return MsgImportEffectKept
-	case "not_kept":
-		return MsgImportEffectNotKept
+	}
+	return MsgImportEffectNotKept
+}
+
+// EffectCode names what happens to the ref.
+func (e ImportRefreshEffect) EffectCode() MessageCode {
+	switch e.Effect {
+	case "refused":
+		return MsgImportEffectRefused
+	case "replace":
+		return MsgImportEffectReplace
 	default:
-		return MsgImportEffectKeptUnknown
+		return MsgImportEffectDelete
 	}
 }
 

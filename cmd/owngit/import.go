@@ -276,12 +276,13 @@ func importStatus(arguments []string) error {
 			Code             string `json:"code"`
 			Reason           string `json:"reason"`
 		} `json:"runtime"`
-		Refs           []importRefView            `json:"refs"`
-		RefsTruncated  bool                       `json:"refs_truncated"`
-		RefreshEffects []importsync.RefreshEffect `json:"refresh_effects"`
-		LastRun        *runSummary                `json:"last_run"`
-		ActiveRun      *runSummary                `json:"active_run"`
-		Options        *importsync.OptionsStatus  `json:"options"`
+		Refs                  []importRefView            `json:"refs"`
+		RefsTruncated         bool                       `json:"refs_truncated"`
+		RefreshEffects        []importsync.RefreshEffect `json:"refresh_effects"`
+		RefreshEffectsUnknown bool                       `json:"refresh_effects_unknown"`
+		LastRun               *runSummary                `json:"last_run"`
+		ActiveRun             *runSummary                `json:"active_run"`
+		Options               *importsync.OptionsStatus  `json:"options"`
 	}
 	var envelope struct {
 		Status json.RawMessage `json:"status"`
@@ -348,6 +349,9 @@ func importStatus(arguments []string) error {
 	if status.RefsTruncated {
 		fmt.Println("The ref list is truncated.")
 	}
+	if status.RefreshEffectsUnknown {
+		fmt.Println("Which refs overwriting diverged refs or following upstream deletions would change could not be worked out now.")
+	}
 	if len(status.RefreshEffects) > 0 {
 		fmt.Println("Refs that overwriting diverged refs or following upstream deletions would change now:")
 		for _, effect := range status.RefreshEffects {
@@ -359,6 +363,9 @@ func importStatus(arguments []string) error {
 
 // refreshEffectText describes what a refresh choice would do to a local ref.
 func refreshEffectText(effect importsync.RefreshEffect) string {
+	if effect.Effect == "refused" {
+		return "the protected default branch differs here; with --overwrite-diverged a refresh stops at it and changes nothing until its protection is turned off"
+	}
 	text := "replaced with the source's, with --overwrite-diverged"
 	if effect.Effect == "delete" {
 		text = "deleted, with --follow-upstream-deletions"
@@ -366,13 +373,10 @@ func refreshEffectText(effect importsync.RefreshEffect) string {
 			text = "deleted, with --follow-upstream-deletions and --overwrite-diverged, because it changed here"
 		}
 	}
-	switch effect.History {
-	case "kept":
+	if effect.History == "kept" {
 		return text + "; kept history keeps the current tip"
-	case "not_kept":
-		return text + "; no kept history"
 	}
-	return text + "; the kept history setting could not be read"
+	return text + "; no kept history"
 }
 
 func importHistory(arguments []string) error {

@@ -321,6 +321,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		page.Options = importOptionsForm(importStatus.Options, nil, chrome.Notices)
 		page.Options.ForURL = importStatus.URL
 		page.Options.Effects = importRefreshEffects(importStatus.RefreshEffects)
+		page.Options.EffectsUnknown = importStatus.RefreshEffectsUnknown
 		page.OptionsSummary = importOptionFacts(importStatus.Options)
 		page.RefreshSummary = importRefreshFacts(importStatus.Options)
 		page.OptionsProblem = importStatus.Options != nil && importStatus.Options.Problem != ""
@@ -338,6 +339,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			page.Options = importOptionsForm(importStatus.Options, &posted, chrome.Notices)
 			page.Options.ForURL = posted.forURL
 			page.Options.Effects = importRefreshEffects(importStatus.RefreshEffects)
+			page.Options.EffectsUnknown = importStatus.RefreshEffectsUnknown
 		}
 	}
 	cursor, _ := strconv.ParseInt(request.URL.Query().Get("cursor"), 10, 64)

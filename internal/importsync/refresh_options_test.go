@@ -400,3 +400,71 @@ func TestReconciledDeletionIsCountedAsDeletedUpstream(t *testing.T) {
 		t.Fatalf("reconciled run = %+v", run)
 	}
 }
+
+// The preview is a plan by the run's own planner. A source that listed
+// nothing at its last refresh deletes nothing, so the preview lists no
+// deletion, and a refresh with the choice on keeps the refs.
+func TestPreviewOfAnEmptySourceDeletesNothing(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.mustImport(ImportInput{})
+	f.transport.mutateAdvertised = func(advertisement *importgit.Advertisement) {
+		*advertisement = importgit.Advertisement{Service: advertisement.Service, ObjectFormat: advertisement.ObjectFormat, Empty: true}
+	}
+	_, err := f.refresh()
+	noErr(t, err)
+	if effects := f.refreshEffects(); len(effects) != 0 {
+		t.Fatalf("preview of an empty source = %+v", effects)
+	}
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{FollowUpstreamDeletions: boolPointer(true)})
+	noErr(t, err)
+	_, err = f.refresh()
+	noErr(t, err)
+	if refs := f.destinationRefs(); refs["refs/heads/dev"] == "" || refs["refs/heads/main"] == "" {
+		t.Fatalf("an empty source deleted refs: %v", refs)
+	}
+}
+
+// A diverged protected default branch makes overwriting refuse the whole
+// refresh. The preview says so instead of promising a replacement, and
+// still lists the deletion that following deletions alone makes; the runs
+// that follow do exactly that.
+func TestPreviewShowsTheProtectedBranchRefusal(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.git(f.source, "branch", "topic")
+	f.mustImport(ImportInput{})
+	localMain := f.localWork("main", "local main\n")
+	localDev := f.localWork("dev", "local dev\n")
+	protect := true
+	_, err := f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+	noErr(t, err)
+	f.git(f.source, "branch", "-D", "topic")
+	_, err = f.refresh()
+	noErr(t, err)
+
+	effects := f.refreshEffects()
+	if len(effects) != 2 || effects["refs/heads/main"].Effect != "refused" || effects["refs/heads/main"].LocalOID != localMain ||
+		effects["refs/heads/topic"].Effect != "delete" {
+		t.Fatalf("preview = %+v", effects)
+	}
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true), FollowUpstreamDeletions: boolPointer(true)})
+	noErr(t, err)
+	if _, err := f.refresh(); problemCode(err) != CodeProtectedBranch {
+		t.Fatalf("refresh with overwrite err = %v", err)
+	}
+	if refs := f.destinationRefs(); refs["refs/heads/topic"] == "" || refs["refs/heads/dev"] != localDev {
+		t.Fatalf("a refused refresh changed refs: %v", refs)
+	}
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(false)})
+	noErr(t, err)
+	_, err = f.refresh()
+	noErr(t, err)
+	if refs := f.destinationRefs(); refs["refs/heads/topic"] != "" || refs["refs/heads/dev"] != localDev || refs["refs/heads/main"] != localMain {
+		t.Fatalf("following deletions alone refs = %v", refs)
+	}
+}
