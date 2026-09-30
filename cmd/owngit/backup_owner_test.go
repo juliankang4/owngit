@@ -228,6 +228,14 @@ func TestRestoreCommandWordsAreLiteral(t *testing.T) {
 	if got := shellWord("windows", path); got != `'D:\Data\o''wner\$(Invoke-Evil) `+"`"+`%TEMP% & x'` {
 		t.Fatalf("PowerShell word: %s", got)
 	}
+	// PowerShell also ends a literal string at the single quotation marks.
+	for _, mark := range []string{"\u2018", "\u2019", "\u201a", "\u201b"} {
+		path := `D:\Data\a` + mark + `; Invoke-Evil; ` + mark + `b`
+		want := `'D:\Data\a` + mark + mark + `; Invoke-Evil; ` + mark + mark + `b'`
+		if got := shellWord("windows", path); got != want {
+			t.Fatalf("PowerShell word with %U: %s", []rune(mark)[0], got)
+		}
+	}
 	if got := shellWord("linux", "/srv/o'wner/$(evil) `x`"); got != `'/srv/o'\''wner/$(evil) `+"`x`'" {
 		t.Fatalf("POSIX word: %s", got)
 	}

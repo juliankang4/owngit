@@ -56,12 +56,23 @@ func commandShell(goos string) string {
 }
 
 // shellWord quotes word as one literal argument for the shell of goos: a
-// PowerShell literal string on Windows, in which only an apostrophe is
-// special and is doubled, and a POSIX shell word elsewhere. Neither
-// expands anything inside the quotes.
+// PowerShell literal string on Windows, and a POSIX shell word elsewhere.
+// Neither expands anything inside the quotes. PowerShell ends a literal
+// string at an apostrophe or any of the single quotation marks U+2018,
+// U+2019, U+201A and U+201B, and reads each doubled as the character
+// itself.
 func shellWord(goos, word string) string {
 	if goos == "windows" {
-		return "'" + strings.ReplaceAll(word, "'", "''") + "'"
+		var quoted strings.Builder
+		quoted.WriteByte('\'')
+		for _, r := range word {
+			if strings.ContainsRune("'\u2018\u2019\u201a\u201b", r) {
+				quoted.WriteRune(r)
+			}
+			quoted.WriteRune(r)
+		}
+		quoted.WriteByte('\'')
+		return quoted.String()
 	}
 	return service.ShellQuote(word)
 }
