@@ -460,8 +460,9 @@ func (m *Manager) localConfig(ctx context.Context, repositoryPath string) (map[s
 }
 
 // RefWriteEnvironment returns the variables that give a push to repository
-// id the kept history and default branch protection it follows now (see
-// writeRetentionHook). A choice that cannot be read is a state.PolicyError.
+// id the kept history, default branch protection and extra ref namespaces
+// it follows now (see writeRetentionHook). A choice that cannot be read is
+// a state.PolicyError.
 func (m *Manager) RefWriteEnvironment(ctx context.Context, id string) ([]string, error) {
 	writes, err := m.Store.RefWrites(ctx, id)
 	if err != nil {
@@ -474,17 +475,22 @@ func (m *Manager) RefWriteEnvironment(ctx context.Context, id string) ([]string,
 	if writes.ProtectDefaultBranch {
 		protect = "on"
 	}
-	return []string{"OWNGIT_KEEP_HISTORY=" + keep, "OWNGIT_PROTECT_DEFAULT_BRANCH=" + protect}, nil
+	// The namespaces hold no space (state.ValidateExtraRefPrefixes), so the
+	// hook splits them at spaces.
+	return []string{"OWNGIT_KEEP_HISTORY=" + keep, "OWNGIT_PROTECT_DEFAULT_BRANCH=" + protect,
+		"OWNGIT_EXTRA_REF_PREFIXES=" + strings.Join(writes.ExtraRefPrefixes, " ")}, nil
 }
 
-// writeRetentionHook writes the update hook that checks every branch and tag
-// update a push makes. Two variables that OwnGit's Git service sets for each
-// push (RefWriteEnvironment) carry the repository's choices, read when the
-// push starts: OWNGIT_PROTECT_DEFAULT_BRANCH=on refuses rewriting or
-// deleting the branch HEAD names, and OWNGIT_KEEP_HISTORY=off leaves the
-// previous tip of an overwritten or deleted ref unkept. Without them, as for
-// a push that does not go through OwnGit, history is kept and nothing is
-// protected. OWNGIT_NAME_CONFLICTS_FILE names a file that lists, one per
+// writeRetentionHook writes the update hook that checks every ref update a
+// push makes. Variables that OwnGit's Git service sets for each push
+// (RefWriteEnvironment) carry the repository's choices, read when the push
+// starts: OWNGIT_PROTECT_DEFAULT_BRANCH=on refuses rewriting or deleting the
+// branch HEAD names, OWNGIT_KEEP_HISTORY=off leaves the previous tip of an
+// overwritten or deleted branch or tag unkept, and OWNGIT_EXTRA_REF_PREFIXES
+// lists the namespaces beyond branches and tags whose refs a push may
+// change, without kept history or protection. Without them, as for a push
+// that does not go through OwnGit, history is kept, nothing is protected
+// and only branches and tags are accepted. OWNGIT_NAME_CONFLICTS_FILE names a file that lists, one per
 // line, the refs of the push that the hook refuses because a file system
 // can treat their name or folder as another ref's (RefNameConflicts; the
 // Git service allows deleting such a ref that exists), and the hook
@@ -507,7 +513,12 @@ case "$ref" in
   refs/heads/*) kind=heads; short=${ref#refs/heads/} ;;
   refs/tags/*) kind=tags; short=${ref#refs/tags/} ;;
   refs/owngit/*) echo "OwnGit reserved refs cannot be changed" >&2; exit 1 ;;
-  *) echo "OwnGit accepts only branch and tag refs" >&2; exit 1 ;;
+  *)
+    kind=
+    for prefix in ${OWNGIT_EXTRA_REF_PREFIXES:-}; do
+      case "$ref" in "$prefix"*) kind=extra; short=$ref ;; esac
+    done
+    test -n "$kind" || { echo "OwnGit accepts branches, tags and the ref namespaces listed in the repository's settings. An administrator can add a namespace such as refs/notes/ in the repository's Settings tab, under Advanced, or with owngit repo settings set --extra-ref-prefixes." >&2; exit 1; } ;;
 esac
 if test -n "${OWNGIT_NAME_CONFLICTS_FILE:-}"; then
   test -r "$OWNGIT_NAME_CONFLICTS_FILE" || { echo "OwnGit could not check the pushed ref names against the existing ones" >&2; exit 1; }
@@ -541,6 +552,7 @@ run_git_objects() {
 actual=$(run_git show-ref --verify --hash "$ref" 2>/dev/null) || { echo "current ref is missing" >&2; exit 1; }
 test "$actual" = "$old" || { echo "current ref changed concurrently" >&2; exit 1; }
 run_git_objects cat-file -e "$old^{object}" || { echo "old object is unavailable" >&2; exit 1; }
+test "$kind" = extra && exit 0
 if test "$kind" = heads && ! is_null_oid "$new"; then
   if run_git_objects merge-base --is-ancestor "$old" "$new"; then
     exit 0

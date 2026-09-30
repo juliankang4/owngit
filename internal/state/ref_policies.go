@@ -24,13 +24,20 @@ import (
 // branch HEAD names is refused. It names no branch, so it follows a change of
 // the default branch.
 //
-// Both are read where a ref write happens (RefWrites), and a stored value
-// that cannot be used is a PolicyError there, never the default.
+// Extra ref namespaces: repository_policies.extra_ref_prefixes, such as
+// refs/notes/. A push may change refs under them as well as branches and
+// tags. They have no kept history and no protection.
+//
+// All three are read where a ref write happens (RefWrites), and a stored
+// value that cannot be used is a PolicyError there, never the default.
 
 const (
 	keptHistoryKey = "retain_history"
 	// repositoryPolicyKey names a repository_policies row in a PolicyError.
 	repositoryPolicyKey = "repository_policies"
+	// repositoryRefPrefixesKey names a repository's extra ref namespaces
+	// in a PolicyError.
+	repositoryRefPrefixesKey = "repository_policies.extra_ref_prefixes"
 )
 
 // KeptHistory reports whether repositories that follow the server default
@@ -83,6 +90,8 @@ func ParseKeptHistoryChoice(value string) (KeptHistoryChoice, bool) {
 type RepositoryRefPolicy struct {
 	KeptHistory          KeptHistoryChoice
 	ProtectDefaultBranch bool
+	// ExtraRefPrefixes are the extra ref namespaces, empty by default.
+	ExtraRefPrefixes []string
 }
 
 // RepositoryRefPolicyChange names what to change; a nil field keeps its
@@ -90,14 +99,49 @@ type RepositoryRefPolicy struct {
 type RepositoryRefPolicyChange struct {
 	KeptHistory          *KeptHistoryChoice
 	ProtectDefaultBranch *bool
+	ExtraRefPrefixes     *[]string
 }
 
-// RepositoryRefPolicy returns what repository id saved. A repository
-// without a row has the defaults: follow the server, no protection.
+// RepositoryRefPolicy returns the kept history choice and default branch
+// protection repository id saved. A repository without a row has the
+// defaults: follow the server, no protection. Its extra ref namespaces are
+// read apart (RepositoryExtraRefPrefixes), so either can be shown while
+// the other cannot be read.
 func (s *Store) RepositoryRefPolicy(ctx context.Context, id string) (RepositoryRefPolicy, error) {
 	return repositoryRefPolicy(ctx, s.db, id)
 }
 
+// RepositoryExtraRefPrefixes returns the extra ref namespaces repository
+// id saved, none by default.
+func (s *Store) RepositoryExtraRefPrefixes(ctx context.Context, id string) ([]string, error) {
+	return repositoryRefPrefixes(ctx, s.db, id)
+}
+
+// repositoryRefPrefixes reads the extra ref namespaces of repository id.
+func repositoryRefPrefixes(ctx context.Context, query querier, id string) ([]string, error) {
+	var text any
+	err := query.QueryRowContext(ctx, `SELECT extra_ref_prefixes FROM repository_policies WHERE repository_id=?`, id).Scan(&text)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	stored, isText := text.(string)
+	var prefixes []string
+	if isText {
+		prefixes, err = decodeRefPrefixes(stored)
+	} else {
+		err = errors.New("not text")
+	}
+	if err != nil {
+		return nil, &PolicyError{Key: repositoryRefPrefixesKey, Value: fmt.Sprint(text), Cause: fmt.Errorf("repository %q: %w", id, err)}
+	}
+	return prefixes, nil
+}
+
+// repositoryRefPolicy reads the kept history choice and default branch
+// protection of repository id.
 func repositoryRefPolicy(ctx context.Context, query querier, id string) (RepositoryRefPolicy, error) {
 	// Both columns are read as stored, so any value that is not a choice,
 	// whatever its type, is a PolicyError.
@@ -147,15 +191,23 @@ type RefPolicySave struct {
 }
 
 // SaveRepositoryRefPolicy applies change to what repository id saved, in
-// one transaction that also decides what the change turned off. A saved row
-// that cannot be read is replaced only by a change that names both choices;
-// otherwise its PolicyError is returned. A change whose result follows a
+// one transaction that also decides what the change turned off. Saved
+// choices that cannot be read are replaced only by a change that names both
+// choices, and saved namespaces only by a change that names them;
+// otherwise their PolicyError is returned. A change whose result follows a
 // server default that cannot be read is refused with that PolicyError and
 // saves nothing. The repository's other policies are left as they are.
 func (s *Store) SaveRepositoryRefPolicy(ctx context.Context, id string, change RepositoryRefPolicyChange) (RefPolicySave, error) {
 	if change.KeptHistory != nil {
 		if _, valid := ParseKeptHistoryChoice(string(*change.KeptHistory)); !valid {
 			return RefPolicySave{}, fmt.Errorf("invalid kept history choice %q", *change.KeptHistory)
+		}
+	}
+	var prefixesText string
+	if change.ExtraRefPrefixes != nil {
+		var err error
+		if prefixesText, err = encodeRefPrefixes(*change.ExtraRefPrefixes); err != nil {
+			return RefPolicySave{}, err
 		}
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -175,13 +227,25 @@ func (s *Store) SaveRepositoryRefPolicy(ctx context.Context, id string, change R
 	if err != nil {
 		return RefPolicySave{}, err
 	}
+	if change.ExtraRefPrefixes == nil {
+		if policy.ExtraRefPrefixes, err = repositoryRefPrefixes(ctx, tx, id); err != nil {
+			return RefPolicySave{}, err
+		}
+		if prefixesText, err = encodeRefPrefixes(policy.ExtraRefPrefixes); err != nil {
+			return RefPolicySave{}, err
+		}
+	} else {
+		policy.ExtraRefPrefixes = *change.ExtraRefPrefixes
+	}
 	if change.KeptHistory != nil {
 		policy.KeptHistory = *change.KeptHistory
 	}
 	if change.ProtectDefaultBranch != nil {
 		policy.ProtectDefaultBranch = *change.ProtectDefaultBranch
 	}
-	result := RefPolicySave{Saved: policy, Now: RefWrites{KeepHistory: policy.KeptHistory == KeptHistoryOn, ProtectDefaultBranch: policy.ProtectDefaultBranch}}
+	result := RefPolicySave{Saved: policy, Now: RefWrites{
+		KeepHistory: policy.KeptHistory == KeptHistoryOn, ProtectDefaultBranch: policy.ProtectDefaultBranch, ExtraRefPrefixes: policy.ExtraRefPrefixes,
+	}}
 	if policy.KeptHistory == KeptHistoryDefault {
 		if result.Now.KeepHistory, err = keptHistory(ctx, tx); err != nil {
 			return RefPolicySave{}, err
@@ -197,9 +261,10 @@ func (s *Store) SaveRepositoryRefPolicy(ctx context.Context, id string, change R
 	case KeptHistoryOff:
 		retain = 0
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO repository_policies(repository_id,retain_history,protect_default_branch,updated_at) VALUES(?,?,?,?)
-		ON CONFLICT(repository_id) DO UPDATE SET retain_history=excluded.retain_history,protect_default_branch=excluded.protect_default_branch,updated_at=excluded.updated_at`,
-		id, retain, boolInt(policy.ProtectDefaultBranch), time.Now().Unix()); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO repository_policies(repository_id,retain_history,protect_default_branch,extra_ref_prefixes,updated_at) VALUES(?,?,?,?,?)
+		ON CONFLICT(repository_id) DO UPDATE SET retain_history=excluded.retain_history,protect_default_branch=excluded.protect_default_branch,
+		extra_ref_prefixes=excluded.extra_ref_prefixes,updated_at=excluded.updated_at`,
+		id, retain, boolInt(policy.ProtectDefaultBranch), prefixesText, time.Now().Unix()); err != nil {
 		return RefPolicySave{}, err
 	}
 	return result, tx.Commit()
@@ -214,6 +279,9 @@ type RefWrites struct {
 	// ProtectDefaultBranch refuses rewriting or deleting the branch HEAD
 	// names.
 	ProtectDefaultBranch bool
+	// ExtraRefPrefixes are the ref namespaces beyond branches and tags a
+	// push may change.
+	ExtraRefPrefixes []string
 }
 
 // RefWrites returns what a ref write to repository id follows now: its own
@@ -238,6 +306,9 @@ func refWrites(ctx context.Context, query querier, id string) (RefWrites, error)
 		if writes.KeepHistory, err = keptHistory(ctx, query); err != nil {
 			return RefWrites{}, err
 		}
+	}
+	if writes.ExtraRefPrefixes, err = repositoryRefPrefixes(ctx, query, id); err != nil {
+		return RefWrites{}, err
 	}
 	return writes, nil
 }

@@ -44,15 +44,16 @@ func (e *PolicyError) Advice() string { return policyNames[e.Key].advice }
 // policyNames describes each policy, by metadata key, in the names an owner
 // uses to set it.
 var policyNames = map[string]struct{ field, advice string }{
-	generalSessionKey:     {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
-	initialBranchKey:      {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
-	gitTransferLimitsKey:  {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size, --transfer-time, --transfer-per-repository, --transfer-extra-slots, --transfer-idle and --transfer-queue."},
-	checkLogRetentionKey:  {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
-	keptHistoryKey:        {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
-	deleteRequiresNameKey: {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
-	loginLimitsKey:        {"login_limits", "The saved login attempt limits cannot be read, so a wrong password cannot be counted. Set all three again under Settings, Access, or with owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m (the defaults)."},
-	crossSiteLinksKey:     {"cross_site_links", "The saved choice for links from other sites cannot be read, so the shared password cannot start a sign-in. Set it again under Settings, Access, or with owngit settings set --cross-site-links."},
-	repositoryPolicyKey:   {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
+	generalSessionKey:        {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
+	initialBranchKey:         {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
+	gitTransferLimitsKey:     {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size, --transfer-time, --transfer-per-repository, --transfer-extra-slots, --transfer-idle and --transfer-queue."},
+	checkLogRetentionKey:     {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
+	keptHistoryKey:           {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
+	deleteRequiresNameKey:    {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
+	loginLimitsKey:           {"login_limits", "The saved login attempt limits cannot be read, so a wrong password cannot be counted. Set all three again under Settings, Access, or with owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m (the defaults)."},
+	crossSiteLinksKey:        {"cross_site_links", "The saved choice for links from other sites cannot be read, so the shared password cannot start a sign-in. Set it again under Settings, Access, or with owngit settings set --cross-site-links."},
+	repositoryRefPrefixesKey: {"extra_ref_prefixes", "This repository's saved extra ref namespaces cannot be read, so pushes to it are refused. Set them again in the repository's Settings tab, under Advanced, or with owngit repo settings set --extra-ref-prefixes."},
+	repositoryPolicyKey:      {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
 }
 
 // policyValue reads the metadata row key with query, the store or a

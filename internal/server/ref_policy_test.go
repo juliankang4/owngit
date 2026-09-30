@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -111,7 +112,7 @@ func TestRepositoryHistoryChoicesAreSavedFromTheSettingsTabAndTheAPI(t *testing.
 	if result := browserForm(t, client, target, url.Values{"csrf": {adminTestCSRF}, "kept_history": {"sometimes"}, "protect_default_branch": {"on"}}, server.URL); result.status != http.StatusBadRequest {
 		t.Fatalf("an unknown choice: status=%d", result.status)
 	}
-	if got := saved(); got != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryDefault}) {
+	if got := saved(); !reflect.DeepEqual(got, state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryDefault}) {
 		t.Fatalf("a refused save changed the choices: %+v", got)
 	}
 	for _, step := range []struct {
@@ -129,7 +130,7 @@ func TestRepositoryHistoryChoicesAreSavedFromTheSettingsTabAndTheAPI(t *testing.
 		if result.status != http.StatusSeeOther || result.header.Get("Location") != "/repositories/project/settings?notice="+step.notice {
 			t.Fatalf("%v: status=%d location=%q", step.form, result.status, result.header.Get("Location"))
 		}
-		if got := saved(); got != step.want {
+		if got := saved(); !reflect.DeepEqual(got, step.want) {
 			t.Fatalf("%v saved %+v, want %+v", step.form, got, step.want)
 		}
 	}
@@ -187,7 +188,7 @@ func TestRepositoryHistoryChoicesAreSavedFromTheSettingsTabAndTheAPI(t *testing.
 	if result.status != http.StatusConflict || !strings.Contains(result.body, enText(webui.MsgRepoHistoryServerUnreadable)) {
 		t.Fatalf("tab save following an unreadable server default: status=%d", result.status)
 	}
-	if got := saved(); got != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
+	if got := saved(); !reflect.DeepEqual(got, state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
 		t.Fatalf("a refused change was saved: %+v", got)
 	}
 	status, answer, problem = repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"kept_history": "off", "protect_default_branch": false})

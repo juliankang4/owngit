@@ -17,6 +17,18 @@ const (
 	MsgTransferQueueHelp        MessageCode = "transfer.queue_help"
 	MsgTransferSlotsWarning     MessageCode = "transfer.slots_warning"
 	MsgTransferSavedLooser      MessageCode = "transfer.saved_looser"
+
+	MsgNamespacesTitle             MessageCode = "repoadmin.namespaces.title"
+	MsgNamespacesHelp              MessageCode = "repoadmin.namespaces.help"
+	MsgNamespacesChange            MessageCode = "repoadmin.namespaces.change"
+	MsgNamespacesLabel             MessageCode = "repoadmin.namespaces.label"
+	MsgNamespacesFieldHelp         MessageCode = "repoadmin.namespaces.field_help"
+	MsgNamespacesUnkept            MessageCode = "repoadmin.namespaces.unkept"
+	MsgNamespacesSave              MessageCode = "repoadmin.namespaces.save"
+	MsgNamespacesSaved             MessageCode = "repoadmin.namespaces.saved"
+	MsgNamespacesInvalid           MessageCode = "repoadmin.namespaces.invalid"
+	MsgNamespacesUnreadable        MessageCode = "repoadmin.namespaces.unreadable"
+	MsgNamespacesChoicesUnreadable MessageCode = "repoadmin.namespaces.choices_unreadable"
 )
 
 var gitStorageCatalog = map[MessageCode]message{
@@ -52,6 +64,39 @@ var gitStorageCatalog = map[MessageCode]message{
 	MsgTransferSavedLooser: {
 		en: "Saved. Transfers that start from now on use the new limits. Transfers can hold slots longer and make other clients wait.",
 		ko: "저장했습니다. 이제부터 시작하는 전송에 새 한도가 적용됩니다. 전송이 자리를 더 오래 차지해 다른 클라이언트가 기다릴 수 있습니다.",
+	},
+
+	MsgNamespacesTitle: {en: "Other ref namespaces", ko: "다른 ref 이름공간"},
+	MsgNamespacesHelp: {
+		en: "Pushes may change branches and tags, and refs under the namespaces listed here, such as refs/notes/ for Git notes. None is listed by default. A change applies to pushes that start after you save.",
+		ko: "푸시로는 브랜치와 태그, 그리고 여기에 적은 이름공간 아래의 ref를 바꿀 수 있습니다. 예를 들어 Git 노트는 refs/notes/입니다. 기본값은 비어 있고, 저장한 뒤 시작하는 푸시부터 적용됩니다.",
+	},
+	MsgNamespacesChange: {en: "Change the namespaces", ko: "이름공간 바꾸기"},
+	MsgNamespacesLabel:  {en: "Namespaces, one per line", ko: "이름공간(한 줄에 하나씩)"},
+	MsgNamespacesFieldHelp: {
+		en: "Each starts with refs/ and ends with /, such as refs/notes/. Branches, tags, OwnGit's own refs/owngit/ and namespaces that differ only in letter case or lie inside another are refused. At most 32.",
+		ko: "refs/로 시작하고 /로 끝나야 합니다(예: refs/notes/). 브랜치, 태그, OwnGit이 쓰는 refs/owngit/, 대소문자만 다르거나 다른 이름공간 안에 들어가는 이름공간은 받지 않습니다. 32개까지 적을 수 있습니다.",
+	},
+	MsgNamespacesUnkept: {
+		en: "Overwritten or deleted refs in these namespaces have no kept history.",
+		ko: "이 이름공간에서 덮어쓰거나 지운 ref는 이전 기록이 보관되지 않습니다.",
+	},
+	MsgNamespacesSave: {en: "Save namespaces", ko: "이름공간 저장"},
+	MsgNamespacesSaved: {
+		en: "Saved. Pushes that start from now on follow the new namespaces.",
+		ko: "저장했습니다. 이제부터 시작하는 푸시는 새 이름공간을 따릅니다.",
+	},
+	MsgNamespacesInvalid: {
+		en: "Write each namespace as refs/name/, outside branches, tags and refs/owngit/, not differing from another only in letter case or lying inside another, at most 32.",
+		ko: "이름공간은 refs/이름/ 형식으로 적어 주세요. 브랜치, 태그, refs/owngit/ 밖이어야 하고, 다른 이름공간과 대소문자만 다르거나 그 안에 들어가면 안 되며, 32개까지입니다.",
+	},
+	MsgNamespacesUnreadable: {
+		en: "The saved namespaces cannot be read, so pushes to this repository are refused. Save the list again to replace them.",
+		ko: "저장된 이름공간을 읽을 수 없어 지금은 이 저장소로 푸시할 수 없습니다. 목록을 다시 저장하면 바뀝니다.",
+	},
+	MsgNamespacesChoicesUnreadable: {
+		en: "Nothing was saved because the repository's kept history and default branch protection cannot be read. Save them above first.",
+		ko: "저장소의 기록 보관과 기본 브랜치 보호 설정을 읽을 수 없어 저장하지 않았습니다. 위에서 먼저 그 설정을 저장해 주세요.",
 	},
 }
 

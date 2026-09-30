@@ -93,6 +93,35 @@
   </form>
 </section>
 
+{{/* Extra ref namespaces, an advanced choice collapsed unless a save was
+     refused or the saved list cannot be read. */}}
+{{$nn := $p.NamespacesNotices}}
+<section class="setblock" aria-labelledby="rset-namespaces-h">
+  <h3 id="rset-namespaces-h" class="setblock__h">{{icon "branch"}}{{bi $lang "repoadmin.namespaces.title"}}</h3>
+  <p class="setblock__d">{{bi $lang "repoadmin.namespaces.help"}}</p>
+  {{if $p.NamespacesUnreadable}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "repoadmin.namespaces.unreadable"}}</span></p>{{end}}
+  {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $nn "Scope" "rset-namespaces" "Field" "" "Focus" 0}}
+  <details class="grp__more"{{if or $nn $p.NamespacesUnreadable $p.Namespaces}} open{{end}}>
+    <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "repoadmin.namespaces.change"}}</summary>
+    <form class="form" method="post" action="{{$p.NamespacesURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="lang" value="{{$lang}}">
+      <div class="f">
+        <label for="rset-namespaces">{{bi $lang "repoadmin.namespaces.label"}}</label>
+        <textarea id="rset-namespaces" name="extra_ref_prefixes" class="mono" rows="3" autocomplete="off" spellcheck="false" placeholder="refs/notes/" aria-describedby="rset-namespaces-help"
+                  {{template "fieldInvalid" dict "Notices" $nn "Scope" "rset-namespaces" "Field" "extra_ref_prefixes"}}>{{$p.Namespaces}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $nn "Scope" "rset-namespaces" "Field" "extra_ref_prefixes"}}
+        <p class="f__help" id="rset-namespaces-help">{{bi $lang "repoadmin.namespaces.field_help"}}</p>
+      </div>
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "repoadmin.namespaces.unkept"}}</span></p>
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $nn "Scope" "rset-namespaces" "ID" "rset-namespaces-password"}}
+      <div class="actions">
+        <button type="submit" class="btn btn--primary">{{bi $lang "repoadmin.namespaces.save"}}</button>
+      </div>
+    </form>
+  </details>
+</section>
+
 <section class="setblock" aria-labelledby="rset-pages-h">
   <h3 id="rset-pages-h" class="setblock__h">{{bi $lang "repoadmin.pages.title"}}</h3>
   <ul class="rset__links">

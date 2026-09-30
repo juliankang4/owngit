@@ -430,6 +430,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.handleSaveHistory(writer, request, stored, summary, chrome, session)
 		return
 	}
+	if len(parts) == 3 && parts[1] == "settings" && parts[2] == "ref-namespaces" && request.Method == http.MethodPost {
+		app.handleSaveNamespaces(writer, request, stored, summary, chrome, session)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "import" {
 		app.handleImportPage(writer, request, stored, summary, chrome)
 		return

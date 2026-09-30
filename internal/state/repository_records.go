@@ -49,31 +49,43 @@ func (p RepositoryPolicy) IsDefault() bool {
 	return p.RetainHistory == nil && !p.ProtectDefaultBranch && len(p.ExtraRefPrefixes) == 0
 }
 
-// maximumExtraRefPrefixes bounds a list of extra ref namespaces.
-const maximumExtraRefPrefixes = 32
+// maximumExtraRefPrefixes bounds a list of extra ref namespaces, and
+// maximumExtraRefPrefix one namespace, so every list fits its column.
+const (
+	maximumExtraRefPrefixes = 32
+	maximumExtraRefPrefix   = 100
+)
 
 // ValidateExtraRefPrefixes accepts ref namespaces such as refs/notes/: each
-// starts with refs/, ends with /, is outside branches, tags and OwnGit's own
-// refs, and appears once.
+// starts with refs/, ends with /, is written with ASCII letters, digits and
+// "-", "_", "." and "/" as Git accepts in a ref name, and has at most 100
+// characters. Letter case aside, none may lie inside or around another of
+// the list or branches, tags or OwnGit's own refs, since some file systems
+// store two such spellings in one folder.
 func ValidateExtraRefPrefixes(prefixes []string) error {
 	if len(prefixes) > maximumExtraRefPrefixes {
 		return fmt.Errorf("at most %d extra ref namespaces are allowed", maximumExtraRefPrefixes)
 	}
-	seen := make(map[string]bool, len(prefixes))
+	taken := []string{"refs/heads/", "refs/tags/", "refs/owngit/"}
 	for _, prefix := range prefixes {
 		name := strings.TrimSuffix(prefix, "/")
-		if !strings.HasPrefix(prefix, "refs/") || !strings.HasSuffix(prefix, "/") || !validBranchText(name) || strings.Count(name, "/") < 1 {
-			return fmt.Errorf("extra ref namespace %q is not a ref prefix such as refs/notes/", prefix)
-		}
-		for _, reserved := range []string{"refs/heads/", "refs/tags/", "refs/owngit/"} {
-			if strings.HasPrefix(prefix, reserved) || strings.HasPrefix(reserved, prefix) {
-				return fmt.Errorf("extra ref namespace %q overlaps %s", prefix, reserved)
+		valid := len(prefix) <= maximumExtraRefPrefix && strings.HasPrefix(prefix, "refs/") && strings.HasSuffix(prefix, "/") &&
+			validBranchText(name) && strings.Count(name, "/") >= 1
+		for _, character := range prefix {
+			if !(character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || strings.ContainsRune("-_./", character)) {
+				valid = false
 			}
 		}
-		if seen[prefix] {
-			return fmt.Errorf("extra ref namespace %q is listed twice", prefix)
+		if !valid {
+			return fmt.Errorf("extra ref namespace %q is not a ref prefix such as refs/notes/", prefix)
 		}
-		seen[prefix] = true
+		folded := strings.ToLower(prefix)
+		for _, other := range taken {
+			if strings.HasPrefix(folded, strings.ToLower(other)) || strings.HasPrefix(strings.ToLower(other), folded) {
+				return fmt.Errorf("extra ref namespace %q overlaps %s", prefix, other)
+			}
+		}
+		taken = append(taken, prefix)
 	}
 	return nil
 }

@@ -269,12 +269,12 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if route.service == "git-receive-pack" {
 		var err error
 		if refWrites, err = h.Repositories.RefWriteEnvironment(request.Context(), route.repositoryID); err != nil {
-			what := fmt.Sprintf("Git push to repository %q failed: its kept history and default branch protection could not be read", route.repositoryID)
+			what := fmt.Sprintf("Git push to repository %q failed: its ref settings could not be read", route.repositoryID)
 			logCause(request.Context(), what, err)
 			if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
 				http.Error(writer, policyErr.Advice(), http.StatusConflict)
 			} else {
-				http.Error(writer, "The repository's kept history and default branch protection could not be read. The OwnGit log says why.", http.StatusServiceUnavailable)
+				http.Error(writer, "The repository's kept history, default branch protection and extra ref namespaces could not be read. The OwnGit log says why.", http.StatusServiceUnavailable)
 			}
 			return
 		}

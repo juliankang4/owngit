@@ -151,7 +151,7 @@ func hasBranch(summary repository.Summary, name string) bool {
 }
 
 func (app *App) renderRepositorySettings(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, status int) {
-	app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, selected, nil, status)
+	app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, selected, nil, nil, status)
 }
 
 // historyForm is what the kept history and protection form sent, shown
@@ -162,16 +162,23 @@ type historyForm struct {
 	notices []webui.Notice
 }
 
+// namespacesForm is what the extra ref namespaces form sent, shown again
+// with its notices after a refused save.
+type namespacesForm struct {
+	text    string
+	notices []webui.Notice
+}
+
 // renderRepositorySettingsPage renders the Settings tab. The kept history
 // and protection form shows history when it was refused, and otherwise the
 // saved choices; a saved row that cannot be read shows the defaults and
-// says so.
-func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, history *historyForm, status int) {
+// says so. The extra ref namespaces form does the same with namespaces.
+func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, selected string, history *historyForm, namespaces *namespacesForm, status int) {
 	base := app.baseRepositoryPage(request, chrome, stored, summary)
 	self := repositorySettingsURL(stored.ID)
 	page := webui.RepositorySettingsPage{
 		Chrome: chrome, Repo: base.Repo, Tabs: repositoryTabs(base, webui.RepoTabSettings),
-		SelfURL: self, DefaultBranchURL: self + "/default-branch", HistoryURL: self + "/history",
+		SelfURL: self, DefaultBranchURL: self + "/default-branch", HistoryURL: self + "/history", NamespacesURL: self + "/ref-namespaces",
 		DefaultBranch:        summary.DefaultBranch,
 		DefaultBranchMissing: summary.DefaultOID == "" && len(summary.Branches) > 0,
 		ConfiguredChecksURL:  configuredChecksURL(stored.ID),
@@ -192,6 +199,19 @@ func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request
 	page.KeptHistory, page.ProtectDefaultBranch = string(saved.KeptHistory), saved.ProtectDefaultBranch
 	if history != nil {
 		page.KeptHistory, page.ProtectDefaultBranch, page.HistoryNotices = string(history.kept), history.protect, history.notices
+	}
+	prefixes, err := app.Store.RepositoryExtraRefPrefixes(request.Context(), stored.ID)
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "repository settings read", err)
+		err, page.NamespacesUnreadable = nil, true
+	}
+	if err != nil {
+		app.answerUnavailable(writer, request, "repository settings read", err)
+		return
+	}
+	page.Namespaces = strings.Join(prefixes, "\n")
+	if namespaces != nil {
+		page.Namespaces, page.NamespacesNotices = namespaces.text, namespaces.notices
 	}
 	serverKeeps, err := app.Store.KeptHistory(request.Context())
 	switch {
@@ -236,7 +256,7 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 			form.kept = state.KeptHistoryDefault
 		}
 		form.notices = append(form.notices, notice)
-		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", form, status)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", form, nil, status)
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		refuse(adminPasswordNotice(request, err, "admin_password"))
@@ -265,6 +285,49 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 		notice = "history_saved_kept_off"
 	case protectOff:
 		notice = "history_saved_protect_off"
+	}
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
+}
+
+// handleSaveNamespaces saves the repository's extra ref namespaces, one per
+// line. They apply to pushes that start after the save; a list that is not
+// empty warns that their refs have no kept history.
+func (app *App) handleSaveNamespaces(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, session state.Session) {
+	writer.Header().Set("Cache-Control", "no-store")
+	if !app.parseForm(writer, request) {
+		return
+	}
+	if !constantEqual(session.CSRF, postValue(request, "csrf")) {
+		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
+		return
+	}
+	form := &namespacesForm{text: postValue(request, "extra_ref_prefixes")}
+	refuse := func(notice webui.Notice, status int) {
+		form.notices = append(form.notices, notice)
+		app.renderRepositorySettingsPage(writer, request, stored, summary, chrome, "", nil, form, status)
+	}
+	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
+		refuse(adminPasswordNotice(request, err, "admin_password"))
+		return
+	}
+	prefixes := strings.Fields(form.text)
+	if err := state.ValidateExtraRefPrefixes(prefixes); err != nil {
+		refuse(webui.Error("extra_ref_prefixes", webui.MsgNamespacesInvalid), http.StatusUnprocessableEntity)
+		return
+	}
+	_, _, err := app.saveRefPolicy(request.Context(), stored.ID, state.RepositoryRefPolicyChange{ExtraRefPrefixes: &prefixes})
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "repository settings save", err)
+		refuse(webui.Error("extra_ref_prefixes", webui.MsgNamespacesChoicesUnreadable), http.StatusConflict)
+		return
+	}
+	if err != nil {
+		refuse(webui.Error("", webui.MsgRepoHistoryFailed), unavailable(request, "repository settings save", err))
+		return
+	}
+	notice := "namespaces_saved"
+	if len(prefixes) > 0 {
+		notice = "namespaces_saved_unkept"
 	}
 	app.noticeRedirect(writer, request, repositorySettingsURL(stored.ID)+"?notice="+notice, http.StatusSeeOther)
 }

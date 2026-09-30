@@ -3,6 +3,7 @@ package recovery
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -59,7 +60,7 @@ func TestServerPoliciesStayWithTheirInstallation(t *testing.T) {
 	if got, err := restored.CrossSiteLinks(ctx); err != nil || got != state.DefaultCrossSiteLinks {
 		t.Fatalf("cross-site choice=%q err=%v", got, err)
 	}
-	if got, err := restored.RepositoryRefPolicy(ctx, "project"); err != nil || got != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
+	if got, err := restored.RepositoryRefPolicy(ctx, "project"); err != nil || !reflect.DeepEqual(got, state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOn, ProtectDefaultBranch: true}) {
 		t.Fatalf("repository choices=%+v err=%v", got, err)
 	}
 }

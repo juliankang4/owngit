@@ -531,6 +531,10 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgRTRevokedDone)}
 	case "default_branch_saved":
 		return []webui.Notice{webui.Success(webui.MsgRepoDefaultBranchSaved)}
+	case "namespaces_saved":
+		return []webui.Notice{webui.Success(webui.MsgNamespacesSaved)}
+	case "namespaces_saved_unkept":
+		return []webui.Notice{webui.Success(webui.MsgNamespacesSaved), {Kind: webui.NoticeWarning, Code: webui.MsgNamespacesUnkept}}
 	case "history_saved":
 		return []webui.Notice{webui.Success(webui.MsgRepoHistorySaved)}
 	case "history_saved_kept_off":

@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -20,7 +22,7 @@ func TestRefWritesFollowTheServerDefaultAndTheRepositoryChoice(t *testing.T) {
 		noErr(t, err)
 		return got
 	}
-	if got := writes(); got != (RefWrites{KeepHistory: true}) {
+	if got := writes(); !reflect.DeepEqual(got, RefWrites{KeepHistory: true}) {
 		t.Fatalf("defaults = %+v", got)
 	}
 	off, on, follow := false, KeptHistoryOn, KeptHistoryDefault
@@ -31,16 +33,16 @@ func TestRefWritesFollowTheServerDefaultAndTheRepositoryChoice(t *testing.T) {
 	protect := true
 	saved, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{KeptHistory: &on, ProtectDefaultBranch: &protect})
 	noErr(t, err)
-	if saved != (RefPolicySave{Saved: RepositoryRefPolicy{KeptHistory: KeptHistoryOn, ProtectDefaultBranch: true}, Now: RefWrites{KeepHistory: true, ProtectDefaultBranch: true}}) {
+	if !reflect.DeepEqual(saved, RefPolicySave{Saved: RepositoryRefPolicy{KeptHistory: KeptHistoryOn, ProtectDefaultBranch: true}, Now: RefWrites{KeepHistory: true, ProtectDefaultBranch: true}}) {
 		t.Fatalf("saved = %+v", saved)
 	}
-	if got := writes(); got != (RefWrites{KeepHistory: true, ProtectDefaultBranch: true}) {
+	if got := writes(); !reflect.DeepEqual(got, RefWrites{KeepHistory: true, ProtectDefaultBranch: true}) {
 		t.Fatalf("repository on, server off = %+v", got)
 	}
 	// A change that names one choice keeps the other.
 	saved, err = store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{KeptHistory: &follow})
 	noErr(t, err)
-	if saved != (RefPolicySave{Saved: RepositoryRefPolicy{KeptHistory: KeptHistoryDefault, ProtectDefaultBranch: true}, Now: RefWrites{ProtectDefaultBranch: true}, KeptHistoryOff: true}) {
+	if !reflect.DeepEqual(saved, RefPolicySave{Saved: RepositoryRefPolicy{KeptHistory: KeptHistoryDefault, ProtectDefaultBranch: true}, Now: RefWrites{ProtectDefaultBranch: true}, KeptHistoryOff: true}) {
 		t.Fatalf("saved = %+v", saved)
 	}
 	var retain any
@@ -68,11 +70,11 @@ func TestRefWritesFollowTheServerDefaultAndTheRepositoryChoice(t *testing.T) {
 	offChoice := KeptHistoryOff
 	saved, err = store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{KeptHistory: &offChoice, ProtectDefaultBranch: &off})
 	noErr(t, err)
-	if !saved.KeptHistoryOff || !saved.ProtectionOff || saved.Now != (RefWrites{}) {
+	if !saved.KeptHistoryOff || !saved.ProtectionOff || !reflect.DeepEqual(saved.Now, RefWrites{}) {
 		t.Fatalf("explicit choices with an unreadable server default = %+v", saved)
 	}
 	noErr(t, store.Exec(ctx, `UPDATE repository_policies SET protect_default_branch=1 WHERE repository_id='project'`))
-	if got := writes(); got != (RefWrites{ProtectDefaultBranch: true}) {
+	if got := writes(); !reflect.DeepEqual(got, RefWrites{ProtectDefaultBranch: true}) {
 		t.Fatalf("repository off with an unreadable server default = %+v", got)
 	}
 	keep := true
@@ -91,11 +93,52 @@ func TestRefWritesFollowTheServerDefaultAndTheRepositoryChoice(t *testing.T) {
 	if _, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{KeptHistory: &on, ProtectDefaultBranch: &unprotected}); err != nil {
 		t.Fatalf("a change of both choices did not replace an unreadable row: %v", err)
 	}
-	if got := writes(); got != (RefWrites{KeepHistory: true}) {
+	if got := writes(); !reflect.DeepEqual(got, RefWrites{KeepHistory: true}) {
 		t.Fatalf("after replacing the unreadable row = %+v", got)
 	}
 	invalid := KeptHistoryChoice("sometimes")
 	if _, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{KeptHistory: &invalid}); err == nil {
 		t.Fatal("an unknown kept history choice was saved")
 	}
+}
+
+// Extra ref namespaces are refused when, letter case aside, they lie inside
+// or around another namespace of the list or branches, tags and OwnGit's
+// own refs. A saved list is kept by a change of the other choices and read
+// with the ref writes; an unreadable one names its setting.
+func TestExtraRefNamespacesAreCheckedSavedAndRead(t *testing.T) {
+	for _, refused := range [][]string{
+		{"refs/Heads/"}, {"refs/"}, {"refs/OWNGIT/x/"}, {"refs/notes/", "refs/Notes/"}, {"refs/notes/", "refs/notes/x/"},
+		{"refs/notes"}, {"refs/nötes/"}, {"refs/notes/", "refs/notes/"}, {"refs/" + strings.Repeat("n", 100) + "/"},
+	} {
+		if err := ValidateExtraRefPrefixes(refused); err == nil {
+			t.Errorf("%q was accepted", refused)
+		}
+	}
+	noErr(t, ValidateExtraRefPrefixes([]string{"refs/notes/", "refs/meta/", "refs/changes-review/"}))
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	noErr(t, store.Exec(ctx, `INSERT INTO repositories(id,name,description,created_at) VALUES('project','project','',1)`))
+	_, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{ExtraRefPrefixes: &[]string{"refs/notes/"}})
+	noErr(t, err)
+	protect := true
+	saved, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+	noErr(t, err)
+	if len(saved.Saved.ExtraRefPrefixes) != 1 || len(saved.Now.ExtraRefPrefixes) != 1 {
+		t.Fatalf("a change of the protection dropped the namespaces: %+v", saved)
+	}
+	if writes, err := store.RefWrites(ctx, "project"); err != nil || len(writes.ExtraRefPrefixes) != 1 || writes.ExtraRefPrefixes[0] != "refs/notes/" {
+		t.Fatalf("writes=%+v err=%v", writes, err)
+	}
+	noErr(t, store.Exec(ctx, `UPDATE repository_policies SET extra_ref_prefixes='["refs/tags/"]' WHERE repository_id='project'`))
+	var policyErr *PolicyError
+	if _, err := store.RefWrites(ctx, "project"); !errors.As(err, &policyErr) || policyErr.Setting() != "extra_ref_prefixes" {
+		t.Fatalf("unreadable namespaces read with err=%v", err)
+	}
+	if _, err := store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{ProtectDefaultBranch: &protect}); !errors.As(err, &policyErr) {
+		t.Fatalf("a change that does not name the unreadable namespaces: err=%v", err)
+	}
+	_, err = store.SaveRepositoryRefPolicy(ctx, "project", RepositoryRefPolicyChange{ExtraRefPrefixes: &[]string{}})
+	noErr(t, err)
 }

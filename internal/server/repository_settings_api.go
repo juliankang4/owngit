@@ -9,7 +9,8 @@ import (
 	"owngit/internal/webui"
 )
 
-// A repository's kept history choice and default branch protection. The
+// A repository's kept history choice, default branch protection and extra
+// ref namespaces. The
 // repository Settings tab and the owner API (/api/v1/repositories/{id}/
 // settings) save them through saveRefPolicy, so both warn the same way when
 // a change turns one of them off.
@@ -45,6 +46,9 @@ type repositorySettingsJSON struct {
 	// ProtectDefaultBranch refuses pushes that rewrite or delete the
 	// default branch.
 	ProtectDefaultBranch *bool `json:"protect_default_branch,omitempty"`
+	// ExtraRefPrefixes are the ref namespaces beyond branches and tags a
+	// push may change, such as refs/notes/. A PATCH replaces the list.
+	ExtraRefPrefixes *[]string `json:"extra_ref_prefixes,omitempty"`
 }
 
 type repositorySettingsResponse struct {
@@ -87,9 +91,15 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 			writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "kept_history_now is not a setting; set kept_history.", nil)
 			return
 		}
-		if input.KeptHistory == nil && input.ProtectDefaultBranch == nil {
-			writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "Name kept_history, protect_default_branch or both.", nil)
+		if input.KeptHistory == nil && input.ProtectDefaultBranch == nil && input.ExtraRefPrefixes == nil {
+			writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "Name kept_history, protect_default_branch, extra_ref_prefixes or several of them.", nil)
 			return
+		}
+		if input.ExtraRefPrefixes != nil {
+			if err := state.ValidateExtraRefPrefixes(*input.ExtraRefPrefixes); err != nil {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "extra_ref_prefixes: "+err.Error()+".", nil)
+				return
+			}
 		}
 		var change state.RepositoryRefPolicyChange
 		if input.KeptHistory != nil {
@@ -100,7 +110,7 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 			}
 			change.KeptHistory = &kept
 		}
-		change.ProtectDefaultBranch = input.ProtectDefaultBranch
+		change.ProtectDefaultBranch, change.ExtraRefPrefixes = input.ProtectDefaultBranch, input.ExtraRefPrefixes
 		saved, warnings, err := app.saveRefPolicy(request.Context(), repositoryID, change)
 		if errors.As(err, new(*state.PolicyError)) {
 			writeSettingUnreadable(writer, request, "repository settings save", err)
@@ -110,12 +120,15 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 			writeAPIError(writer, unavailable(request, "repository settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
 		}
+		if input.ExtraRefPrefixes != nil && len(*input.ExtraRefPrefixes) > 0 {
+			warnings = append(warnings, webui.MsgNamespacesUnkept)
+		}
 		for _, warning := range warnings {
 			response.Warnings = append(response.Warnings, webui.Text(webui.LangEN, warning))
 		}
 		response.Settings = repositorySettingsJSON{
 			KeptHistory: pointer(string(saved.Saved.KeptHistory)), KeptHistoryNow: onOff(saved.Now.KeepHistory),
-			ProtectDefaultBranch: pointer(saved.Saved.ProtectDefaultBranch),
+			ProtectDefaultBranch: pointer(saved.Saved.ProtectDefaultBranch), ExtraRefPrefixes: prefixList(saved.Saved.ExtraRefPrefixes),
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
 		return
@@ -131,7 +144,15 @@ func (app *App) handleRepositorySettingsAPI(writer http.ResponseWriter, request 
 	}
 	response.Settings = repositorySettingsJSON{
 		KeptHistory: pointer(string(saved.KeptHistory)), KeptHistoryNow: onOff(writes.KeepHistory),
-		ProtectDefaultBranch: pointer(saved.ProtectDefaultBranch),
+		ProtectDefaultBranch: pointer(saved.ProtectDefaultBranch), ExtraRefPrefixes: prefixList(writes.ExtraRefPrefixes),
 	}
 	writeAPIJSON(writer, http.StatusOK, response)
+}
+
+// prefixList is a list of namespaces for JSON, [] when there is none.
+func prefixList(prefixes []string) *[]string {
+	if prefixes == nil {
+		prefixes = []string{}
+	}
+	return &prefixes
 }

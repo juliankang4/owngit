@@ -27,6 +27,12 @@ type repositoryAPIItem struct {
 	// DefaultBranch is shown by a single repository read when its refs can be
 	// read now. It is left out of lists, which read no Git data.
 	DefaultBranch string `json:"default_branch,omitempty"`
+	// PushRefNamespaces, shown by a single repository read, are the ref
+	// namespaces a push may change: branches, tags and the repository's
+	// extra ref namespaces. PushRefNamespacesError replaces them when the
+	// saved extra namespaces cannot be read, which refuses every push.
+	PushRefNamespaces      []string `json:"push_ref_namespaces,omitempty"`
+	PushRefNamespacesError string   `json:"push_ref_namespaces_error,omitempty"`
 }
 
 type repositoryListResponse struct {
@@ -125,6 +131,18 @@ func (app *App) showRepositoryAPI(writer http.ResponseWriter, request *http.Requ
 	// is still described; only its default branch is left out.
 	if snapshot, err := app.Repositories.RefSnapshotWithin(request.Context(), stored.ID, repositoryListWait); err == nil && !snapshot.Stale {
 		item.DefaultBranch = snapshot.Summary.DefaultBranch
+	}
+	extra, err := app.Store.RepositoryExtraRefPrefixes(request.Context(), stored.ID)
+	var policyErr *state.PolicyError
+	switch {
+	case errors.As(err, &policyErr):
+		logFailure(request, "repository ref namespaces read", err)
+		item.PushRefNamespacesError = policyErr.Advice()
+	case err != nil:
+		writeAPIError(writer, unavailable(request, "repository ref namespaces read", err), "state_unavailable", "OwnGit state is unavailable.", nil)
+		return
+	default:
+		item.PushRefNamespaces = append([]string{"refs/heads/", "refs/tags/"}, extra...)
 	}
 	writeAPIJSON(writer, http.StatusOK, repositoryResponse{OK: true, Repository: item})
 }

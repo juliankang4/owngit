@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -147,7 +148,7 @@ func TestRepoSettingsCommandSetsAndShows(t *testing.T) {
 		}
 	}
 	printed, err := captureStdout(func() error {
-		return repoCommand(append([]string{"settings", "set", "--kept-history", "off", "--protect-default-branch", "on"}, remote...))
+		return repoCommand(append([]string{"settings", "set", "--kept-history", "off", "--protect-default-branch", "on", "--extra-ref-prefixes", "refs/notes/, refs/meta/"}, remote...))
 	})
 	if err != nil {
 		t.Fatalf("repo settings set: %v", err)
@@ -156,10 +157,11 @@ func TestRepoSettingsCommandSetsAndShows(t *testing.T) {
 		Settings map[string]any `json:"settings"`
 		Warnings []string       `json:"warnings"`
 	}
-	if err := json.Unmarshal([]byte(printed), &answer); err != nil || len(answer.Warnings) != 1 {
+	if err := json.Unmarshal([]byte(printed), &answer); err != nil || len(answer.Warnings) != 2 ||
+		!reflect.DeepEqual(answer.Settings["extra_ref_prefixes"], []any{"refs/notes/", "refs/meta/"}) {
 		t.Fatalf("repo settings set printed %q (%v)", printed, err)
 	}
-	if saved, err := fixture.store.RepositoryRefPolicy(context.Background(), "project"); err != nil || saved != (state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOff, ProtectDefaultBranch: true}) {
+	if saved, err := fixture.store.RepositoryRefPolicy(context.Background(), "project"); err != nil || !reflect.DeepEqual(saved, state.RepositoryRefPolicy{KeptHistory: state.KeptHistoryOff, ProtectDefaultBranch: true}) {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
 	// A password file sent to an inferred server names that server.

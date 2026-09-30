@@ -55,6 +55,14 @@ type RepositorySettingsPage struct {
 	// HistoryNotices are the notices of a refused save of these choices,
 	// shown in their form.
 	HistoryNotices []Notice
+	// NamespacesURL is the POST target that saves the extra ref
+	// namespaces. Namespaces holds them one per line, or what a refused
+	// save sent. NamespacesUnreadable is true when the saved list cannot be
+	// read; the form then starts empty, and saving it replaces the list.
+	NamespacesURL        string
+	Namespaces           string
+	NamespacesUnreadable bool
+	NamespacesNotices    []Notice
 	// The repository's other administrator screens, each with one line of
 	// explanation on the page. An empty URL renders no entry.
 	ConfiguredChecksURL  string
