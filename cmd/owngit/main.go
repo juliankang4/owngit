@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -542,6 +543,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	defer listener.Close()
 	clearServeError(stateDirectory.Name())
+	// The public share address is optional: when it cannot listen, OwnGit
+	// still serves its own address, and the Network settings say why.
+	var publicListener net.Listener
+	if network.PublicShareListen != "" {
+		if publicListener, err = net.Listen("tcp", network.PublicShareListen); err != nil {
+			network.PublicShareError = err.Error()
+			logf("the public share address could not listen on %s, so share links answer only on OwnGit's own address: %v", network.PublicShareListen, err)
+		} else {
+			defer publicListener.Close()
+			network.PublicShareAddress = publicListener.Addr().String()
+		}
+	}
 
 	policy := server.NewHostPolicy(allowedHosts...)
 	trusted, err := store.TrustedHosts(ctx)
@@ -752,6 +765,22 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		IdleTimeout: 60 * time.Second, MaxHeaderBytes: 1 << 20,
 	}
 	application.OnHostAccepted = live.Publish
+	servers := []*http.Server{httpServer}
+	if publicListener != nil {
+		application.PublicShareURL = network.PublicShareURL
+		publicServer := &http.Server{
+			Handler: application.PublicShareHandler(), ReadHeaderTimeout: httpServer.ReadHeaderTimeout,
+			ReadTimeout: httpServer.ReadTimeout, WriteTimeout: httpServer.WriteTimeout,
+			IdleTimeout: httpServer.IdleTimeout, MaxHeaderBytes: httpServer.MaxHeaderBytes,
+		}
+		servers = append(servers, publicServer)
+		go func() {
+			if err := publicServer.Serve(publicListener); !errors.Is(err, http.ErrServerClosed) {
+				logf("the public share address stopped: %v", err)
+			}
+		}()
+		logf("OwnGit answers share links only on %s, which visitors reach at %s", publicListener.Addr(), network.PublicShareURL)
+	}
 	live.Publish()
 	defer clearNetwork()
 	errCh := make(chan error, 1)
@@ -804,7 +833,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 
 	select {
 	case serveErr := <-errCh:
-		_ = httpServer.Close()
+		for _, server := range servers {
+			_ = server.Close()
+		}
 		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		gitErr := gitHandler.Wait(shutdownContext)
 		cancel()
@@ -819,7 +850,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		// Stop import runs first, so their handlers return promptly with the
 		// recorded outcome instead of outliving the HTTP shutdown window.
 		importRuntime.stop()
-		return stopServing(httpServer, gitHandler, 10*time.Second, logf)
+		return stopServing(servers, gitHandler, 10*time.Second, logf)
 	}
 }
 
@@ -838,16 +869,26 @@ func runTerminalSetup(ctx context.Context, config firstrun.Config) error {
 // closing their connections, which is an ordinary stop and is logged. It
 // fails only when the server cannot stop or when the Git processes are not
 // cleaned up within another grace.
-func stopServing(httpServer *http.Server, gitHandler *githttp.Handler, grace time.Duration, logf func(string, ...any)) error {
+func stopServing(servers []*http.Server, gitHandler *githttp.Handler, grace time.Duration, logf func(string, ...any)) error {
 	shutdownContext, cancel := context.WithTimeout(context.Background(), grace)
 	defer cancel()
-	shutdownErr := httpServer.Shutdown(shutdownContext)
-	if shutdownErr != nil {
-		if errors.Is(shutdownErr, context.DeadlineExceeded) {
-			logf("stopping: ended %d Git transfer(s) and any other requests still running after %s", gitHandler.Active(), grace)
-			shutdownErr = nil
+	errs := make([]error, len(servers))
+	var wait sync.WaitGroup
+	for i, server := range servers {
+		wait.Go(func() { errs[i] = server.Shutdown(shutdownContext) })
+	}
+	wait.Wait()
+	var shutdownErr error
+	if slices.ContainsFunc(errs, func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }) {
+		logf("stopping: ended %d Git transfer(s) and any other requests still running after %s", gitHandler.Active(), grace)
+	}
+	for i, err := range errs {
+		if err != nil {
+			_ = servers[i].Close()
+			if !errors.Is(err, context.DeadlineExceeded) && shutdownErr == nil {
+				shutdownErr = err
+			}
 		}
-		_ = httpServer.Close()
 	}
 	// The ended requests stop their Git processes; wait for that cleanup with
 	// its own deadline, since the shutdown wait may have used all of grace.

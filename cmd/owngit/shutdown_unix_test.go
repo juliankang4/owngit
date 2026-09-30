@@ -73,7 +73,7 @@ func TestStopServingEndsARunningTransferAndSucceeds(t *testing.T) {
 		logged = append(logged, fmt.Sprintf(format, arguments...))
 	}
 	started := time.Now()
-	if err := stopServing(httpServer, gitHandler, 300*time.Millisecond, logf); err != nil {
+	if err := stopServing([]*http.Server{httpServer}, gitHandler, 300*time.Millisecond, logf); err != nil {
 		t.Fatalf("stop with a running transfer failed: %v", err)
 	}
 	if elapsed := time.Since(started); elapsed > 3*time.Second {

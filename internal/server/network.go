@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"owngit/internal/requestctx"
+	"owngit/internal/webui"
 )
 
 // DefaultListenAddress is where serve listens when neither a flag nor a
@@ -59,6 +60,51 @@ func ValidateBaseURL(value string) (string, error) {
 		return "", fmt.Errorf("base URL %q needs a port from 1 to 65535, or none", value)
 	}
 	return parsed.String(), nil
+}
+
+// ValidatePublicShare checks the public share address to be saved: listen,
+// the address its listener uses, and publicURL, the origin visitors use to
+// reach it through a tunnel or reverse proxy. Both are empty (off) or both
+// set. listen must not use the port of privateListen, OwnGit's own listen
+// address. It returns publicURL in canonical form.
+func ValidatePublicShare(listen, publicURL, privateListen string) (string, error) {
+	if listen == "" && publicURL == "" {
+		return "", nil
+	}
+	if listen == "" || publicURL == "" {
+		return "", errors.New("the public share address needs both its listen address and the URL visitors use, or neither")
+	}
+	if err := ValidateListenAddress(listen); err != nil {
+		return "", err
+	}
+	_, port, _ := net.SplitHostPort(listen)
+	if _, privatePort, err := net.SplitHostPort(privateListen); err == nil && port == privatePort {
+		return "", fmt.Errorf("the public share address needs a port other than %s, which OwnGit itself listens on", port)
+	}
+	canonical, err := ValidateBaseURL(publicURL)
+	if err != nil {
+		return "", fmt.Errorf("public share URL: %w", err)
+	}
+	return canonical, nil
+}
+
+// PublicShareWarnings are what a saved public share address means for the
+// owner, said by Settings and by "owngit network set": that the Internet
+// reaches it, that a listen address beyond this computer is reached
+// directly, and that visitors look like one address while no proxy is
+// trusted. None is said while it is off.
+func PublicShareWarnings(listen string, trustedProxies []string) []webui.MessageCode {
+	if listen == "" {
+		return nil
+	}
+	warnings := []webui.MessageCode{webui.MsgPublicShareWarnOn}
+	if host, _, err := net.SplitHostPort(listen); err == nil && !IsLoopbackHost(host) {
+		warnings = append(warnings, webui.MsgPublicShareWarnDirect)
+	}
+	if len(trustedProxies) == 0 {
+		warnings = append(warnings, webui.MsgPublicShareWarnProxy)
+	}
+	return warnings
 }
 
 func validPort(port string) bool {

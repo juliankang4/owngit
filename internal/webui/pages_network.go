@@ -2,7 +2,8 @@ package webui
 
 // ActionSaveNetwork saves the network settings from the Settings page.
 // Fields: admin_password, listen, base_url, allowed_hosts, trusted_proxies
-// (one entry per line), and network_revision, which names the saved values
+// (one entry per line), public_share_listen, public_share_url, and
+// network_revision, which names the saved values
 // the form was opened with.
 const ActionSaveNetwork = "save_network"
 
@@ -35,6 +36,12 @@ type NetworkInfo struct {
 	// Listen is this computer's address, BaseURL the address other devices
 	// use, Hosts the allowed names and Proxies the trusted reverse proxies.
 	Listen, BaseURL, Hosts, Proxies NetworkValue
+	// PublicShare is the public share address: its URL and listen address.
+	PublicShare NetworkValue
+	// PublicShareWarnings say what the saved public share address means;
+	// PublicShareError why the running server could not listen on it.
+	PublicShareWarnings []MessageCode
+	PublicShareError    string
 	// Form holds the text fields: the saved values, or what was submitted
 	// when a save was refused. Saved always holds the saved values, which
 	// the form compares its fields with and which Cancel puts back.
@@ -77,7 +84,8 @@ type NetworkValue struct {
 
 // NetworkForm is the text of the Network form fields.
 type NetworkForm struct {
-	Listen, BaseURL, Hosts, Proxies string
+	Listen, BaseURL, Hosts, Proxies   string
+	PublicShareListen, PublicShareURL string
 }
 
 // NetworkRow is one row of the Network block: a setting's label, the text
@@ -94,5 +102,6 @@ func (info NetworkInfo) Rows() []NetworkRow {
 		{Name: MsgNetBaseURL, Empty: MsgNetNoBaseURL, V: info.BaseURL},
 		{Name: MsgNetHosts, Empty: MsgNetNone, V: info.Hosts},
 		{Name: MsgNetProxies, Empty: MsgNetNone, V: info.Proxies},
+		{Name: MsgPublicShareTitle, Empty: MsgNetNone, V: info.PublicShare},
 	}
 }

@@ -29,6 +29,18 @@
     <p class="f__help">{{bi $lang .CloneHelp}}</p>
   </div>
   {{end}}
+  {{if .PublicURL}}
+  <div class="f">
+    <label for="share-public-url">{{bi $lang "share.created.public_link"}}</label>
+    <textarea id="share-public-url" class="tokenbox mono" rows="2" readonly spellcheck="false" autocomplete="off" data-select-on-focus>{{.PublicURL}}</textarea>
+  </div>
+  {{end}}
+  {{if .PublicCloneURL}}
+  <div class="f">
+    <label for="share-public-clone">{{bi $lang "share.created.public_clone"}}</label>
+    <input id="share-public-clone" class="mono" type="text" readonly spellcheck="false" autocomplete="off" value="{{.PublicCloneURL}}" data-select-on-focus>
+  </div>
+  {{end}}
   {{range .Warnings}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang .}}</span></p>{{end}}
 </div>
 {{end}}

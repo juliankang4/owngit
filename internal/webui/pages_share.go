@@ -91,6 +91,9 @@ type CreatedShareLink struct {
 	URL       string
 	CloneURL  string
 	CloneHelp MessageCode
+	// PublicURL and PublicCloneURL are the same on the public share
+	// address, when the running server has one.
+	PublicURL, PublicCloneURL string
 	// Warnings say what the chosen expiry, scope and password allow.
 	Warnings []MessageCode
 }

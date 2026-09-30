@@ -1665,6 +1665,10 @@ const updateCheckKey = "update_check"
 const (
 	networkListenKey  = "network_listen"
 	networkBaseURLKey = "network_base_url"
+	// The public share address: a second listener that answers share links
+	// only, and the URL visitors use to reach it.
+	networkPublicShareListenKey = "network_public_share_listen"
+	networkPublicShareURLKey    = "network_public_share_url"
 	// networkTrustedProxiesKey holds the trusted reverse proxies as a JSON
 	// list of canonical addresses and ranges.
 	networkTrustedProxiesKey = "network_trusted_proxies"
@@ -1679,15 +1683,22 @@ const (
 type NetworkSettings struct {
 	Listen  string
 	BaseURL string
+	// PublicShareListen and PublicShareURL are both set or both empty; the
+	// public share address is off while they are empty.
+	PublicShareListen string
+	PublicShareURL    string
 }
 
 // NetworkSettings returns the saved network settings.
 func (s *Store) NetworkSettings(ctx context.Context) (NetworkSettings, error) {
-	values, err := s.metadataValues(ctx, networkListenKey, networkBaseURLKey)
+	values, err := s.metadataValues(ctx, networkListenKey, networkBaseURLKey, networkPublicShareListenKey, networkPublicShareURLKey)
 	if err != nil {
 		return NetworkSettings{}, err
 	}
-	return NetworkSettings{Listen: values[networkListenKey], BaseURL: values[networkBaseURLKey]}, nil
+	return NetworkSettings{
+		Listen: values[networkListenKey], BaseURL: values[networkBaseURLKey],
+		PublicShareListen: values[networkPublicShareListenKey], PublicShareURL: values[networkPublicShareURLKey],
+	}, nil
 }
 
 // TrustedProxies returns the saved trusted reverse proxies, sorted.
@@ -1840,7 +1851,10 @@ func (s *Store) UpdateNetwork(ctx context.Context, update NetworkUpdate) error {
 		return err
 	}
 	defer tx.Rollback()
-	for key, value := range map[string]string{networkListenKey: update.Settings.Listen, networkBaseURLKey: update.Settings.BaseURL} {
+	for key, value := range map[string]string{
+		networkListenKey: update.Settings.Listen, networkBaseURLKey: update.Settings.BaseURL,
+		networkPublicShareListenKey: update.Settings.PublicShareListen, networkPublicShareURLKey: update.Settings.PublicShareURL,
+	} {
 		if value == "" {
 			_, err = tx.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, key)
 		} else {
@@ -1933,6 +1947,14 @@ type RunningNetwork struct {
 	// server believes, and TrustedProxiesSource where the list came from.
 	TrustedProxies       []string `json:"trusted_proxies"`
 	TrustedProxiesSource string   `json:"trusted_proxies_source"`
+	// PublicShareListen and PublicShareURL are the public share address the
+	// server started with, or empty when it is off. PublicShareAddress is
+	// the bound address, or empty when listening failed; PublicShareError
+	// then says why.
+	PublicShareListen  string `json:"public_share_listen"`
+	PublicShareURL     string `json:"public_share_url"`
+	PublicShareAddress string `json:"public_share_address"`
+	PublicShareError   string `json:"public_share_error,omitempty"`
 }
 
 // PublishRunningNetwork records what this serving process uses.

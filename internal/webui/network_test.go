@@ -21,9 +21,9 @@ func TestNetworkSettingsStateIsWrittenOut(t *testing.T) {
 		if got := strings.Count(out, text(MsgNetPending)); got < 2 {
 			t.Errorf("%s: pending rows do not say %q", lang, Text(lang, MsgNetPending))
 		}
-		// Four rows, two values each, each named.
-		if got := strings.Count(out, `class="netrow__k"`); got != 8 {
-			t.Errorf("%s: named values=%d, want 8", lang, got)
+		// Five rows, two values each, each named.
+		if got := strings.Count(out, `class="netrow__k"`); got != 10 {
+			t.Errorf("%s: named values=%d, want 10", lang, got)
 		}
 		for _, code := range []MessageCode{MsgNetRestart, MsgNetOptionNote, MsgNetFromOption, MsgNetPlainHTTP, MsgNetHTTPSProxy, MsgNetSaveNote, MsgNetNoBaseURL} {
 			if !strings.Contains(out, text(code)) {
@@ -37,7 +37,7 @@ func TestNetworkSettingsStateIsWrittenOut(t *testing.T) {
 			}
 		}
 		// Help text is attached to its field.
-		for _, id := range []string{"net-listen-help", "net-base-help", "net-hosts-help", "net-proxies-help"} {
+		for _, id := range []string{"net-listen-help", "net-base-help", "net-hosts-help", "net-proxies-help", "net-public-listen-help", "net-public-url-help"} {
 			if !strings.Contains(out, `aria-describedby="`+id+`"`) || !strings.Contains(out, `id="`+id+`"`) {
 				t.Errorf("%s: %s is not attached to its field", lang, id)
 			}

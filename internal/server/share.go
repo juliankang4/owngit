@@ -323,7 +323,7 @@ func (app *App) shareCloneURL(request *http.Request, link state.ShareLink) (stri
 	if link.PasswordHash != "" {
 		help = webui.MsgShareCloneHelpPassword
 	}
-	return app.serverOrigin(request) + shareBase(link.ID) + ".git", help
+	return app.shareOrigin(request) + shareBase(link.ID) + ".git", help
 }
 
 // shareChrome is the frame of a share link's pages: no dashboard, no

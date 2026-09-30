@@ -177,6 +177,7 @@ func (app *App) createShareLinkForm(writer http.ResponseWriter, request *http.Re
 	if link.Scope == state.ShareClone {
 		created.CloneURL, created.CloneHelp = app.shareCloneURL(request, link)
 	}
+	created.PublicURL, created.PublicCloneURL = app.publicShareURLs(link, secret)
 	page.Created = created
 	page.Form = webui.ShareLinkForm{Scope: state.ShareBrowse, Expiry: webui.ShareExpiryDefault}
 	page.Chrome.Notices = append(page.Chrome.Notices, webui.Success(webui.MsgShareCreatedNotice))
@@ -366,11 +367,16 @@ func (app *App) createShareLinkAPI(writer http.ResponseWriter, request *http.Req
 		ShareLink shareLinkJSON `json:"share_link"`
 		// URL holds the link's secret. This answer is the only place it
 		// appears.
-		URL         string   `json:"url"`
-		CloneURL    string   `json:"clone_url,omitempty"`
-		CloneSignIn string   `json:"clone_sign_in,omitempty"`
-		Warnings    []string `json:"warnings,omitempty"`
+		URL         string `json:"url"`
+		CloneURL    string `json:"clone_url,omitempty"`
+		CloneSignIn string `json:"clone_sign_in,omitempty"`
+		// PublicURL and PublicCloneURL are the same on the public share
+		// address, when the running server has one.
+		PublicURL      string   `json:"public_url,omitempty"`
+		PublicCloneURL string   `json:"public_clone_url,omitempty"`
+		Warnings       []string `json:"warnings,omitempty"`
 	}{OK: true, ShareLink: app.shareLinkJSON(link), URL: app.serverOrigin(request) + sharePrefix + secret}
+	response.PublicURL, response.PublicCloneURL = app.publicShareURLs(link, secret)
 	if link.Scope == state.ShareClone {
 		var help webui.MessageCode
 		response.CloneURL, help = app.shareCloneURL(request, link)

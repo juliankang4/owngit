@@ -65,6 +65,10 @@ type App struct {
 	// without a restart. It derives each request's scheme, Host and client
 	// address, and the addresses shown to people. See serverOrigin.
 	Network *LiveNetwork
+	// PublicShareURL is the address visitors use for the public share
+	// address this server started with (PublicShareHandler), or "" when it
+	// is off.
+	PublicShareURL string
 	// Tailscale shares this OwnGit on the tailnet with Tailscale Serve.
 	// Whether Tailscale is installed is what its Find reports.
 	Tailscale               *Tailscale

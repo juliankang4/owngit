@@ -1,6 +1,7 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -53,7 +54,7 @@ func (app *App) networkReport(ctx context.Context) (NetworkReport, error) {
 // is refused instead of silently undoing that change.
 func networkRevision(report NetworkReport) string {
 	hash := sha256.New()
-	for _, value := range append([]string{report.Saved.Listen, report.Saved.BaseURL, ""},
+	for _, value := range append([]string{report.Saved.Listen, report.Saved.BaseURL, report.Saved.PublicShareListen, report.Saved.PublicShareURL, ""},
 		append(append(slices.Clone(report.Saved.AllowedHosts), ""), report.Saved.TrustedProxies...)...) {
 		hash.Write([]byte(value))
 		hash.Write([]byte{0})
@@ -71,9 +72,11 @@ func networkInfo(report NetworkReport) webui.NetworkInfo {
 		ProxyExample: "127.0.0.1, 10.0.0.0/8",
 		Form: webui.NetworkForm{
 			Listen: report.Saved.Listen, BaseURL: report.Saved.BaseURL,
-			Hosts:   strings.Join(report.Saved.AllowedHosts, "\n"),
-			Proxies: strings.Join(report.Saved.TrustedProxies, "\n"),
+			Hosts:             strings.Join(report.Saved.AllowedHosts, "\n"),
+			Proxies:           strings.Join(report.Saved.TrustedProxies, "\n"),
+			PublicShareListen: report.Saved.PublicShareListen, PublicShareURL: report.Saved.PublicShareURL,
 		},
+		PublicShareWarnings: PublicShareWarnings(report.Saved.PublicShareListen, report.Saved.TrustedProxies),
 	}
 	info.Saved = info.Form
 	next := report.NextStart
@@ -81,6 +84,10 @@ func networkInfo(report NetworkReport) webui.NetworkInfo {
 	info.BaseURL = webui.NetworkValue{Next: nonEmpty(next.BaseURL), NextSource: next.BaseURLSource}
 	info.Hosts = webui.NetworkValue{Next: report.Saved.AllowedHosts}
 	info.Proxies = webui.NetworkValue{Next: next.TrustedProxies, NextSource: next.TrustedProxiesSource}
+	info.PublicShare = webui.NetworkValue{Next: publicShareValues(report.Saved.PublicShareURL, report.Saved.PublicShareListen)}
+	if report.Saved.PublicShareListen != "" {
+		info.PublicShare.NextSource = NetworkSourceSaved
+	}
 	if running := report.Running; running != nil {
 		info.Status = webui.NetworkCurrent
 		if report.RestartNeeded {
@@ -91,7 +98,9 @@ func networkInfo(report NetworkReport) webui.NetworkInfo {
 		info.BaseURL.Now, info.BaseURL.NowSource, info.BaseURL.Pending = nonEmpty(running.BaseURL), running.BaseURLSource, pending.BaseURL
 		info.Hosts.Now, info.Hosts.Pending = runningAllowedHosts(report), pending.Hosts
 		info.Proxies.Now, info.Proxies.NowSource, info.Proxies.Pending = running.TrustedProxies, running.TrustedProxiesSource, pending.Proxies
-		for _, value := range []*webui.NetworkValue{&info.Listen, &info.BaseURL, &info.Hosts, &info.Proxies} {
+		info.PublicShare.Now, info.PublicShare.Pending = publicShareValues(running.PublicShareURL, running.PublicShareAddress), pending.PublicShare
+		info.PublicShareError = running.PublicShareError
+		for _, value := range []*webui.NetworkValue{&info.Listen, &info.BaseURL, &info.Hosts, &info.Proxies, &info.PublicShare} {
 			value.NowKnown = true
 			info.FromOption = info.FromOption || value.NowSource == NetworkSourceFlag
 		}
@@ -136,6 +145,15 @@ func normalizedOrSelf(value string) string {
 	return value
 }
 
+// publicShareValues shows a public share address as its URL and its listen
+// address, or nothing while it is off.
+func publicShareValues(publicURL, listen string) []string {
+	if listen == "" {
+		return nil
+	}
+	return []string{publicURL, listen}
+}
+
 func nonEmpty(value string) []string {
 	if value == "" {
 		return nil
@@ -156,6 +174,8 @@ func networkForm(request *http.Request) webui.NetworkForm {
 	return webui.NetworkForm{
 		Listen: strings.TrimSpace(postValue(request, "listen")), BaseURL: strings.TrimSpace(postValue(request, "base_url")),
 		Hosts: postValue(request, "allowed_hosts"), Proxies: postValue(request, "trusted_proxies"),
+		PublicShareListen: strings.TrimSpace(postValue(request, "public_share_listen")),
+		PublicShareURL:    strings.TrimSpace(postValue(request, "public_share_url")),
 	}
 }
 
@@ -187,6 +207,10 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 		if baseURL, err = ValidateBaseURL(form.BaseURL); err != nil {
 			notices = append(notices, webui.Error("base_url", webui.MsgNetBadBaseURL))
 		}
+	}
+	publicURL, err := ValidatePublicShare(form.PublicShareListen, form.PublicShareURL, cmp.Or(form.Listen, DefaultListenAddress))
+	if err != nil {
+		notices = append(notices, webui.Notice{Kind: webui.NoticeError, Code: webui.MsgPublicShareInvalid, Field: "public_share_listen", Detail: err.Error()})
 	}
 	var hosts []string
 	for _, value := range networkEntries(form.Hosts) {
@@ -223,7 +247,7 @@ func (app *App) saveNetwork(writer http.ResponseWriter, request *http.Request, s
 		app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{Network: &form, AdminVerified: true})
 		return
 	}
-	update := state.NetworkUpdate{Settings: state.NetworkSettings{Listen: form.Listen, BaseURL: baseURL}}
+	update := state.NetworkUpdate{Settings: state.NetworkSettings{Listen: form.Listen, BaseURL: baseURL, PublicShareListen: form.PublicShareListen, PublicShareURL: publicURL}}
 	stored, err := app.Store.TrustedHosts(ctx)
 	if err != nil {
 		app.renderNotSaved(writer, request, settings, csrf, action, "network settings read", err)

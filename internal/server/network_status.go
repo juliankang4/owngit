@@ -30,6 +30,10 @@ type NetworkReport struct {
 		BaseURL        string   `json:"base_url"`
 		AllowedHosts   []string `json:"allowed_hosts"`
 		TrustedProxies []string `json:"trusted_proxies"`
+		// PublicShareListen and PublicShareURL are the public share
+		// address, empty while it is off. Only saved values apply to it.
+		PublicShareListen string `json:"public_share_listen"`
+		PublicShareURL    string `json:"public_share_url"`
 	} `json:"saved"`
 	// NextStart is what a start without network flags uses.
 	NextStart struct {
@@ -57,6 +61,7 @@ type NetworkReport struct {
 func NewNetworkReport(saved state.NetworkSettings, hosts, proxies []string) NetworkReport {
 	var report NetworkReport
 	report.Saved.Listen, report.Saved.BaseURL = saved.Listen, saved.BaseURL
+	report.Saved.PublicShareListen, report.Saved.PublicShareURL = saved.PublicShareListen, saved.PublicShareURL
 	report.Saved.AllowedHosts = NormalizedHosts(hosts)
 	report.Saved.TrustedProxies = nonNil(proxies)
 	report.NextStart.TrustedProxies, report.NextStart.TrustedProxiesSource = report.Saved.TrustedProxies, NetworkSourceDefault
@@ -85,12 +90,12 @@ func (report *NetworkReport) SetServer(observed state.RunningObservation) {
 
 // NetworkPending names the saved values the running server does not use yet.
 type NetworkPending struct {
-	Listen, BaseURL, Hosts, Proxies bool
+	Listen, BaseURL, Hosts, Proxies, PublicShare bool
 }
 
 // Any reports whether a restart is needed for the saved values to apply.
 func (pending NetworkPending) Any() bool {
-	return pending.Listen || pending.BaseURL || pending.Hosts || pending.Proxies
+	return pending.Listen || pending.BaseURL || pending.Hosts || pending.Proxies || pending.PublicShare
 }
 
 // Pending compares the saved values with the running record. It is all
@@ -116,6 +121,7 @@ func (report NetworkReport) Pending() NetworkPending {
 			pending.Hosts = true
 		}
 	}
+	pending.PublicShare = report.Saved.PublicShareListen != running.PublicShareListen || report.Saved.PublicShareURL != running.PublicShareURL
 	pending.Proxies = running.TrustedProxiesSource != NetworkSourceFlag &&
 		!slices.Equal(report.Saved.TrustedProxies, nonNil(running.TrustedProxies))
 	return pending

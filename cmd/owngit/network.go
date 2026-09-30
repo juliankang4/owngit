@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"flag"
@@ -17,6 +18,7 @@ import (
 	"owngit/internal/requestctx"
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // Network settings: the listen address, the base URL other devices use, the
@@ -38,6 +40,11 @@ type serveNetwork struct {
 	ListenSource  string
 	BaseURL       string // "" derives addresses from each request
 	BaseURLSource string
+	// PublicShareListen and PublicShareURL are the saved public share
+	// address, empty while it is off; no flag sets them. PublicShareAddress
+	// is the bound address, or PublicShareError why listening failed.
+	PublicShareListen, PublicShareURL    string
+	PublicShareAddress, PublicShareError string
 }
 
 // effectiveServeNetwork applies flag over saved over default. A flag value is
@@ -66,6 +73,10 @@ func effectiveServeNetwork(saved state.NetworkSettings, flags *flag.FlagSet, lis
 		}
 		network.BaseURL, network.BaseURLSource = canonical, sourceSaved
 	}
+	if _, err := server.ValidatePublicShare(saved.PublicShareListen, saved.PublicShareURL, network.Listen); err != nil {
+		return serveNetwork{}, fmt.Errorf("saved %w; run \"owngit network set --public-share-off\" to turn it off", err)
+	}
+	network.PublicShareListen, network.PublicShareURL = saved.PublicShareListen, saved.PublicShareURL
 	return network, nil
 }
 
@@ -151,6 +162,8 @@ func liveNetwork(store *state.Store, live bool, network serveNetwork, proxies se
 			BaseURL: network.BaseURL, BaseURLSource: network.BaseURLSource, Origin: origin,
 			SavedHosts:     server.NormalizedHosts(savedHosts),
 			TrustedProxies: proxies.List, TrustedProxiesSource: proxies.Source,
+			PublicShareListen: network.PublicShareListen, PublicShareURL: network.PublicShareURL,
+			PublicShareAddress: network.PublicShareAddress, PublicShareError: network.PublicShareError,
 		},
 		BaseURL: configuredOrigin(network, origin), Proxies: proxies.Prefixes, Hosts: policy, FlagHosts: flagHosts,
 	}
@@ -203,8 +216,9 @@ func printNetworkUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  network show [--json]                 saved settings and, when OwnGit runs, the values it uses")
 	fmt.Fprintln(writer, "  network set [--listen ADDR] [--base-url URL] [--allowed-host HOST ...] [--remove-allowed-host HOST ...]")
 	fmt.Fprintln(writer, "              [--trusted-proxy ADDR_OR_CIDR ...] [--remove-trusted-proxy ADDR_OR_CIDR ...]")
+	fmt.Fprintln(writer, "              [--public-share-listen ADDR --public-share-url URL | --public-share-off]")
 	fmt.Fprintln(writer, "              [--accept-insecure-http] [--json]")
-	fmt.Fprintln(writer, "  network reset [--clear-allowed-hosts] [--clear-trusted-proxies] [--json]  remove the saved listen address and base URL")
+	fmt.Fprintln(writer, "  network reset [--clear-allowed-hosts] [--clear-trusted-proxies] [--json]  remove the saved listen address, base URL and public share address")
 	fmt.Fprintln(writer, "Saved settings apply at the next start. A serve flag overrides one for that run only.")
 }
 
@@ -307,6 +321,11 @@ func printNetworkReport(writer io.Writer, report networkReport) {
 	fmt.Fprintf(writer, "  Listen address: %s\n  Base URL:       %s\n  Allowed Hosts:  %s\n", listen, baseURL, hostList(report.Saved.AllowedHosts))
 	fmt.Fprintln(writer, "  localhost, 127.0.0.1 and ::1 are always accepted from this computer.")
 	fmt.Fprintf(writer, "  Trusted proxies: %s\n", hostList(report.Saved.TrustedProxies))
+	if report.Saved.PublicShareListen == "" {
+		fmt.Fprintln(writer, "  Public share address: off")
+	} else {
+		fmt.Fprintf(writer, "  Public share address: listens on %s, visitors use %s\n", report.Saved.PublicShareListen, report.Saved.PublicShareURL)
+	}
 	if report.StaleRecord {
 		fmt.Fprintln(writer, "A record left by an OwnGit server that stopped without cleaning up was ignored.")
 	}
@@ -333,6 +352,14 @@ func printNetworkReport(writer io.Writer, report networkReport) {
 	if running.TrustedProxiesSource != "" {
 		fmt.Fprintf(writer, "  Trusted proxies: %s (%s)\n", hostList(running.TrustedProxies), running.TrustedProxiesSource)
 	}
+	switch {
+	case running.PublicShareError != "":
+		fmt.Fprintf(writer, "  Public share address: could not listen on %s: %s\n", running.PublicShareListen, running.PublicShareError)
+	case running.PublicShareAddress != "":
+		fmt.Fprintf(writer, "  Public share address: listening on %s, visitors use %s\n", running.PublicShareAddress, running.PublicShareURL)
+	default:
+		fmt.Fprintln(writer, "  Public share address: off")
+	}
 	flagged := running.ListenSource == sourceFlag || running.BaseURLSource == sourceFlag || running.TrustedProxiesSource == sourceFlag
 	if flagged {
 		fmt.Fprintln(writer, "The running server was started with --listen, --base-url or --trusted-proxy, which overrides the saved value for that run. If a service starts OwnGit with that option, remove it there for the saved value to apply.")
@@ -356,6 +383,9 @@ func networkSet(arguments []string) error {
 	flags.Var(&removeHosts, "remove-allowed-host", "stop allowing this Host `name` (repeatable)")
 	flags.Var(&addProxies, "trusted-proxy", "trust forwarded headers from this reverse proxy `address` or CIDR range (repeatable)")
 	flags.Var(&removeProxies, "remove-trusted-proxy", "stop trusting this proxy `address` or CIDR range (repeatable)")
+	publicListen := flags.String("public-share-listen", "", "listen address of the public share address, which answers share links only, such as 127.0.0.1:7655")
+	publicURL := flags.String("public-share-url", "", "the address visitors use for the public share address, such as https://box.tail1234.ts.net")
+	publicOff := flags.Bool("public-share-off", false, "turn the public share address off")
 	acceptPlain := flags.Bool("accept-insecure-http", false, "accept that other computers reach OwnGit over plain HTTP, which is not encrypted; needed once for a listen address beyond this computer")
 	asJSON := flags.Bool("json", false, "print the saved settings as JSON")
 	if err := parseFlagsJSON(flags, arguments); err != nil {
@@ -368,11 +398,15 @@ func networkSet(arguments []string) error {
 	}
 	set := map[string]bool{}
 	flags.Visit(func(entry *flag.Flag) { set[entry.Name] = true })
-	if !set["listen"] && !set["base-url"] && len(addHosts) == 0 && len(removeHosts) == 0 && len(addProxies) == 0 && len(removeProxies) == 0 {
+	public := set["public-share-listen"] || set["public-share-url"]
+	if !set["listen"] && !set["base-url"] && !public && !*publicOff && len(addHosts) == 0 && len(removeHosts) == 0 && len(addProxies) == 0 && len(removeProxies) == 0 {
 		if !*asJSON {
 			printNetworkUsage(os.Stderr)
 		}
-		return invalid(errors.New("network set needs --listen, --base-url, --allowed-host, --remove-allowed-host, --trusted-proxy, or --remove-trusted-proxy"))
+		return invalid(errors.New("network set needs --listen, --base-url, --allowed-host, --remove-allowed-host, --trusted-proxy, --remove-trusted-proxy, --public-share-listen with --public-share-url, or --public-share-off"))
+	}
+	if public && *publicOff {
+		return invalid(errors.New("--public-share-off turns the public share address off; do not give its address as well"))
 	}
 	// Every value is checked before anything is saved.
 	if set["listen"] && *listen != "" {
@@ -425,6 +459,18 @@ func networkSet(arguments []string) error {
 	}
 	if set["base-url"] {
 		update.Settings.BaseURL = *baseURL
+	}
+	switch {
+	case *publicOff:
+		update.Settings.PublicShareListen, update.Settings.PublicShareURL = "", ""
+	case public:
+		update.Settings.PublicShareListen, update.Settings.PublicShareURL = *publicListen, *publicURL
+	}
+	// The public share address is checked against the listen address the
+	// next start uses, which may have changed above.
+	privateListen := cmp.Or(update.Settings.Listen, server.DefaultListenAddress)
+	if update.Settings.PublicShareURL, err = server.ValidatePublicShare(update.Settings.PublicShareListen, update.Settings.PublicShareURL, privateListen); err != nil {
+		return invalid(err)
 	}
 	// A listen address beyond this computer serves other computers over
 	// plain HTTP, which the owner accepts once, as in Settings, before
@@ -488,6 +534,11 @@ func networkSet(arguments []string) error {
 	proxies, err := store.TrustedProxies(ctx)
 	if err != nil {
 		return unavailable(err)
+	}
+	if public {
+		for _, code := range server.PublicShareWarnings(update.Settings.PublicShareListen, proxies) {
+			warnings = append(warnings, webui.Text(webui.LangEN, code))
+		}
 	}
 	if strings.HasPrefix(update.Settings.BaseURL, "https:") && len(proxies) == 0 {
 		warnings = append(warnings, "The base URL uses https but no reverse proxy is trusted. Name the proxy with --trusted-proxy so that OwnGit treats requests through it as HTTPS.")
@@ -602,7 +653,7 @@ func networkReset(arguments []string) error {
 	if *asJSON {
 		return printNetworkChange(ctx, store, nil)
 	}
-	fmt.Printf("Saved listen address and base URL removed. At the next start OwnGit listens on %s, unless a serve flag says otherwise.\n", server.DefaultListenAddress)
+	fmt.Printf("Saved listen address, base URL and public share address removed. At the next start OwnGit listens on %s, unless a serve flag says otherwise.\n", server.DefaultListenAddress)
 	if *clearHosts {
 		fmt.Println("Allowed Hosts removed. localhost, 127.0.0.1 and ::1 are always accepted from this computer.")
 	} else {

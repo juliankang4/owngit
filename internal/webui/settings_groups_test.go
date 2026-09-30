@@ -33,7 +33,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupCrossSite:  {"cross_site_links"},
 		GroupLogs:       {"check_logs"},
 		GroupConnection: {"insecure_ack"},
-		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
+		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "public_share_listen", "public_share_url", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network", "tailscale_port", "tailscale_https_port"},
 	}
 	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z_]+)"`)

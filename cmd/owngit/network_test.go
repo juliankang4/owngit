@@ -37,14 +37,14 @@ func TestEffectiveServeNetworkPrecedence(t *testing.T) {
 		arguments []string
 		want      serveNetwork
 	}{
-		{"defaults", state.NetworkSettings{}, nil, serveNetwork{"127.0.0.1:7654", "default", "", "default"}},
-		{"saved", saved, nil, serveNetwork{"0.0.0.0:7700", "saved", "http://gitbox.internal:7700", "saved"}},
+		{"defaults", state.NetworkSettings{}, nil, serveNetwork{Listen: "127.0.0.1:7654", ListenSource: "default", BaseURL: "", BaseURLSource: "default"}},
+		{"saved", saved, nil, serveNetwork{Listen: "0.0.0.0:7700", ListenSource: "saved", BaseURL: "http://gitbox.internal:7700", BaseURLSource: "saved"}},
 		{"flags win", saved, []string{"--listen", "127.0.0.1:0", "--base-url", "http://other.internal:1"},
-			serveNetwork{"127.0.0.1:0", "flag", "http://other.internal:1", "flag"}},
+			serveNetwork{Listen: "127.0.0.1:0", ListenSource: "flag", BaseURL: "http://other.internal:1", BaseURLSource: "flag"}},
 		{"flag equal to the default still wins", saved, []string{"--listen", "127.0.0.1:7654"},
-			serveNetwork{"127.0.0.1:7654", "flag", "http://gitbox.internal:7700", "saved"}},
+			serveNetwork{Listen: "127.0.0.1:7654", ListenSource: "flag", BaseURL: "http://gitbox.internal:7700", BaseURLSource: "saved"}},
 		{"empty base URL flag derives for this run", saved, []string{"--base-url", ""},
-			serveNetwork{"0.0.0.0:7700", "saved", "", "flag"}},
+			serveNetwork{Listen: "0.0.0.0:7700", ListenSource: "saved", BaseURL: "", BaseURLSource: "flag"}},
 	}
 	for _, test := range cases {
 		flags, listen, baseURL := parse(test.arguments...)
@@ -551,5 +551,72 @@ func noErrOutput(t *testing.T) func(string, error) string {
 		t.Helper()
 		noErr(t, err)
 		return output
+	}
+}
+
+// "network set" saves the public share address with its warnings and
+// refuses one that is half set or shares OwnGit's own port. At the next
+// start OwnGit answers share links only there, and when that address
+// cannot listen, OwnGit still serves its own address and says why.
+func TestServeOpensThePublicShareAddress(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	for name, arguments := range map[string][]string{
+		"without a URL":             {"--public-share-listen", "127.0.0.1:7655"},
+		"without an address":        {"--public-share-url", "https://share.example.test"},
+		"on OwnGit's own port":      {"--public-share-listen", "127.0.0.1:7654", "--public-share-url", "https://share.example.test"},
+		"with a path":               {"--public-share-listen", "127.0.0.1:7655", "--public-share-url", "https://share.example.test/x"},
+		"turned on and off at once": {"--public-share-listen", "127.0.0.1:7655", "--public-share-url", "https://share.example.test", "--public-share-off"},
+	} {
+		if _, err := runNetwork(t, append([]string{"set", "--state-dir", stateDir}, arguments...)...); err == nil {
+			t.Errorf("%s was saved", name)
+		}
+	}
+	public := freeLoopbackAddress(t)
+	output, err := runNetwork(t, "set", "--state-dir", stateDir, "--public-share-listen", public, "--public-share-url", "https://share.example.test")
+	noErr(t, err)
+	if !strings.Contains(output, "Anyone on the Internet can reach the public address") || !strings.Contains(output, "No reverse proxy is trusted") {
+		t.Fatalf("set output: %q", output)
+	}
+	if report := networkJSON(t, stateDir); report.Saved.PublicShareListen != public || report.Saved.PublicShareURL != "https://share.example.test" {
+		t.Fatalf("saved report=%+v", report.Saved)
+	}
+
+	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
+	report := networkJSON(t, stateDir)
+	if report.Running == nil || report.Running.PublicShareAddress != public || report.Running.PublicShareURL != "https://share.example.test" || report.RestartNeeded {
+		instance.stop()
+		t.Fatalf("running report=%+v", report.Running)
+	}
+	for path, want := range map[string]int{"/": http.StatusNotFound, "/setup": http.StatusNotFound, "/api/v1/repositories": http.StatusNotFound, "/assets/owngit.css": http.StatusOK} {
+		response, err := http.Get("http://" + public + path)
+		noErr(t, err)
+		response.Body.Close()
+		if response.StatusCode != want {
+			instance.stop()
+			t.Fatalf("%s status=%d, want %d", path, response.StatusCode, want)
+		}
+	}
+	text, err := runNetwork(t, "show", "--state-dir", stateDir)
+	noErr(t, err)
+	instance.stop()
+	if !strings.Contains(text, "Public share address: listening on "+public) {
+		t.Fatalf("show text: %q", text)
+	}
+
+	// A public address that cannot listen leaves OwnGit's own address.
+	taken, err := net.Listen("tcp", public)
+	noErr(t, err)
+	defer taken.Close()
+	instance = startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
+	report = networkJSON(t, stateDir)
+	instance.stop()
+	if report.Running == nil || report.Running.PublicShareAddress != "" || report.Running.PublicShareError == "" {
+		t.Fatalf("running report with the port taken=%+v", report.Running)
+	}
+
+	_, err = runNetwork(t, "set", "--state-dir", stateDir, "--public-share-off")
+	noErr(t, err)
+	if report := networkJSON(t, stateDir); report.Saved.PublicShareListen != "" || report.Saved.PublicShareURL != "" {
+		t.Fatalf("after turning off=%+v", report.Saved)
 	}
 }

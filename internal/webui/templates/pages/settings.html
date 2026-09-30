@@ -520,7 +520,7 @@
      only changes what the next start uses. Resetting stays with the
      host-only command, which is explained instead of offered here. */}}
 {{$net := $p.Network}}{{$gn := forAction $p.Group "network" $p.Notices}}
-{{$focus := firstError $gn "listen" "base_url" "allowed_hosts" "trusted_proxies" "insecure_ack" "admin_password"}}
+{{$focus := firstError $gn "listen" "base_url" "allowed_hosts" "trusted_proxies" "public_share_listen" "insecure_ack" "admin_password"}}
 <section class="grp" id="grp-network" aria-labelledby="grp-network-h" data-group="network"{{if hasError $gn}} data-group-refused{{end}}>
   {{template "grpHead" dict "Lang" $lang "Group" "network" "Title" (bi $lang "settings.network.title")}}
   <p class="scope">{{icon "info"}}<span>{{bi $lang "settings.network.intro"}}</span></p>
@@ -543,6 +543,8 @@
   {{if $net.PlainHTTP}}<p class="netnote">{{icon "unlocked"}}<span>{{bi $lang "settings.network.plain_http"}}</span></p>{{end}}
   {{if $net.NeedsName}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.needs_name"}}</span></p>{{end}}
   {{if $net.HTTPSWithoutProxy}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.network.https_without_proxy"}}</span></p>{{end}}
+  {{with $net.PublicShareError}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.public_share.failed"}} <span class="mono">{{.}}</span></span></p>{{end}}
+  {{range $net.PublicShareWarnings}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang .}}</span></p>{{end}}
   {{/* The clone address is administrator information, like the storage
        location. The backend clears it for an ordinary visitor. */}}
   {{if and .Chrome.Viewer.AdminConfirmed $p.CloneHint}}
@@ -587,6 +589,27 @@
                   {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "trusted_proxies" "Help" "net-proxies-help"}}{{if eq $focus "trusted_proxies"}} autofocus{{end}}>{{$net.Form.Proxies}}</textarea>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "trusted_proxies"}}
         <p class="f__help" id="net-proxies-help">{{biF $lang "settings.network.trusted_proxies_help" $net.ProxyExample}}</p>
+      </div>
+    </details>
+    {{/* The public share address answers share links only. It opens by
+         itself when it is on or refused, so nothing saved is hidden. */}}
+    <details class="grp__more"{{if or $net.Form.PublicShareListen $net.Form.PublicShareURL (eq $focus "public_share_listen")}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "settings.public_share.title"}}</summary>
+      <p class="f__help">{{bi $lang "settings.public_share.intro"}}</p>
+      {{if not $net.Saved.PublicShareListen}}<p class="netnote">{{icon "warning"}}<span>{{bi $lang "settings.public_share.warn_on"}}</span></p>{{end}}
+      <div class="f">
+        <label for="net-public-listen">{{bi $lang "settings.public_share.listen"}}</label>
+        <input id="net-public-listen" name="public_share_listen" type="text" value="{{$net.Form.PublicShareListen}}" data-saved="{{$net.Saved.PublicShareListen}}" placeholder="127.0.0.1:7655"
+               spellcheck="false" autocapitalize="off" autocomplete="off"
+               {{template "netDescribed" dict "Notices" $gn "Scope" "network" "Field" "public_share_listen" "Help" "net-public-listen-help"}}{{if eq $focus "public_share_listen"}} autofocus{{end}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "network" "Field" "public_share_listen"}}
+        <p class="f__help" id="net-public-listen-help">{{bi $lang "settings.public_share.listen_help"}}</p>
+      </div>
+      <div class="f">
+        <label for="net-public-url">{{bi $lang "settings.public_share.url"}}</label>
+        <input id="net-public-url" name="public_share_url" type="text" inputmode="url" value="{{$net.Form.PublicShareURL}}" data-saved="{{$net.Saved.PublicShareURL}}" placeholder="https://box.tail1234.ts.net"
+               spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="net-public-url-help">
+        <p class="f__help" id="net-public-url-help">{{bi $lang "settings.public_share.url_help"}} {{bi $lang "settings.public_share.off"}}</p>
       </div>
     </details>
     {{/* The same acknowledgement setup asks for, until it was given once.

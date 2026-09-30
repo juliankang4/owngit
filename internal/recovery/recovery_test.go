@@ -50,7 +50,7 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	settings, _ := store.Settings(ctx)
 	noErr(t, store.CreateSession(ctx, "general-session", "general", "csrf", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
 	noErr(t, store.AddTrustedHost(ctx, "private-host.example"))
-	noErr(t, store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654", BaseURL: "http://private-host.example:7654"}, AddProxies: []string{"192.0.2.10"}}))
+	noErr(t, store.UpdateNetwork(ctx, state.NetworkUpdate{Settings: state.NetworkSettings{Listen: "0.0.0.0:7654", BaseURL: "http://private-host.example:7654", PublicShareListen: "127.0.0.1:7655", PublicShareURL: "https://share.example.test"}, AddProxies: []string{"192.0.2.10"}}))
 	noErr(t, store.PublishRunningNetwork(ctx, state.RunningNetwork{PID: 1, Listen: "0.0.0.0:7654"}))
 	noErr(t, store.SaveTailscaleServe(ctx, state.TailscaleServe{Name: "box.tail0000.ts.net", HTTPSPort: 443, Target: "http://127.0.0.1:7654", Confirmed: true}))
 
