@@ -99,7 +99,7 @@ func (s *Service) logf(format string, arguments ...any) {
 // Start records every run that a previous process left running as
 // interrupted, then starts the scheduler. Stop ends it.
 func (s *Service) Start(ctx context.Context) error {
-	if count, err := s.Store.InterruptBackupRuns(ctx, interruptedMessage, time.Now()); err != nil {
+	if count, err := s.Store.InterruptBackupRuns(ctx, interruptedMessage, s.now()); err != nil {
 		return fmt.Errorf("record unfinished backups as interrupted: %w", err)
 	} else if count > 0 {
 		s.logf("a backup that OwnGit was making when it stopped is recorded as interrupted")
@@ -231,10 +231,7 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 	if _, err := rand.Read(id); err != nil {
 		return state.BackupRun{}, err
 	}
-	// A run records when it really ran; the clock s.now only decides when
-	// a scheduled one is due. The backup's own manifest time is checked
-	// against these (owned).
-	now := time.Now()
+	now := s.now()
 	run := state.BackupRun{
 		ID: hex.EncodeToString(id), Kind: kind, Status: state.BackupRunning, Destination: schedule.Destination,
 		Verification: state.BackupVerifyNotRun, StartedAt: now,
@@ -264,6 +261,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	if report.Captured {
 		run.HoldKnown, run.LongestHold, run.LongestHoldRepository = true, report.LongestHold, report.LongestHoldRepository
 	}
+	run.ManifestSHA256 = report.ManifestSHA256
 	if err == nil && schedule.Verify {
 		if err = s.verify(ctx, output); err != nil {
 			run.Verification = state.BackupVerifyFailed
@@ -289,7 +287,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	// is still there, and is kept as OwnGit's; one never published is not.
 	if err != nil || ctx.Err() != nil {
 		if published, problem := s.published(run); !published {
-			run.BackupName = ""
+			run.BackupName, run.ManifestSHA256 = "", ""
 		} else if problem != "" {
 			problems = append(problems, problem)
 		}
@@ -304,7 +302,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 			run.Message += " Also, " + strings.Join(problems, "; ")
 		}
 	}
-	run.FinishedAt = time.Now()
+	run.FinishedAt = s.now()
 	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
 	if err := s.Store.FinishBackupRun(record, run); err != nil {
@@ -416,13 +414,17 @@ var (
 )
 
 // openOwned opens the backup that run wrote, held for its removal. The run
-// owns its folder only while the folder, not a link, holds an OwnGit
-// backup whose instant lies within the run. A folder that is missing gives
-// errMissing, one that holds anything else errNotOwned (wrapped, saying
-// why); a folder that cannot be read gives that error.
+// owns its folder only while the folder, not a link, holds the very
+// manifest the run wrote, as its SHA-256 recorded with the run shows; no
+// other backup, even one made in the same second, has it. A folder that is
+// missing gives errMissing, one that holds anything else errNotOwned
+// (wrapped, saying why); a folder that cannot be read gives that error.
 func openOwned(folder *recovery.BackupFolder, run state.BackupRun) (*recovery.BackupCopy, error) {
 	if !validName(run.BackupName) {
 		return nil, fmt.Errorf("%w: %q is not a backup name", errNotOwned, run.BackupName)
+	}
+	if run.ManifestSHA256 == "" {
+		return nil, fmt.Errorf("%s: %w: the run recorded no manifest, so OwnGit cannot tell its backup", run.BackupName, errNotOwned)
 	}
 	backup, err := folder.Open(run.BackupName)
 	switch {
@@ -433,14 +435,9 @@ func openOwned(folder *recovery.BackupFolder, run state.BackupRun) (*recovery.Ba
 	case err != nil:
 		return nil, err
 	}
-	// Recorded times are whole seconds; a run still going ends now.
-	end := time.Now()
-	if !run.FinishedAt.IsZero() {
-		end = run.FinishedAt.Add(time.Second)
-	}
-	if backup.CreatedAt.Before(run.StartedAt.Truncate(time.Second)) || backup.CreatedAt.After(end) {
+	if backup.ManifestSHA256 != run.ManifestSHA256 {
 		backup.Close()
-		return nil, fmt.Errorf("%s: %w: it holds a backup of another time", run.BackupName, errNotOwned)
+		return nil, fmt.Errorf("%s: %w: it holds another backup", run.BackupName, errNotOwned)
 	}
 	return backup, nil
 }

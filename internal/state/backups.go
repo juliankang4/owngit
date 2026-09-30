@@ -71,6 +71,10 @@ type BackupRun struct {
 	HoldKnown             bool
 	LongestHold           time.Duration
 	LongestHoldRepository string
+	// ManifestSHA256 is the SHA-256 of the manifest the run wrote, empty
+	// when it wrote none: only the folder holding that manifest is the
+	// run's backup.
+	ManifestSHA256 string
 }
 
 // ValidateBackupSchedule checks a schedule against the bounds the schema
@@ -147,16 +151,19 @@ func (s *Store) StartBackupRun(ctx context.Context, run BackupRun) error {
 // verification, message (cut to MaxBackupRunMessage bytes), finish time,
 // hold, and its backup name, empty when the run published no backup.
 func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
-	var holdMS, holdRepository any
+	var holdMS, holdRepository, manifest any
+	if run.ManifestSHA256 != "" {
+		manifest = run.ManifestSHA256
+	}
 	if run.HoldKnown {
 		holdMS = run.LongestHold.Milliseconds()
 		if run.LongestHoldRepository != "" {
 			holdRepository = run.LongestHoldRepository
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?,backup_name=?
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?,backup_name=?,manifest_sha256=?
 		WHERE id=? AND status='running'`,
-		run.Status, run.Verification, cutText(run.Message, MaxBackupRunMessage), run.FinishedAt.Unix(), holdMS, holdRepository, run.BackupName, run.ID)
+		run.Status, run.Verification, cutText(run.Message, MaxBackupRunMessage), run.FinishedAt.Unix(), holdMS, holdRepository, run.BackupName, manifest, run.ID)
 	if err != nil {
 		return err
 	}
@@ -183,7 +190,7 @@ func (s *Store) InterruptBackupRuns(ctx context.Context, message string, now tim
 // BackupRuns returns every recorded run, the newest first: in the order
 // they were started, which one at a time keeps, whatever the clock said.
 func (s *Store) BackupRuns(ctx context.Context) ([]BackupRun, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,status,destination,backup_name,verification,message,started_at,finished_at,longest_hold_ms,longest_hold_repository
+	rows, err := s.db.QueryContext(ctx, `SELECT id,kind,status,destination,backup_name,verification,message,started_at,finished_at,longest_hold_ms,longest_hold_repository,manifest_sha256
 		FROM backup_runs ORDER BY rowid DESC`)
 	if err != nil {
 		return nil, err
@@ -194,12 +201,12 @@ func (s *Store) BackupRuns(ctx context.Context) ([]BackupRun, error) {
 		var run BackupRun
 		var started int64
 		var finished, holdMS sql.NullInt64
-		var holdRepository sql.NullString
+		var holdRepository, manifest sql.NullString
 		if err := rows.Scan(&run.ID, &run.Kind, &run.Status, &run.Destination, &run.BackupName, &run.Verification, &run.Message,
-			&started, &finished, &holdMS, &holdRepository); err != nil {
+			&started, &finished, &holdMS, &holdRepository, &manifest); err != nil {
 			return nil, err
 		}
-		run.StartedAt = time.Unix(started, 0)
+		run.StartedAt, run.ManifestSHA256 = time.Unix(started, 0), manifest.String
 		if finished.Valid {
 			run.FinishedAt = time.Unix(finished.Int64, 0)
 		}

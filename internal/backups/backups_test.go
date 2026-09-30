@@ -179,18 +179,22 @@ func TestScheduledBackupsRunOncePerInterval(t *testing.T) {
 	if len(runs) != 1 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded {
 		t.Fatalf("runs: %+v", runs)
 	}
-	// Runs record the real time; the clock of the test decides when one is
-	// due, so the first run started at most a few seconds after it.
+	if !runs[0].StartedAt.Equal(f.clock.Now()) {
+		t.Fatalf("the run started at %s, not at the clock's %s", runs[0].StartedAt, f.clock.Now())
+	}
 	f.clock.advance(23 * time.Hour)
-	if wait := f.service.tick(); wait < time.Hour || wait > time.Hour+time.Minute {
+	if wait := f.service.tick(); wait != time.Hour {
 		t.Fatalf("an hour before the next backup: waits %s", wait)
 	}
-	f.clock.advance(time.Hour + time.Minute)
+	f.clock.advance(time.Hour)
+	f.service.tick()
+	f.service.work.Wait()
+	// Another look at the same instant finds the slot used.
 	f.service.tick()
 	f.service.work.Wait()
 	runs, err = f.store.BackupRuns(context.Background())
 	noErr(t, err)
-	if len(runs) != 2 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded {
+	if len(runs) != 2 || runs[0].Kind != state.BackupRunScheduled || !runs[0].StartedAt.Equal(f.clock.Now()) {
 		t.Fatalf("runs: %+v", runs)
 	}
 
@@ -555,10 +559,9 @@ func TestStatusReadsNoBackupFolder(t *testing.T) {
 	}
 }
 
-// A run owns its folder only while it holds a backup of the run's own
-// time: a folder that another backup took, by an exchange of names for
-// example, is not the run's, and so is never removed as the run's.
-func TestARunOwnsOnlyABackupOfItsOwnTime(t *testing.T) {
+// A run owns its folder only while it holds the very manifest the run
+// wrote.
+func TestARunOwnsOnlyTheManifestItWrote(t *testing.T) {
 	f := newFixture(t)
 	f.configure(t, ScheduleChange{})
 	run := f.backUpNow(t)
@@ -568,16 +571,43 @@ func TestARunOwnsOnlyABackupOfItsOwnTime(t *testing.T) {
 	backup, err := openOwned(folder, run)
 	noErr(t, err)
 	backup.Close()
-	for _, shifted := range []time.Duration{-time.Hour, time.Hour} {
+	for _, digest := range []string{"", strings.Repeat("0", 64)} {
 		other := run
-		other.StartedAt, other.FinishedAt = run.StartedAt.Add(shifted), run.FinishedAt.Add(shifted)
+		other.ManifestSHA256 = digest
 		if _, err := openOwned(folder, other); !errors.Is(err, errNotOwned) {
-			t.Errorf("a run %s off owns the backup: %v", shifted, err)
+			t.Errorf("a run with manifest digest %q owns the backup: %v", digest, err)
 		}
 	}
 	missing := run
 	missing.BackupName = namePrefix + "missing"
 	if _, err := openOwned(folder, missing); !errors.Is(err, errMissing) {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+// Two verified backups made in the same second whose folders were
+// exchanged are both left: each folder holds the other run's manifest.
+func TestRetentionLeavesExchangedBackupsOfTheSameSecond(t *testing.T) {
+	f := newFixture(t)
+	keep := 2
+	f.configure(t, ScheduleChange{Keep: &keep})
+	started := f.clock.Now()
+	older := f.runAt(t, strings.Repeat("f", 32), started)
+	newer := f.runAt(t, strings.Repeat("e", 32), started)
+	if older.Verification != state.BackupVerifyPassed || newer.Verification != state.BackupVerifyPassed {
+		t.Fatalf("runs: %+v %+v", older, newer)
+	}
+	olderPath, newerPath := filepath.Join(f.destination, older.BackupName), filepath.Join(f.destination, newer.BackupName)
+	noErr(t, os.Rename(olderPath, olderPath+"-swap"))
+	noErr(t, os.Rename(newerPath, olderPath))
+	noErr(t, os.Rename(olderPath+"-swap", newerPath))
+	third := f.runAt(t, strings.Repeat("d", 32), started)
+	if third.Status != state.BackupSucceeded || !strings.Contains(third.Message, "holds another backup") {
+		t.Fatalf("third: %+v", third)
+	}
+	for _, path := range []string{olderPath, newerPath} {
+		if _, err := os.Stat(filepath.Join(path, "manifest.json")); err != nil {
+			t.Fatalf("%s was removed: %v", path, err)
+		}
 	}
 }

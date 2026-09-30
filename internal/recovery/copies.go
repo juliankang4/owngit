@@ -1,8 +1,11 @@
 package recovery
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -49,6 +52,8 @@ type BackupCopy struct {
 	dir    *os.Root
 	// CreatedAt is the instant the backup describes.
 	CreatedAt time.Time
+	// ManifestSHA256 is the SHA-256 of its manifest (CaptureReport).
+	ManifestSHA256 string
 	// bundles are the files the manifest names in its repositories
 	// folder, by repository ID.
 	bundles map[string]string
@@ -106,14 +111,19 @@ func readCopy(folder *BackupFolder, name string, dir *os.Root) (*BackupCopy, err
 		return nil, err
 	}
 	defer file.Close()
-	manifest, err := decodeManifest(file, info.Size(), manifestLimit)
+	digest := sha256.New()
+	content := io.TeeReader(file, digest)
+	manifest, err := decodeManifest(content, info.Size(), manifestLimit)
 	if err == nil {
 		err = validateManifest(manifest)
+	}
+	if err == nil {
+		_, err = io.Copy(io.Discard, content)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read the manifest of %s: %w", name, err)
 	}
-	backup := &BackupCopy{folder: folder, name: name, dir: dir, CreatedAt: manifest.CreatedAt, bundles: map[string]string{}}
+	backup := &BackupCopy{folder: folder, name: name, dir: dir, CreatedAt: manifest.CreatedAt, ManifestSHA256: hex.EncodeToString(digest.Sum(nil)), bundles: map[string]string{}}
 	for _, item := range manifest.Repositories {
 		if item.Bundle != "" {
 			backup.bundles[item.ID] = path.Base(item.Bundle)

@@ -86,7 +86,7 @@ func TestUnsupportedSchemaInCommittedWALPreservesSource(t *testing.T) {
 // currentSchemaFingerprint pins the catalog of schema 16. A changed migration
 // statement changes it, so the current schema cannot drift unnoticed.
 const (
-	currentSchemaFingerprint = "d885a7c4d60f66b9ae3917a55bc4373cbace41933eb08c3b6b6e8adfdd376138"
+	currentSchemaFingerprint = "76fab395b9b4a930070469e7208a9193fd8a2b1a4a13a9ab6b83fe125baf6a9b"
 	currentSchemaObjects     = 120
 )
 

@@ -190,6 +190,7 @@ func TestSchema16Constraints(t *testing.T) {
 			INSERT INTO backup_runs(id,kind,status,destination,started_at) VALUES('00000000000000000000000000000004','scheduled','running','/home/example/b',2)`,
 		"backup every ten minutes":     `UPDATE backup_schedule SET interval_seconds=600`,
 		"negative backup hold":         `UPDATE backup_runs SET longest_hold_ms=-1`,
+		"short manifest digest":        `UPDATE backup_runs SET manifest_sha256='abc'`,
 		"extra refs that are not JSON": `UPDATE repository_policies SET extra_ref_prefixes='refs/notes/'`,
 	} {
 		t.Run(name, func(t *testing.T) {

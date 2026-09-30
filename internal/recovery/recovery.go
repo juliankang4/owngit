@@ -510,10 +510,12 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	if err != nil {
 		return err
 	}
-	if err := writeManifest(file, manifest); err != nil {
+	digest := sha256.New()
+	if err := writeManifest(io.MultiWriter(file, digest), manifest); err != nil {
 		file.Close()
 		return err
 	}
+	report.ManifestSHA256 = hex.EncodeToString(digest.Sum(nil))
 	if err := file.Sync(); err != nil {
 		file.Close()
 		return err

@@ -66,6 +66,9 @@ type CaptureReport struct {
 	// Captured says that the capture finished: the instant was taken and
 	// every repository's refs were read, so the fields above are final.
 	Captured bool `json:"captured"`
+	// ManifestSHA256 is the SHA-256 of the manifest the backup wrote, once
+	// it was written. It names this backup and no other.
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
 }
 
 // capturedRepository is one repository as the backup describes it: its

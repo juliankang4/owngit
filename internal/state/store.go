@@ -1520,7 +1520,10 @@ var schemaSteps = []schemaStep{
 			-- The longest time the backup kept one repository's Git writes
 			-- waiting and that repository, once its capture finished.
 			longest_hold_ms INTEGER CHECK (longest_hold_ms IS NULL OR longest_hold_ms >= 0),
-			longest_hold_repository TEXT CHECK (longest_hold_repository IS NULL OR length(longest_hold_repository) BETWEEN 1 AND 100)
+			longest_hold_repository TEXT CHECK (longest_hold_repository IS NULL OR length(longest_hold_repository) BETWEEN 1 AND 100),
+			-- The SHA-256 of the manifest the run wrote, which names its
+			-- backup: only the folder that holds this manifest is the run's.
+			manifest_sha256 TEXT CHECK (manifest_sha256 IS NULL OR (length(manifest_sha256) = 64 AND manifest_sha256 NOT GLOB '*[^0-9a-f]*'))
 		)`,
 		`CREATE UNIQUE INDEX backup_runs_running ON backup_runs(status) WHERE status = 'running'`,
 		`CREATE INDEX backup_runs_recent ON backup_runs(started_at,id)`,
