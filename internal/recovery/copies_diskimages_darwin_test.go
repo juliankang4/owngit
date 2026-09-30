@@ -42,6 +42,13 @@ func TestBackupOntoDiskImages(t *testing.T) {
 			noErr(t, os.Mkdir(destination, 0o700))
 			backUpOntoFolder(t, destination)
 
+			// The dashboard says that a restore cannot write there.
+			if volume.name == "exfat" {
+				if fileSystem, err := RestoreLimit(destination); err != nil || fileSystem != "exfat" {
+					t.Fatalf("restore limit of an exFAT folder: %q %v", fileSystem, err)
+				}
+			}
+
 			// Repositories are refused before any work, naming the file
 			// system: on exFAT for the rename, on FAT for the companions.
 			backup := newTwoRepositoryBackup(t, t.TempDir())

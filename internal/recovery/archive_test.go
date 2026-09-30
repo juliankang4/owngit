@@ -128,3 +128,16 @@ func TestUnpackArchiveRefusesWhatABackupDoesNotHold(t *testing.T) {
 		t.Fatalf("name %q", name)
 	}
 }
+
+// A folder whose file system renames without replacing has no restore
+// limit, and the test leaves nothing there.
+func TestRestoreLimitOfAnOrdinaryFolder(t *testing.T) {
+	dir := t.TempDir()
+	fileSystem, err := RestoreLimit(dir)
+	if err != nil || fileSystem != "" {
+		t.Fatalf("restore limit: %q %v", fileSystem, err)
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("the test left %v %v", entries, err)
+	}
+}
