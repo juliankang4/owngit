@@ -88,12 +88,7 @@ func TestCleanupRemovesOnlyOldUnreachableObjects(t *testing.T) {
 			schedule.cleanupGrace = 14 * 24 * time.Hour
 			// An unfinished check job or an import in progress may still
 			// need an unreachable commit, so cleanup waits for them.
-			task, err := manager.Store.CreateTask(ctx, "cleanup", "check", time.Now())
-			noErr(t, err)
-			noErr(t, manager.Store.Exec(ctx, `INSERT INTO check_jobs(id,repository_id,task_id,trigger_kind,event_key,source_oid,trigger_ref,workflow_path,
-				workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,dedup_digest,status,admitted_at)
-				VALUES('job','cleanup',?,'push','event',?,'refs/heads/main','check.yml',?,1,'host',1,1,'{}','{}',?,'pending',1)`,
-				task.ID, oldLoose, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+			admitCheckJob(t, manager, "cleanup", "job", oldLoose)
 			noErr(t, manager.Store.Exec(ctx, `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,created_at)
 				VALUES('run','cleanup',1,1,'refresh','fetching',1,1)`))
 			for _, finish := range []string{
@@ -130,5 +125,64 @@ func TestCleanupRemovesOnlyOldUnreachableObjects(t *testing.T) {
 			}
 			runGit(t, "", "--git-dir", remote, "fsck", "--connectivity-only", "--no-dangling")
 		})
+	}
+}
+
+// admitCheckJob records a pending check job, as admission does, for oid.
+func admitCheckJob(t *testing.T, manager *Manager, repositoryID, id, oid string) {
+	t.Helper()
+	ctx := context.Background()
+	task, err := manager.Store.CreateTask(ctx, repositoryID, "check", time.Now())
+	noErr(t, err)
+	noErr(t, manager.Store.Exec(ctx, `INSERT INTO check_jobs(id,repository_id,task_id,trigger_kind,event_key,source_oid,trigger_ref,workflow_path,
+		workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,dedup_digest,status,admitted_at)
+		VALUES(?,?,?,'push','event',?,'refs/heads/main','check.yml',?,1,'external_runner',1,1,'{}','{}',?,'pending',1)`,
+		id, repositoryID, task.ID, oid, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+}
+
+// A check that pinned its commit and is between reads keeps its source
+// objects, although they are old and no ref reaches them any more: cleanup
+// waits until the job ends, then removes them.
+func TestCleanupKeepsTheSourceOfACheckBetweenReads(t *testing.T) {
+	ctx := context.Background()
+	manager, remote, work := newTestRepository(t)
+	commitFile(t, work, "source only\n", "source", "2024-01-01T00:00:00Z")
+	runGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/main")
+	source := gitOutput(t, work, "rev-parse", "HEAD")
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	noErr(t, filepath.WalkDir(filepath.Join(remote, "objects"), func(path string, entry os.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			err = os.Chtimes(path, old, old)
+		}
+		return err
+	}))
+	// The objects are old, but the commit becomes unreachable only now.
+	runGit(t, "", "--git-dir", remote, "update-ref", "-d", "refs/heads/main")
+	admitCheckJob(t, manager, "sample", "job", source)
+	pinned, err := manager.PinRepository(ctx, "sample", source, source)
+	noErr(t, err)
+	entries, err := pinned.ListTreeRecursive(ctx, PinnedHead, 1<<20)
+	noErr(t, err)
+	if len(entries) != 1 {
+		t.Fatalf("tree entries=%+v", entries)
+	}
+
+	schedule := MaintenanceSchedule{}.withDefaults()
+	schedule.cleanupGrace = 2 * 24 * time.Hour
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) {
+		t.Fatalf("cleanup during the check: %v", err)
+	}
+	if _, err := pinned.ReadBlobObject(ctx, entries[0].OID, entries[0].Size); err != nil {
+		t.Fatalf("the check's next read after cleanup: %v", err)
+	}
+
+	noErr(t, manager.Store.Exec(ctx, `UPDATE check_jobs SET status='passed' WHERE id='job'`))
+	steps, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule)
+	noErr(t, err, "cleanup after the check")
+	if steps != 4 {
+		t.Fatalf("cleanup ran %d steps", steps)
+	}
+	if _, err := gitCombined("", "--git-dir", remote, "cat-file", "-e", source); err == nil {
+		t.Fatal("cleanup kept the old unreachable commit after the check ended")
 	}
 }

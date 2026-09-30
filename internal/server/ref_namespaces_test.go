@@ -33,7 +33,7 @@ func TestExtraRefNamespacesAreSavedFromTheSettingsTabAndTheAPI(t *testing.T) {
 		t.Fatalf("the Settings tab lacks the namespaces:\n%s", page.body)
 	}
 	target := server.URL + "/repositories/project/settings/ref-namespaces"
-	for _, refused := range []string{"refs/Heads/", "refs/notes/\nrefs/Notes/", "refs/owngit/x/", "notes"} {
+	for _, refused := range []string{"refs/Heads/", "refs/notes/\nrefs/Notes/", "refs/Notes/a/\nrefs/notes/b/", "refs/owngit/x/", "notes"} {
 		result := browserForm(t, client, target, url.Values{"csrf": {adminTestCSRF}, "extra_ref_prefixes": {refused}}, server.URL)
 		if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, enText(webui.MsgNamespacesInvalid)) {
 			t.Fatalf("%q: status=%d", refused, result.status)
@@ -58,8 +58,10 @@ func TestExtraRefNamespacesAreSavedFromTheSettingsTabAndTheAPI(t *testing.T) {
 	if status != http.StatusOK || !reflect.DeepEqual(*answer.Settings.ExtraRefPrefixes, []string{"refs/notes/", "refs/meta/"}) {
 		t.Fatalf("PATCH of the protection status=%d answer=%+v problem=%s", status, answer, problem)
 	}
-	if status, _, problem := repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"extra_ref_prefixes": []string{"refs/tags/"}}); status != http.StatusBadRequest {
-		t.Fatalf("PATCH overlapping tags status=%d problem=%s", status, problem)
+	for _, refused := range [][]string{{"refs/tags/"}, {"refs/Notes/a/", "refs/notes/b/"}} {
+		if status, _, problem := repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"extra_ref_prefixes": refused}); status != http.StatusBadRequest {
+			t.Fatalf("PATCH %q status=%d problem=%s", refused, status, problem)
+		}
 	}
 	status, answer, _ = repositorySettingsAPI(t, server.URL, "project", http.MethodPatch, map[string]any{"extra_ref_prefixes": []string{"refs/notes/"}})
 	if status != http.StatusOK || len(answer.Warnings) != 1 || answer.Warnings[0] != enText(webui.MsgNamespacesUnkept) {

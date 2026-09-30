@@ -109,13 +109,14 @@ func TestRefWritesFollowTheServerDefaultAndTheRepositoryChoice(t *testing.T) {
 func TestExtraRefNamespacesAreCheckedSavedAndRead(t *testing.T) {
 	for _, refused := range [][]string{
 		{"refs/Heads/"}, {"refs/"}, {"refs/OWNGIT/x/"}, {"refs/notes/", "refs/Notes/"}, {"refs/notes/", "refs/notes/x/"},
-		{"refs/notes"}, {"refs/nötes/"}, {"refs/notes/", "refs/notes/"}, {"refs/" + strings.Repeat("n", 100) + "/"},
+		{"refs/notes"}, {"refs/nötes/"}, {"refs/notes/", "refs/notes/"}, {"refs/Notes/a/", "refs/notes/b/"}, {"refs/meta/x/", "refs/Meta/x/y/"},
+		{"refs/Heads-x/", "refs/heads-x/y/"}, {"refs/" + strings.Repeat("n", 100) + "/"},
 	} {
 		if err := ValidateExtraRefPrefixes(refused); err == nil {
 			t.Errorf("%q was accepted", refused)
 		}
 	}
-	noErr(t, ValidateExtraRefPrefixes([]string{"refs/notes/", "refs/meta/", "refs/changes-review/"}))
+	noErr(t, ValidateExtraRefPrefixes([]string{"refs/notes/", "refs/meta/", "refs/changes-review/", "refs/x/a/", "refs/x/b/", "refs/headsx/"}))
 
 	store := openTestStore(t)
 	ctx := context.Background()

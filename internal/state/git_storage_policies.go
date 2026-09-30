@@ -510,13 +510,16 @@ func (s *Store) UnusedObjectCleanup(ctx context.Context) (UnusedObjectCleanup, e
 }
 
 // RepositoryObjectsInUse reports whether repository id has a check job
-// that has not finished (pending, claimed or started) or an import run in
-// progress. Either may still need objects that no ref reaches, so unused
+// that has not finished (from admission, whatever runs it) or an import run
+// in progress. Either may still need objects that no ref reaches, so unused
 // object cleanup waits for them.
 func (s *Store) RepositoryObjectsInUse(ctx context.Context, id string) (bool, error) {
-	var busy bool
-	err := s.db.QueryRowContext(ctx, `SELECT
-		EXISTS(SELECT 1 FROM check_jobs WHERE repository_id=? AND status IN ('pending','claimed','started'))
-		OR EXISTS(SELECT 1 FROM import_runs WHERE repository_id=? AND status IN ('preparing','fetching','indexing','inspecting','publishing'))`, id, id).Scan(&busy)
-	return busy, err
+	jobs, err := countUnfinishedCheckJobsTx(ctx, s.db, id)
+	if err != nil || jobs > 0 {
+		return jobs > 0, err
+	}
+	var importing bool
+	err = s.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM import_runs WHERE repository_id=?
+		AND status IN ('preparing','fetching','indexing','inspecting','publishing'))`, id).Scan(&importing)
+	return importing, err
 }

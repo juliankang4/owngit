@@ -59,9 +59,10 @@ const (
 // ValidateExtraRefPrefixes accepts ref namespaces such as refs/notes/: each
 // starts with refs/, ends with /, is written with ASCII letters, digits and
 // "-", "_", "." and "/" as Git accepts in a ref name, and has at most 100
-// characters. Letter case aside, none may lie inside or around another of
-// the list or branches, tags or OwnGit's own refs, since some file systems
-// store two such spellings in one folder.
+// characters. None may lie inside or around another of the list or
+// branches, tags or OwnGit's own refs, letter case aside, or spell a folder
+// they share differently (refs/Notes/a/ beside refs/notes/b/), since some
+// file systems store two such spellings in one folder.
 func ValidateExtraRefPrefixes(prefixes []string) error {
 	if len(prefixes) > maximumExtraRefPrefixes {
 		return fmt.Errorf("at most %d extra ref namespaces are allowed", maximumExtraRefPrefixes)
@@ -79,15 +80,31 @@ func ValidateExtraRefPrefixes(prefixes []string) error {
 		if !valid {
 			return fmt.Errorf("extra ref namespace %q is not a ref prefix such as refs/notes/", prefix)
 		}
-		folded := strings.ToLower(prefix)
 		for _, other := range taken {
-			if strings.HasPrefix(folded, strings.ToLower(other)) || strings.HasPrefix(strings.ToLower(other), folded) {
-				return fmt.Errorf("extra ref namespace %q overlaps %s", prefix, other)
+			if refPrefixesConflict(prefix, other) {
+				return fmt.Errorf("extra ref namespace %q overlaps %s or spells one of its folders differently", prefix, other)
 			}
 		}
 		taken = append(taken, prefix)
 	}
 	return nil
+}
+
+// refPrefixesConflict reports whether two ref prefixes name one folder in
+// two spellings, or one lies inside the other, letter case aside. They are
+// compared folder by folder from refs/: folders that differ apart from
+// letter case are siblings, which never conflict.
+func refPrefixesConflict(a, b string) bool {
+	left, right := strings.Split(strings.Trim(a, "/"), "/"), strings.Split(strings.Trim(b, "/"), "/")
+	for index := range min(len(left), len(right)) {
+		if !strings.EqualFold(left[index], right[index]) {
+			return false
+		}
+		if left[index] != right[index] {
+			return true
+		}
+	}
+	return true
 }
 
 // encodeRefPrefixes returns the column text of a valid list: [] when empty.
