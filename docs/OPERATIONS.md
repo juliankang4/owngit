@@ -779,7 +779,7 @@ While sharing is on, saving another port moves it. OwnGit checks that the new po
 git remote set-url origin https://NAME.TAILNET.ts.net:8443/git/project.git
 ```
 
-If the new port is taken, nothing changes. If sharing was turned off at the old port and then cannot be turned on at the new one, it stays off and the message says why; save a port again to turn it back on. If your tailnet's access controls limit ports, allow the new one.
+If the new port is taken, nothing changes. If sharing was turned off at the old port and Tailscale then refuses it on the new one, sharing stays off and the message says why; save a port again to turn it back on. Some other failures at that point, such as settings that cannot be saved or an answer from Tailscale that never arrives, can leave Tailscale already serving OwnGit on the new port. The last case under [Replacing what another service has on a port](#replacing-what-another-service-has-on-a-port) says how to finish or undo that. If your tailnet's access controls limit ports, allow the new one.
 
 #### Replacing what another service has on a port
 
