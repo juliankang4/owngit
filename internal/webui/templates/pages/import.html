@@ -126,6 +126,7 @@
   {{if $p.Last}}
     <p><span class="pill">{{importToken $lang $p.Last.Kind}}</span> <span class="pill pill--off">{{importToken $lang $p.Last.Status}}</span> <span class="mono">{{$p.Last.ID}}</span></p>
     {{with $p.Last.ErrorClass}}<p>{{importError $lang .}}</p>{{end}}
+    {{if and $p.Last.Message $p.Last.SettingRefusal}}<p>{{bi $lang "import.refusal_details"}}</p>{{end}}
     {{with $p.Last.Message}}<details><summary>{{bi $lang "import.technical_details"}}</summary><p class="mono" dir="auto">{{.}}</p></details>{{end}}
   {{else}}
     <p>{{bi $lang "import.no_run"}}</p>

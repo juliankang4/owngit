@@ -191,9 +191,45 @@ const (
 	MsgImportFactLimits         MessageCode = "import.fact.limits"
 	MsgImportOriginInvalid      MessageCode = "import.origin_invalid"
 	MsgImportURLPlainHTTP       MessageCode = "import.url_plain_http"
+
+	MsgImportRefusedPrivate   MessageCode = "import.error.address_needs_private_network"
+	MsgImportRefusedException MessageCode = "import.error.address_needs_exceptional_destination"
+	MsgImportRefusedAddress   MessageCode = "import.error.address_refused"
+	MsgImportRefusedRedirect  MessageCode = "import.error.redirect_not_allowed"
+	MsgImportRefusedPlain     MessageCode = "import.error.redirect_needs_plain_http"
+	MsgImportRefusalDetails   MessageCode = "import.refusal_details"
+	MsgImportTransportReset   MessageCode = "import.transport_reset"
 )
 
 var importOptionsCatalog = map[MessageCode]message{
+	MsgImportRefusedPrivate: {
+		en: "OwnGit did not connect: the source address is on a private network, which this source does not allow. To connect, turn on “Allow a private-network source” in this source's settings.",
+		ko: "원본 주소가 사설망에 있고 이 원본은 사설망 연결을 허용하지 않아 OwnGit이 연결하지 않았습니다. 연결하려면 이 원본 설정에서 ‘사설망 원본 허용’을 켜세요.",
+	},
+	MsgImportRefusedException: {
+		en: "OwnGit did not connect: the source address is a special-purpose address, which this source does not allow. To connect, turn on “Allow this exceptional destination” under Connection and limits.",
+		ko: "원본 주소가 특수 용도 주소이고 이 원본은 그런 주소를 허용하지 않아 OwnGit이 연결하지 않았습니다. 연결하려면 ‘연결과 한도’에서 ‘예외 대상 주소 허용’을 켜세요.",
+	},
+	MsgImportRefusedAddress: {
+		en: "OwnGit did not connect: the source address is in a range that imports never connect to, such as link-local or multicast. No setting allows it, so use another source address.",
+		ko: "원본 주소가 링크 로컬이나 멀티캐스트처럼 가져오기가 절대 연결하지 않는 범위에 있어 OwnGit이 연결하지 않았습니다. 이를 허용하는 설정은 없으니 다른 원본 주소를 쓰세요.",
+	},
+	MsgImportRefusedRedirect: {
+		en: "OwnGit did not follow the source's redirect, because this source's Redirects setting does not allow it. To follow it, choose a redirect option under Connection and limits; a redirect to another origin also needs that origin approved.",
+		ko: "이 원본의 리디렉션 설정이 허용하지 않아 OwnGit이 원본의 리디렉션을 따르지 않았습니다. 따르려면 ‘연결과 한도’에서 리디렉션 방식을 고르세요. 다른 출처로의 리디렉션은 그 출처를 승인해야 합니다.",
+	},
+	MsgImportRefusedPlain: {
+		en: "OwnGit did not follow the source's redirect from HTTPS to plain HTTP, which this source does not allow. To follow it, turn on “Allow plain HTTP for this source” under Connection and limits.",
+		ko: "원본이 HTTPS에서 암호화되지 않은 HTTP로 리디렉션했고 이 원본은 이를 허용하지 않아 OwnGit이 따르지 않았습니다. 따르려면 ‘연결과 한도’에서 ‘이 원본에 암호화되지 않은 HTTP 허용’을 켜세요.",
+	},
+	MsgImportTransportReset: {
+		en: "The address changed, so the plain HTTP, redirect and exceptional destination choices were reset. Choose again any that the new address needs.",
+		ko: "주소가 바뀌어 암호화되지 않은 HTTP, 리디렉션, 예외 대상 주소 설정을 초기화했습니다. 새 주소에 필요한 설정을 다시 고르세요.",
+	},
+	MsgImportRefusalDetails: {
+		en: "The technical details name the address and its range, or the origin the redirect leads to.",
+		ko: "기술 세부 정보에 해당 주소와 범위, 또는 리디렉션이 향하는 출처가 적혀 있습니다.",
+	},
 	MsgImportOptions:            {en: "Connection and limits", ko: "연결과 한도"},
 	MsgImportOptionsHelp:        {en: "These choices apply to this source only. The defaults suit most sources.", ko: "이 원본에만 적용됩니다. 대부분의 원본은 기본값으로 충분합니다."},
 	MsgImportOptionsUnreadable:  {en: "A saved connection choice or limit of this source cannot be read, so imports from it stop. Set it again under Connection and limits.", ko: "이 원본에 저장된 연결 설정이나 한도를 읽을 수 없어 가져오기가 멈췄습니다. ‘연결과 한도’에서 다시 설정하세요."},
@@ -417,6 +453,16 @@ func ImportErrorCode(class string) MessageCode {
 		return MsgImportErrorRefs
 	case "network":
 		return MsgImportErrorNetwork
+	case "address_needs_private_network":
+		return MsgImportRefusedPrivate
+	case "address_needs_exceptional_destination":
+		return MsgImportRefusedException
+	case "address_refused":
+		return MsgImportRefusedAddress
+	case "redirect_not_allowed":
+		return MsgImportRefusedRedirect
+	case "redirect_needs_plain_http":
+		return MsgImportRefusedPlain
 	case "protocol":
 		return MsgImportErrorProtocol
 	case "too_large":

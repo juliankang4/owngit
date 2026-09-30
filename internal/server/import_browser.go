@@ -180,6 +180,13 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 			app.renderImportPage(writer, request, stored, summary, chrome, http.StatusUnprocessableEntity)
 			return
 		}
+		if posted.forURL != "" && posted.forURL != strings.TrimSpace(postValue(request, "url")) {
+			// The connection choices on the form were drawn for the saved
+			// address, not the one submitted: leave them to the service,
+			// which resets them for a new address. A choice made again for
+			// the new address is submitted for it (see owngit.js).
+			options.AllowPlainHTTP, options.Redirects, options.ApprovedRedirectOrigin, options.AllowReservedAddresses = nil, nil, nil, nil
+		}
 		_, err = app.Imports.ConfigureSource(request.Context(), importsync.ConfigureInput{
 			RepositoryID: stored.ID, URL: postValue(request, "url"), Mode: importsync.Mode(postValue(request, "mode")),
 			GitOnlyConsent: postValue(request, "git_only_consent") == "1", AllowPrivateNetwork: postValue(request, "allow_private_network") == "1",
@@ -312,6 +319,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		page.GitOnlyConsent = importStatus.GitOnlyConsent
 		page.PrivateNetwork = importStatus.TransportConsent
 		page.Options = importOptionsForm(importStatus.Options, nil, chrome.Notices)
+		page.Options.ForURL = importStatus.URL
 		page.OptionsSummary = importOptionFacts(importStatus.Options)
 		page.OptionsProblem = importStatus.Options != nil && importStatus.Options.Problem != ""
 		page.CredentialForm = importStatus.CredentialForm
@@ -325,6 +333,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			page.PrivateNetwork = postValue(request, "allow_private_network") == "1"
 			posted := readPostedImportOptions(request)
 			page.Options = importOptionsForm(importStatus.Options, &posted, chrome.Notices)
+			page.Options.ForURL = posted.forURL
 		}
 	}
 	cursor, _ := strconv.ParseInt(request.URL.Query().Get("cursor"), 10, 64)
@@ -523,6 +532,9 @@ type postedImportOptions struct {
 	origin    string
 	reserved  bool
 	limits    map[string]webui.LimitInput
+	// forURL is the address the connection choices were drawn or chosen
+	// for, on the Import tab; empty on the new-import form.
+	forURL string
 }
 
 func readPostedImportOptions(request *http.Request) postedImportOptions {
@@ -532,6 +544,7 @@ func readPostedImportOptions(request *http.Request) postedImportOptions {
 		origin:    strings.TrimSpace(postValue(request, "approved_redirect_origin")),
 		reserved:  postValue(request, "allow_reserved_addresses") == "1",
 		limits:    map[string]webui.LimitInput{},
+		forURL:    strings.TrimSpace(postValue(request, "options_url")),
 	}
 	if posted.redirects == "" {
 		posted.redirects = state.ImportRedirectRefuse
@@ -554,6 +567,13 @@ func (posted postedImportOptions) change() (importsync.OptionsChange, []webui.No
 	var problems []webui.Notice
 	switch posted.redirects {
 	case state.ImportRedirectRefuse, state.ImportRedirectSameOrigin:
+		// An origin typed but unused is still refused when malformed; a saved
+		// one shown again is dropped with the policy change.
+		if posted.origin != "" {
+			if _, err := importfetch.ParseRedirectOrigin(posted.origin, true); err != nil {
+				problems = append(problems, webui.Error("approved_redirect_origin", webui.MsgImportOriginInvalid))
+			}
+		}
 	case state.ImportRedirectApproved:
 		if _, err := importfetch.ParseRedirectOrigin(posted.origin, posted.plainHTTP); err != nil {
 			problems = append(problems, webui.Error("approved_redirect_origin", webui.MsgImportOriginInvalid))

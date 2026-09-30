@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -184,3 +185,140 @@ func TestImportFormsSaveAndShowTheOptions(t *testing.T) {
 		t.Fatalf("a viewer without the administrator password sees the options: status=%d", page.status)
 	}
 }
+
+// Changing only the address on the Import tab resets the plain HTTP,
+// redirect and exceptional destination choices drawn for the saved address,
+// even though the form sends them again; limits stay. Choices recorded for
+// the new address apply to it.
+func TestImportTabAddressChangeResetsConnectionChoices(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "address-admin")
+	saved := "http://example.invalid/team/project.git"
+	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
+		RepositoryID: "project", URL: saved, Mode: importsync.ModeStandalone,
+		Options: importsync.OptionsChange{
+			AllowPlainHTTP: boolRef(true), AllowReservedAddresses: boolRef(true), Redirects: stringRef("approved"),
+			ApprovedRedirectOrigin: stringRef("https://mirror.example"), Limits: map[string]int64{"refs": 100_000},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page := browserGET(t, client, server.URL+"/repositories/project/import?setup=1")
+	if !strings.Contains(page.body, `name="options_url" value="`+saved+`"`) || !strings.Contains(page.body, "data-import-transport-reset") {
+		t.Fatalf("the form does not record the address its choices belong to: %s", page.body)
+	}
+	form := func(address, forURL string) browserHTTPResult {
+		return browserForm(t, client, server.URL+"/repositories/project/import", url.Values{
+			"csrf": {csrf}, "action": {webui.ActionImportConfigure}, "admin_password": {"admin-password"},
+			"url": {address}, "options_url": {forURL}, "mode": {"standalone"},
+			"allow_plain_http": {"1"}, "redirects": {"approved"}, "approved_redirect_origin": {"https://mirror.example"},
+			"allow_reserved_addresses": {"1"}, "refs": {"100000"},
+		}, server.URL)
+	}
+	// A browser without scripting sends the saved choices with a new address.
+	moved := "https://example.invalid/other/project.git"
+	if result := form(moved, saved); result.status != http.StatusSeeOther {
+		t.Fatalf("address change status=%d body=%s", result.status, result.body)
+	}
+	source, _, err := fixture.app.Imports.Store.ImportSource(context.Background(), "project")
+	if err != nil || source.URL != moved || source.Options.AllowPlainHTTP || source.Options.AllowReservedAddresses ||
+		source.Options.Redirects != "refuse" || source.Options.ApprovedRedirectOrigin != "" || source.Options.Limits.Refs != 100_000 {
+		t.Fatalf("after an address-only change: %+v, %v", source, err)
+	}
+	// Choices made again for the new address are saved for it.
+	if result := form(moved, moved); result.status != http.StatusSeeOther {
+		t.Fatalf("choices for the new address status=%d body=%s", result.status, result.body)
+	}
+	source, _, err = fixture.app.Imports.Store.ImportSource(context.Background(), "project")
+	if err != nil || !source.Options.AllowReservedAddresses || source.Options.Redirects != "approved" {
+		t.Fatalf("choices for the new address: %+v, %v", source.Options, err)
+	}
+	// An origin typed with the Refuse policy is still checked.
+	refused := browserForm(t, client, server.URL+"/repositories/project/import", url.Values{
+		"csrf": {csrf}, "action": {webui.ActionImportConfigure}, "admin_password": {"admin-password"},
+		"url": {moved}, "options_url": {moved}, "mode": {"standalone"}, "redirects": {"refuse"}, "approved_redirect_origin": {"https://mirror.example/path"},
+	}, server.URL)
+	if refused.status != http.StatusUnprocessableEntity || !strings.Contains(refused.body, webui.Text(webui.LangEN, webui.MsgImportOriginInvalid)) {
+		t.Fatalf("malformed unused origin status=%d", refused.status)
+	}
+}
+
+// The API refuses a malformed approved origin whatever the redirect policy,
+// and a policy change that drops a stored origin is allowed.
+func TestImportAPIRefusesAMalformedUnusedOrigin(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	base := server.URL + "/api/v1/repositories/project/import"
+	decodeImportSource(t, importAPIRequest(t, http.MethodPut, base, map[string]any{
+		"url": "https://example.invalid/team/project.git", "mode": "standalone", "redirects": "approved", "approved_redirect_origin": "https://mirror.example",
+	}, "admin-password"))
+	for _, body := range []map[string]any{
+		{"redirects": "refuse", "approved_redirect_origin": "https://mirror.example/path"},
+		{"redirects": "same_origin", "approved_redirect_origin": "mirror.example"},
+	} {
+		if response := importAPIRequest(t, http.MethodPatch, base, body, "admin-password"); response.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, response) != importsync.CodeInvalidSource {
+			t.Errorf("%v: status=%d", body, response.StatusCode)
+		}
+	}
+	dropped := decodeImportSource(t, importAPIRequest(t, http.MethodPatch, base, map[string]any{"redirects": "refuse"}, "admin-password"))
+	if dropped.Options.Redirects != "refuse" || dropped.Options.ApprovedRedirectOrigin != "" {
+		t.Fatalf("policy change = %+v", dropped.Options)
+	}
+}
+
+// A run refused by an address or redirect setting says so in the reader's
+// language and names the setting to turn on. An administrator is pointed to
+// the technical details for the address; a viewer never sees it.
+func TestImportTabExplainsSettingRefusals(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	refusal := error(&importfetch.Error{
+		Op: "validate source address", Kind: importfetch.ErrAddressPolicy,
+		Address: "192.0.2.10", AddressRange: "documentation range 192.0.2.0/24", Consent: importfetch.ConsentExceptionalDestination,
+	})
+	fixture.app.Imports.Fetch = func(context.Context, importfetch.Request, importfetch.PackConsumer) (*importfetch.Result, error) {
+		return nil, refusal
+	}
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	csrf := browserAdminSessionFor(t, fixture, server.URL, jar, "refusal-admin")
+	if _, err := fixture.app.Imports.ConfigureSource(context.Background(), importsync.ConfigureInput{
+		RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: importsync.ModeStandalone,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		err     error
+		message webui.MessageCode
+		literal string
+	}{
+		{refusal, webui.MsgImportRefusedException, "192.0.2.10"},
+		{&importfetch.Error{Op: "validate source address", Kind: importfetch.ErrAddressPolicy, Address: "10.0.0.1", AddressRange: "private range 10.0.0.0/8", Consent: importfetch.ConsentPrivateNetwork}, webui.MsgImportRefusedPrivate, "10.0.0.1"},
+		{&importfetch.Error{Op: "follow redirect", Kind: importfetch.ErrRedirect, RedirectOrigin: "https://mirror.example"}, webui.MsgImportRefusedRedirect, "https://mirror.example"},
+	} {
+		refusal = test.err
+		browserForm(t, client, server.URL+"/repositories/project/import", url.Values{
+			"csrf": {csrf}, "action": {webui.ActionImportRefresh}, "admin_password": {"admin-password"},
+		}, server.URL)
+		for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+			page := browserGET(t, client, server.URL+"/repositories/project/import?lang="+string(lang))
+			details := strings.Index(page.body, "<details><summary>")
+			if !strings.Contains(page.body, html.EscapeString(webui.Text(lang, test.message))) || !strings.Contains(page.body, webui.Text(lang, webui.MsgImportRefusalDetails)) || details < 0 {
+				t.Fatalf("%s page for %v lacks the explanation", lang, test.err)
+			}
+			if at := strings.Index(page.body, test.literal); at < details {
+				t.Fatalf("%s page names %s outside the technical details", lang, test.literal)
+			}
+		}
+		anonymous, _ := newBrowserClient(t)
+		page := browserGET(t, anonymous, server.URL+"/repositories/project/import?lang=ko")
+		if !strings.Contains(page.body, html.EscapeString(webui.Text(webui.LangKO, test.message))) || strings.Contains(page.body, test.literal) ||
+			strings.Contains(page.body, webui.Text(webui.LangKO, webui.MsgImportRefusalDetails)) {
+			t.Fatalf("viewer page for %v: explanation missing or literal shown", test.err)
+		}
+	}
+}
+
+func boolRef(value bool) *bool       { return &value }
+func stringRef(value string) *string { return &value }

@@ -50,6 +50,9 @@ func TestImportConfigureChangesOnlyTheGivenOptions(t *testing.T) {
 		{"configure", fixture.repositoryID, "--limit", "pack_bytes=9999999999TiB"},
 		{"configure", fixture.repositoryID, "--limit", "refs=0"},
 		{"configure", fixture.repositoryID, "--limit", "refs=1", "--limit", "refs=2"},
+		// A malformed origin is refused even when the policy would not use it.
+		{"configure", fixture.repositoryID, "--redirects", "refuse", "--approved-origin", "https://mirror.example/path"},
+		{"configure", fixture.repositoryID, "--approved-origin", "mirror.example"},
 	} {
 		if _, err := captureStdout(func() error { return importCommand(append(arguments, remote...)) }); err == nil {
 			t.Errorf("%v was accepted", arguments)

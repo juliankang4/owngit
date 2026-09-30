@@ -205,9 +205,9 @@ func (e *ImportSourceSettingError) Unwrap() error { return e.Cause }
 // Advice says which setting to save again and where.
 func (e *ImportSourceSettingError) Advice() string {
 	if e.Setting == "limits" {
-		return "This source's saved import limits cannot be read. Set them again on the repository's Import tab, or with owngit import configure --limit."
+		return "This source's saved import limits cannot be used. Set them again on the repository's Import tab, or with owngit import configure --limit."
 	}
-	return "This source's saved redirect choice cannot be read. Set it again on the repository's Import tab, or with owngit import configure --redirects."
+	return "This source's saved redirect choice cannot be used. Set it again on the repository's Import tab, or with owngit import configure --redirects."
 }
 
 // decodeImportOptions reads the option columns of one source row.

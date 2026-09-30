@@ -73,7 +73,7 @@ func (s *Service) execute(parent context.Context, repositoryID, name, descriptio
 	defer mutex.Unlock()
 
 	ctx := parent
-	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	source, exists, err := s.readSource(ctx, repositoryID)
 	if err != nil {
 		if stop := admissionStop(ctx, err); stop != nil {
 			return state.ImportRun{}, stop

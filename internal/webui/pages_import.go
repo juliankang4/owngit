@@ -26,6 +26,18 @@ type ImportRunRow struct {
 	RowID      int64
 }
 
+// SettingRefusal reports a run this source's address or redirect settings
+// refused on purpose. Its technical message names the address, range or
+// redirect origin, so the page points an administrator there.
+func (r ImportRunRow) SettingRefusal() bool {
+	switch r.ErrorClass {
+	case "address_needs_private_network", "address_needs_exceptional_destination", "address_refused",
+		"redirect_not_allowed", "redirect_needs_plain_http":
+		return true
+	}
+	return false
+}
+
 // ImportRefRow is one observed ref. The state word is visible text.
 type ImportRefRow struct {
 	Name   string
@@ -148,6 +160,11 @@ type ImportOptionsForm struct {
 	// field, so its collapsed part opens too.
 	Open    bool
 	Refused string
+	// ForURL is the source address the connection choices belong to, on
+	// the Import tab. When the address changes the page clears the
+	// choices, and the server does not apply choices made for another
+	// address.
+	ForURL string
 }
 
 // MainLimits and DeeperLimits split the limits into the ones most imports

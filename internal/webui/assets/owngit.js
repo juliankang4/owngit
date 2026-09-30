@@ -497,6 +497,40 @@
   }
   selectOnFocus(document);
 
+  /* Import source: connection choices belong to one address.
+   *
+   * When the address is edited, the plain HTTP, redirect and exceptional
+   * destination choices drawn for the saved address are cleared, and the
+   * owner is told. A choice made after that is for the address then in the
+   * field, which options_url records; the server ignores choices recorded
+   * for another address, so without scripting a changed address is saved
+   * with the choices reset. */
+
+  all('[data-import-options-url]').forEach(function (forURL) {
+    var form = forURL.form;
+    var address = form && form.querySelector('[data-import-url]');
+    if (!address) { return; }
+    var note = form.querySelector('[data-import-transport-reset]');
+    var controls = all('[data-import-transport]', form);
+    address.addEventListener('input', function () {
+      if (address.value.trim() === forURL.value) { return; }
+      var changed = false;
+      controls.forEach(function (control) {
+        if (control.type === 'checkbox' && control.checked) { control.checked = false; changed = true; }
+        if (control.type === 'radio' && control.checked !== (control.value === 'refuse')) {
+          control.checked = control.value === 'refuse'; changed = true;
+        }
+        if (control.type !== 'checkbox' && control.type !== 'radio' && control.value !== '') { control.value = ''; changed = true; }
+      });
+      if (changed && note) { note.textContent = note.getAttribute('data-import-transport-reset'); }
+    });
+    function chosen() { forURL.value = address.value.trim(); }
+    controls.forEach(function (control) {
+      control.addEventListener('input', chosen);
+      control.addEventListener('change', chosen);
+    });
+  });
+
   /* Copy an example to the clipboard.
    *
    * The button is rendered hidden and shown only here, because without a

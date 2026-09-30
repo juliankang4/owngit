@@ -23,8 +23,16 @@ const (
 	CodeUnsupportedFormat = "unsupported_object_format"
 	CodeUnsupportedRefs   = "unsupported_refs"
 	CodeNetwork           = "network"
-	CodeProtocol          = "protocol"
-	CodeTooLarge          = "too_large"
+	// The address and redirect refusal codes report a deliberate refusal by
+	// this source's settings, each naming the setting that would allow it.
+	// CodeAddressRefused is an address no setting allows.
+	CodeAddressNeedsPrivate   = "address_needs_private_network"
+	CodeAddressNeedsException = "address_needs_exceptional_destination"
+	CodeAddressRefused        = "address_refused"
+	CodeRedirectNotAllowed    = "redirect_not_allowed"
+	CodeRedirectNeedsPlain    = "redirect_needs_plain_http"
+	CodeProtocol              = "protocol"
+	CodeTooLarge              = "too_large"
 	// CodeTooManyRefs reports a source that advertises more refs than an
 	// import accepts, counting the refs it would not import.
 	CodeTooManyRefs        = "too_many_refs"
@@ -206,14 +214,14 @@ func classifyFetchError(err error, limits Limits) *Problem {
 	case errors.Is(fetchError, importfetch.ErrNameResolution):
 		return newProblem(CodeNetwork, "source host name could not be resolved", err)
 	case errors.Is(fetchError, importfetch.ErrAddressPolicy):
-		return newProblem(CodeNetwork, addressPolicyMessage(fetchError), err)
+		return newProblem(addressPolicyCode(fetchError), addressPolicyMessage(fetchError), err)
 	case errors.Is(fetchError, importfetch.ErrConnection):
 		if message := tlsFailureMessage(err); message != "" {
 			return newProblem(CodeNetwork, message, err)
 		}
 		return newProblem(CodeNetwork, "source connection or response body failed", err)
 	case errors.Is(fetchError, importfetch.ErrRedirect):
-		return newProblem(CodeProtocol, redirectMessage(fetchError), err)
+		return newProblem(redirectCode(fetchError), redirectMessage(fetchError), err)
 	case errors.Is(fetchError, importfetch.ErrHTTPStatus):
 		return newProblem(CodeNetwork, "source returned an unexpected HTTP status", err)
 	case errors.Is(fetchError, importfetch.ErrMediaType), errors.Is(fetchError, importfetch.ErrContentEncoding), errors.Is(fetchError, importfetch.ErrResponseHeaders):
@@ -265,6 +273,33 @@ func addressPolicyMessage(fetchError *importfetch.Error) string {
 		return refused + "; allow this exceptional destination for this source to connect to it"
 	}
 	return refused + ", which an import never connects to"
+}
+
+// addressPolicyCode is the class of an address refusal: the setting that
+// would allow the address, or none.
+func addressPolicyCode(fetchError *importfetch.Error) string {
+	switch fetchError.Consent {
+	case importfetch.ConsentPrivateNetwork:
+		return CodeAddressNeedsPrivate
+	case importfetch.ConsentExceptionalDestination:
+		return CodeAddressNeedsException
+	}
+	return CodeAddressRefused
+}
+
+// redirectCode is the class of a redirect refusal. A redirect the source's
+// redirect or plain HTTP setting would follow is a refusal by that setting;
+// a loop, too many hops or an unusable target is the source's protocol
+// problem.
+func redirectCode(fetchError *importfetch.Error) string {
+	switch {
+	case errors.Is(fetchError, importfetch.ErrRedirectDowngrade):
+		return CodeRedirectNeedsPlain
+	case errors.Is(fetchError, importfetch.ErrRedirectLoop), errors.Is(fetchError, importfetch.ErrTooManyRedirects),
+		errors.Is(fetchError, importfetch.ErrRedirectTarget), errors.Is(fetchError, importfetch.ErrRedirectRequest):
+		return CodeProtocol
+	}
+	return CodeRedirectNotAllowed
 }
 
 // redirectMessage says why a source redirect was not followed and what

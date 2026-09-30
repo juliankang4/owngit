@@ -284,6 +284,14 @@ func (c OptionsChange) apply(options state.ImportOptions) (state.ImportOptions, 
 		options.Redirects = *c.Redirects
 	}
 	if c.ApprovedRedirectOrigin != nil {
+		// An origin given with the change is refused when malformed, even if
+		// the redirect policy then drops it. Whether its scheme fits the plain
+		// HTTP choice matters only for the approved policy (checkOptions).
+		if *c.ApprovedRedirectOrigin != "" {
+			if _, err := importfetch.ParseRedirectOrigin(*c.ApprovedRedirectOrigin, true); err != nil {
+				return options, err
+			}
+		}
 		options.ApprovedRedirectOrigin = *c.ApprovedRedirectOrigin
 	}
 	if c.AllowReservedAddresses != nil {
@@ -376,7 +384,7 @@ func (s *Service) configure(ctx context.Context, repositoryID string, replaces f
 	now := s.clock()
 	lock := s.Repositories.Locks.For(repositoryID)
 	lock.Lock()
-	previous, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	previous, exists, err := s.readSource(ctx, repositoryID)
 	var settingErr *state.ImportSourceSettingError
 	for _, problem := range settingErrors(err) {
 		if replaces(problem.Setting) {
@@ -420,11 +428,63 @@ func (s *Service) configure(ctx context.Context, repositoryID string, replaces f
 // SavedLimits returns the limits the owner set for a source, for bounding a
 // request that waits for its run.
 func (s *Service) SavedLimits(ctx context.Context, repositoryID string) (state.ImportLimits, error) {
-	source, _, err := s.Store.ImportSource(ctx, repositoryID)
+	source, _, err := s.readSource(ctx, repositoryID)
 	if err != nil {
 		return state.ImportLimits{}, sourceReadProblem(err)
 	}
 	return source.Options.Limits, nil
+}
+
+// readSource reads a source for status, a change or a run. Beyond what the
+// state layer checks when it reads the row, it holds the saved options to
+// the rules a change is held to (usableOptions), so a saved option that
+// could not be saved now is reported the same way: as the named setting of
+// this source, read as its default.
+func (s *Service) readSource(ctx context.Context, repositoryID string) (state.ImportSource, bool, error) {
+	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	if !exists || (err != nil && len(settingErrors(err)) == 0) {
+		return source, exists, err
+	}
+	reported := map[string]bool{}
+	for _, setting := range settingErrors(err) {
+		reported[setting.Setting] = true
+	}
+	problems := []error{err}
+	unusable := usableOptions(source.Options)
+	for _, setting := range []string{"redirects", "limits"} {
+		problem := unusable[setting]
+		if problem == nil || reported[setting] {
+			continue
+		}
+		problems = append(problems, &state.ImportSourceSettingError{RepositoryID: repositoryID, Setting: setting, Cause: problem})
+		defaults := state.DefaultImportOptions()
+		if setting == "limits" {
+			source.Options.Limits = defaults.Limits
+		} else {
+			source.Options.Redirects, source.Options.ApprovedRedirectOrigin = defaults.Redirects, defaults.ApprovedRedirectOrigin
+		}
+	}
+	return source, exists, errors.Join(problems...)
+}
+
+// usableOptions checks saved options the way checkOptions checks a change:
+// an approved origin in canonical form that fits the plain HTTP choice, and
+// stage times that fit inside the run. It names each unusable setting.
+func usableOptions(options state.ImportOptions) map[string]error {
+	problems := map[string]error{}
+	if options.Redirects == state.ImportRedirectApproved {
+		origin, err := importfetch.ParseRedirectOrigin(options.ApprovedRedirectOrigin, options.AllowPlainHTTP)
+		if err == nil && origin != options.ApprovedRedirectOrigin {
+			err = errors.New("the approved redirect origin is not in its canonical form")
+		}
+		if err != nil {
+			problems["redirects"] = err
+		}
+	}
+	if err := checkSourceLimits(options.Limits); err != nil {
+		problems["limits"] = err
+	}
+	return problems
 }
 
 // settingErrors lists the unusable saved options a source read reported.
@@ -1007,7 +1067,7 @@ var reconcilePageLimit = reconcilePageSize
 // guessed.
 func (s *Service) Status(ctx context.Context, repositoryID string) (Status, error) {
 	status := Status{RepositoryID: repositoryID, Runtime: s.runtimeStatus()}
-	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	source, exists, err := s.readSource(ctx, repositoryID)
 	if err != nil && len(settingErrors(err)) == 0 {
 		return Status{}, sourceReadProblem(err)
 	}
