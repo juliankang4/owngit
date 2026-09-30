@@ -1301,7 +1301,7 @@ OwnGit은 이를 위해 Tailscale을 바꾸지 않습니다. Tailscale Funnel을
 tailscale funnel --bg --https=8443 http://127.0.0.1:7655
 ```
 
-다시 없애려면 `tailscale funnel --https=8443 off`를 실행합니다. 다른 리버스 프록시와 마찬가지로 터널이나 프록시는 비밀값이 든 링크의 첫 요청 `/share/SECRET`을 로그에 남길 수 있습니다.
+처음에는 Tailscale이 tailnet에서 Funnel을 허용할지 물을 수 있고, 주소를 처음 쓸 때 HTTPS 인증서를 받습니다. 다시 없애려면 `tailscale funnel --https=8443 off`를 실행합니다. 다른 리버스 프록시와 마찬가지로 터널이나 프록시는 비밀값이 든 링크의 첫 요청 `/share/SECRET`을 로그에 남길 수 있습니다.
 
 ### 저장소 삭제하기
 

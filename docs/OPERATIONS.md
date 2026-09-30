@@ -1301,7 +1301,7 @@ OwnGit does not change Tailscale for this. With Tailscale Funnel, point Funnel a
 tailscale funnel --bg --https=8443 http://127.0.0.1:7655
 ```
 
-`tailscale funnel --https=8443 off` removes it again. As with any reverse proxy, the tunnel or proxy may log the first request of a link, `/share/SECRET`, which carries the secret.
+The first time, Tailscale may ask you to allow Funnel for your tailnet, and it gets the HTTPS certificate when the address is first used. `tailscale funnel --https=8443 off` removes it again. As with any reverse proxy, the tunnel or proxy may log the first request of a link, `/share/SECRET`, which carries the secret.
 
 ### Deleting a repository
 
