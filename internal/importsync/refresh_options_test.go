@@ -323,6 +323,13 @@ func TestRefreshChoicesAreRunAuthorityAndBelongToTheAddress(t *testing.T) {
 	if repeated.OverwriteDiverged || !repeated.FollowUpstreamDeletions {
 		t.Fatalf("repeated form choices = %+v", repeated)
 	}
+	// The new source generation observed nothing yet, so a ref only the
+	// earlier source had is not deleted.
+	_, err = f.refresh()
+	noErr(t, err)
+	if f.destinationRefs()["refs/heads/dev"] == "" {
+		t.Fatal("a refresh of a new source deleted a ref observed only by the earlier source")
+	}
 }
 
 // A saved list of extra namespaces that cannot be used is named: status
