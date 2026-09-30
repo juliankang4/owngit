@@ -98,7 +98,7 @@ func (app *App) answerRepositoryAddressPage(writer http.ResponseWriter, request 
 	address, _ := repositoryAddressOf(request)
 	switch {
 	case address.err != nil:
-		app.renderError(writer, request, unavailable(request, "repository address read", address.err), webui.MsgErrUnavailable, "")
+		app.renderError(writer, request, unavailable(request, "repository record read", address.err), webui.MsgErrUnavailable, "")
 	case address.movedTo != "":
 		http.Redirect(writer, request, address.movedTo, http.StatusTemporaryRedirect)
 	case address.id == "":
@@ -123,7 +123,7 @@ func answerRepositoryAddressAPI(writer http.ResponseWriter, request *http.Reques
 	case !named:
 		return true
 	case address.err != nil:
-		writeAPIError(writer, unavailable(request, "repository address read", address.err), "state_unavailable", "OwnGit state is unavailable.", nil)
+		writeAPIError(writer, unavailable(request, "repository record read", address.err), "state_unavailable", "OwnGit state is unavailable.", nil)
 	case address.movedTo != "" && !boundCredential:
 		// The API client does not follow redirects, so the answer also says
 		// where the repository is now.
