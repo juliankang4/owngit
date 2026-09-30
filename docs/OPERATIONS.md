@@ -1251,7 +1251,7 @@ An administrator creates and revokes links under Share links on the repository's
 
 - a **name**, which only administrators see, such as the person or company it is for (one line, at most 100 bytes);
 - an **access**: *Browse files and history*, or *Browse, and clone with Git*;
-- an **expiry**: after 1, 7, 30 (the default) or 90 days, or *Until revoked*;
+- an **expiry**: after 1, 7, 30 (the default) or 90 days, or *Until revoked*. The command line and the API also take any number of days from 1 to 3650;
 - an optional **extra password** (8 to 1024 characters) that visitors type before they see anything.
 
 After you create a link, OwnGit shows its address once, such as `https://HOST/share/SECRET`. OwnGit keeps only a SHA-256 fingerprint of the secret, so it cannot show the address again; if it is lost, create a new link and revoke the old one. The list shows each link's name, access, expiry, last use and state (active, expired or revoked), and the start of the address its visitor pages use (`/share/ID`). Revoking stops a link at once. Revoked and expired links stay in the list as a record.
@@ -1269,7 +1269,7 @@ Clone and fetch get branches and tags only, never refs in [other ref namespaces]
 
 **Renames, deletion and backups.** A link names its repository, not its address, so it keeps working after a rename. Deleting the repository deletes its links. Share links are not in backups: after a restore there are none, so create new ones.
 
-**Where the secret can appear.** Only the first request, `/share/SECRET`, carries the secret in its path. OwnGit does not log it and answers with a redirect to `/share/ID`; no later page, link or `Referer` header carries it (answers under `/share/` send `Referrer-Policy: no-referrer`, also refusals and errors; the extra password form, whose address holds no secret, sends `same-origin`). A reverse proxy in front of OwnGit may still log that first path, so check its access log settings before sending links through it. For Git, the secret is the password, which Git's credential helper may store like any other password.
+**Where the secret can appear.** Only the first request, `/share/SECRET`, carries the secret in its path. OwnGit does not log it and answers with a redirect to `/share/ID`; no later page, link or `Referer` header carries it (answers under `/share/` send `Referrer-Policy: no-referrer`, also refusals and errors; the extra password form, whose address holds no secret, sends `same-origin`). A reverse proxy in front of OwnGit may still log that first path, so check its access log settings before sending links through it. For Git, the secret is part of the sign-in (the password, or the user name when the link has an extra password), so Git's credential helper may store it with the rest of the clone's credentials.
 
 On the command line, with the administrator password in `--password-file`:
 
@@ -1649,7 +1649,7 @@ Each source has three choices about what a refresh brings in and how closely it 
 
 On the command line, `--extra-ref-prefixes=` clears the list, and `--overwrite-diverged=false` or `--follow-upstream-deletions=false` turns a choice off. The API takes these fields in the same requests as the [connection choices](#connection-choices-and-limits). There, `extra_ref_prefixes` is an array, `[]` clears it, and a field left out keeps its saved value. The source's `options` object reports all three, and the Import tab lists the ones you changed under Refresh.
 
-The last two choices can change or delete local work, so the form warns "Local work may be replaced; upstream deletions will remove these local refs." The command line prints the same warning when either is on. Before you turn one on, [check what it would change](#checking-what-the-choices-would-change).
+The last two choices can change or delete local work, so the form warns "Local work may be replaced; upstream deletions will remove these local refs." `owngit import configure` prints the same warning in its text output when either is on after the change. Before you turn one on, [check what it would change](#checking-what-the-choices-would-change).
 
 Changing any of the three stops a refresh in progress that has not published yet, which ends as `superseded`. A new source address turns both Overwrite diverged branches and Follow upstream deletions off and keeps the namespaces ([When the source address changes](#when-the-source-address-changes)).
 
@@ -2104,8 +2104,7 @@ OwnGit records the SHA-256 hash of each backup's manifest with the backup. A fol
 - a folder that is a link, or that holds another backup than the one OwnGit wrote there, for example one copied or swapped in. OwnGit stops counting such a folder as its own;
 - a backup whose manifest cannot be read.
 
-A backup whose end OwnGit could not record, for example because its process was killed, is never counted or removed. After a failed or interrupted backup, nothing is removed.
-- When you change the destination, the backups in the earlier folder stay as they are.
+A backup whose end OwnGit could not record, for example because its process was killed, is never counted or removed. After a failed or interrupted backup, nothing is removed. When you change the destination, the backups in the earlier folder stay as they are.
 
 ### Free space in the backup folder
 
@@ -2191,7 +2190,7 @@ A backup holds up to 1 GiB of OwnGit records, counted by the memory they take an
 
 ### Backup versions
 
-OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, or its manifest would pass the 64 MiB that version 10 allows. Records that need version 11 include a repository's own kept history choice, default branch protection or other ref namespaces, an import source's extra ref namespaces or refresh choices, and a check policy's or check job's [container options](AUTOMATIC_CHECKS.md#container-options), including a named Docker network. Import history needs version 11 too when it records refs outside branches and tags, or a deletion that followed the source, even after those choices were turned off. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
+OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, or its manifest would pass the 64 MiB that version 10 allows. Records that need version 11 include a repository's own kept history choice, default branch protection or other ref namespaces, the names of a [renamed](#renaming-a-repository) repository, an import source's extra ref namespaces or refresh choices, and a check policy's or check job's [container options](AUTOMATIC_CHECKS.md#container-options), including a named Docker network. Import history needs version 11 too when it records refs outside branches and tags, or a deletion that followed the source, even after those choices were turned off. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version.
 
 ### Restoring a backup
 

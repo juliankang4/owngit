@@ -96,7 +96,7 @@ owngit check-job cancel --server https://git.example.test --repository project -
 owngit check-job rerun --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
 ```
 
-`check-job list`는 가장 최근 작업 100개를 돌려줍니다. `check-job log`는 원본 로그를 읽는데, 원본 로그는 설정에서 정한 기간(기본 30일, [프로젝트 체크](OPERATIONS.ko.md#프로젝트-체크) 참고) 동안만 보관하고 결과는 계속 남습니다. 이미 끝난 작업에 `check-job cancel`을 쓰면 아무것도 바뀌지 않고 `check_job_finished`로 실패합니다. 시작 전에 실패하면 `unavailable`, `error`, `interrupted`로 기록합니다. 작업이 소스를 복사할 때 푸시가 저장소를 붙잡고 있으면 늦어질 뿐이며(OwnGit이 직접 실행하는 체크는 최대 10분, 러너의 소스 요청은 요청마다 20초), 그래도 끝나지 않을 때 `unavailable`로 기록합니다. 명령이 실행된 뒤 OwnGit은 추적되는 파일을 모두 다시 확인합니다. 새로 생긴 추적되지 않은 파일은 괜찮지만, 추적되는 파일이 바뀌거나 지워지거나 모드가 바뀌면 깨끗한 결과가 되지 않으며, 컨테이너나 프로세스가 정리되었는지 OwnGit이 확인하지 못해도 마찬가지입니다.
+`check-job list`는 가장 최근 작업 100개를 돌려줍니다. `check-job log`는 원본 로그를 읽는데, 원본 로그는 설정에서 정한 기간(기본 30일, [프로젝트 체크](OPERATIONS.ko.md#프로젝트-체크) 참고) 동안만 보관하고 결과는 계속 남습니다. 이미 끝난 작업에 `check-job cancel`을 쓰면 아무것도 바뀌지 않고 `check_job_finished`로 실패합니다. 시작 전에 실패하면 `unavailable`, `error`, `interrupted`로 기록합니다. 작업이 소스를 복사할 때 푸시가 저장소를 붙잡고 있으면 늦어질 뿐이며(OwnGit이 직접 실행하는 체크는 최대 10분, 러너의 소스 요청은 요청마다 20초), 그래도 끝나지 않을 때 `unavailable`로 기록합니다. 명령이 실행된 뒤 OwnGit은 추적되는 파일을 모두 다시 확인합니다. 새로 생긴 추적되지 않은 파일은 괜찮지만 추적되는 파일이 바뀌거나 지워지거나 모드가 바뀌면 깨끗한 결과가 되지 않으며 컨테이너나 프로세스가 정리되었는지 OwnGit이 확인하지 못해도 마찬가지입니다. 끝난 작업의 컨테이너를 OwnGit이 지우지 못하면 저장소의 자동 체크 페이지에 있는 남은 체크 컨테이너 목록에 나옵니다([삭제가 거부될 때](OPERATIONS.ko.md#삭제가-거부될-때) 참고).
 
 ## 체크가 보는 소스
 
@@ -179,6 +179,8 @@ owngit runner \
 ```
 
 토큰 파일의 첫 줄에는 토큰을 발급한 서버가 `owngit-server: ORIGIN` 형식으로 적히며, `runner`는 다른 `--server`에는 이 파일을 쓰지 않습니다([자격 증명 파일과 서버 줄](CODING_TOOLS.ko.md#자격-증명-파일과-서버-줄) 참고). 러너 토큰은 `owngit runner-credential list`로 확인하고 `owngit runner-credential revoke --credential ID`로 취소합니다. 서버는 해시만 저장하며 토큰을 취소하면 더는 쓸 수 없고 그 러너가 가져갔지만 아직 시작하지 않은 작업은 중단됩니다.
+
+저장소 이름을 바꾸면 예전 이름으로 시작한 러너는 90일 동안 계속 동작합니다. 그 전에 `--repository`를 새 이름으로 바꿔 러너를 다시 시작하세요([이름을 바꾼 뒤의 러너와 체크 에이전트](OPERATIONS.ko.md#이름을-바꾼-뒤의-러너와-체크-에이전트) 참고).
 
 `runner`와 `runner-credential`은 OwnGit의 HTTPS 주소가 필요합니다. OwnGit을 tailnet에 공유하고 같은 tailnet에 있는 러너에서 `https://NAME.TAILNET.ts.net` 주소를 쓰거나([tailnet에서 HTTPS로 공유하기](OPERATIONS.ko.md#tailnet에서-https로-공유하기) 참고), OwnGit 앞에 TLS를 처리하는 리버스 프록시를 두세요([리버스 프록시 뒤에서 운영하기](OPERATIONS.ko.md#리버스-프록시-뒤에서-운영하기) 참고). `--ca-file /path/to/private-ca.pem`을 쓰면 시스템 루트에 더해 비공개 인증 기관도 신뢰합니다.
 

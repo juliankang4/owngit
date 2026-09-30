@@ -428,7 +428,7 @@ rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, or `invalid_repository_description` (over 500
 bytes).
 
-Five `repo` commands are owner actions and need the administrator password in
+These `repo` commands are owner actions and need the administrator password in
 `--password-file` instead:
 
 - `owngit repo settings show` and `owngit repo settings set` read and change
@@ -443,6 +443,9 @@ Five `repo` commands are owner actions and need the administrator password in
   `invalid_repository_name`, or `reserved_repository_name`.
 - `owngit repo delete --repository NAME --files keep|delete` deletes a
   repository ([Deleting on the command line](OPERATIONS.md#deleting-on-the-command-line)).
+- `owngit repo share list`, `create` and `revoke` manage a repository's
+  read-only [share links](OPERATIONS.md#share-links). `create` prints the
+  link's secret once; `list` never does.
 
 For 90 days after a rename, a `repo` or `pr` command that names the repository
 by its old address fails with `repository_moved` and changes nothing;
@@ -450,7 +453,7 @@ by its old address fails with `repository_moved` and changes nothing;
 `repository_not_found`.
 
 Inside a clone, these commands take `--server` from `origin`, except
-`repo rename`, which always needs `--server`. `repo settings` and `repo default-branch` also take
+`repo rename`, which always needs `--server`. `repo settings`, `repo default-branch` and `repo share` also take
 `--repository` from `origin`. The password file must then name that server
 ([Credential files and the server line](#credential-files-and-the-server-line)).
 

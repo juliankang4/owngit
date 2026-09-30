@@ -204,16 +204,17 @@ owngit repo create --server https://owngit.example.test --name example-project \
 
 저장소마다 `id`, `name`, `address`, `description`, `created_at`, `clone_url`이 있습니다. `address`는 저장소에 접속하는 주소로, 지금 이름의 소문자입니다. 이름을 바꾸기 전에는 ID와 같습니다. `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 주며 아직 이 저장소로 안내하는 예전 주소를 `aliases`에 안내가 끝나는 시각(`until`)과 함께 보여 줍니다. 푸시로 바꿀 수 있는 ref 이름공간은 `push_ref_namespaces`에 나옵니다([다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 참고). `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과)으로 실패합니다.
 
-`repo` 명령 가운데 다음 다섯은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
+`repo` 명령 가운데 다음 명령은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
 
 - `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록), [다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 설정을 읽고 바꿉니다.
 - `owngit repo default-branch --branch BRANCH`는 기존 브랜치를 [기본 브랜치](OPERATIONS.ko.md#기본-브랜치-바꾸기)로 정합니다.
 - `owngit repo rename NAME NEW-NAME`은 저장소 이름을 바꾸고 바뀐 저장소를 JSON으로 출력합니다([저장소 이름 바꾸기](OPERATIONS.ko.md#저장소-이름-바꾸기) 참고). 실패하면 `repository_name_taken`, `repository_busy`, `invalid_repository_name`, `reserved_repository_name` 중 하나가 나옵니다.
 - `owngit repo delete --repository NAME --files keep|delete`는 저장소를 삭제합니다([명령줄에서 삭제하기](OPERATIONS.ko.md#명령줄에서-삭제하기) 참고).
+- `owngit repo share list`, `create`, `revoke`는 저장소의 읽기 전용 [공유 링크](OPERATIONS.ko.md#공유-링크)를 관리합니다. `create`는 링크의 비밀값을 한 번만 출력하고 `list`는 비밀값을 출력하지 않습니다.
 
 이름을 바꾼 뒤 90일 동안 예전 주소로 저장소를 가리키는 `repo`나 `pr` 명령은 아무것도 바꾸지 않고 `repository_moved`로 실패하고 `details.address`에 새 이름이 나옵니다. 90일이 지나면 예전 주소는 `repository_not_found`로 답합니다.
 
-클론 안에서는 이 명령들이 `--server`를 `origin`에서 가져옵니다. 다만 `repo rename`에는 `--server`를 늘 넘겨야 합니다. `repo settings`와 `repo default-branch`는 `--repository`도 `origin`에서 가져옵니다. 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
+클론 안에서는 이 명령들이 `--server`를 `origin`에서 가져옵니다. 다만 `repo rename`에는 `--server`를 늘 넘겨야 합니다. `repo settings`, `repo default-branch`, `repo share`는 `--repository`도 `origin`에서 가져옵니다. 이때 비밀번호 파일에 그 서버가 적혀 있어야 합니다([자격 증명 파일과 서버 줄](#자격-증명-파일과-서버-줄) 참고).
 
 `owngit repo kept-history`와 `owngit repo restore`는 대시보드의 되돌리기 화면처럼 이전 커밋의 파일을 되살리며 일반 접근도 그 화면과 같습니다([저장소 파일 되돌리기](OPERATIONS.ko.md#저장소-파일-되돌리기) 참고). 되돌리기는 두 단계입니다. 먼저 미리 보고, 미리 보기가 돌려준 `expected_head`를 넣어 적용합니다.
 

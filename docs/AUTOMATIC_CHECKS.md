@@ -186,7 +186,10 @@ minutes for a check OwnGit runs, 20 seconds per source request from a runner)
 before it is recorded as `unavailable`. After the commands run, OwnGit checks
 every tracked file again: generated untracked files are fine, but a changed,
 removed, or mode-changed tracked file prevents a clean result, and so does a
-container or process that OwnGit cannot confirm was cleaned up.
+container or process that OwnGit cannot confirm was cleaned up. A container
+of a finished job that OwnGit could not remove is listed under Leftover check
+containers on the repository's Automatic checks page (see
+[When deletion is refused](OPERATIONS.md#when-deletion-is-refused)).
 
 ## Source a check sees
 
@@ -304,6 +307,11 @@ issued it, and `runner` refuses it for any other `--server` (see
 `owngit runner-credential list` and `owngit runner-credential revoke
 --credential ID` manage tokens; the server stores only a hash, and revoking a
 token stops its use and interrupts a claimed job that has not started.
+
+After a repository is renamed, a runner started with the old name keeps
+working for 90 days. Restart it with `--repository` set to the new name before
+then (see
+[Runners and helpers after a rename](OPERATIONS.md#runners-and-helpers-after-a-rename)).
 
 `runner` and `runner-credential` need an HTTPS address for OwnGit. Either
 share OwnGit on your tailnet and use its `https://NAME.TAILNET.ts.net` address
