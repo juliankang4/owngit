@@ -94,10 +94,10 @@
         {{if eq .State "active"}}<span class="pill pill--on">{{icon "check"}}{{bi $lang "share.state.active"}}</span>
         {{else if eq .State "expired"}}<span class="pill pill--off">{{icon "slash"}}{{bi $lang "share.state.expired"}}</span>
         {{else}}<span class="pill pill--off">{{icon "slash"}}{{bi $lang "share.state.revoked"}}</span>{{end}}
+        {{if .HasPassword}}<span class="pill">{{icon "lock"}}{{bi $lang "share.has_password"}}</span>{{end}}
       </div>
       <dl class="kv kv--tight">
         <div><dt>{{bi $lang "share.scope"}}</dt><dd>{{if eq .Scope "clone"}}{{bi $lang "share.scope.clone"}}{{else}}{{bi $lang "share.scope.browse"}}{{end}}</dd></div>
-        {{if .HasPassword}}<div><dt>{{bi $lang "share.has_password"}}</dt><dd>{{icon "lock"}}</dd></div>{{end}}
         <div><dt>{{bi $lang "share.id"}}</dt><dd class="mono">/share/{{.ShortID}}</dd></div>
         <div><dt>{{bi $lang "share.created_at"}}</dt><dd>{{biDateTime $lang .CreatedAt}}</dd></div>
         <div><dt>{{bi $lang "share.expires_at"}}</dt><dd>{{if notZero .ExpiresAt}}{{biDateTime $lang .ExpiresAt}}{{else}}{{bi $lang "share.until_revoked"}}{{end}}</dd></div>
