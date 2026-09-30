@@ -36,34 +36,35 @@ type FeedRecord struct {
 	At time.Time
 }
 
-// feedQueries select, for each kind, the records written after the first
-// and up to the second argument, the oldest first; the time is the last
-// column. Times are Unix seconds except for check jobs, which keep
+// feedQueries select, for each kind, the records written at or after the
+// first and before the second argument, the oldest first; the time is the
+// last column. Times are Unix seconds except for check jobs, which keep
 // nanoseconds.
 var feedQueries = map[string]string{
 	NotifyPullRequest: `SELECT p.repository_id || '/' || p.number, p.repository_id, r.name, p.number, p.title, p.source_branch, '', p.created_at
 		FROM pull_requests p JOIN repositories r ON r.id = p.repository_id
-		WHERE p.status != 'creating' AND p.created_at > ? AND p.created_at <= ? ORDER BY p.created_at, p.repository_id, p.number`,
+		WHERE p.status != 'creating' AND p.created_at >= ? AND p.created_at < ? ORDER BY p.created_at, p.repository_id, p.number`,
 	NotifyCheckFailed: `SELECT j.id, j.repository_id, r.name, j.pull_request_number, '', j.trigger_ref, j.summary, j.finished_at / 1000000000
 		FROM check_jobs j JOIN repositories r ON r.id = j.repository_id
-		WHERE j.status IN ('failed','error') AND j.finished_at > ? * 1000000000 AND j.finished_at <= ? * 1000000000 ORDER BY j.finished_at, j.id`,
+		WHERE j.status IN ('failed','error') AND j.finished_at >= ? * 1000000000 AND j.finished_at < ? * 1000000000 ORDER BY j.finished_at, j.id`,
 	NotifyImportFailed: `SELECT i.id, i.repository_id, COALESCE(r.name, i.repository_id), 0, '', '', i.message, i.finished_at
 		FROM import_runs i LEFT JOIN repositories r ON r.id = i.repository_id
-		WHERE i.status IN ('failed','interrupted','unresolved') AND i.finished_at > ? AND i.finished_at <= ? ORDER BY i.finished_at, i.id`,
+		WHERE i.status IN ('failed','interrupted','unresolved') AND i.finished_at >= ? AND i.finished_at < ? ORDER BY i.finished_at, i.id`,
 	NotifyBackupFailed: `SELECT b.id, '', '', 0, '', '', b.message, COALESCE(b.finished_at, b.started_at)
 		FROM backup_runs b
-		WHERE b.status IN ('failed','interrupted') AND COALESCE(b.finished_at, b.started_at) > ? AND COALESCE(b.finished_at, b.started_at) <= ? ORDER BY 8, b.id`,
+		WHERE b.status IN ('failed','interrupted') AND COALESCE(b.finished_at, b.started_at) >= ? AND COALESCE(b.finished_at, b.started_at) < ? ORDER BY 8, b.id`,
 }
 
-// FeedRecords reads the records of kind written after after and up to
-// until, both whole seconds, the oldest first, that include accepts (nil
-// accepts all). It returns the first limit of them and how many there are.
-func (s *Store) FeedRecords(ctx context.Context, kind string, after, until time.Time, include func(FeedRecord) bool, limit int) ([]FeedRecord, int, error) {
+// FeedRecords reads the records of kind written at or after from and
+// before until, both whole seconds, the oldest first, that include accepts
+// (nil accepts all). It returns the first limit of them and how many there
+// are.
+func (s *Store) FeedRecords(ctx context.Context, kind string, from, until time.Time, include func(FeedRecord) bool, limit int) ([]FeedRecord, int, error) {
 	query, known := feedQueries[kind]
 	if !known {
 		return nil, 0, fmt.Errorf("the event feed has no records of kind %q", kind)
 	}
-	rows, err := s.db.QueryContext(ctx, query, after.Unix(), until.Unix())
+	rows, err := s.db.QueryContext(ctx, query, from.Unix(), until.Unix())
 	if err != nil {
 		return nil, 0, err
 	}

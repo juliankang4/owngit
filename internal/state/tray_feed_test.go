@@ -10,15 +10,16 @@ import (
 	"time"
 )
 
-// Each kind reads the records written within the window, the oldest first,
+// Each kind reads the records written within the window, from its first
+// time and before its second, the oldest first,
 // and counts all of them; a pull request still being created, a check or
 // import that ended well and records outside the window are not read.
 func TestFeedRecordsReadTheWindow(t *testing.T) {
 	fixture := newCheckJobFixture(t)
 	store, ctx, now := fixture.store, context.Background(), fixture.now
-	window := func(kind string, after, until time.Time, limit int) ([]FeedRecord, int) {
+	window := func(kind string, from, until time.Time, limit int) ([]FeedRecord, int) {
 		t.Helper()
-		records, total, err := store.FeedRecords(ctx, kind, after, until, nil, limit)
+		records, total, err := store.FeedRecords(ctx, kind, from, until, nil, limit)
 		noErr(t, err)
 		return records, total
 	}
@@ -32,14 +33,14 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 		SourceOID: strings.Repeat("a", 40), TargetOID: strings.Repeat("b", 40), InitialReview: ReviewNotRequested,
 	}, now.Add(time.Second))
 	noErr(t, err)
-	records, total := window(NotifyPullRequest, now.Add(-time.Second), now.Add(2*time.Second), 2)
+	records, total := window(NotifyPullRequest, now, now.Add(3*time.Second), 2)
 	if total != 3 || len(records) != 2 || records[0].ID != "project/1" || records[0].Title != "First" || records[0].RepositoryName != "Project" ||
 		records[0].Branch != "feature-First" || records[0].Number != 1 || !records[0].At.Equal(now) || records[1].Title != "Second" {
 		t.Fatalf("pull requests %d %+v", total, records)
 	}
-	// The window starts after its first time and ends at its second.
-	if records, total := window(NotifyPullRequest, now, now.Add(time.Second), 10); total != 1 || records[0].Title != "Second" {
-		t.Fatalf("pull requests in (now, now+1s]: %d %+v", total, records)
+	// The window starts at its first time and ends before its second.
+	if records, total := window(NotifyPullRequest, now.Add(time.Second), now.Add(2*time.Second), 10); total != 1 || records[0].Title != "Second" {
+		t.Fatalf("pull requests in [now+1s, now+2s): %d %+v", total, records)
 	}
 
 	fixture.setPolicy(t, nil)
@@ -51,11 +52,11 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 	passing := fixture.admit(t, pushJobRequest())
 	_, attempt = fixture.claimAndStart(t, passing, runner, "")
 	completeJobAttempt(t, store, attempt, AttemptPassed, now.Add(3*time.Second))
-	if records, total := window(NotifyCheckFailed, now, now.Add(3*time.Second), 10); total != 1 || records[0].ID != failing.ID ||
+	if records, total := window(NotifyCheckFailed, now, now.Add(4*time.Second), 10); total != 1 || records[0].ID != failing.ID ||
 		records[0].Number != 1 || records[0].Branch != "main" || records[0].RepositoryName != "Project" || !records[0].At.Equal(now.Add(3*time.Second)) {
 		t.Fatalf("failed checks %d %+v", total, records)
 	}
-	if _, total := window(NotifyCheckFailed, now.Add(3*time.Second), now.Add(time.Hour), 10); total != 0 {
+	if _, total := window(NotifyCheckFailed, now.Add(4*time.Second), now.Add(time.Hour), 10); total != 0 {
 		t.Fatalf("a check was read twice: %d", total)
 	}
 
@@ -66,7 +67,7 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 		noErr(t, store.Exec(ctx, `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,finished_at,message,created_at) VALUES(?,?,1,1,'scheduled',?,?,?,?,?)`,
 			run.id, run.repository, run.status, now.Unix(), now.Add(4*time.Second).Unix(), "the source did not answer", now.Unix()))
 	}
-	records, total = window(NotifyImportFailed, now, now.Add(4*time.Second), 10)
+	records, total = window(NotifyImportFailed, now.Add(time.Second), now.Add(5*time.Second), 10)
 	ids := []string{}
 	for _, record := range records {
 		ids = append(ids, record.ID+"="+record.RepositoryName)
@@ -76,7 +77,7 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 	}
 	// Only the records include accepts are counted and returned.
 	gone := func(record FeedRecord) bool { return record.RepositoryID == "gone" }
-	if records, total, err := store.FeedRecords(ctx, NotifyImportFailed, now, now.Add(4*time.Second), gone, 10); err != nil || total != 1 || records[0].ID != "run-gone" {
+	if records, total, err := store.FeedRecords(ctx, NotifyImportFailed, now.Add(time.Second), now.Add(5*time.Second), gone, 10); err != nil || total != 1 || records[0].ID != "run-gone" {
 		t.Fatalf("failed imports of a gone repository %d %+v %v", total, records, err)
 	}
 
@@ -84,7 +85,7 @@ func TestFeedRecordsReadTheWindow(t *testing.T) {
 		strings.Repeat("a", 32), now.Unix(), now.Add(5*time.Second).Unix()))
 	noErr(t, store.Exec(ctx, `INSERT INTO backup_runs(id,kind,status,destination,started_at,finished_at) VALUES(?,'manual','succeeded','/backups',?,?)`,
 		strings.Repeat("b", 32), now.Unix(), now.Add(5*time.Second).Unix()))
-	if records, total := window(NotifyBackupFailed, now, now.Add(5*time.Second), 10); total != 1 || records[0].Message != "the disk is full" || records[0].RepositoryID != "" {
+	if records, total := window(NotifyBackupFailed, now.Add(time.Second), now.Add(6*time.Second), 10); total != 1 || records[0].Message != "the disk is full" || records[0].RepositoryID != "" {
 		t.Fatalf("failed backups %d %+v", total, records)
 	}
 	if _, _, err := store.FeedRecords(ctx, NotifyPush, now, now, nil, 1); err == nil {

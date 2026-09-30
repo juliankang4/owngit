@@ -114,6 +114,9 @@ type App struct {
 	ImportRunTimeout time.Duration
 	ActivityLimit    int
 	Now              func() time.Time
+	// Sleep, when set, replaces waiting on the real clock; tests that set
+	// Now move their clock with it.
+	Sleep func(time.Duration)
 	// requestObserver runs after a per-request deadline is installed: when
 	// the request starts and when an operation begins. Tests use it to
 	// observe that deadline. Production leaves it nil.

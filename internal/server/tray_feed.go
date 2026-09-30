@@ -2,9 +2,7 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -47,11 +45,6 @@ const trayFeedSeparate = 3
 // were written.
 var trayRecordKinds = []string{state.NotifyPullRequest, state.NotifyCheckFailed, state.NotifyImportFailed, state.NotifyBackupFailed}
 
-// trayBoundaryRecords bounds the records of one kind a cursor remembers
-// as already there in the second it starts at. More in that one second
-// leave the whole second as before the start.
-const trayBoundaryRecords = 3
-
 // TrayEvents is the answer of TrayEventsPath.
 type TrayEvents struct {
 	OK bool `json:"ok"`
@@ -82,15 +75,10 @@ type TrayNotification struct {
 type trayCursor struct {
 	// Push is the sequence of the last push reported or dropped.
 	Push int64 `json:"p"`
-	// Times holds, for each of trayRecordKinds, the time in Unix seconds up
-	// to which its records were reported or dropped.
+	// Times holds, for each of trayRecordKinds, the time in Unix seconds
+	// from which its records are still to be reported or dropped.
 	Times map[string]int64 `json:"t"`
-	// Seen holds, for a kind whose time was set to the present (a new
-	// cursor, or the kind off), the marks of its records already written
-	// in that second. The records of that second that are not among them
-	// came later and are still reported. Records store whole seconds, so
-	// the second alone cannot tell them apart.
-	Seen map[string][]string `json:"s,omitempty"`
+
 	// Update is the newer release reported or known when the feed started.
 	Update string `json:"u"`
 }
@@ -107,42 +95,32 @@ func decodeTrayCursor(value string) (trayCursor, bool) {
 		return trayCursor{}, false
 	}
 	for _, kind := range trayRecordKinds {
-		if cursor.Times[kind] <= 0 || len(cursor.Seen[kind]) > trayBoundaryRecords {
+		if cursor.Times[kind] <= 0 {
 			return trayCursor{}, false
 		}
 	}
 	return cursor, true
 }
 
-// recordMark is how a cursor names a record it saw: short, since the
-// cursor is kept in a small file, and enough to tell the few records of
-// one second apart.
-func recordMark(id string) string {
-	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:3])
-}
-
-// startKind sets the time of kind to now and remembers the records of kind
-// already written in that second.
-func (app *App) startKind(ctx context.Context, cursor *trayCursor, kind string, now time.Time) error {
-	// Check jobs keep nanoseconds, so a record of this second can be later
-	// than now itself.
-	inSecond := func(record state.FeedRecord) bool { return record.At.Equal(now) }
-	records, total, err := app.Store.FeedRecords(ctx, kind, now.Add(-time.Second), now.Add(time.Second), inSecond, trayBoundaryRecords)
-	if err != nil {
-		return err
-	}
-	cursor.Times[kind] = now.Unix()
-	if total > trayBoundaryRecords {
-		delete(cursor.Seen, kind)
+// waitUntil returns once the clock reached at, which is at most a second
+// away.
+func (app *App) waitUntil(ctx context.Context, at time.Time) error {
+	wait := at.Sub(app.now())
+	if wait <= 0 {
 		return nil
 	}
-	seen := []string{}
-	for _, record := range records {
-		seen = append(seen, recordMark(record.ID))
+	if app.Sleep != nil {
+		app.Sleep(wait)
+		return nil
 	}
-	cursor.Seen[kind] = seen
-	return nil
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // trayOrigins remembers, in this process only, which records came from a
@@ -283,7 +261,12 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 		return TrayEvents{}, err
 	}
 	now := app.now().Truncate(time.Second)
-	until := now.Add(-trayFeedDelay)
+	// Records are read once their second ended a minute ago.
+	until := now.Add(-trayFeedDelay + time.Second)
+	// A starting point is the next whole second, and the answer waits for
+	// it: what was written before it came before the start, and what is
+	// written from it on is new.
+	start, starting := now.Add(time.Second), false
 	update := ""
 	if app.Releases != nil && settings.UpdateCheck {
 		if release, newer := app.Releases.Newer(); newer {
@@ -291,15 +274,16 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 		}
 	}
 	cursor := feed.cursor
-	// A new cursor starts now: what came before is never reported. A
-	// cursor past the last push this database ever recorded belongs to
-	// other records, such as those a restore replaced.
+	// A new cursor starts: what came before is never reported. A cursor past
+	// the last push this database ever recorded belongs to other records,
+	// such as those a restore replaced.
 	if !feed.resume || cursor.Push > lastPush {
-		cursor = trayCursor{Push: lastPush, Times: map[string]int64{}, Seen: map[string][]string{}, Update: update}
+		cursor = trayCursor{Push: lastPush, Times: map[string]int64{}, Update: update}
 		for _, kind := range trayRecordKinds {
-			if err := app.startKind(ctx, &cursor, kind, now); err != nil {
-				return TrayEvents{}, err
-			}
+			cursor.Times[kind] = start.Unix()
+		}
+		if err := app.waitUntil(ctx, start); err != nil {
+			return TrayEvents{}, err
 		}
 		return TrayEvents{OK: true, Cursor: cursor.encode(), Started: true, Notifications: []TrayNotification{}}, nil
 	}
@@ -311,45 +295,33 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 	var notifications []TrayNotification
 	notifications, cursor.Push = app.pushNotifications(request, feed, pushes, cursor.Push, lastPush)
 	events.Notifications = append(events.Notifications, notifications...)
-	if cursor.Seen == nil {
-		cursor.Seen = map[string][]string{}
-	}
 	for _, kind := range trayRecordKinds {
-		// A kind that is off drops what was written up to now; one that is
-		// on reads what is a minute old. A clock that went back leaves the
-		// time where it was until it passes it again.
-		after := time.Unix(cursor.Times[kind], 0)
+		// A kind that is off starts again, so what was written while it was
+		// off is dropped; one that is on reads what is a minute old. A clock
+		// that went back leaves the time where it was until it passes it
+		// again.
+		from := time.Unix(cursor.Times[kind], 0)
 		if !feed.shows(kind) {
-			if !now.Before(after) {
-				if err := app.startKind(ctx, &cursor, kind, now); err != nil {
-					return TrayEvents{}, err
-				}
+			if start.After(from) {
+				cursor.Times[kind], starting = start.Unix(), true
 			}
 			continue
 		}
-		if !until.After(after) {
+		if !until.After(from) {
 			continue
 		}
-		// The second of a time set to the present is read again, without
-		// the records that were there then.
-		seen, started := cursor.Seen[kind]
-		from := after
-		if started {
-			from = after.Add(-time.Second)
-		}
-		include := func(record state.FeedRecord) bool {
-			if started && (record.At.Before(after) || record.At.Equal(after) && slices.Contains(seen, recordMark(record.ID))) {
-				return false
-			}
-			return !app.dropped(feed, originKey(kind, record.ID))
-		}
+		include := func(record state.FeedRecord) bool { return !app.dropped(feed, originKey(kind, record.ID)) }
 		records, total, err := app.Store.FeedRecords(ctx, kind, from, until, include, trayFeedSeparate+1)
 		if err != nil {
 			return TrayEvents{}, err
 		}
 		events.Notifications = append(events.Notifications, app.recordNotifications(feed, kind, records, total)...)
 		cursor.Times[kind] = until.Unix()
-		delete(cursor.Seen, kind)
+	}
+	if starting {
+		if err := app.waitUntil(ctx, start); err != nil {
+			return TrayEvents{}, err
+		}
 	}
 	if update != "" && update != cursor.Update {
 		if feed.shows(state.NotifyUpdate) {

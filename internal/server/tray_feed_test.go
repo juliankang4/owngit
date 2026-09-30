@@ -64,6 +64,7 @@ func feedApp(t *testing.T) (*App, *feedClock, string, string) {
 	clock := &feedClock{}
 	clock.set(time.Unix(1_900_000_000, 0))
 	app.Now, app.PullRequests.Now = clock.now, clock.now
+	app.Sleep = clock.add
 	for _, name := range []string{"notes", "site"} {
 		_, err := app.Repositories.Create(context.Background(), name, "")
 		noErr(t, err)
@@ -385,32 +386,60 @@ func TestTrayEventsStartAfterWhatCameBefore(t *testing.T) {
 	}
 }
 
-// Records in the second the feed started are told apart by whether they
-// were there at the start, as are those in the second a kind was last read
-// while off.
-func TestTrayEventsStartKeepsWhatFollowsInTheSameSecond(t *testing.T) {
+// subsecondClock is a clock for tests that need parts of a second; the
+// feed's wait for its starting point moves it.
+func subsecondClock(app *App, at time.Time) *time.Time {
+	app.Now = func() time.Time { return at }
+	app.Sleep = func(wait time.Duration) { at = at.Add(wait) }
+	return &at
+}
+
+// A starting point is the next whole second, and the feed answers once it
+// came: records of the second the feed started in, written before it
+// answered, came before the start, and records written after the answer
+// are new.
+func TestTrayEventsStartAtTheNextSecond(t *testing.T) {
 	app, clock, _, _ := feedApp(t)
-	failedImport(t, app, "same-second-before", clock.now())
+	second := clock.now()
+	at := subsecondClock(app, second.Add(100*time.Millisecond))
+	for index := range 4 {
+		failedImport(t, app, "before-"+strconv.Itoa(index), *at)
+	}
 	start := feedRead(t, app, "", nil)
-	failedImport(t, app, "same-second-after", clock.now())
-	clock.add(2 * time.Minute)
+	answered := *at
+	*at = at.Add(200 * time.Millisecond)
+	failedImport(t, app, "after", *at)
+	*at = at.Add(2 * time.Minute)
 	first := feedRead(t, app, start.Cursor, nil)
-	if got := onlyNotification(t, first); got.ID != "import_failed:same-second-after" {
-		t.Fatalf("after the start in its second %+v", got)
+	if got := onlyNotification(t, first); got.ID != "import_failed:after" {
+		t.Fatalf("after four imports in the start's second %+v", got)
 	}
 
-	failedImport(t, app, "off-before", clock.now())
-	off := feedRead(t, app, first.Cursor, url.Values{"kinds": {""}})
-	failedImport(t, app, "on-after", clock.now())
-	clock.add(2 * time.Minute)
-	if got := onlyNotification(t, feedRead(t, app, off.Cursor, nil)); got.ID != "import_failed:on-after" {
-		t.Fatalf("after an off read in its second %+v", got)
+	// A kind that is off starts again at the next second too.
+	*at = at.Add(300 * time.Millisecond)
+	failedImport(t, app, "while-off", *at)
+	off := feedRead(t, app, first.Cursor, url.Values{"kinds": {"pull_request"}})
+	*at = at.Add(200 * time.Millisecond)
+	failedImport(t, app, "on-again", *at)
+	*at = at.Add(2 * time.Minute)
+	on := feedRead(t, app, off.Cursor, nil)
+	if got := onlyNotification(t, on); got.ID != "import_failed:on-again" {
+		t.Fatalf("after imports were off %+v", got)
+	}
+	if !answered.Equal(second.Add(time.Second)) {
+		t.Fatalf("the first answer came at %v, want the next second", answered)
+	}
+	// A read with every kind on does not wait.
+	before := *at
+	feedRead(t, app, on.Cursor, nil)
+	if !at.Equal(before) {
+		t.Fatalf("a read with every kind on waited %v", at.Sub(before))
 	}
 }
 
-// Failed checks keep nanoseconds: of those in the second the feed started,
-// only the ones finished after the start are reported, and none of the
-// second before.
+// Failed checks keep nanoseconds: those finished in the second the feed
+// started in, before it answered, are not reported, nor those of the
+// second before; those after the answer are.
 func TestTrayEventsStartTellsChecksApartWithinTheSecond(t *testing.T) {
 	app, clock, _, _ := feedApp(t)
 	ctx, second := context.Background(), clock.now()
@@ -431,33 +460,16 @@ func TestTrayEventsStartTellsChecksApartWithinTheSecond(t *testing.T) {
 		noErr(t, err)
 		noErr(t, app.Store.Exec(ctx, `UPDATE check_jobs SET status = 'failed', finished_at = ? WHERE id = ?`, finished.UnixNano(), job.ID))
 	}
-	at := second.Add(400 * time.Millisecond)
-	app.Now = func() time.Time { return at }
+	at := subsecondClock(app, second.Add(400*time.Millisecond))
 	fail("second-before", second.Add(-500*time.Millisecond))
-	fail("before-start", second.Add(200*time.Millisecond))
+	for index := range 4 {
+		fail("before-start-"+strconv.Itoa(index), second.Add(200*time.Millisecond))
+	}
 	start := feedRead(t, app, "", nil)
-	fail("after-start", second.Add(700*time.Millisecond))
-	at = at.Add(2 * time.Minute)
+	fail("after-start", at.Add(100*time.Millisecond))
+	*at = at.Add(2 * time.Minute)
 	if got := onlyNotification(t, feedRead(t, app, start.Cursor, nil)); got.Subtitle != "after-start" {
 		t.Fatalf("checks in the start's second %+v", got)
-	}
-}
-
-// The largest cursor fits the length the icons keep.
-func TestTrayCursorFitsWithEveryKindAtItsBoundary(t *testing.T) {
-	cursor := trayCursor{Push: 1 << 40, Times: map[string]int64{}, Seen: map[string][]string{}, Update: "100.100.100"}
-	for _, kind := range trayRecordKinds {
-		cursor.Times[kind] = 1 << 40
-		for index := range trayBoundaryRecords {
-			cursor.Seen[kind] = append(cursor.Seen[kind], recordMark(kind+strconv.Itoa(index)))
-		}
-	}
-	encoded := cursor.encode()
-	if len(encoded) > state.TrayCursorLimit || !state.ValidTrayCursor(encoded) {
-		t.Fatalf("cursor of %d bytes", len(encoded))
-	}
-	if decoded, ok := decodeTrayCursor(encoded); !ok || len(decoded.Seen[state.NotifyBackupFailed]) != trayBoundaryRecords {
-		t.Fatalf("decoded %+v %v", decoded, ok)
 	}
 }
 
