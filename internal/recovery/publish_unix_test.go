@@ -16,7 +16,6 @@ import (
 // come only from a process that may write in the parent; that window has
 // no deterministic test.)
 func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
-	unsupported := errors.New("exclusive rename unsupported")
 	root := t.TempDir()
 	stage := filepath.Join(root, "stage")
 	noErr(t, os.MkdirAll(filepath.Join(stage, "repositories"), 0o700))
@@ -33,7 +32,7 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	for _, target := range []string{empty, full, file} {
 		before, err := os.Lstat(target)
 		noErr(t, err)
-		if err := renameDirectoryOnce(stage, target, unsupported); err == nil {
+		if err := moveIntoNewFolder(stage, target); err == nil {
 			t.Fatalf("published over %s", target)
 		}
 		after, err := os.Lstat(target)
@@ -44,12 +43,12 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	if entries, err := os.ReadDir(empty); err != nil || len(entries) != 0 {
 		t.Fatalf("the empty folder received %d entries: %v", len(entries), err)
 	}
-	if err := renameDirectoryOnce(file, filepath.Join(root, "moved"), unsupported); err != unsupported {
-		t.Fatalf("a file was published: %v", err)
+	if err := moveIntoNewFolder(file, filepath.Join(root, "moved")); err == nil {
+		t.Fatal("a file was published")
 	}
 
 	target := filepath.Join(root, "published")
-	noErr(t, renameDirectoryOnce(stage, target, unsupported))
+	noErr(t, moveIntoNewFolder(stage, target))
 	for _, name := range []string{manifestName, filepath.Join("repositories", "project.bundle")} {
 		if _, err := os.Stat(filepath.Join(target, name)); err != nil {
 			t.Fatal(err)
@@ -57,5 +56,15 @@ func TestPublicationWithoutAnExclusiveRename(t *testing.T) {
 	}
 	if _, err := os.Lstat(stage); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stage still there: %v", err)
+	}
+}
+
+// On a file system with the exclusive rename, the check that a restore
+// makes first passes and leaves nothing behind.
+func TestRestoreFolderCheckLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	noErr(t, requireExclusiveRename(dir))
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		t.Fatalf("%d entries left: %v", len(entries), err)
 	}
 }

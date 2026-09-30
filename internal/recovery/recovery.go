@@ -534,7 +534,7 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 		return err
 	}
 	destination.ReleaseStage()
-	if err := renameNoReplace(stage, absolute); err != nil {
+	if err := publishBackup(stage, absolute); err != nil {
 		return fmt.Errorf("publish completed backup: %w", err)
 	}
 	published = true
@@ -652,6 +652,13 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	}
 	if pathsOverlap(stateTarget, repositoryTarget) || pathsOverlap(inputRoot, stateTarget) || pathsOverlap(inputRoot, repositoryTarget) {
 		return errors.New("backup, state, and repository paths must not overlap")
+	}
+	// Both folders are published with the rename that never replaces
+	// anything, so a file system without it is refused before any work.
+	for _, dir := range []string{stateDestination.Dir(), repositoryDestination.Dir()} {
+		if err := requireExclusiveRename(dir); err != nil {
+			return err
+		}
 	}
 
 	manifest, err := readManifest(filepath.Join(inputRoot, manifestName))

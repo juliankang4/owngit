@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -35,4 +36,27 @@ func TestBackupOntoExFAT(t *testing.T) {
 	destination := filepath.Join(mount, "backups")
 	noErr(t, os.Mkdir(destination, 0o700))
 	backUpOntoFolder(t, destination)
+
+	// A restore publishes only with the exclusive rename, so a repository
+	// folder there is refused before any work, naming the file system.
+	backup := newTwoRepositoryBackup(t, t.TempDir())
+	stateTarget := filepath.Join(t.TempDir(), "state")
+	repositoryTarget := filepath.Join(destination, "repositories")
+	err := Restore(context.Background(), backup, stateTarget, repositoryTarget, "")
+	if err == nil || !strings.Contains(err.Error(), "(exfat)") {
+		t.Fatalf("restore onto exFAT: %v", err)
+	}
+	for _, target := range []string{stateTarget, repositoryTarget} {
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after the refusal: %v", target, err)
+		}
+	}
+	entries, err := os.ReadDir(destination)
+	noErr(t, err)
+	for _, entry := range entries {
+		// macOS keeps its own records on a volume it mounted.
+		if !strings.HasPrefix(entry.Name(), "._") {
+			t.Fatalf("the refused restore left %s", entry.Name())
+		}
+	}
 }
