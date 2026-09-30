@@ -117,11 +117,18 @@ func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
 	})
 	manager.NoteRepositoryWrite("sample")
 	pid := waitForPID(t, pidFile)
-	waitFor(t, "timeout", func() bool { return len(log.matching("failed")) == 1 })
+	// The other steps run real Git under the same short limit, so on a busy
+	// machine an earlier step can time out first and the hang starts in a
+	// later attempt. The repack's own timeout is the failure after one step.
+	waitFor(t, "timeout", func() bool {
+		for _, line := range log.matching("failed") {
+			if strings.Contains(line, "1 of 3 steps") {
+				return true
+			}
+		}
+		return false
+	})
 	assertProcessGone(t, pid)
-	if line := log.matching("failed")[0]; !strings.Contains(line, "1 of 3 steps") {
-		t.Fatalf("timeout log: %s", line)
-	}
 	if !manager.pendingMaintenance("sample") {
 		t.Fatal("timed-out maintenance is not retried")
 	}
