@@ -59,7 +59,7 @@ func (s *Service) refreshEffects(ctx context.Context, source state.ImportSource,
 	if err != nil {
 		return nil, err
 	}
-	protected, err := s.protectedBranch(ctx, run, repositoryPath, destHEAD)
+	protected, err := s.headBranch(ctx, repositoryPath, destHEAD)
 	if err != nil {
 		return nil, err
 	}

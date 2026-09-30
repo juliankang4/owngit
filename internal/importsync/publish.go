@@ -89,8 +89,9 @@ func mayReplaceLocal(source state.ImportSource, observed, local string) bool {
 }
 
 // keptLocalRef reports whether a local ref the source deleted stays whatever
-// the refresh choices are: it is absent, symbolic, or the branch a HEAD
-// names, so a repository never loses its default branch this way.
+// the refresh choices are: it is absent, symbolic, or a branch a HEAD
+// names directly or at the end of its symbolic chain, so a repository never
+// loses its default branch this way.
 func keptLocalRef(name, local string, symbolic bool, headTargets ...string) bool {
 	return local == "" || symbolic || slices.Contains(headTargets, name)
 }
@@ -118,9 +119,13 @@ func keptLocalRef(name, local string, symbolic bool, headTargets ...string) bool
 // refresh follows the source once the protection is off or the source is a
 // fast-forward again.
 func (s *Service) planPublication(ctx context.Context, run *runState, repositoryPath string, dest, destSymrefs map[string]string, destHEAD headIdentity, observations priorObservations) (*publicationPlan, error) {
-	protected, err := s.protectedBranch(ctx, run, repositoryPath, destHEAD)
+	headBranch, err := s.headBranch(ctx, repositoryPath, destHEAD)
 	if err != nil {
 		return nil, err
+	}
+	protected := ""
+	if run.writes.ProtectDefaultBranch {
+		protected = headBranch
 	}
 	plan := &publicationPlan{
 		expected: map[string]string{}, desired: map[string]string{}, observed: map[string]string{}, retained: map[string]string{},
@@ -210,7 +215,7 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 		plan.deletedRefs = append(plan.deletedRefs, ref)
 		destination := dest[ref]
 		if !run.source.FollowUpstreamDeletions || len(run.selected.refs) == 0 ||
-			keptLocalRef(ref, destination, destSymrefs[ref] != "", destHEAD.target, sourceHEAD.target) ||
+			keptLocalRef(ref, destination, destSymrefs[ref] != "", destHEAD.target, headBranch, sourceHEAD.target) ||
 			!mayReplaceLocal(run.source, observed, destination) {
 			continue
 		}
@@ -272,13 +277,22 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 	return plan, nil
 }
 
-// protectedBranch returns the branch that default branch protection keeps
-// from being rewritten, or "" when protection is off or HEAD is not symbolic.
-func (s *Service) protectedBranch(ctx context.Context, run *runState, repositoryPath string, destHEAD headIdentity) (string, error) {
-	if !run.writes.ProtectDefaultBranch || destHEAD.kind != headSymbolic {
+// headBranch returns the branch the destination HEAD resolves to, at the
+// end of its symbolic chain, or "" for a HEAD that is not symbolic. Default
+// branch protection and the deletion guard both use it, so an alias between
+// HEAD and the branch bypasses neither. An unreadable or cyclic chain fails.
+func (s *Service) headBranch(ctx context.Context, repositoryPath string, destHEAD headIdentity) (string, error) {
+	if destHEAD.kind != headSymbolic {
 		return "", nil
 	}
-	return destHEAD.target, nil
+	terminal, symbolic, err := s.Repositories.ReadSymbolicRefTarget(ctx, repositoryPath, "HEAD")
+	if err != nil {
+		return "", newProblem(CodeRepositoryMissing, "destination symbolic HEAD chain could not be resolved", err)
+	}
+	if !symbolic {
+		return "", newProblem(CodeDestinationChanged, "destination HEAD changed while the publication was planned", nil)
+	}
+	return terminal, nil
 }
 
 func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) bool {
@@ -718,6 +732,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 					if err := s.validatePreparedRefKinds(preparedCtx, repositoryPath, plan, transactionRefs); err != nil {
 						return err
 					}
+					if err := s.validatePreparedHEADKeepsDeletions(preparedCtx, repositoryPath, plan); err != nil {
+						return err
+					}
 					return s.authorityCurrent(preparedCtx, run)
 				})
 			if errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
@@ -1064,6 +1081,39 @@ func (s *Service) validatePreparedRefKinds(ctx context.Context, repositoryPath s
 		}
 		if plan.expected[name] == "" && exists {
 			return newProblem(CodeDestinationChanged, fmt.Sprintf("destination ref %q appeared while its transaction was prepared", name), nil)
+		}
+	}
+	return nil
+}
+
+// validatePreparedHEADKeepsDeletions reads HEAD again while the deletions
+// are prepared, so a HEAD moved since planning onto a ref being deleted,
+// directly or through its chain, stops the transaction.
+func (s *Service) validatePreparedHEADKeepsDeletions(ctx context.Context, repositoryPath string, plan *publicationPlan) error {
+	deletes := false
+	for ref, desired := range plan.desired {
+		if ref != state.ImportHeadRef && desired == "" && plan.expected[ref] != "" {
+			deletes = true
+			break
+		}
+	}
+	if !deletes {
+		return nil
+	}
+	target, _, err := s.Repositories.ReadHead(ctx, repositoryPath)
+	if err != nil {
+		return newProblem(CodeRepositoryMissing, "destination HEAD could not be read", err)
+	}
+	if target == "" {
+		return nil
+	}
+	terminal, _, err := s.Repositories.ReadSymbolicRefTarget(ctx, repositoryPath, "HEAD")
+	if err != nil {
+		return newProblem(CodeRepositoryMissing, "destination symbolic HEAD chain could not be resolved", err)
+	}
+	for _, name := range []string{target, terminal} {
+		if desired, planned := plan.desired[name]; planned && desired == "" && plan.expected[name] != "" {
+			return newProblem(CodeDestinationChanged, fmt.Sprintf("destination HEAD now resolves to %q, which this refresh deletes", name), nil)
 		}
 	}
 	return nil

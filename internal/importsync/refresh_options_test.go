@@ -468,3 +468,67 @@ func TestPreviewShowsTheProtectedBranchRefusal(t *testing.T) {
 		t.Fatalf("following deletions alone refs = %v", refs)
 	}
 }
+
+// The branch at the end of a symbolic HEAD chain is the default branch:
+// following deletions never deletes it, and default branch protection
+// covers it, so an alias between HEAD and the branch bypasses neither.
+func TestSymbolicHEADChainKeepsAndProtectsItsBranch(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+	path := f.destinationPath()
+	f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/dev")
+	f.git(path, "symbolic-ref", "HEAD", "refs/heads/local-alias")
+	f.git(f.source, "branch", "-D", "dev")
+	dev := f.destinationRefs()["refs/heads/dev"]
+	if effects := f.refreshEffects(); len(effects) != 0 {
+		t.Fatalf("preview with HEAD through an alias = %+v", effects)
+	}
+	_, err := f.refresh()
+	noErr(t, err)
+	if f.destinationRefs()["refs/heads/dev"] != dev || f.git(path, "rev-parse", "--verify", "HEAD") != dev {
+		t.Fatal("a refresh deleted the branch HEAD resolves to through an alias")
+	}
+
+	f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/main")
+	localMain := f.localWork("main", "local main\n")
+	protect := true
+	_, err = f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+	noErr(t, err)
+	if effect := f.refreshEffects()["refs/heads/main"]; effect.Effect != "refused" {
+		t.Fatalf("preview of the protected branch behind an alias = %+v", effect)
+	}
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
+	noErr(t, err)
+	if _, err := f.refresh(); problemCode(err) != CodeProtectedBranch {
+		t.Fatalf("refresh err = %v", err)
+	}
+	if f.destinationRefs()["refs/heads/main"] != localMain {
+		t.Fatal("overwrite rewrote the protected branch behind an alias")
+	}
+}
+
+// A HEAD moved onto a ref being deleted after the plan was made stops the
+// transaction before the deletion. Like any other change made here during
+// a publication, it is left for the owner to resolve.
+func TestDeletionStopsWhenHEADMovesOntoItsRef(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.git(f.source, "branch", "dev")
+	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
+	path := f.destinationPath()
+	f.git(f.source, "branch", "-D", "dev")
+	dev := f.destinationRefs()["refs/heads/dev"]
+	f.service.beforeRefTransaction = func() {
+		f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/dev")
+		f.git(path, "symbolic-ref", "HEAD", "refs/heads/local-alias")
+	}
+	if _, err := f.refresh(); err == nil || !strings.Contains(err.Error(), `now resolves to "refs/heads/dev", which this refresh deletes`) {
+		t.Fatalf("refresh err = %v", err)
+	}
+	if f.destinationRefs()["refs/heads/dev"] != dev {
+		t.Fatal("the branch HEAD moved onto was deleted")
+	}
+}
