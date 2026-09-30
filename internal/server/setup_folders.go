@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"owngit/internal/bidi"
@@ -37,12 +38,15 @@ type folderEntry struct {
 }
 
 type folderResult struct {
-	Path        string            `json:"path"`
-	Parent      string            `json:"parent"`
-	ParentRoots bool              `json:"parent_roots"`
-	Folders     []folderEntry     `json:"folders"`
-	Truncated   bool              `json:"truncated"`
-	Error       webui.MessageCode `json:"error,omitempty"`
+	Path            string            `json:"path"`
+	Parent          string            `json:"parent"`
+	ParentRoots     bool              `json:"parent_roots"`
+	Folders         []folderEntry     `json:"folders"`
+	Truncated       bool              `json:"truncated"`
+	StartedAtParent bool              `json:"started_at_parent,omitempty"`
+	SuggestedName   string            `json:"suggested_name,omitempty"`
+	SkippedNames    bool              `json:"skipped_names,omitempty"`
+	Error           webui.MessageCode `json:"error,omitempty"`
 }
 
 func isSetupFolderPath(path string) bool {
@@ -81,6 +85,7 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 	}
 	path, name := postValue(request, "path"), postValue(request, "name")
 	create := request.URL.Path == setupFolderCreatePath
+	start := path == "" || formChecked(postValue(request, "start"))
 	if len(path) > 32768 || !utf8.ValidString(path) || strings.ContainsRune(path, 0) {
 		writeFolderResult(writer, request, http.StatusBadRequest, folderResult{Error: webui.MsgFolderInvalidPath})
 		return
@@ -111,6 +116,13 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 		}
 		path := filepath.Clean(path)
 		if create {
+			existing, _, err := nearestFolder(ctx, path)
+			if err != nil {
+				return folderResult{}, err
+			}
+			if existing != path {
+				return folderResult{}, fs.ErrNotExist
+			}
 			parent, err := os.OpenRoot(path)
 			if err != nil {
 				return folderResult{}, err
@@ -118,7 +130,7 @@ func (app *App) handleSetupFolders(writer http.ResponseWriter, request *http.Req
 			defer parent.Close()
 			return app.createFolder(ctx, parent, name)
 		}
-		return listFolders(ctx, path, formChecked(postValue(request, "hidden")))
+		return listFolders(ctx, path, formChecked(postValue(request, "hidden")), start)
 	})
 	if err != nil {
 		status, code := folderProblem(request, err, create)
@@ -144,11 +156,12 @@ func (app *App) createFolder(ctx context.Context, parent *os.Root, name string) 
 	if err := ctx.Err(); err != nil {
 		return folderResult{}, err
 	}
-	child := filepath.Join(parent.Name(), name)
-	if err := os.Mkdir(child, 0o700); err != nil {
+	// The opened parent stays the write target across pathname replacement.
+	// Mkdir refuses an existing final entry and uses storage's creation mode.
+	if err := parent.Mkdir(name, 0o700); err != nil {
 		return folderResult{}, err
 	}
-	return folderResult{Path: child}, nil
+	return folderResult{Path: filepath.Join(parent.Name(), name)}, nil
 }
 
 // A deadline bounds the response, not an OS call on a stalled mount. One
@@ -186,16 +199,46 @@ func (app *App) folderOperation(ctx context.Context, operation func(context.Cont
 	}
 }
 
-func listFolders(ctx context.Context, path string, showHidden bool) (folderResult, error) {
-	result := folderResult{Path: path, Folders: []folderEntry{}}
-	result.Parent, result.ParentRoots = folderParent(path)
-	info, err := os.Stat(path)
+// nearestFolder also detects paths running through a file when the OS
+// reports them as missing. Only a missing component permits walking upward.
+func nearestFolder(ctx context.Context, path string) (string, string, error) {
+	missingName := ""
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		info, err := os.Stat(path)
+		if err == nil {
+			if !info.IsDir() {
+				return "", "", errNotDirectory
+			}
+			return path, missingName, nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", "", err
+		}
+		missingName, path = filepath.Base(path), parent
+	}
+}
+
+func listFolders(ctx context.Context, path string, showHidden, start bool) (folderResult, error) {
+	existing, missingName, err := nearestFolder(ctx, path)
 	if err != nil {
 		return folderResult{}, err
 	}
-	if !info.IsDir() {
-		return folderResult{}, errNotDirectory
+	if existing != path && !start {
+		return folderResult{}, fs.ErrNotExist
 	}
+	result := folderResult{Path: existing, Folders: []folderEntry{}, StartedAtParent: existing != path}
+	if result.StartedAtParent && validFolderName(missingName) {
+		result.SuggestedName = missingName
+	}
+	path = existing
+	result.Parent, result.ParentRoots = folderParent(path)
 	if err := ctx.Err(); err != nil {
 		return folderResult{}, err
 	}
@@ -218,14 +261,23 @@ func listFolders(ctx context.Context, path string, showHidden bool) (folderResul
 		if err := ctx.Err(); err != nil {
 			return folderResult{}, err
 		}
-		if !entry.IsDir() {
-			continue
-		}
 		name := entry.Name()
-		if !utf8.ValidString(name) {
-			return folderResult{}, errors.New("folder name is not UTF-8")
-		}
 		child := filepath.Join(path, name)
+		if !entry.IsDir() {
+			if entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) == 0 {
+				continue
+			}
+			info, err := os.Stat(child)
+			if errors.Is(err, fs.ErrNotExist) || folderLinkLoop(err) || folderNotDirectory(err) {
+				continue
+			}
+			if err != nil {
+				return folderResult{}, err
+			}
+			if !info.IsDir() {
+				continue
+			}
+		}
 		if !showHidden {
 			hidden, err := chooserHidden(child, name)
 			if err != nil {
@@ -234,6 +286,10 @@ func listFolders(ctx context.Context, path string, showHidden bool) (folderResul
 			if hidden {
 				continue
 			}
+		}
+		if !utf8.ValidString(name) {
+			result.SkippedNames = true
+			continue
 		}
 		result.Folders = append(result.Folders, folderEntry{Name: name, Path: child})
 	}
@@ -244,6 +300,11 @@ func listFolders(ctx context.Context, path string, showHidden bool) (folderResul
 func validFolderName(name string) bool {
 	if name == "" || strings.TrimSpace(name) == "" || name == "." || name == ".." || !utf8.ValidString(name) || strings.ContainsAny(name, "/\\\x00") {
 		return false
+	}
+	for _, char := range name {
+		if unicode.IsControl(char) {
+			return false
+		}
 	}
 	return platformFolderName(name)
 }

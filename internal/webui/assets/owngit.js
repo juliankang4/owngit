@@ -407,6 +407,7 @@
     var name = document.getElementById('folder-name');
     var retry = dialog.querySelector('[data-folder-retry]');
     var limit = dialog.querySelector('[data-folder-limit]');
+    var skipped = dialog.querySelector('[data-folder-skipped]');
     var current = '', parentPath = '', roots = false, parentRoots = false;
     var ready = false, busy = false, generation = 0, controller = null;
 
@@ -453,6 +454,7 @@
       body.set('path', values.path);
       body.set('hidden', hidden.checked ? '1' : '');
       body.set('roots', values.roots ? '1' : '');
+      body.set('start', values.start ? '1' : '');
       if (creating) { body.set('name', values.name); }
       controller = new AbortController();
       var active = controller;
@@ -473,21 +475,24 @@
       });
     }
 
-    function load(path, showRoots, focusList, created) {
+    function load(path, showRoots, focusList, created, start) {
       var focused = document.activeElement;
       var ticket = ++generation;
       ready = false;
       locationOf({ path: path }, showRoots);
       list.replaceChildren();
+      list.hidden = false;
       limit.hidden = true;
+      skipped.hidden = true;
       retry.hidden = true;
       say('folder.loading');
       setBusy(true);
-      return request(dialog.getAttribute('data-list-url'), { path: path, roots: showRoots }, false).then(function (result) {
+      return request(dialog.getAttribute('data-list-url'), { path: path, roots: showRoots, start: start }, false).then(function (result) {
         if (ticket !== generation || !dialog.open) { return; }
         if (result.error) {
           if (result.path) { locationOf(result, showRoots); }
           say(result.error);
+          list.hidden = true;
           retry.hidden = false;
           return;
         }
@@ -495,6 +500,8 @@
         locationOf(result, showRoots);
         ready = true;
         limit.hidden = !result.truncated;
+        skipped.hidden = !result.skipped_names;
+        if (start && result.suggested_name) { name.value = result.suggested_name; }
         result.folders.forEach(function (folder) {
           var row = document.createElement('li');
           var button = document.createElement('button');
@@ -508,7 +515,8 @@
           row.appendChild(button);
           list.appendChild(row);
         });
-        say(created ? 'folder.created' : (!result.folders.length && !result.truncated ? 'folder.empty' : ''));
+        say(created ? 'folder.created' : (result.started_at_parent ? 'folder.parent_opened' :
+          (!result.folders.length && !result.truncated && !result.skipped_names ? 'folder.empty' : '')));
         if (focusList) {
           setBusy(false);
           var first = list.querySelector('button');
@@ -517,6 +525,7 @@
       }).catch(function () {
         if (ticket !== generation || !dialog.open) { return; }
         say('folder.failed');
+        list.hidden = true;
         retry.hidden = false;
       }).finally(function () {
         if (ticket !== generation || !dialog.open) { return; }
@@ -534,7 +543,7 @@
     opener.addEventListener('click', function () {
       if (dialog.open) { return; }
       if (controller) { controller.abort(); }
-      current = field.value || field.getAttribute('placeholder') || '';
+      current = field.value.trim() || field.getAttribute('placeholder') || '';
       parentPath = '';
       parentRoots = false;
       roots = false;
@@ -542,7 +551,7 @@
       pathLabel.textContent = current;
       drives.hidden = true;
       dialog.showModal();
-      load(current, false, false, false);
+      load(current, false, false, false, true);
     });
     dialog.addEventListener('close', function () {
       // Native close events are queued. A reopened dialog owns its new request.

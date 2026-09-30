@@ -1795,6 +1795,7 @@ span.hm__cell { cursor: default; }
 .folderchooser__status { font-size: 12.5px; color: var(--text-2); }
 .folderchooser__status:has(> p:not([hidden])) { min-height: 20px; }
 .folderchooser__new { gap: 6px; }
+.folderchooser [data-folder-retry] { justify-self: start; }
 .folderchooser__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .folderchooser[aria-busy="true"] { cursor: progress; }
 

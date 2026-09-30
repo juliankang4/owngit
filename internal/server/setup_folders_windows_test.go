@@ -39,12 +39,12 @@ func TestFolderChooserWindowsDrivesAndHiddenAttributes(t *testing.T) {
 	noErr(t, err)
 	noErr(t, windows.SetFileAttributes(pointer, windows.FILE_ATTRIBUTE_HIDDEN))
 	t.Cleanup(func() { _ = windows.SetFileAttributes(pointer, windows.FILE_ATTRIBUTE_NORMAL) })
-	visible, err := listFolders(context.Background(), root, false)
+	visible, err := listFolders(context.Background(), root, false, false)
 	noErr(t, err)
 	if len(visible.Folders) != 1 || visible.Folders[0].Name != "visible" {
 		t.Fatalf("hidden attribute=%+v", visible)
 	}
-	all, err := listFolders(context.Background(), root, true)
+	all, err := listFolders(context.Background(), root, true, false)
 	noErr(t, err)
 	if len(all.Folders) != 2 {
 		t.Fatalf("show hidden=%+v", all)

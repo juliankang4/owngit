@@ -23,6 +23,7 @@ func folderStartRequest(t *testing.T, app *App, path string) *httptest.ResponseR
 	t.Helper()
 	values := url.Values{"path": {path}, "start": {"1"}, "csrf": {"owner-csrf"}}
 	request := httptest.NewRequest(http.MethodPost, "http://localhost"+setupFoldersPath, strings.NewReader(values.Encode()))
+	request.RemoteAddr = "127.0.0.1:54000"
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("Origin", "http://localhost")
 	request.AddCookie(&http.Cookie{Name: setupCookie, Value: "owner-session"})
@@ -104,6 +105,8 @@ func TestFolderChooserLinksToFoldersAreListed(t *testing.T) {
 	noErr(t, os.Symlink(target, filepath.Join(root, "linked")))
 	noErr(t, os.Symlink(filepath.Join(target, "missing"), filepath.Join(root, "broken")))
 	noErr(t, os.Symlink(filepath.Join(target, "file"), filepath.Join(root, "file-link")))
+	noErr(t, os.Symlink("cycle", filepath.Join(root, "cycle")))
+	noErr(t, os.Symlink(filepath.Join(target, "file", "child"), filepath.Join(root, "broken-through-file")))
 	noErr(t, store.StartApprovedSetupSession(context.Background(), "owner-session", "owner-csrf", time.Now().Add(time.Hour)))
 	response := folderRequest(t, app, setupFoldersPath, root, "", "owner-session", "owner-csrf", "localhost", "http://localhost")
 	if response.Code != http.StatusOK {
@@ -135,6 +138,22 @@ func TestFolderChooserUnsupportedNameDoesNotHideOtherFolders(t *testing.T) {
 	result := readFolderResult(t, response)
 	if len(result.Folders) != 1 || result.Folders[0].Name != "visible" || folderResponseFacts(t, response)["skipped_names"] != true {
 		t.Fatalf("partial listing=%s", response.Body.String())
+	}
+	onlyUnsupported := t.TempDir()
+	noErr(t, os.Mkdir(filepath.Join(onlyUnsupported, "legacy-\xff"), 0o700))
+	partial, err := listFolders(context.Background(), onlyUnsupported, false, false)
+	noErr(t, err)
+	if len(partial.Folders) != 0 || !partial.SkippedNames {
+		t.Errorf("all unsupported names: %+v", partial)
+	}
+	hiddenRoot := t.TempDir()
+	noErr(t, os.Mkdir(filepath.Join(hiddenRoot, ".legacy-\xff"), 0o700))
+	for _, showHidden := range []bool{false, true} {
+		partial, err := listFolders(context.Background(), hiddenRoot, showHidden, false)
+		noErr(t, err)
+		if partial.SkippedNames != showHidden {
+			t.Errorf("hidden=%v skipped=%v", showHidden, partial.SkippedNames)
+		}
 	}
 }
 

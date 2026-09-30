@@ -20,23 +20,9 @@ import (
 	"owngit/internal/webui"
 )
 
-// Chooser fixtures are moved to Trash where available, otherwise retained.
 func folderFixture(t *testing.T) string {
 	t.Helper()
-	root, err := os.MkdirTemp("", "owngit-folder-test-")
-	noErr(t, err)
-	t.Cleanup(func() {
-		home, err := os.UserHomeDir()
-		trash := filepath.Join(home, ".Trash")
-		if info, statErr := os.Stat(trash); err != nil || statErr != nil || !info.IsDir() {
-			t.Logf("retained folder fixture: %s", root)
-			return
-		}
-		if err := os.Rename(root, filepath.Join(trash, filepath.Base(root))); err != nil {
-			t.Logf("retained folder fixture: %s (%v)", root, err)
-		}
-	})
-	return root
+	return t.TempDir()
 }
 
 func folderRequest(t *testing.T, app *App, route, path, name, token, csrf, host, origin string) *httptest.ResponseRecorder {
@@ -168,7 +154,7 @@ func TestSetupFoldersListAndCreate(t *testing.T) {
 	if homeResponse.Code != http.StatusOK || readFolderResult(t, homeResponse).Path != root {
 		t.Fatalf("home fallback: %d %s", homeResponse.Code, homeResponse.Body.String())
 	}
-	result, err := listFolders(context.Background(), root, true)
+	result, err := listFolders(context.Background(), root, true, false)
 	noErr(t, err)
 	if len(result.Folders) != 4 || result.Folders[0].Name != ".hidden" {
 		t.Fatalf("hidden listing=%+v", result)
@@ -242,7 +228,7 @@ func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 			t.Fatalf("%s: %d %+v", test.path, response.Code, result)
 		}
 	}
-	empty, err := listFolders(context.Background(), root, false)
+	empty, err := listFolders(context.Background(), root, false, false)
 	noErr(t, err)
 	if len(empty.Folders) != 1 {
 		t.Fatalf("fixture list=%+v", empty)
@@ -252,7 +238,7 @@ func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 	for i := 0; i < folderEntryLimit+1; i++ {
 		noErr(t, os.Mkdir(filepath.Join(large, fmt.Sprintf("folder-%04d", i)), 0o700))
 	}
-	result, err := listFolders(context.Background(), large, false)
+	result, err := listFolders(context.Background(), large, false, false)
 	noErr(t, err)
 	if !result.Truncated || len(result.Folders) != folderEntryLimit {
 		t.Fatalf("bounded listing=%+v", result)
@@ -262,7 +248,7 @@ func TestSetupFoldersErrorsAndLimits(t *testing.T) {
 			t.Fatal("listing not sorted")
 		}
 	}
-	result, err = listFolders(context.Background(), filepath.Join(large, "folder-0000"), false)
+	result, err = listFolders(context.Background(), filepath.Join(large, "folder-0000"), false, false)
 	noErr(t, err)
 	if result.Truncated || result.Folders == nil || len(result.Folders) != 0 {
 		t.Fatalf("empty listing=%+v", result)

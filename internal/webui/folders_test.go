@@ -17,6 +17,7 @@ func TestSetupFolderChooserPreservesManualSubmission(t *testing.T) {
 			`data-folder-list aria-label=`, `data-folder-cancel autofocus`, `data-folder-use disabled`,
 			`class="form f folderchooser__new"`,
 			`data-folder-message="folder.denied" hidden`, `data-folder-message="folder.empty" hidden`,
+			`data-folder-message="folder.parent_opened" hidden`, `data-folder-skipped hidden`,
 			`data-en="Choose folder" data-ko="폴더 선택"`,
 		} {
 			if !strings.Contains(out, part) {
@@ -40,6 +41,10 @@ func TestFolderChooserRequestsOnlySetupEndpoints(t *testing.T) {
 		"target.origin !== window.location.origin", "target.pathname !== expected", "target.search || target.hash",
 		"'/setup/folders/new' : '/setup/folders'", "method: 'POST'", "credentials: 'same-origin'", "redirect: 'manual'",
 		"body.set('csrf', token.value)", "body.set('path', values.path)", "body.set('name', values.name)",
+		"body.set('start', values.start ? '1' : '')", "load(current, false, false, false, true)",
+		"if (start && result.suggested_name) { name.value = result.suggested_name; }",
+		"skipped.hidden = !result.skipped_names", "result.started_at_parent ? 'folder.parent_opened'",
+		"!result.skipped_names ? 'folder.empty'", "field.value.trim()", "list.hidden = true",
 		"label.textContent = folder.name", "field.value = current", "dialog.showModal()", "opener.focus()",
 		"ready = false", "say(result.error)", "controller.abort()", "list.replaceChildren()",
 	} {

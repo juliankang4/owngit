@@ -185,6 +185,7 @@
       {{range $p.FolderMessages}}<p data-folder-message="{{.}}" hidden>{{bi $lang .}}</p>{{end}}
     </div>
     <p class="fieldnote" data-folder-limit hidden>{{bi $lang "folder.limit"}}</p>
+    <p class="fieldnote" role="status" data-folder-skipped hidden>{{bi $lang "folder.skipped_names"}}</p>
     <button type="button" class="btn" data-folder-retry hidden>{{bi $lang "folder.retry"}}</button>
     <form class="form f folderchooser__new" method="post" action="/setup/folders/new" data-folder-create>
       <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">

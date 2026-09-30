@@ -5,7 +5,6 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
-	"unicode"
 	"unicode/utf16"
 
 	"golang.org/x/sys/windows"
@@ -27,11 +26,6 @@ func platformFolderName(name string) bool {
 	if len(utf16.Encode([]rune(name))) > 255 || strings.ContainsAny(name, `<>:"|?*`) || strings.HasSuffix(name, ".") || strings.HasSuffix(name, " ") {
 		return false
 	}
-	for _, char := range name {
-		if unicode.IsControl(char) {
-			return false
-		}
-	}
 	base, _, _ := strings.Cut(name, ".")
 	base = strings.ToUpper(strings.TrimRight(base, " "))
 	switch base {
@@ -50,6 +44,8 @@ func platformFolderName(name string) bool {
 func folderNotDirectory(err error) bool {
 	return errors.Is(err, windows.ERROR_DIRECTORY)
 }
+
+func folderLinkLoop(err error) bool { return errors.Is(err, windows.ERROR_CANT_RESOLVE_FILENAME) }
 
 func folderParent(path string) (string, bool) {
 	parent := filepath.Dir(path)
