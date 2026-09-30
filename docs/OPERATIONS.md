@@ -538,14 +538,23 @@ The question lists each change, showing a password only as entered, and offers S
 - Only one part with a password field can be saved on the way out, and only when you go to another OwnGit page by a link or by Back. The question asks for the administrator password when that part needs it. A part it marks Save separately must be saved with its own Save.
 - Reloading, closing the tab, or going back to another site shows the browser's own question instead.
 
-### Server settings on the command line
+### Settings on the command line
 
-These settings are shown with their saved values only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup). Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
+`owngit settings` makes every change of the General, Access, Repositories and Storage & recovery tabs, except the display choices of your browser. It works through the administrator API, so each command needs `--server` and a `--password-file` holding the administrator password, and it prints its answer as JSON:
 
-The command line reads and changes the same settings through the administrator API. Both commands need `--server` and a `--password-file` holding the administrator password:
+- `owngit settings show` prints the saved settings (listed below), the access mode (`access_mode`, `open` or `password`), how often the dashboard asks for the administrator password (`admin_confirmation`) and the new-release check (`update_check`). `update_check_forced_off` is true when the server was started with `--no-update-check`.
+- `owngit settings set` changes only the settings its options name, such as `--session 7d` or `--update-check off`.
+- `owngit settings access --mode password` turns the shared password on or replaces it. `--mode open` turns it off, so anyone who reaches OwnGit can read and push.
+- `owngit settings admin-password` replaces the administrator password.
+- `owngit settings confirmation --choice CHOICE` sets how often the dashboard asks for the administrator password: `every`, `30m`, `1h`, `8h`, `1d`, `7d`, `30d` or `never` (Do not ask). `never` also needs `--acknowledge-no-ask`, which accepts the same warning as Settings.
 
-- `owngit settings show` prints these settings as JSON.
-- `owngit settings set` changes only the ones its options name, such as `--session 7d`.
+```sh
+owngit settings set --server http://127.0.0.1:7654 --password-file /path/to/admin-password --update-check off
+```
+
+A new password never goes on the command line. `settings access` reads it from the file given with `--access-password-file`, and `settings admin-password` from `--new-password-file`; each must be an owner-only file ([Password and token files](#password-and-token-files)). Without that option, the command asks for the password twice at a prompt that does not show what you type, which works only in a terminal. OwnGit refuses the same passwords as Settings, such as one that is too short or one that equals the other password. A new shared password signs out everyone signed in with the old one. A new administrator password ends every browser's administrator confirmation. Commands that read the old one from a password file stop working until you put the new one there.
+
+In the dashboard, the saved values of these settings are shown only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), whether [deleting a repository](#deleting-a-repository) asks for its name, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup). Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
 
 In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, and the browsing limits, repository maintenance and unused object cleanup are `browse_limits`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others.
 
@@ -557,7 +566,18 @@ When a saved setting cannot be read, for example after a hand edit of the state 
 - repository maintenance: no repository is maintained;
 - unused object cleanup: no object is removed, and maintenance goes on without it.
 
-These settings belong to this installation host and are not in backups, so a restored installation starts with the defaults.
+The settings that `settings set` and `settings confirmation` change belong to this installation host and are not in backups, so a restored installation starts with the defaults. The access mode and both passwords are in backups.
+
+The Network tab and the OwnGit icon have their own commands, which run on the installation host: `owngit network` and `owngit tailscale` ([Network settings](#network-settings)), and `owngit tray on` or `owngit tray off` ([OwnGit icon](#owngit-icon)).
+
+### Dashboard-only and command-line-only tasks
+
+Every owner task in Settings and on a repository's pages also has a command that prints JSON. A few tasks are on one side only, on purpose:
+
+- Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)).
+- Dashboard only: accepting the plain HTTP warning, because it concerns the browser's own connection. A command gives its own consent each time with `--accept-insecure-http`.
+- Running programs: `owngit serve` runs OwnGit, `owngit service` installs and controls it as a service, `owngit runner` runs automatic checks, and `owngit mcp` serves a coding tool. They have no dashboard form because they start or control a process.
+- Records from coding tools: check tasks, correction rounds and attempts (`owngit check task new`, `check cycle reserve`, `check run`) are evidence that a coding tool records ([Coding tools](CODING_TOOLS.md)). The dashboard shows them but does not create them.
 
 ### How long a sign-in lasts
 
@@ -605,7 +625,9 @@ If the saved limits cannot be read, for example after a hand edit of the state d
 - **Again after 30 minutes** (the default), **1 hour**, **8 hours**, **1 day**, **7 days** or **30 days**: after you type the password, on the administrator sign-in or in a form, this browser does not ask again for that long. The time counts from when you typed it; moving between pages does not extend it. Another browser is asked for its own. The sidebar shows until when this browser is confirmed, with End to stop now. Signing out, End, or changing or resetting the administrator password ends it. Choosing a shorter time shortens it to the new time counted from when the password was typed, so it may end at once.
 - **Do not ask**: anyone who can open the dashboard can change settings, delete repositories, issue credentials and turn on automatic checks without the administrator password. When anyone can reach OwnGit without a password, nobody has to sign in either. Turning it on asks for the password one last time and for a tick confirming the warning. While it is on, every page shows "Administrator password check off", which leads back here.
 
-To end the confirmation of a browser you no longer have, change the administrator password in Settings, or run `owngit reset-admin`; either ends every browser's confirmation.
+On the command line, `owngit settings confirmation` makes the same choice ([Settings on the command line](#settings-on-the-command-line)).
+
+To end the confirmation of a browser you no longer have, change the administrator password in Settings or with `owngit settings admin-password`, or run `owngit reset-admin` on the installation host. Each ends every browser's confirmation.
 
 The command line and the administrator API always ask for the administrator password, for reads as well as changes, whatever the choice. A browser that is confirmed in the dashboard is not signed in to the API.
 
@@ -1041,7 +1063,7 @@ After setup, OwnGit asks GitHub once a day whether a newer release exists. When 
 
 The check is one HTTPS request to `https://api.github.com/repos/juliankang4/owngit/releases/latest` with a User-Agent that names OwnGit and its version, about 30 seconds after a start or right after setup. No repository data is sent; GitHub sees the server's address. Drafts and prereleases are ignored. Apart from [imports](#importing-from-another-git-host) and `owngit update` when you run it, this is the only connection OwnGit opens to another host.
 
-Turn the check off on the General tab of Settings, under Update check, and save with the administrator password; the setting belongs to this installation host and is not in backups. For a deployment that must never check, start the server with `--no-update-check`, which wins over the saved setting:
+Turn the check off on the General tab of Settings, under Update check, and save with the administrator password, or run `owngit settings set --update-check off`. The setting belongs to this installation host and is not in backups. For a deployment that must never check, start the server with `--no-update-check`, which wins over the saved setting:
 
 ```sh
 owngit serve --no-update-check
@@ -1049,7 +1071,7 @@ owngit serve --no-update-check
 
 ## Host-owner recovery
 
-Both procedures need access to the installation host; OwnGit has no email or account recovery.
+Both procedures need access to the installation host; OwnGit has no email or account recovery. They are commands only, because they are for when the dashboard cannot be used.
 
 Before setup is complete, a terminal on the installation host issues a replacement setup link. Add `--base-url http://127.0.0.1:7654` for a link on that address instead of the one the server listens on:
 
@@ -1067,7 +1089,7 @@ Resetting ends every browser's administrator confirmation and leaves repositorie
 
 ### Password and token files
 
-Every command that reads a password or token file you wrote yourself, including `reset-admin`, `import`, `pr` and `repo`, requires a regular file that only your account can read. OwnGit never accepts a password as a command-line value. When it refuses a file, it says which accounts can also read it and gives the command that fixes it.
+Every command that reads a password or token file you wrote yourself, including `reset-admin`, `settings`, `import`, `pr` and `repo`, requires a regular file that only your account can read. OwnGit never accepts a password as a command-line value. A command that sets a new password reads it from such a file or asks for it at a hidden prompt. When it refuses a file, it says which accounts can also read it and gives the command that fixes it.
 
 A password file holds the password on one line; one line break after it is fine. A file with more lines, or a password that is too short, is refused with a message that says so.
 
@@ -1130,7 +1152,7 @@ A change applies to pushes and imports that start after you save; a run already 
 
 ### Changing the default branch
 
-The default branch is the one OwnGit and `git clone` open first (the repository's `HEAD`). An administrator picks any existing branch in the repository's Settings tab. An imported repository whose only branch is `master` shows no default branch until you choose one. Changing it creates no branch and leaves every ref and kept history as it was.
+The default branch is the one OwnGit and `git clone` open first (the repository's `HEAD`). An administrator picks any existing branch in the repository's Settings tab, or runs `owngit repo default-branch --repository NAME --branch BRANCH` with the administrator password in `--password-file`. Inside a clone of the repository, `--server` and `--repository` come from its `origin` remote. An imported repository whose only branch is `master` shows no default branch until you choose one. Changing it creates no branch and leaves every ref and kept history as it was.
 
 To keep the default branch from being rewritten or deleted, turn on Protect the default branch on the repository's Settings tab, or run `owngit repo settings set --repository NAME --protect-default-branch on`. It is off by default. While it is on, OwnGit refuses a push that is not a fast-forward of the default branch and a push that deletes it, and Git shows `remote: OwnGit protects the default branch main and refused ...` with `! [remote rejected]`. Pushes that add commits, every other branch and tag, merging a pull request, restoring files and deleting the repository work as before. An import still follows a fast-forward of the default branch. When the source rewrote it, the refresh fails with `protected_default_branch` and changes nothing; to follow the source, turn the protection off and refresh again. Changing the default branch moves the protection to the new one.
 
@@ -1175,19 +1197,44 @@ git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push
 
 This command brings back only branches and tags; kept history, pull requests and checks do not come back. To bring back refs such as `refs/notes/` as well, first list their namespace under [Other ref namespaces](#other-ref-namespaces) of the new repository, then add a matching refspec such as `'refs/notes/*:refs/notes/*'`. If the kept repository's main branch is not `main`, change the default branch afterwards.
 
+#### Deleting on the command line
+
+`owngit repo delete` deletes a repository as the Delete page does, with the administrator password:
+
+```sh
+owngit repo delete --server http://HOST:7654 --password-file /path/to/admin-password \
+  --repository NAME --files keep --confirm-name NAME
+```
+
+- `--repository` is always required. Unlike `repo settings` and `repo default-branch`, this command never takes it from the `origin` remote of a clone, so running the command in the wrong folder cannot delete that folder's repository.
+- `--files keep` moves the files to `.owngit-removed`, as above, and the answer gives their folder in `kept_path`. `--files delete` deletes them.
+- `--confirm-name` repeats the name while Settings ask for it. Without it, the command is refused with `name_mismatch` and deletes nothing.
+- The JSON answer names the `repository` and the `mode`. `incomplete` is true when the repository is gone from OwnGit but its files are moved or deleted at the next start ([If OwnGit stops during a deletion](#if-owngit-stops-during-a-deletion)).
+- A refusal has the same reasons as on the Delete page, such as `repository_busy` ([When deletion is refused](#when-deletion-is-refused)), and `setting_unreadable` when the name setting cannot be read.
+
 #### When deletion is refused
 
 The reason decides the next step:
 
 - An import is running, a check job is claimed or running, or another Git operation (push, clone, restore or merge) holds the repository: try again once it finishes.
 - A check container still waits for OwnGit to confirm its removal: a cleanup that failed is retried when OwnGit starts, so restart OwnGit after Docker is available again.
-- The server log says the container belongs to another Docker daemon, for example after Docker was reset or reinstalled: remove any leftover container labeled `com.owngit.check-job=JOB` on that daemon, or make sure that daemon no longer exists. Then release the record on the OwnGit computer:
+- The repository's Automatic checks page lists the container under Leftover check containers, for example after Docker was reset or reinstalled: forget its record as described next.
+
+The Leftover check containers list shows the containers of finished jobs that OwnGit could not remove, because they were created on another Docker daemon or Docker was unavailable. Each entry gives the job, the container's name and ID, its Docker daemon and its label `com.owngit.check-job=JOB`. To release one:
+
+1. Remove the container on the Docker daemon that ran it, or make sure that daemon no longer exists.
+2. Tick "I removed this container, or its Docker daemon no longer exists" and choose Forget container.
+3. Restart OwnGit to clean up the job's check workspace.
+
+OwnGit removes no container; it only forgets the record. It refuses a record of the Docker daemon it uses now, because the next start of OwnGit removes that container itself, and a job that has not finished.
+
+When the dashboard cannot be opened, or OwnGit is stopped, release the record on the OwnGit computer instead:
 
 ```sh
 owngit forget-check-container --job JOB --confirm-container-removed
 ```
 
-`JOB` is the job identifier from the log; add `--state-dir` for a non-default state directory. The command removes no container. It refuses a job without a record, a record of the daemon running now (the next start of OwnGit cleans that up itself), and a job that has not finished.
+`JOB` is the job identifier from the list or the server log; add `--state-dir` for a non-default state directory. `--json` prints the forgotten record as JSON: `job`, `repository`, `container_name`, `container_id`, `daemon_id`, and `docker_unavailable` when Docker could not be checked. The command refuses the same records as the page, and a job without a record.
 
 #### If OwnGit stops during a deletion
 

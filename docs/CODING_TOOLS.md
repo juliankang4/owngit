@@ -352,7 +352,7 @@ strength of an unmeasured `0`.
 `owngit repo` lists, shows, and creates repositories, restores their files
 from earlier commits, and prints one JSON object. It uses general access,
 like `owngit pr`: pass the shared general-access password with
-`--password-file`, or omit it when access is open. There is no delete or rename.
+`--password-file`, or omit it when access is open. There is no rename.
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -370,12 +370,20 @@ rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, or `invalid_repository_description` (over 500
 bytes).
 
-`owngit repo settings show` and `owngit repo settings set` read and change one
-repository's [kept history and default branch protection](OPERATIONS.md#kept-history)
-and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
-Unlike the other `repo` commands, they need the administrator password in
-`--password-file`. Inside a clone they take `--server` and `--repository` from
-`origin`, and the password file must then name that server
+Four `repo` commands are owner actions and need the administrator password in
+`--password-file` instead:
+
+- `owngit repo settings show` and `owngit repo settings set` read and change
+  one repository's
+  [kept history and default branch protection](OPERATIONS.md#kept-history)
+  and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
+- `owngit repo default-branch --branch BRANCH` makes an existing branch the
+  [default branch](OPERATIONS.md#changing-the-default-branch).
+- `owngit repo delete --repository NAME --files keep|delete` deletes a
+  repository ([Deleting on the command line](OPERATIONS.md#deleting-on-the-command-line)).
+
+Inside a clone they take `--server` from `origin`, and all but `repo delete`
+take `--repository` from it too. The password file must then name that server
 ([Credential files and the server line](#credential-files-and-the-server-line)).
 
 `owngit repo kept-history` and `owngit repo restore` bring back files from an
