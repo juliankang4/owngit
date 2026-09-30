@@ -199,9 +199,77 @@ const (
 	MsgImportRefusedPlain     MessageCode = "import.error.redirect_needs_plain_http"
 	MsgImportRefusalDetails   MessageCode = "import.refusal_details"
 	MsgImportTransportReset   MessageCode = "import.transport_reset"
+
+	MsgImportRefreshChoices       MessageCode = "import.refresh_choices"
+	MsgImportRefreshChoicesHelp   MessageCode = "import.refresh_choices_help"
+	MsgImportExtraRefs            MessageCode = "import.extra_refs"
+	MsgImportExtraRefsHelp        MessageCode = "import.extra_refs_help"
+	MsgImportExtraRefsWarning     MessageCode = "import.extra_refs_warning"
+	MsgImportExtraRefsInvalid     MessageCode = "import.extra_refs_invalid"
+	MsgImportOverwrite            MessageCode = "import.overwrite_diverged"
+	MsgImportOverwriteHelp        MessageCode = "import.overwrite_diverged_help"
+	MsgImportFollowDeletions      MessageCode = "import.follow_deletions"
+	MsgImportFollowDeletionsHelp  MessageCode = "import.follow_deletions_help"
+	MsgImportRefreshWarning       MessageCode = "import.refresh_warning"
+	MsgImportEffectsHeading       MessageCode = "import.effects_heading"
+	MsgImportEffectsNone          MessageCode = "import.effects_none"
+	MsgImportEffectReplace        MessageCode = "import.effect.replace"
+	MsgImportEffectDelete         MessageCode = "import.effect.delete"
+	MsgImportEffectNeedsOverwrite MessageCode = "import.effect.needs_overwrite"
+	MsgImportEffectNeedsFollow    MessageCode = "import.effect.needs_follow"
+	MsgImportEffectNeedsBoth      MessageCode = "import.effect.needs_both"
+	MsgImportEffectKept           MessageCode = "import.effect.kept"
+	MsgImportEffectNotKept        MessageCode = "import.effect.not_kept"
+	MsgImportEffectKeptUnknown    MessageCode = "import.effect.kept_unknown"
+	MsgImportFactRefresh          MessageCode = "import.fact.refresh"
+	MsgImportFactExtraRefs        MessageCode = "import.fact.extra_refs"
+	MsgImportFactOverwrite        MessageCode = "import.fact.overwrite"
+	MsgImportFactFollowDeletions  MessageCode = "import.fact.follow_deletions"
+	MsgImportRefNotImported       MessageCode = "import.ref.not_imported"
 )
 
 var importOptionsCatalog = map[MessageCode]message{
+	MsgImportRefreshChoices: {en: "Refs and refresh", ko: "ref와 새로고침"},
+	MsgImportRefreshChoicesHelp: {
+		en: "By default a refresh brings in branches and tags, keeps a branch or tag you changed here, and only counts refs the source deleted. These choices apply from the next refresh.",
+		ko: "기본적으로 새로고침은 브랜치와 태그를 가져오고, 여기서 바꾼 브랜치나 태그는 그대로 두며, 원본에서 삭제된 ref는 개수만 셉니다. 이 설정은 다음 새로고침부터 적용됩니다.",
+	},
+	MsgImportExtraRefs: {en: "Extra ref namespaces", ko: "추가 ref 네임스페이스"},
+	MsgImportExtraRefsHelp: {
+		en: "One per line, each ending with a slash, such as refs/notes/. Refs under these namespaces are imported with branches and tags. Pushes to this repository are not affected.",
+		ko: "한 줄에 하나씩, refs/notes/처럼 슬래시로 끝나게 적습니다. 이 네임스페이스의 ref를 브랜치, 태그와 함께 가져옵니다. 이 저장소로의 푸시에는 영향을 주지 않습니다.",
+	},
+	MsgImportExtraRefsWarning: {en: "Overwritten or deleted refs in these namespaces have no kept history.", ko: "이 네임스페이스에서 덮어쓰거나 삭제한 ref는 보관된 기록에 남지 않습니다."},
+	MsgImportExtraRefsInvalid: {
+		en: "Enter ref namespaces such as refs/notes/, one per line, each once. Branches, tags and refs/owngit/ are not allowed.",
+		ko: "refs/notes/ 같은 ref 네임스페이스를 한 줄에 하나씩, 중복 없이 적으세요. 브랜치, 태그, refs/owngit/은 쓸 수 없습니다.",
+	},
+	MsgImportOverwrite: {en: "Overwrite diverged branches", ko: "원본과 달라진 브랜치 덮어쓰기"},
+	MsgImportOverwriteHelp: {
+		en: "A branch, tag or extra ref that changed here since the source was last seen is replaced with the source's.",
+		ko: "원본을 마지막으로 확인한 뒤 여기서 바뀐 브랜치, 태그, 추가 ref를 원본의 것으로 바꿉니다.",
+	},
+	MsgImportFollowDeletions: {en: "Follow upstream deletions", ko: "원본의 삭제 따르기"},
+	MsgImportFollowDeletionsHelp: {
+		en: "A ref the source deleted is deleted here too, unless it changed here since, the default branch uses it, or it is a symbolic ref.",
+		ko: "원본에서 삭제된 ref를 여기서도 삭제합니다. 그 뒤 여기서 바뀌었거나, 기본 브랜치이거나, 심볼릭 ref라면 남겨 둡니다.",
+	},
+	MsgImportRefreshWarning:       {en: "Local work may be replaced; upstream deletions will remove these local refs.", ko: "여기서 한 작업이 바뀔 수 있고, 원본에서 삭제된 ref는 여기서도 삭제됩니다."},
+	MsgImportEffectsHeading:       {en: "Refs these choices would change now", ko: "지금 이 설정이 바꿀 ref"},
+	MsgImportEffectsNone:          {en: "As of the last refresh, no local ref would change.", ko: "마지막 새로고침 기준으로 바뀔 ref가 없습니다."},
+	MsgImportEffectReplace:        {en: "Replaced with the source's", ko: "원본의 것으로 바뀜"},
+	MsgImportEffectDelete:         {en: "Deleted", ko: "삭제됨"},
+	MsgImportEffectNeedsOverwrite: {en: "with Overwrite diverged branches", ko: "‘원본과 달라진 브랜치 덮어쓰기’를 켜면"},
+	MsgImportEffectNeedsFollow:    {en: "with Follow upstream deletions", ko: "‘원본의 삭제 따르기’를 켜면"},
+	MsgImportEffectNeedsBoth:      {en: "with both choices, because it changed here", ko: "여기서 바뀌었으므로 두 설정을 모두 켜면"},
+	MsgImportEffectKept:           {en: "kept history keeps the current tip", ko: "지금 커밋은 보관된 기록에 남음"},
+	MsgImportEffectNotKept:        {en: "no kept history", ko: "보관된 기록에 남지 않음"},
+	MsgImportEffectKeptUnknown:    {en: "kept history setting could not be read", ko: "보관된 기록 설정을 읽지 못함"},
+	MsgImportFactRefresh:          {en: "Refresh", ko: "새로고침"},
+	MsgImportFactExtraRefs:        {en: "Extra refs", ko: "추가 ref"},
+	MsgImportFactOverwrite:        {en: "Overwrites diverged branches", ko: "달라진 브랜치 덮어씀"},
+	MsgImportFactFollowDeletions:  {en: "Follows upstream deletions", ko: "원본의 삭제 따름"},
+	MsgImportRefNotImported:       {en: "Namespace not imported", ko: "가져오지 않는 네임스페이스"},
 	MsgImportRefusedPrivate: {
 		en: "OwnGit did not connect: the source address is on a private network, which this source does not allow. To connect, turn on “Allow a private-network source” in this source's settings.",
 		ko: "원본 주소가 사설망에 있고 이 원본은 사설망 연결을 허용하지 않아 OwnGit이 연결하지 않았습니다. 연결하려면 이 원본 설정에서 ‘사설망 원본 허용’을 켜세요.",
@@ -223,8 +291,8 @@ var importOptionsCatalog = map[MessageCode]message{
 		ko: "원본이 HTTPS에서 암호화되지 않은 HTTP로 리디렉션했고 이 원본은 이를 허용하지 않아 OwnGit이 따르지 않았습니다. 따르려면 ‘연결과 한도’에서 ‘이 원본에 암호화되지 않은 HTTP 허용’을 켜세요.",
 	},
 	MsgImportTransportReset: {
-		en: "The address changed, so the plain HTTP, redirect and exceptional destination choices were reset. Choose again any that the new address needs.",
-		ko: "주소가 바뀌어 암호화되지 않은 HTTP, 리디렉션, 예외 대상 주소 설정을 초기화했습니다. 새 주소에 필요한 설정을 다시 고르세요.",
+		en: "The address changed, so the plain HTTP, redirect, exceptional destination, overwrite and upstream deletion choices were reset. Choose again any that the new address needs.",
+		ko: "주소가 바뀌어 암호화되지 않은 HTTP, 리디렉션, 예외 대상 주소, 덮어쓰기, 삭제 따르기 설정을 초기화했습니다. 새 주소에 필요한 설정을 다시 고르세요.",
 	},
 	MsgImportRefusalDetails: {
 		en: "The technical details name the address and its range, or the origin the redirect leads to.",
@@ -550,6 +618,8 @@ func importTokenCode(token string) (MessageCode, bool) {
 		return MsgImportRefUnknown, true
 	case "deleted_at_source":
 		return MsgImportRefDeleted, true
+	case "not_imported":
+		return MsgImportRefNotImported, true
 	case "basic":
 		return MsgImportCredentialBasic, true
 	case "bearer":

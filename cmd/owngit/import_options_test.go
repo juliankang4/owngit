@@ -92,3 +92,41 @@ func TestImportAddSendsSourceOptions(t *testing.T) {
 		t.Fatalf("added source = %+v, %v, %v", source, exists, err)
 	}
 }
+
+func TestImportConfigureSetsRefreshChoices(t *testing.T) {
+	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin")
+	noErr(t, os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordPath, false))
+	fixture := startImportCLIServer(t)
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+
+	printed, err := captureStdout(func() error {
+		return importCommand(append([]string{"configure", fixture.repositoryID, "--extra-ref-prefixes", "refs/notes/, refs/changes/",
+			"--overwrite-diverged", "--follow-upstream-deletions"}, remote...))
+	})
+	for _, want := range []string{"Extra ref namespaces: refs/notes/, refs/changes/", "Diverged refs: overwritten", "Upstream deletions: followed", "Local work may be replaced"} {
+		if err != nil || !strings.Contains(printed, want) {
+			t.Fatalf("configure output lacks %q: %q err=%v", want, printed, err)
+		}
+	}
+	source, _, err := fixture.store.ImportSource(context.Background(), fixture.repositoryID)
+	if err != nil || !source.OverwriteDiverged || !source.FollowUpstreamDeletions || strings.Join(source.ExtraRefPrefixes, ",") != "refs/notes/,refs/changes/" {
+		t.Fatalf("stored source = %+v, %v", source, err)
+	}
+	printed, err = captureStdout(func() error {
+		return importCommand(append([]string{"configure", fixture.repositoryID, "--extra-ref-prefixes=", "--overwrite-diverged=false", "--json"}, remote...))
+	})
+	var response struct {
+		Options importsync.OptionsStatus `json:"options"`
+	}
+	if err != nil || json.Unmarshal([]byte(printed), &response) != nil || len(response.Options.ExtraRefPrefixes) != 0 ||
+		response.Options.OverwriteDiverged || !response.Options.FollowUpstreamDeletions {
+		t.Fatalf("configure --json output=%q err=%v", printed, err)
+	}
+	if _, err := captureStdout(func() error {
+		return importCommand(append([]string{"configure", fixture.repositoryID, "--extra-ref-prefixes", "refs/heads/"}, remote...))
+	}); err == nil {
+		t.Fatal("a branch namespace was accepted as an extra namespace")
+	}
+}

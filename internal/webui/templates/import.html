@@ -87,6 +87,48 @@
       <span class="check__t">{{bi $lang "import.reserved"}}</span>
       <span class="check__d">{{bi $lang "import.reserved_help"}}</span>
     </label>
+    {{/* Refresh choices. The two consequential ones are cleared with the
+         connection choices when the address changes, and on the Import tab
+         the refs they would change now are listed before saving. */}}
+    <fieldset class="fset">
+      <legend>{{bi $lang "import.refresh_choices"}}</legend>
+      <p class="f__help">{{bi $lang "import.refresh_choices_help"}}</p>
+      <div class="f">
+        <label for="{{$id}}-extra-refs">{{bi $lang "import.extra_refs"}}</label>
+        <textarea id="{{$id}}-extra-refs" name="extra_ref_prefixes" rows="2" spellcheck="false" autocapitalize="off" autocomplete="off"
+                  placeholder="refs/notes/" {{template "fieldInvalid" dict "Notices" $n "Field" "extra_ref_prefixes"}}>{{$o.ExtraRefPrefixes}}</textarea>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "extra_ref_prefixes"}}
+        <p class="f__help">{{bi $lang "import.extra_refs_help"}}</p>
+        <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "import.extra_refs_warning"}}</span></p>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="overwrite_diverged" value="1"{{if $o.Overwrite}} checked{{end}} data-import-transport>
+        <span class="check__t">{{bi $lang "import.overwrite_diverged"}}</span>
+        <span class="check__d">{{bi $lang "import.overwrite_diverged_help"}}</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" name="follow_upstream_deletions" value="1"{{if $o.Follow}} checked{{end}} data-import-transport>
+        <span class="check__t">{{bi $lang "import.follow_deletions"}}</span>
+        <span class="check__d">{{bi $lang "import.follow_deletions_help"}}</span>
+      </label>
+      <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "import.refresh_warning"}}</span></p>
+      {{if $o.ForURL}}
+      <div class="f">
+        <p class="f__help"><strong>{{bi $lang "import.effects_heading"}}</strong></p>
+        {{if $o.Effects}}
+        <ul class="imp__effects">
+          {{range $o.Effects}}
+          <li><span class="mono" dir="auto">{{.Name}}</span>
+            <span class="pill pill--off">{{if eq .Effect "replace"}}{{bi $lang "import.effect.replace"}}{{else}}{{bi $lang "import.effect.delete"}}{{end}}</span>
+            <span class="f__help">{{bi $lang .Needs}}; {{bi $lang .HistoryCode}}</span></li>
+          {{end}}
+        </ul>
+        {{else}}
+        <p class="f__help">{{bi $lang "import.effects_none"}}</p>
+        {{end}}
+      </div>
+      {{end}}
+    </fieldset>
     <fieldset class="fset">
       <legend>{{bi $lang "import.limits"}}</legend>
       <p class="f__help">{{bi $lang "import.limits_help"}}</p>

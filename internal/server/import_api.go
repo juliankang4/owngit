@@ -88,8 +88,8 @@ func (app *App) handleImportSourceAPI(writer http.ResponseWriter, request *http.
 		}
 		writeAPIJSON(writer, http.StatusOK, importSourceJSON(source))
 	case http.MethodPatch:
-		// Changes only the connection options and limits named in the
-		// request; the source address, mode and consents stay.
+		// Changes only the connection options, limits and refresh choices
+		// named in the request; the source address, mode and consents stay.
 		var input importOptionsInput
 		if !decodeAPIJSON(writer, request, &input) {
 			return
@@ -518,32 +518,38 @@ func importSourceJSON(source state.ImportSource) any {
 		OK: true, RepositoryID: source.RepositoryID, URL: source.URL, Mode: source.Mode,
 		SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
 		GitOnlyConsent: source.GitOnlyConsent, AllowPrivateNetwork: source.AllowPrivateNetwork,
-		Options: importsync.DescribeOptions(source.Options, nil),
+		Options: importsync.DescribeOptions(source, nil),
 	}
 }
 
 // importOptionsInput is the JSON form of a change to a source's connection
-// options and limits. An omitted field keeps its value; limits names only
-// the limits to set, each to a value in its range (setting the default value
-// returns a limit to its default).
+// options, limits and refresh choices. An omitted field keeps its value;
+// limits names only the limits to set, each to a value in its range (setting
+// the default value returns a limit to its default), and extra_ref_prefixes
+// replaces the whole list ([] clears it).
 type importOptionsInput struct {
-	AllowPlainHTTP         *bool            `json:"allow_plain_http"`
-	Redirects              *string          `json:"redirects"`
-	ApprovedRedirectOrigin *string          `json:"approved_redirect_origin"`
-	AllowReservedAddresses *bool            `json:"allow_reserved_addresses"`
-	Limits                 map[string]int64 `json:"limits"`
+	AllowPlainHTTP          *bool            `json:"allow_plain_http"`
+	Redirects               *string          `json:"redirects"`
+	ApprovedRedirectOrigin  *string          `json:"approved_redirect_origin"`
+	AllowReservedAddresses  *bool            `json:"allow_reserved_addresses"`
+	Limits                  map[string]int64 `json:"limits"`
+	OverwriteDiverged       *bool            `json:"overwrite_diverged"`
+	FollowUpstreamDeletions *bool            `json:"follow_upstream_deletions"`
+	ExtraRefPrefixes        *[]string        `json:"extra_ref_prefixes"`
 }
 
 func (input importOptionsInput) change() importsync.OptionsChange {
 	return importsync.OptionsChange{
 		AllowPlainHTTP: input.AllowPlainHTTP, Redirects: input.Redirects, ApprovedRedirectOrigin: input.ApprovedRedirectOrigin,
 		AllowReservedAddresses: input.AllowReservedAddresses, Limits: input.Limits,
+		OverwriteDiverged: input.OverwriteDiverged, FollowUpstreamDeletions: input.FollowUpstreamDeletions, ExtraRefPrefixes: input.ExtraRefPrefixes,
 	}
 }
 
 func (input importOptionsInput) present() bool {
 	return input.AllowPlainHTTP != nil || input.Redirects != nil || input.ApprovedRedirectOrigin != nil ||
-		input.AllowReservedAddresses != nil || input.Limits != nil
+		input.AllowReservedAddresses != nil || input.Limits != nil ||
+		input.OverwriteDiverged != nil || input.FollowUpstreamDeletions != nil || input.ExtraRefPrefixes != nil
 }
 
 // sourceRunLimits bounds a run this server starts by the run time its source

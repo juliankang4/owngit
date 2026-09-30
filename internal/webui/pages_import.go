@@ -109,6 +109,9 @@ type ImportPage struct {
 	Options        ImportOptionsForm
 	OptionsSummary []ImportOptionFact
 	OptionsProblem bool
+	// RefreshSummary lists the refresh choices that differ from their
+	// defaults: extra ref namespaces, overwrite and upstream deletions.
+	RefreshSummary []ImportOptionFact
 }
 
 // ImportOptionFact is one changed option in the status strip: a message and
@@ -147,13 +150,24 @@ const (
 	ImportRedirectApproved   = "approved"
 )
 
-// ImportOptionsForm is the connection and limits group of a source form.
+// ImportOptionsForm is the connection, refs and limits group of a source
+// form.
 type ImportOptionsForm struct {
 	PlainHTTP      bool
 	Redirects      string
 	ApprovedOrigin string
 	Reserved       bool
 	Limits         []ImportLimitControl
+	// ExtraRefPrefixes is the list of extra ref namespaces, one per line.
+	// Overwrite and Follow are the choices to overwrite diverged refs and
+	// follow upstream deletions.
+	ExtraRefPrefixes string
+	Overwrite        bool
+	Follow           bool
+	// Effects lists, on the Import tab, the local refs those two choices
+	// would change on the next refresh, so the owner sees them before
+	// saving.
+	Effects []ImportRefreshEffect
 	// Open shows the group expanded: an option differs from its default, so
 	// a changed URL is never saved without the owner seeing what applies to
 	// it, or a refusal points into the group. Refused names the refused
@@ -165,6 +179,42 @@ type ImportOptionsForm struct {
 	// choices, and the server does not apply choices made for another
 	// address.
 	ForURL string
+}
+
+// ImportRefreshEffect is one local ref the refresh choices would change:
+// Effect is "replace" or "delete", LocalChanged says the local ref changed
+// since the source was observed, and History is "kept", "not_kept" or
+// "unknown".
+type ImportRefreshEffect struct {
+	Name         string
+	Effect       string
+	LocalChanged bool
+	History      string
+}
+
+// Needs names the choice, or both choices, that make the refresh change
+// the ref.
+func (e ImportRefreshEffect) Needs() MessageCode {
+	switch {
+	case e.Effect == "replace":
+		return MsgImportEffectNeedsOverwrite
+	case e.LocalChanged:
+		return MsgImportEffectNeedsBoth
+	default:
+		return MsgImportEffectNeedsFollow
+	}
+}
+
+// HistoryCode says whether kept history keeps the local tip.
+func (e ImportRefreshEffect) HistoryCode() MessageCode {
+	switch e.History {
+	case "kept":
+		return MsgImportEffectKept
+	case "not_kept":
+		return MsgImportEffectNotKept
+	default:
+		return MsgImportEffectKeptUnknown
+	}
 }
 
 // MainLimits and DeeperLimits split the limits into the ones most imports

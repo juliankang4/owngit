@@ -78,6 +78,10 @@
       <dt>{{bi $lang "import.fact.connection"}}</dt>
       <dd>{{range $p.OptionsSummary}}<span class="pill pill--off">{{bi $lang .Code}}{{with .Value}}&nbsp;<span class="mono">{{.}}</span>{{end}}</span>{{else}}{{bi $lang "import.fact.defaults"}}{{end}}</dd>
     </div>
+    <div class="facts__i">
+      <dt>{{bi $lang "import.fact.refresh"}}</dt>
+      <dd>{{range $p.RefreshSummary}}<span class="pill pill--off">{{bi $lang .Code}}{{with .Value}}&nbsp;<span class="mono">{{.}}</span>{{end}}</span>{{else}}{{bi $lang "import.fact.defaults"}}{{end}}</dd>
+    </div>
     {{end}}
   </dl>
   {{if and $p.Admin $p.OptionsProblem}}

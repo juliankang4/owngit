@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"owngit/internal/importfetch"
 	"owngit/internal/importsync"
@@ -319,7 +320,9 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 		page.PrivateNetwork = importStatus.TransportConsent
 		page.Options = importOptionsForm(importStatus.Options, nil, chrome.Notices)
 		page.Options.ForURL = importStatus.URL
+		page.Options.Effects = importRefreshEffects(importStatus.RefreshEffects)
 		page.OptionsSummary = importOptionFacts(importStatus.Options)
+		page.RefreshSummary = importRefreshFacts(importStatus.Options)
 		page.OptionsProblem = importStatus.Options != nil && importStatus.Options.Problem != ""
 		page.CredentialForm = importStatus.CredentialForm
 		page.CredentialBound = importStatus.CredentialBound
@@ -334,6 +337,7 @@ func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Reque
 			posted.forAddress(importStatus.Options, page.URL)
 			page.Options = importOptionsForm(importStatus.Options, &posted, chrome.Notices)
 			page.Options.ForURL = posted.forURL
+			page.Options.Effects = importRefreshEffects(importStatus.RefreshEffects)
 		}
 	}
 	cursor, _ := strconv.ParseInt(request.URL.Query().Get("cursor"), 10, 64)
@@ -524,14 +528,19 @@ func importProblemStatus(request *http.Request, step string, err error) int {
 	return status
 }
 
-// postedImportOptions is the connection and limits group of a submitted
-// source form, as typed.
+// postedImportOptions is the connection, refs and limits group of a
+// submitted source form, as typed.
 type postedImportOptions struct {
 	plainHTTP bool
 	redirects string
 	origin    string
 	reserved  bool
 	limits    map[string]webui.LimitInput
+	// overwrite, follow and prefixes are the refresh choices; prefixes is
+	// the typed list of extra ref namespaces.
+	overwrite bool
+	follow    bool
+	prefixes  string
 	// forURL is the address the connection choices were drawn or chosen
 	// for, on the Import tab; empty on the new-import form.
 	forURL string
@@ -544,6 +553,9 @@ func readPostedImportOptions(request *http.Request) postedImportOptions {
 		origin:    strings.TrimSpace(postValue(request, "approved_redirect_origin")),
 		reserved:  postValue(request, "allow_reserved_addresses") == "1",
 		limits:    map[string]webui.LimitInput{},
+		overwrite: postValue(request, "overwrite_diverged") == "1",
+		follow:    postValue(request, "follow_upstream_deletions") == "1",
+		prefixes:  postValue(request, "extra_ref_prefixes"),
 		forURL:    strings.TrimSpace(postValue(request, "options_url")),
 	}
 	if posted.redirects == "" {
@@ -564,8 +576,12 @@ func (posted *postedImportOptions) forAddress(saved *importsync.OptionsStatus, a
 	if posted.forURL != "" && posted.forURL != address && saved != nil {
 		change := importsync.OptionsChange{
 			AllowPlainHTTP: &posted.plainHTTP, Redirects: &posted.redirects, ApprovedRedirectOrigin: &posted.origin, AllowReservedAddresses: &posted.reserved,
-		}.WithoutRepeated(state.ImportOptions{
-			AllowPlainHTTP: saved.AllowPlainHTTP, Redirects: saved.Redirects, ApprovedRedirectOrigin: saved.ApprovedRedirectOrigin, AllowReservedAddresses: saved.AllowReservedAddresses,
+			OverwriteDiverged: &posted.overwrite, FollowUpstreamDeletions: &posted.follow,
+		}.WithoutRepeated(state.ImportSource{
+			Options: state.ImportOptions{
+				AllowPlainHTTP: saved.AllowPlainHTTP, Redirects: saved.Redirects, ApprovedRedirectOrigin: saved.ApprovedRedirectOrigin, AllowReservedAddresses: saved.AllowReservedAddresses,
+			},
+			OverwriteDiverged: saved.OverwriteDiverged, FollowUpstreamDeletions: saved.FollowUpstreamDeletions,
 		})
 		defaults := state.DefaultImportOptions()
 		if change.AllowPlainHTTP == nil {
@@ -577,6 +593,12 @@ func (posted *postedImportOptions) forAddress(saved *importsync.OptionsStatus, a
 		if change.AllowReservedAddresses == nil {
 			posted.reserved = defaults.AllowReservedAddresses
 		}
+		if change.OverwriteDiverged == nil {
+			posted.overwrite = false
+		}
+		if change.FollowUpstreamDeletions == nil {
+			posted.follow = false
+		}
 	}
 	posted.forURL = address
 }
@@ -586,11 +608,15 @@ func (posted *postedImportOptions) forAddress(saved *importsync.OptionsStatus, a
 // default. A mistake the form can name is returned on its field, before
 // anything reaches the import service, which stays the authority.
 func (posted postedImportOptions) change() (importsync.OptionsChange, []webui.Notice) {
+	prefixes := strings.FieldsFunc(posted.prefixes, func(character rune) bool { return character == ',' || unicode.IsSpace(character) })
 	change := importsync.OptionsChange{
 		AllowPlainHTTP: &posted.plainHTTP, Redirects: &posted.redirects, AllowReservedAddresses: &posted.reserved,
-		Limits: map[string]int64{},
+		Limits: map[string]int64{}, OverwriteDiverged: &posted.overwrite, FollowUpstreamDeletions: &posted.follow, ExtraRefPrefixes: &prefixes,
 	}
 	var problems []webui.Notice
+	if state.ValidateExtraRefPrefixes(prefixes) != nil {
+		problems = append(problems, webui.Error("extra_ref_prefixes", webui.MsgImportExtraRefsInvalid))
+	}
 	switch posted.redirects {
 	case state.ImportRedirectRefuse, state.ImportRedirectSameOrigin:
 		// An origin typed but unused is still refused when malformed; a saved
@@ -632,7 +658,8 @@ func (posted postedImportOptions) change() (importsync.OptionsChange, []webui.No
 // one of them opens the group.
 func importOptionField(field string) bool {
 	switch field {
-	case "allow_plain_http", "redirects", "approved_redirect_origin", "allow_reserved_addresses":
+	case "allow_plain_http", "redirects", "approved_redirect_origin", "allow_reserved_addresses",
+		"extra_ref_prefixes", "overwrite_diverged", "follow_upstream_deletions":
 		return true
 	}
 	for _, name := range webui.ImportLimitFieldNames() {
@@ -647,7 +674,7 @@ func importOptionField(field string) bool {
 // options, or a refused submission as typed when posted is not nil.
 func importOptionsForm(saved *importsync.OptionsStatus, posted *postedImportOptions, notices []webui.Notice) webui.ImportOptionsForm {
 	if saved == nil {
-		saved = importsync.DescribeOptions(state.DefaultImportOptions(), nil)
+		saved = importsync.DescribeOptions(state.ImportSource{Options: state.DefaultImportOptions()}, nil)
 	}
 	changed := map[string]int64{}
 	for _, name := range saved.ChangedLimits {
@@ -662,14 +689,17 @@ func importOptionsForm(saved *importsync.OptionsStatus, posted *postedImportOpti
 	}
 	form := webui.ImportOptionsForm{
 		PlainHTTP: saved.AllowPlainHTTP, Redirects: saved.Redirects, ApprovedOrigin: saved.ApprovedRedirectOrigin, Reserved: saved.AllowReservedAddresses,
+		Overwrite: saved.OverwriteDiverged, Follow: saved.FollowUpstreamDeletions, ExtraRefPrefixes: strings.Join(saved.ExtraRefPrefixes, "\n"),
 	}
 	var typed map[string]webui.LimitInput
 	if posted != nil {
 		form.PlainHTTP, form.Redirects, form.ApprovedOrigin, form.Reserved = posted.plainHTTP, posted.redirects, posted.origin, posted.reserved
+		form.Overwrite, form.Follow, form.ExtraRefPrefixes = posted.overwrite, posted.follow, posted.prefixes
 		typed = posted.limits
 	}
 	form.Limits = webui.NewImportLimitControls(changed, typed, bounds)
-	form.Open = form.PlainHTTP || form.Redirects != state.ImportRedirectRefuse || form.Reserved || len(changed) > 0
+	form.Open = form.PlainHTTP || form.Redirects != state.ImportRedirectRefuse || form.Reserved || len(changed) > 0 ||
+		form.Overwrite || form.Follow || strings.TrimSpace(form.ExtraRefPrefixes) != ""
 	for _, notice := range notices {
 		if importOptionField(notice.Field) {
 			form.Open = true
@@ -704,6 +734,35 @@ func importOptionFacts(options *importsync.OptionsStatus) []webui.ImportOptionFa
 		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactLimits, Value: strconv.Itoa(len(options.ChangedLimits))})
 	}
 	return facts
+}
+
+// importRefreshFacts lists the refresh choices that differ from their
+// defaults, for the status strip.
+func importRefreshFacts(options *importsync.OptionsStatus) []webui.ImportOptionFact {
+	if options == nil {
+		return nil
+	}
+	var facts []webui.ImportOptionFact
+	if len(options.ExtraRefPrefixes) > 0 {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactExtraRefs, Value: strings.Join(options.ExtraRefPrefixes, ", ")})
+	}
+	if options.OverwriteDiverged {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactOverwrite})
+	}
+	if options.FollowUpstreamDeletions {
+		facts = append(facts, webui.ImportOptionFact{Code: webui.MsgImportFactFollowDeletions})
+	}
+	return facts
+}
+
+// importRefreshEffects lists the local refs the refresh choices would change
+// now, for the source form.
+func importRefreshEffects(effects []importsync.RefreshEffect) []webui.ImportRefreshEffect {
+	rows := make([]webui.ImportRefreshEffect, 0, len(effects))
+	for _, effect := range effects {
+		rows = append(rows, webui.ImportRefreshEffect{Name: effect.Name, Effect: effect.Effect, LocalChanged: effect.LocalChanged, History: effect.History})
+	}
+	return rows
 }
 
 // importSourceProblem names, on its field, why the import service refused a

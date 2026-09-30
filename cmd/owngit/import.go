@@ -61,7 +61,7 @@ func importCommand(arguments []string) error {
 func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit import <add|configure|refresh|status|history|cancel|schedule|credentials|resolve> [options]")
 	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH] [source options]")
-	fmt.Fprintln(writer, "  import configure <name> [source options] [--json]   change the connection options and limits of a source")
+	fmt.Fprintln(writer, "  import configure <name> [source options] [--json]   change the connection options, limits and refresh choices of a source")
 	fmt.Fprintln(writer, "  import refresh <name>")
 	fmt.Fprintln(writer, "  import status <name> [--json]")
 	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW]")
@@ -80,7 +80,13 @@ func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "    sizes (pack_bytes, advertisement_bytes) take bytes or KiB, MiB, GiB, TiB; times (run_seconds, fetch_seconds,")
 	fmt.Fprintln(writer, "    index_seconds, verify_seconds, tls_handshake_seconds, response_header_seconds) take seconds or a duration such")
 	fmt.Fprintln(writer, "    as 90m; counts (refs, lfs_objects) take a number. Higher limits let an import use more disk and run longer.")
-	fmt.Fprintln(writer, "  owngit import status <name> shows every limit in force.")
+	fmt.Fprintln(writer, "  --extra-ref-prefixes refs/notes/,...     also import refs in these namespaces; --extra-ref-prefixes= imports only branches and tags")
+	fmt.Fprintln(writer, "                                          overwritten or deleted refs in these namespaces have no kept history")
+	fmt.Fprintln(writer, "  --overwrite-diverged[=false]            a later refresh replaces a ref changed here since the source was last seen")
+	fmt.Fprintln(writer, "  --follow-upstream-deletions[=false]     a later refresh deletes refs the source deleted, except changed ones unless")
+	fmt.Fprintln(writer, "                                          overwrite is on, the default branch and symbolic refs")
+	fmt.Fprintln(writer, "    Local work may be replaced; upstream deletions will remove these local refs. A new source address turns both off.")
+	fmt.Fprintln(writer, "  owngit import status <name> shows every limit in force and the refs the last two choices would change now.")
 }
 
 type importFlags struct {
@@ -270,11 +276,12 @@ func importStatus(arguments []string) error {
 			Code             string `json:"code"`
 			Reason           string `json:"reason"`
 		} `json:"runtime"`
-		Refs          []importRefView           `json:"refs"`
-		RefsTruncated bool                      `json:"refs_truncated"`
-		LastRun       *runSummary               `json:"last_run"`
-		ActiveRun     *runSummary               `json:"active_run"`
-		Options       *importsync.OptionsStatus `json:"options"`
+		Refs           []importRefView            `json:"refs"`
+		RefsTruncated  bool                       `json:"refs_truncated"`
+		RefreshEffects []importsync.RefreshEffect `json:"refresh_effects"`
+		LastRun        *runSummary                `json:"last_run"`
+		ActiveRun      *runSummary                `json:"active_run"`
+		Options        *importsync.OptionsStatus  `json:"options"`
 	}
 	var envelope struct {
 		Status json.RawMessage `json:"status"`
@@ -341,7 +348,31 @@ func importStatus(arguments []string) error {
 	if status.RefsTruncated {
 		fmt.Println("The ref list is truncated.")
 	}
+	if len(status.RefreshEffects) > 0 {
+		fmt.Println("Refs that overwriting diverged refs or following upstream deletions would change now:")
+		for _, effect := range status.RefreshEffects {
+			fmt.Printf("  %s: %s\n", effect.Name, refreshEffectText(effect))
+		}
+	}
 	return nil
+}
+
+// refreshEffectText describes what a refresh choice would do to a local ref.
+func refreshEffectText(effect importsync.RefreshEffect) string {
+	text := "replaced with the source's, with --overwrite-diverged"
+	if effect.Effect == "delete" {
+		text = "deleted, with --follow-upstream-deletions"
+		if effect.LocalChanged {
+			text = "deleted, with --follow-upstream-deletions and --overwrite-diverged, because it changed here"
+		}
+	}
+	switch effect.History {
+	case "kept":
+		return text + "; kept history keeps the current tip"
+	case "not_kept":
+		return text + "; no kept history"
+	}
+	return text + "; the kept history setting could not be read"
 }
 
 func importHistory(arguments []string) error {
@@ -606,6 +637,9 @@ type importOptionFlags struct {
 	approvedOrigin *string
 	reserved       *bool
 	limits         importLimitFlags
+	extraPrefixes  *string
+	overwrite      *bool
+	follow         *bool
 }
 
 func addImportOptionFlags(flags *flag.FlagSet) *importOptionFlags {
@@ -615,6 +649,9 @@ func addImportOptionFlags(flags *flag.FlagSet) *importOptionFlags {
 		approvedOrigin: flags.String("approved-origin", "", "the one other origin approved redirects follow, such as https://mirror.example"),
 		reserved:       flags.Bool("allow-exceptional-destination", false, "reach usable special-purpose addresses for this source"),
 		limits:         importLimitFlags{},
+		extraPrefixes:  flags.String("extra-ref-prefixes", "", "comma-separated extra ref namespaces, such as refs/notes/; empty imports only branches and tags"),
+		overwrite:      flags.Bool("overwrite-diverged", false, "let a later refresh replace refs changed here"),
+		follow:         flags.Bool("follow-upstream-deletions", false, "let a later refresh delete refs the source deleted"),
 	}
 	flags.Var(options.limits, "limit", "set one limit as `NAME=VALUE`; repeatable")
 	return options
@@ -633,6 +670,18 @@ func (options *importOptionFlags) body(flags *flag.FlagSet) map[string]any {
 			body["approved_redirect_origin"] = *options.approvedOrigin
 		case "allow-exceptional-destination":
 			body["allow_reserved_addresses"] = *options.reserved
+		case "extra-ref-prefixes":
+			prefixes := []string{}
+			for _, prefix := range strings.Split(*options.extraPrefixes, ",") {
+				if prefix = strings.TrimSpace(prefix); prefix != "" {
+					prefixes = append(prefixes, prefix)
+				}
+			}
+			body["extra_ref_prefixes"] = prefixes
+		case "overwrite-diverged":
+			body["overwrite_diverged"] = *options.overwrite
+		case "follow-upstream-deletions":
+			body["follow_upstream_deletions"] = *options.follow
 		}
 	})
 	if len(options.limits) > 0 {
@@ -745,6 +794,9 @@ func importConfigure(arguments []string) error {
 	}
 	fmt.Printf("Saved the source options of %s. Changes apply from the next run.\n", flags.Arg(0))
 	printImportOptions(response.Options)
+	if response.Options.OverwriteDiverged || response.Options.FollowUpstreamDeletions {
+		fmt.Printf("Local work may be replaced; upstream deletions will remove these local refs. owngit import status %s lists the refs this would change now.\n", flags.Arg(0))
+	}
 	return nil
 }
 
@@ -769,6 +821,15 @@ func printImportOptions(options *importsync.OptionsStatus) {
 	}
 	if options.AllowReservedAddresses {
 		fmt.Println("Exceptional destination: allowed")
+	}
+	if len(options.ExtraRefPrefixes) > 0 {
+		fmt.Println("Extra ref namespaces: " + strings.Join(options.ExtraRefPrefixes, ", ") + "; overwritten or deleted refs in these namespaces have no kept history")
+	}
+	if options.OverwriteDiverged {
+		fmt.Println("Diverged refs: overwritten with the source's")
+	}
+	if options.FollowUpstreamDeletions {
+		fmt.Println("Upstream deletions: followed")
 	}
 	if len(options.ChangedLimits) == 0 {
 		fmt.Println("Limits: defaults")
@@ -841,7 +902,7 @@ func splitImportArgs(arguments []string) (positionals, flagArgs []string) {
 func isImportBoolFlag(arg string) bool {
 	switch arg {
 	case "--git-only-consent", "--allow-private-network", "--accept-insecure-http", "--enable", "--disable", "--clear", "-h", "--help",
-		"--allow-plain-http", "--allow-exceptional-destination", "--json":
+		"--allow-plain-http", "--allow-exceptional-destination", "--overwrite-diverged", "--follow-upstream-deletions", "--json":
 		return true
 	default:
 		return false
@@ -1097,6 +1158,8 @@ func importRefStateText(state string) string {
 		return "differs from the source"
 	case "deleted_at_source":
 		return "deleted at the source, kept here"
+	case "not_imported":
+		return "in a namespace this source no longer imports, kept here"
 	case "absent_locally":
 		return "missing in OwnGit"
 	case "earlier_source":
