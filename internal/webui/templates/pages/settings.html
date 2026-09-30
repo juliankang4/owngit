@@ -321,6 +321,74 @@
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>
 
+{{/* Whether a link from another site keeps the shared sign-in (the
+     general session cookie's SameSite). Keep the sign-in says what a
+     link from another site can then do. */}}
+{{$gn := forAction $p.Group "cross_site" $p.Notices}}{{$focus := firstError $gn "cross_site_links" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "cross_site"}}
+{{$saved := $p.Policies.CrossSiteLinks}}{{$cross := draft $p.Group $p.Draft "cross_site" "cross_site_links" $saved}}
+<section class="grp" id="grp-cross_site" aria-labelledby="grp-cross_site-h" data-group="cross_site"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "cross_site" "Title" (bi $lang "cross_site.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "cross_site.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_cross_site">
+    <div class="f f--row">
+      <label for="cross-site">{{bi $lang "cross_site.label"}}</label>
+      <select id="cross-site" name="cross_site_links" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "cross_site" "Field" "cross_site_links" "Help" "cross-site-help"}}{{if eq $focus "cross_site_links"}} autofocus{{end}}>
+        {{range crossMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $cross}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "cross_site" "Field" "cross_site_links"}}
+      <p class="f__help" id="cross-site-help">{{bi $lang "cross_site.help"}}</p>
+    </div>
+    <p class="wn" data-show-if="cross_site_links=lax">{{icon "warning"}}<span>{{bi $lang "cross_site.lax_warning"}}</span></p>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "cross_site" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
+{{/* The login attempt limits. The summary stays in view; the three fields
+     are an advanced change, collapsed unless a save was refused or the
+     saved limits cannot be read. */}}
+{{$gn := forAction $p.Group "login" $p.Notices}}{{$focus := firstError $gn "login_attempts" "login_window" "login_pause" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "login"}}
+{{$attempts := draft $p.Group $p.Draft "login" "login_attempts" $p.Policies.LoginAttempts}}
+<section class="grp" id="grp-login" aria-labelledby="grp-login-h" data-group="login"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "login" "Title" (bi $lang "login_limits.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "login_limits.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  {{if not $bad}}<p class="setblock__now">{{icon "lock"}}{{loginSummary $lang $p.Policies}}</p>{{end}}
+  <form class="gform" method="post" action="{{tabURL "access"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_login_limits">
+    <details class="grp__more" data-group-details{{if or (hasError $gn) $bad}} open{{end}}>
+      <summary class="linkbtn">{{icon "chevron"}}{{bi $lang "login_limits.change"}}</summary>
+      <div class="f f--row">
+        <label for="login-attempts">{{bi $lang "login_limits.attempts"}}</label>
+        <input id="login-attempts" name="login_attempts" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" required
+               value="{{$attempts}}" data-saved="{{if not $bad}}{{$p.Policies.LoginAttempts}}{{end}}"
+               {{template "netDescribed" dict "Notices" $gn "Scope" "login" "Field" "login_attempts" "Help" "login-attempts-help"}}{{if eq $focus "login_attempts"}} autofocus{{end}}>
+        {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "login" "Field" "login_attempts"}}
+        <p class="f__help" id="login-attempts-help">{{bi $lang "login_limits.attempts_help"}}</p>
+      </div>
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "login" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "login-window" "Field" "login_window" "Units" (limitUnits "duration") "Saved" $p.Policies.LoginWindow "Label" (code "login_limits.window") "Help" (code "login_limits.window_help")}}
+      {{template "setAmount" dict "Lang" $lang "Page" $p "Group" "login" "Notices" $gn "Focus" $focus "Bad" $bad "ID" "login-pause" "Field" "login_pause" "Units" (limitUnits "duration") "Saved" $p.Policies.LoginPause "Label" (code "login_limits.pause") "Help" (code "login_limits.pause_help")}}
+      <p class="wn">{{icon "warning"}}<span>{{bi $lang "login_limits.warning"}}</span></p>
+      <p class="netnote netnote--info">{{icon "info"}}<span>{{bi $lang "login_limits.proxy"}}</span></p>
+      {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "login" "Notices" $gn "Focus" $focus "Cancel" (tabURL "access")}}
+    </details>
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
 {{/* Changing the administrator password stays an explicit form: the current
      password is its own confirmation. */}}
 {{$gn := forAction $p.Group "admin" $p.Notices}}{{$focus := firstError $gn "admin_password" "new_admin_password"}}
@@ -727,6 +795,37 @@
     </div>
     <p class="wn" data-show-if="kept_history=off">{{icon "warning"}}<span>{{bi $lang "kept_history.off_warning"}}</span></p>
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "history" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
+  </form>
+  {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
+</section>
+
+{{/* Whether deleting a repository asks for its typed name. The Delete
+     page always shows the repository and asks what happens to its files. */}}
+{{$gn := forAction $p.Group "delete_name" $p.Notices}}{{$focus := firstError $gn "delete_requires_name" "admin_password"}}
+{{$bad := index $p.Policies.Unreadable "delete_name"}}
+{{$saved := $p.Policies.DeleteRequiresName}}{{$ask := draft $p.Group $p.Draft "delete_name" "delete_requires_name" $saved}}
+<section class="grp" id="grp-delete_name" aria-labelledby="grp-delete_name-h" data-group="delete_name"{{if hasError $gn}} data-group-refused{{end}}{{if $bad}} data-group-open{{end}}>
+  {{template "grpHead" dict "Lang" $lang "Group" "delete_name" "Title" (bi $lang "delete_name.title")}}
+  <p class="scope">{{icon "info"}}<span>{{bi $lang "delete_name.scope"}}</span></p>
+  {{template "grpNotes" dict "Lang" $lang "Notices" $gn "Focus" $focus}}
+  {{if $bad}}<p class="wn">{{icon "warning"}}<span>{{bi $lang "policy.unreadable"}}</span></p>{{end}}
+  {{if $p.Policies.Visible}}
+  <form class="gform" method="post" action="{{tabURL "repositories"}}" data-group-form>
+    <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
+    <input type="hidden" name="action" value="save_delete_name">
+    <div class="f f--row">
+      <label for="delete-name">{{bi $lang "delete_name.label"}}</label>
+      <select id="delete-name" name="delete_requires_name" data-saved="{{if not $bad}}{{$saved}}{{end}}"
+              {{template "netDescribed" dict "Notices" $gn "Scope" "delete_name" "Field" "delete_requires_name" "Help" "delete-name-help"}}{{if eq $focus "delete_requires_name"}} autofocus{{end}}>
+        {{range deleteMenu}}
+          <option value="{{.Value}}" data-en="{{t "en" .Label}}" data-ko="{{t "ko" .Label}}"{{if eq .Value $ask}} selected{{end}}>{{t $lang .Label}}</option>
+        {{end}}
+      </select>
+      {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "delete_name" "Field" "delete_requires_name"}}
+      <p class="f__help" id="delete-name-help">{{bi $lang "delete_name.help"}}</p>
+    </div>
+    <p class="wn" data-show-if="delete_requires_name=off">{{icon "warning"}}<span>{{bi $lang "delete_name.off_warning"}}</span></p>
+    {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "delete_name" "Notices" $gn "Focus" $focus "Cancel" (tabURL "repositories")}}
   </form>
   {{else}}{{template "policyAdminOnly" dict "Lang" $lang "Chrome" $.Chrome}}{{end}}
 </section>

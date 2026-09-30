@@ -32,7 +32,7 @@ func repositoryDeletePage(c Chrome) RepositoryDeletePage {
 	return RepositoryDeletePage{
 		Chrome: c, Repo: evidenceRepo(), Tabs: adminRepoTabs(RepoTabDelete),
 		SelfURL: "/repositories/r1/delete", SubmitURL: "/repositories/r1/delete", CancelURL: "/repositories/r1/settings",
-		GitPath: "/srv/git/r1.git", RemovedPath: "/srv/git/.owngit-removed",
+		GitPath: "/srv/git/r1.git", RemovedPath: "/srv/git/.owngit-removed", Name: DeleteNameRule{Required: true},
 	}
 }
 
@@ -93,6 +93,31 @@ func TestDeletePageNeedsAChoiceANameAndThePassword(t *testing.T) {
 	}
 	if !strings.Contains(out, `aria-invalid="true" aria-describedby="confirm_name-note"`) || !strings.Contains(out, Text(LangKO, MsgRepoDeleteNameMismatch)) {
 		t.Error("the name error is not tied to its field")
+	}
+}
+
+// With the typed name turned off in Settings the page still shows the
+// repository and asks for the choice and the password; while that choice
+// cannot be read it says why nothing can be deleted.
+func TestDeletePageFollowsTheNameSetting(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		page := repositoryDeletePage(fullChrome(lang))
+		page.Name = DeleteNameRule{}
+		out := render(t, r, page)
+		if strings.Contains(out, `name="confirm_name"`) {
+			t.Errorf("%s: the name is asked for while Settings turned it off", lang)
+		}
+		for _, want := range []string{`name="mode" value="keep_files" required`, `name="admin_password" type="password" required`, "forge-cli", strings.Split(Text(lang, MsgDeleteNamePageOff), "%s")[0]} {
+			if !strings.Contains(out, want) {
+				t.Errorf("%s: the page without the name lacks %q", lang, want)
+			}
+		}
+		page.Name = DeleteNameRule{Required: true, Unreadable: true}
+		out = render(t, r, page)
+		if strings.Contains(out, `name="confirm_name"`) || !strings.Contains(out, Text(lang, MsgDeleteNameUnreadableDelete)) {
+			t.Errorf("%s: an unreadable choice is not explained", lang)
+		}
 	}
 }
 

@@ -341,6 +341,22 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 		app.renderLoginFailure(writer, request, scope, field, next, code, false, http.StatusUnprocessableEntity)
 		return
 	}
+	// A shared sign-in's cookie follows the saved cross-site link choice,
+	// read before the session starts so that no session is left without
+	// its cookie.
+	links := state.CrossSiteStrict
+	if kind == "general" {
+		var err error
+		if links, err = app.Store.CrossSiteLinks(request.Context()); err != nil {
+			if errors.As(err, new(*state.PolicyError)) {
+				logFailure(request, "sign-in", err)
+				app.renderLoginFailure(writer, request, scope, "", next, webui.MsgCrossSiteUnreadableIn, false, http.StatusConflict)
+			} else {
+				app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, unavailable(request, "sign-in", err))
+			}
+			return
+		}
+	}
 	// The new session replaces the one of kind this browser holds, so no
 	// copy of the old token outlives it.
 	replaced := ""
@@ -350,21 +366,30 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 	session, err := app.Auth.Authenticate(request.Context(), kind, password, requestctx.Of(request).ClientAddress, replaced)
 	if err != nil {
 		admin := scope == webui.AuthAdmin
+		var policyErr *state.PolicyError
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminLocked, webui.MsgLoginLocked), true, http.StatusTooManyRequests)
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminFailed, webui.MsgLoginFailed), false, http.StatusUnauthorized)
-		case errors.As(err, new(*state.PolicyError)):
+		case errors.As(err, &policyErr):
 			logFailure(request, "sign-in", err)
-			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgSessionUnreadableSignIn, false, http.StatusConflict)
+			code := webui.MsgSessionUnreadableSignIn
+			if policyErr.Setting() == "login_limits" {
+				code = webui.MsgLoginLimitsUnreadable
+			}
+			app.renderLoginFailure(writer, request, scope, "", next, code, false, http.StatusConflict)
 		default:
 			// The password was not judged, or the session could not be saved.
 			app.renderLoginFailure(writer, request, scope, "", next, webui.MsgErrUnavailable, false, unavailable(request, "sign-in", err))
 		}
 		return
 	}
-	app.setCookie(writer, request, cookieName, session.Token, session.Expires, true)
+	if kind == "general" {
+		app.setGeneralCookie(writer, request, session.Token, session.Expires, links)
+	} else {
+		app.setCookie(writer, request, cookieName, session.Token, session.Expires, true)
+	}
 	app.clearCookie(writer, request, preauthCookie, true)
 	http.Redirect(writer, request, next, http.StatusSeeOther)
 }

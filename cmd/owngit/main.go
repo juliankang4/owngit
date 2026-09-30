@@ -1125,13 +1125,16 @@ func restoreState(arguments []string) error {
 // looser than the defaults. Sizes use the units of Settings, where 1 GB is
 // 1024 MB.
 func restoredSettingsNotice() string {
-	limits := state.DefaultGitTransferLimits
+	limits, login := state.DefaultGitTransferLimits, state.DefaultLoginLimits
 	return fmt.Sprintf("Server-wide settings start at their defaults, as on a new installation: a sign-in with the shared password lasts %s, "+
 		"new repositories start on %s, one Git transfer may move %d GB and take %s, raw check logs are kept %s, "+
-		"and repositories that follow the server keep overwritten and deleted history. Each repository's own kept history choice and default branch protection come back with it. "+
+		"repositories that follow the server keep overwritten and deleted history, deleting a repository asks for its name, "+
+		"%d wrong passwords within %s pause an address for %s, and a link from another site opens without the shared sign-in. "+
+		"Each repository's own kept history choice and default branch protection come back with it. "+
 		"Set them again under Settings or with owngit settings set. The administrator password check and the new release check are also at their defaults; set them under Settings.",
 		plainDuration(state.DefaultGeneralSession.Length()), state.DefaultInitialBranch, limits.MaximumBytes>>30,
-		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()))
+		plainDuration(limits.Operation), plainDuration(state.DefaultCheckLogRetention.Duration()),
+		login.Attempts, plainDuration(login.Window), plainDuration(login.Pause))
 }
 
 // plainDuration writes a whole number of days, hours or minutes in words.

@@ -68,8 +68,8 @@ func (RepositorySettingsPage) page() string     { return "repository-settings" }
 func (p RepositorySettingsPage) chrome() Chrome { return p.Chrome }
 
 // RepositoryDeletePage renders /repositories/{id}/delete, the confirmation
-// that asks for a mode, the typed repository name, and the administrator
-// password.
+// that asks for a mode, the typed repository name unless Settings turned
+// that off, and the administrator password.
 type RepositoryDeletePage struct {
 	Chrome Chrome
 	Repo   RepositoryHeader
@@ -85,8 +85,18 @@ type RepositoryDeletePage struct {
 	// the backend cannot name it.
 	GitPath     string
 	RemovedPath string
+	// Name says whether the typed name is asked for.
+	Name DeleteNameRule
 	// CancelURL leaves without deleting.
 	CancelURL string
+}
+
+// DeleteNameRule is the Settings choice whether deleting a repository asks
+// for its typed name. Unreadable means the saved choice cannot be read:
+// the page says so and a deletion is refused until it is set again.
+type DeleteNameRule struct {
+	Required   bool
+	Unreadable bool
 }
 
 func (RepositoryDeletePage) page() string     { return "repository-delete" }

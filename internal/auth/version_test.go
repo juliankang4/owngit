@@ -107,7 +107,7 @@ func TestVerifiedSharedPasswordMustStillBeCurrentForBasicAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.StartSession(ctx, "", "disabled-token", "general", "csrf", settings.AccessSessionVersion, manager.now().Add(FailureBlock)); !errors.Is(err, state.ErrAccessChanged) {
+	if err := store.StartSession(ctx, "", "disabled-token", "general", "csrf", settings.AccessSessionVersion, manager.now().Add(state.DefaultLoginLimits.Pause)); !errors.Is(err, state.ErrAccessChanged) {
 		t.Fatalf("disabled mode allowed session insertion: %v", err)
 	}
 }

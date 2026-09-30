@@ -43,6 +43,11 @@
   </dl>
   {{end}}
 
+  {{/* Settings can turn the typed name off; the page then says so, and
+       the repository name stays in the heading above. */}}
+  {{if $p.Name.Unreadable}}
+  <p class="wn">{{icon "warning"}}<span>{{bi $lang "delete_name.unreadable_delete"}}</span></p>
+  {{else if $p.Name.Required}}
   <div class="f">
     {{/* The name to type is part of the label, so a screen reader announces
          it with the field and the field's error can own aria-describedby. */}}
@@ -52,6 +57,9 @@
            {{template "fieldInvalid" dict "Notices" $n "Field" "confirm_name"}}>
     {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "confirm_name"}}
   </div>
+  {{else}}
+  <p class="scope">{{icon "info"}}<span>{{biF $lang "delete_name.page_off" $p.Repo.Name}}</span></p>
+  {{end}}
 
   {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $n "ID" "rdel-password"}}
 

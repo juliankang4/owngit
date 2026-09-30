@@ -142,15 +142,23 @@ func DiscoverBackend(ctx context.Context, git *gitexec.Runner) (string, error) {
 func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	if h.Authorize != nil {
 		allowed, err := h.Authorize(request)
+		var policyErr *state.PolicyError
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
 			// Not 401: Git erases the stored password it sent when the answer
 			// is 401, and a right password must outlast a lockout. Git 2.54
 			// repeats a 429 at once, without end, unless Retry-After asks it
-			// to wait; it stops at a wait over http.maxRetryTime. The lockout
-			// ends within FailureBlock.
-			writer.Header().Set("Retry-After", strconv.Itoa(int(auth.FailureBlock/time.Second)))
+			// to wait; it stops at a wait over http.maxRetryTime. The wait is
+			// what remains of this address's pause.
+			if seconds := auth.RetryAfter(err); seconds > 0 {
+				writer.Header().Set("Retry-After", strconv.Itoa(seconds))
+			}
 			http.Error(writer, "too many authentication attempts; try again later", http.StatusTooManyRequests)
+			return
+		case errors.As(err, &policyErr):
+			// The saved login limits cannot be read, so a wrong password
+			// could not be counted; the right one still passes.
+			http.Error(writer, policyErr.Advice(), http.StatusConflict)
 			return
 		case err != nil:
 			http.Error(writer, "authentication is unavailable; try again later", http.StatusServiceUnavailable)

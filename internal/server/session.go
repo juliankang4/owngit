@@ -206,11 +206,18 @@ func (app *App) validPreauthCSRF(request *http.Request, submitted string) bool {
 	return err == nil && submitted != "" && constantEqual(cookie.Value, submitted)
 }
 
+// setCookie sets a Strict cookie: a request that another site starts does
+// not carry it. Only the general session cookie can be Lax, by the owner's
+// choice (setGeneralCookie).
 func (app *App) setCookie(writer http.ResponseWriter, request *http.Request, name, value string, expires time.Time, httpOnly bool) {
+	app.writeCookie(writer, request, name, value, expires, httpOnly, http.SameSiteStrictMode)
+}
+
+func (app *App) writeCookie(writer http.ResponseWriter, request *http.Request, name, value string, expires time.Time, httpOnly bool, sameSite http.SameSite) {
 	http.SetCookie(writer, &http.Cookie{
 		Name: name, Value: value, Path: "/", Expires: expires,
 		MaxAge: int(expires.Sub(app.now()).Seconds()), HttpOnly: httpOnly,
-		Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteStrictMode,
+		Secure: requestctx.Of(request).Secure(), SameSite: sameSite,
 	})
 }
 
@@ -445,6 +452,18 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgKeptHistorySaved)}
 	case "kept_history_off":
 		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgKeptHistorySavedOff}}
+	case "delete_name_on":
+		return []webui.Notice{webui.Success(webui.MsgDeleteNameSaved)}
+	case "delete_name_off":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgDeleteNameSavedOff}}
+	case "login_limits_saved":
+		return []webui.Notice{webui.Success(webui.MsgLoginLimitsSaved)}
+	case "login_limits_looser":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgLoginLimitsSavedLooser}}
+	case "cross_site_strict":
+		return []webui.Notice{webui.Success(webui.MsgCrossSiteSaved)}
+	case "cross_site_lax":
+		return []webui.Notice{{Kind: webui.NoticeWarning, Code: webui.MsgCrossSiteSavedLax}}
 	case "insecure_acknowledged":
 		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":

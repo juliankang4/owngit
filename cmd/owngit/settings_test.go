@@ -54,6 +54,42 @@ func TestSettingsCommandSetsAndShows(t *testing.T) {
 	}
 }
 
+// The access policies are set by name like every other setting, and the
+// login limits keep the ones not named.
+func TestSettingsCommandSetsTheAccessPolicies(t *testing.T) {
+	fixture := startImportCLIServer(t)
+	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+	printed, err := captureStdout(func() error {
+		return settingsCommand(append([]string{"set", "--delete-requires-name", "off", "--cross-site-links", "lax", "--login-attempts", "6", "--login-pause", "30m"}, remote...))
+	})
+	if err != nil {
+		t.Fatalf("settings set: %v", err)
+	}
+	var answer struct {
+		Settings map[string]any `json:"settings"`
+		Warnings []string       `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(printed), &answer); err != nil || answer.Settings["cross_site_links"] != "lax" || len(answer.Warnings) != 3 {
+		t.Fatalf("settings set printed %q (%v)", printed, err)
+	}
+	ctx := context.Background()
+	if saved, err := fixture.store.DeleteRequiresName(ctx); err != nil || saved {
+		t.Fatalf("saved delete choice=%v err=%v", saved, err)
+	}
+	if saved, err := fixture.store.CrossSiteLinks(ctx); err != nil || saved != state.CrossSiteLax {
+		t.Fatalf("saved cross-site choice=%q err=%v", saved, err)
+	}
+	if saved, err := fixture.store.LoginLimits(ctx); err != nil || saved != (state.LoginLimits{Attempts: 6, Window: 10 * time.Minute, Pause: 30 * time.Minute}) {
+		t.Fatalf("saved login limits=%+v err=%v", saved, err)
+	}
+	for _, refused := range [][]string{{"--login-window", "90s500ms"}, {"--login-pause", "later"}, {"--login-attempts", "0"}, {"--cross-site-links", "none"}} {
+		if _, err := captureStdout(func() error { return settingsCommand(append(append([]string{"set"}, refused...), remote...)) }); err == nil {
+			t.Fatalf("settings set %v was accepted", refused)
+		}
+	}
+}
+
 // repo settings set changes only the choices it names, and repo settings
 // show prints them with what the repository does now. Inside a clone the
 // server and the repository come from its origin remote.

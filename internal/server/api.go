@@ -264,15 +264,22 @@ func (app *App) authorizeAPI(writer http.ResponseWriter, request *http.Request, 
 
 // checkAPIPassword verifies an API request's password of kind ("general" or
 // "admin") and answers when it is not accepted: 401 with a challenge only
-// for a wrong password, 429 for a rate limit, and 503 without a challenge
-// when the check could not be completed, because the password may be right.
+// for a wrong password, 429 with Retry-After for a rate limit, 409 when a
+// wrong password cannot be counted because the saved login limits cannot
+// be read, and 503 without a challenge when the check could not be
+// completed, because the password may be right.
 func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Request, kind, password string) bool {
 	_, err := app.Auth.VerifyCredential(request.Context(), kind, password, requestctx.Of(request).ClientAddress)
 	switch {
 	case err == nil:
 		return true
 	case errors.Is(err, auth.ErrRateLimited):
+		if seconds := auth.RetryAfter(err); seconds > 0 {
+			writer.Header().Set("Retry-After", strconv.Itoa(seconds))
+		}
 		writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
+	case errors.As(err, new(*state.PolicyError)):
+		writeSettingUnreadable(writer, request, kind+" password check", err)
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		realm, code, message := `Basic realm="OwnGit"`, "invalid_credentials", "The shared general-access password is invalid."
 		if kind == "admin" {

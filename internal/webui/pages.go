@@ -219,6 +219,18 @@ const (
 	// server keep overwritten and deleted history. Fields: admin_password,
 	// kept_history ("on" or "off").
 	ActionSaveKeptHistory = "save_kept_history"
+	// ActionSaveDeleteName saves whether deleting a repository asks for its
+	// typed name. Fields: admin_password, delete_requires_name ("on" or
+	// "off").
+	ActionSaveDeleteName = "save_delete_name"
+	// ActionSaveLoginLimits saves the login attempt limits. Fields:
+	// admin_password, login_attempts, and login_window and login_pause,
+	// each with its _unit (see LimitInput).
+	ActionSaveLoginLimits = "save_login_limits"
+	// ActionSaveCrossSite saves whether a link from another site keeps the
+	// shared sign-in. Fields: admin_password, cross_site_links (one of
+	// CrossSiteChoices).
+	ActionSaveCrossSite = "save_cross_site"
 )
 
 // The Settings tabs. Each is its own address, so a tab works as an ordinary
@@ -283,6 +295,9 @@ const (
 	GroupBranch     = "branch"
 	GroupTransfer   = "transfer"
 	GroupHistory    = "history"
+	GroupDeleteName = "delete_name"
+	GroupLogin      = "login"
+	GroupCrossSite  = "cross_site"
 	GroupLogs       = "logs"
 	GroupConnection = "connection"
 	GroupNetwork    = "network"
@@ -293,9 +308,11 @@ const (
 var settingsGroupTabs = map[string]string{
 	GroupUpdate: SettingsGeneral, GroupTray: SettingsGeneral,
 	GroupAccess: SettingsAccess, GroupAdmin: SettingsAccess, GroupConfirm: SettingsAccess, GroupSession: SettingsAccess,
+	GroupCrossSite: SettingsAccess, GroupLogin: SettingsAccess,
 	GroupConnection: SettingsNetwork, GroupNetwork: SettingsNetwork, GroupTailscale: SettingsNetwork,
 	GroupBranch: SettingsRepositories, GroupTransfer: SettingsRepositories, GroupHistory: SettingsRepositories,
-	GroupLogs: SettingsStorage,
+	GroupDeleteName: SettingsRepositories,
+	GroupLogs:       SettingsStorage,
 }
 
 // SettingsGroupTab returns the tab that shows group, or "" for an unknown
@@ -324,6 +341,12 @@ func SettingsActionGroup(action string) string {
 		return GroupTransfer
 	case ActionSaveKeptHistory:
 		return GroupHistory
+	case ActionSaveDeleteName:
+		return GroupDeleteName
+	case ActionSaveLoginLimits:
+		return GroupLogin
+	case ActionSaveCrossSite:
+		return GroupCrossSite
 	case ActionSaveCheckLogs:
 		return GroupLogs
 	case ActionAcknowledgeInsecure:
@@ -447,6 +470,15 @@ type Policies struct {
 	// KeptHistory is "on" when repositories that follow the server keep
 	// overwritten and deleted history, and "off" when they do not.
 	KeptHistory string
+	// DeleteRequiresName is "on" when deleting a repository asks for its
+	// typed name, and "off" when it does not.
+	DeleteRequiresName string
+	// LoginAttempts, LoginWindow and LoginPause are the login attempt
+	// limits: that many wrong passwords within the window pause an address.
+	LoginAttempts           string
+	LoginWindow, LoginPause LimitInput
+	// CrossSiteLinks is one of CrossSiteChoices.
+	CrossSiteLinks string
 	// Visible is true for a confirmed administrator. Otherwise no saved
 	// value is read or shown, and each group says where to confirm.
 	Visible bool

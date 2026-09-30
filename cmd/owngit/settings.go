@@ -67,6 +67,11 @@ func settingsSet(arguments []string) error {
 	transferTime := flags.String("transfer-time", "", "how long one Git transfer may take, such as 30m or 2h, from 1m to 24h")
 	checkLogs := flags.String("check-logs", "", "how long raw check logs are kept: 7d, 30d, 90d, 365d or indefinite")
 	keptHistory := flags.String("kept-history", "", "whether repositories that follow the server keep overwritten and deleted history: on or off")
+	deleteName := flags.String("delete-requires-name", "", "whether deleting a repository asks for its typed name: on or off")
+	loginAttempts := flags.Int("login-attempts", 0, "how many wrong passwords from one address within the login window pause it, from 1 to 100")
+	loginWindow := flags.String("login-window", "", "how long wrong passwords are counted together, such as 10m, from 1m to 24h")
+	loginPause := flags.String("login-pause", "", "how long an address that reached the attempts is paused, such as 15m, from 1m to 24h")
+	crossSite := flags.String("cross-site-links", "", "whether a link from another site keeps the shared sign-in: strict (open it again from OwnGit) or lax (keep the sign-in)")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -86,6 +91,29 @@ func settingsSet(arguments []string) error {
 	}
 	if given["kept-history"] {
 		change["kept_history"] = *keptHistory
+	}
+	if given["delete-requires-name"] {
+		change["delete_requires_name"] = *deleteName
+	}
+	if given["cross-site-links"] {
+		change["cross_site_links"] = *crossSite
+	}
+	login := map[string]int64{}
+	if given["login-attempts"] {
+		login["attempts"] = int64(*loginAttempts)
+	}
+	for _, option := range []struct{ flag, field, value string }{{"login-window", "window_seconds", *loginWindow}, {"login-pause", "pause_seconds", *loginPause}} {
+		if !given[option.flag] {
+			continue
+		}
+		duration, err := time.ParseDuration(option.value)
+		if err != nil || duration%time.Second != 0 {
+			return cliProblem("invalid_arguments", "--"+option.flag+" takes a time in whole seconds, such as 10m or 1h.")
+		}
+		login[option.field] = int64(duration / time.Second)
+	}
+	if len(login) > 0 {
+		change["login_limits"] = login
 	}
 	transfer := map[string]int64{}
 	if given["transfer-size"] {

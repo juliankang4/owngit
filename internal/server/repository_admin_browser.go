@@ -276,10 +276,18 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 // handleRepositoryDelete serves the confirmation page and its POST. It runs
 // before the repository's Git data is read, so a repository whose data can no
 // longer be read can still be removed.
+//
+// Settings decide whether the name must be typed (deleteNameRule). While
+// that choice cannot be read, the page says so and a deletion is refused.
 func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http.Request, stored state.Repository, chrome webui.Chrome, session state.Session) {
 	writer.Header().Set("Cache-Control", "no-store")
+	name, err := app.deleteNameRule(request)
+	if err != nil {
+		app.answerUnavailable(writer, request, "delete setting read", err)
+		return
+	}
 	if request.Method == http.MethodGet {
-		app.renderRepositoryDelete(writer, request, stored, chrome, "", http.StatusOK)
+		app.renderRepositoryDelete(writer, request, stored, chrome, "", name, http.StatusOK)
 		return
 	}
 	if !app.parseForm(writer, request) {
@@ -295,18 +303,23 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		mode = ""
 		chrome.Notices = append(chrome.Notices, webui.Error("mode", webui.MsgRepoDeleteModeRequired))
 	}
+	if name.Unreadable {
+		chrome.Notices = append(chrome.Notices, webui.Error("", webui.MsgDeleteNameUnreadableDelete))
+		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, http.StatusConflict)
+		return
+	}
 	// Names never contain spaces, so trimming only forgives a pasted space.
-	if strings.TrimSpace(postValue(request, "confirm_name")) != stored.Name {
+	if name.Required && strings.TrimSpace(postValue(request, "confirm_name")) != stored.Name {
 		chrome.Notices = append(chrome.Notices, webui.Error("confirm_name", webui.MsgRepoDeleteNameMismatch))
 	}
 	if len(chrome.Notices) != 0 {
-		app.renderRepositoryDelete(writer, request, stored, chrome, mode, http.StatusUnprocessableEntity)
+		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, http.StatusUnprocessableEntity)
 		return
 	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		chrome.Notices = append(chrome.Notices, notice)
-		app.renderRepositoryDelete(writer, request, stored, chrome, mode, status)
+		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, status)
 		return
 	}
 
@@ -350,7 +363,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 			status = unavailable(request, "repository deletion", err)
 		}
 		chrome.Notices = append(chrome.Notices, webui.Error("", code))
-		app.renderRepositoryDelete(writer, request, stored, chrome, mode, status)
+		app.renderRepositoryDelete(writer, request, stored, chrome, mode, name, status)
 		return
 	}
 	// An incomplete deletion has already removed the repository from OwnGit,
@@ -363,12 +376,24 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	app.noticeRedirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
 }
 
-func (app *App) renderRepositoryDelete(writer http.ResponseWriter, request *http.Request, stored state.Repository, chrome webui.Chrome, mode string, status int) {
+// deleteNameRule says whether a deletion asks for the typed name, as saved
+// in Settings. A saved choice that cannot be read is logged and reported
+// as Unreadable; err is a failure to read the state at all.
+func (app *App) deleteNameRule(request *http.Request) (webui.DeleteNameRule, error) {
+	required, err := app.Store.DeleteRequiresName(request.Context())
+	if errors.As(err, new(*state.PolicyError)) {
+		logFailure(request, "delete setting read", err)
+		return webui.DeleteNameRule{Required: true, Unreadable: true}, nil
+	}
+	return webui.DeleteNameRule{Required: required}, err
+}
+
+func (app *App) renderRepositoryDelete(writer http.ResponseWriter, request *http.Request, stored state.Repository, chrome webui.Chrome, mode string, name webui.DeleteNameRule, status int) {
 	base := app.baseRepositoryPage(request, chrome, stored, repository.Summary{})
 	page := webui.RepositoryDeletePage{
 		Chrome: chrome, Repo: base.Repo, Tabs: repositoryTabs(base, webui.RepoTabDelete),
 		SelfURL: repositoryDeleteURL(stored.ID), SubmitURL: repositoryDeleteURL(stored.ID),
-		Mode: mode, CancelURL: repositorySettingsURL(stored.ID),
+		Mode: mode, Name: name, CancelURL: repositorySettingsURL(stored.ID),
 	}
 	// The page is administrator only, and the administrator already sees the
 	// storage path in the toolbar, so naming the folder adds nothing new.

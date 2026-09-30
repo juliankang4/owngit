@@ -35,14 +35,27 @@ var (
 	ErrRateLimited        = errors.New("too many authentication attempts")
 )
 
-// Failed password limit per client address and kind: the fourth wrong
-// password within the window refuses that address for FailureBlock, after
-// which ErrRateLimited ends.
-const (
-	maximumFailures = 4
-	failureWindow   = 10 * time.Minute
-	FailureBlock    = 15 * time.Minute
-)
+// RateLimitedError is ErrRateLimited with how much longer the pause lasts.
+// Wrong passwords are counted per client address and kind under the login
+// limits saved in Settings (state.LoginLimits).
+type RateLimitedError struct {
+	Remaining time.Duration
+}
+
+func (err *RateLimitedError) Error() string { return ErrRateLimited.Error() }
+
+// Is makes errors.Is(err, ErrRateLimited) true.
+func (err *RateLimitedError) Is(target error) bool { return target == ErrRateLimited }
+
+// RetryAfter is the whole number of seconds, at least one, until a client
+// that err refused may try again, or 0 when err is no RateLimitedError.
+func RetryAfter(err error) int {
+	var limited *RateLimitedError
+	if !errors.As(err, &limited) {
+		return 0
+	}
+	return max(int((limited.Remaining+time.Second-1)/time.Second), 1)
+}
 
 // Password length limits, in characters (Unicode code points) rather than
 // bytes, so a password in any script meets the rule the interface states.
@@ -236,12 +249,12 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 		return 0, err
 	}
 	defer release()
-	blocked, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
+	remaining, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
 	if err != nil {
 		return 0, err
 	}
-	if blocked {
-		return 0, ErrRateLimited
+	if remaining > 0 {
+		return 0, &RateLimitedError{Remaining: remaining}
 	}
 	encoded, version, err := m.Store.PasswordCredential(ctx, kind)
 	if errors.Is(err, state.ErrAccessChanged) {
@@ -275,8 +288,11 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 	}
 	if !check(encoded, password) {
 		// A client that leaves after its guess was checked still counts. A
-		// guess that could not be counted is not reported as checked.
-		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now(), maximumFailures, failureWindow, FailureBlock); err != nil {
+		// guess that could not be counted is not reported as checked, also
+		// when the saved login limits cannot be read (a state.PolicyError):
+		// the right password still passes then, so an administrator can set
+		// them again.
+		if err := m.Store.RecordFailedAttempt(context.WithoutCancel(ctx), kind, address, m.now()); err != nil {
 			return 0, err
 		}
 		return 0, ErrInvalidCredentials

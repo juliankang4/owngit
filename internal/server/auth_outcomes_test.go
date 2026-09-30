@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -75,7 +76,7 @@ func requireLogged(t *testing.T, serverLog *lockedLog, lines ...string) {
 func failAttemptClearing(t *testing.T, store *state.Store) {
 	t.Helper()
 	for _, kind := range []string{"general", "admin"} {
-		noErr(t, store.RecordFailedAttempt(context.Background(), kind, "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
+		noErr(t, store.RecordFailedAttempt(context.Background(), kind, "127.0.0.1", time.Now()))
 	}
 	refuseWrites(t, store, "refuse_clearing", "DELETE ON login_attempts")
 }
@@ -201,7 +202,7 @@ func TestRateLimitedBrowserPasswordIsTooManyRequests(t *testing.T) {
 	preauth := cookieValue(t, jar, server.URL, preauthCookie)
 	for _, kind := range []string{"general", "admin"} {
 		for range 4 {
-			noErr(t, fixture.store.RecordFailedAttempt(context.Background(), kind, "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
+			noErr(t, fixture.store.RecordFailedAttempt(context.Background(), kind, "127.0.0.1", time.Now()))
 		}
 	}
 	requireLocked := func(name string, result browserHTTPResult, locked webui.MessageCode) {
@@ -311,11 +312,13 @@ func TestGitPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 	}
 	requireLogged(t, serverLog, "GET /git/project.git/info/refs: Git password check could not be completed: ")
 	for range 3 {
-		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
+		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now()))
 	}
-	// Retry-After is the whole lockout, so Git does not repeat the request
-	// before it ends.
-	if status, header := discover(); status != http.StatusTooManyRequests || header.Get("WWW-Authenticate") != "" || header.Get("Retry-After") != "900" {
+	// Retry-After is what remains of the 15 minute pause, so Git does not
+	// repeat the request before it ends.
+	status, header := discover()
+	retry, err := strconv.Atoi(header.Get("Retry-After"))
+	if status != http.StatusTooManyRequests || header.Get("WWW-Authenticate") != "" || err != nil || retry < 890 || retry > 900 {
 		t.Fatalf("rate-limited status=%d header=%v", status, header)
 	}
 }
@@ -327,7 +330,7 @@ func TestGitLockoutKeepsTheStoredPassword(t *testing.T) {
 	fixture := newAPIFixture(t, true)
 	server := serve(t, fixture.app.Handler())
 	for range 4 {
-		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now(), 4, 10*time.Minute, 15*time.Minute))
+		noErr(t, fixture.store.RecordFailedAttempt(context.Background(), "general", "127.0.0.1", time.Now()))
 	}
 	home := t.TempDir()
 	emptyConfig := filepath.Join(home, "gitconfig")

@@ -11,6 +11,10 @@ import (
 	"owngit/internal/state"
 )
 
+// maximumFailures is the number of wrong passwords that pause an address
+// while no login limits were saved (state.DefaultLoginLimits).
+const maximumFailures = 4
+
 func TestAuthenticationAttemptsAreBoundedAndSessionsAreVersioned(t *testing.T) {
 	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
 	if err != nil {

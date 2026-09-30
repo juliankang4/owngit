@@ -290,6 +290,42 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		if !keep {
 			notice = "kept_history_off"
 		}
+	case webui.ActionSaveDeleteName:
+		ask, valid := parseOnOff(postValue(request, "delete_requires_name"))
+		if !valid {
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("delete_requires_name", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{DeleteRequiresName: &ask})
+		notice = "delete_name_on"
+		if !ask {
+			notice = "delete_name_off"
+		}
+	case webui.ActionSaveLoginLimits:
+		limits, notices := loginLimitsForm(request)
+		if len(notices) > 0 {
+			app.renderSettingsPage(writer, request, settings, csrf, action, notices, http.StatusUnprocessableEntity, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{LoginLimits: &limits})
+		notice = "login_limits_saved"
+		if limits.Looser() {
+			notice = "login_limits_looser"
+		}
+	case webui.ActionSaveCrossSite:
+		links, valid := state.ParseCrossSiteLinks(postValue(request, "cross_site_links"))
+		if !valid {
+			app.renderSettingsPage(writer, request, settings, csrf, action, []webui.Notice{webui.Error("cross_site_links", webui.MsgSettingsUnknownAct)}, http.StatusBadRequest, settingsView{AdminVerified: true})
+			return
+		}
+		err = app.Store.SavePolicies(request.Context(), state.PolicyChange{CrossSiteLinks: &links})
+		if err == nil {
+			app.renewGeneralCookie(writer, request, links)
+		}
+		notice = "cross_site_strict"
+		if links == state.CrossSiteLax {
+			notice = "cross_site_lax"
+		}
 	case webui.ActionSaveNetwork:
 		app.saveNetwork(writer, request, settings, csrf)
 		return
@@ -385,6 +421,12 @@ var settingsNoticeGroups = map[string]string{
 	"check_logs_saved":       webui.GroupLogs,
 	"kept_history_on":        webui.GroupHistory,
 	"kept_history_off":       webui.GroupHistory,
+	"delete_name_on":         webui.GroupDeleteName,
+	"delete_name_off":        webui.GroupDeleteName,
+	"login_limits_saved":     webui.GroupLogin,
+	"login_limits_looser":    webui.GroupLogin,
+	"cross_site_strict":      webui.GroupCrossSite,
+	"cross_site_lax":         webui.GroupCrossSite,
 	"insecure_acknowledged":  webui.GroupConnection,
 	"network_saved":          webui.GroupNetwork,
 	"tailscale_on":           webui.GroupTailscale,
@@ -494,7 +536,9 @@ type settingsView struct {
 // sends nothing.
 var settingsDraftFields = map[string]bool{
 	"access_mode": false, "admin_confirmation": false, "no_ask_ack": true, "general_session": false, "initial_branch": false,
-	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false, "update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "insecure_ack": true,
+	"transfer_size": false, "transfer_size_unit": false, "transfer_time": false, "transfer_time_unit": false, "check_logs": false,
+	"delete_requires_name": false, "login_attempts": false, "login_window": false, "login_window_unit": false, "login_pause": false, "login_pause_unit": false, "cross_site_links": false,
+	"update_check": true, "tray_icon": true, "tailscale": true, "home_network": true, "insecure_ack": true,
 }
 
 // settingsDraft collects what a refused form sent, for settingsDraftFields.

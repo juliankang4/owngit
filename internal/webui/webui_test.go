@@ -137,10 +137,14 @@ func allPages(lang Lang) map[string]Page {
 		},
 		"settings-access": SettingsPage{
 			Chrome: c, Tab: SettingsAccess, SubmitURL: "/settings", AccessMode: AccessPassword,
-			Policies: Policies{Visible: true, Session: "12h"},
+			Policies: Policies{
+				Visible: true, Session: "12h", CrossSiteLinks: "strict",
+				LoginAttempts: "4", LoginWindow: LimitInput{Amount: "10", Unit: "min"}, LoginPause: LimitInput{Amount: "15", Unit: "min"},
+			},
 		},
 		"settings-repositories": SettingsPage{Chrome: c, Tab: SettingsRepositories, SubmitURL: "/settings", Policies: Policies{
 			Visible: true, InitialBranch: "main", TransferSize: LimitInput{Amount: "4", Unit: "GB"}, TransferTime: LimitInput{Amount: "30", Unit: "min"}, KeptHistory: "on",
+			DeleteRequiresName: "on",
 		}},
 		"settings-storage": SettingsPage{
 			Chrome: c, Tab: SettingsStorage, SubmitURL: "/settings",

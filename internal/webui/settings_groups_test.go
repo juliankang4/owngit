@@ -21,12 +21,15 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 		GroupBranch:     {"initial_branch"},
 		GroupTransfer:   {"transfer_size", "transfer_size_unit", "transfer_time", "transfer_time_unit"},
 		GroupHistory:    {"kept_history"},
+		GroupDeleteName: {"delete_requires_name"},
+		GroupLogin:      {"login_attempts", "login_window", "login_window_unit", "login_pause", "login_pause_unit"},
+		GroupCrossSite:  {"cross_site_links"},
 		GroupLogs:       {"check_logs"},
 		GroupConnection: {"insecure_ack"},
 		GroupNetwork:    {"network_revision", "listen", "base_url", "allowed_hosts", "trusted_proxies", "insecure_ack"},
 		GroupTailscale:  {"tailscale", "home_network"},
 	}
-	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z]+)"`)
+	groupPattern := regexp.MustCompile(`<section class="grp" id="grp-([a-z_]+)"`)
 	namePattern := regexp.MustCompile(`name="([a-z_]+)"`)
 	seen := map[string]bool{}
 	for _, name := range []string{"settings", "settings-access", "settings-network", "settings-repositories", "settings-storage"} {
@@ -73,7 +76,7 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 // groupForms returns the form of each Settings group on a rendered tab.
 func groupForms(out string) map[string]string {
 	forms := map[string]string{}
-	for _, m := range regexp.MustCompile(`<section class="grp" id="grp-([a-z]+)"`).FindAllStringSubmatchIndex(out, -1) {
+	for _, m := range regexp.MustCompile(`<section class="grp" id="grp-([a-z_]+)"`).FindAllStringSubmatchIndex(out, -1) {
 		section := out[m[0]:]
 		section = section[:strings.Index(section, "</section>")]
 		start := strings.Index(section, "<form")

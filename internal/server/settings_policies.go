@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,7 +15,8 @@ import (
 
 // Server-wide policies: how long a sign-in lasts, the branch new
 // repositories start on, the Git transfer limits, whether repositories keep
-// overwritten and deleted history, and how long raw check logs are kept.
+// overwritten and deleted history, how long raw check logs are kept, and
+// the access policies (access_policies.go).
 // The Settings tabs and the owner API (/api/v1/settings) read and save them
 // through the same state accessors, which hold their choices and bounds.
 // The first four apply to what starts after they are saved: a sign-in, a
@@ -51,6 +53,24 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 			session = state.DefaultGeneralSession
 		}
 		policies.Session = string(session)
+		links, err := app.Store.CrossSiteLinks(request.Context())
+		if err = unreadable(webui.GroupCrossSite, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if links == "" {
+			links = state.DefaultCrossSiteLinks
+		}
+		policies.CrossSiteLinks = string(links)
+		limits, err := app.Store.LoginLimits(request.Context())
+		if err = unreadable(webui.GroupLogin, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if limits == (state.LoginLimits{}) {
+			limits = state.DefaultLoginLimits
+		}
+		policies.LoginAttempts = strconv.Itoa(limits.Attempts)
+		policies.LoginWindow = webui.FormatLimit(webui.LimitDuration, limits.Window.Milliseconds(), "")
+		policies.LoginPause = webui.FormatLimit(webui.LimitDuration, limits.Pause.Milliseconds(), "")
 	}
 	if tab == webui.SettingsRepositories {
 		branch, err := app.Store.InitialBranch(request.Context())
@@ -78,6 +98,14 @@ func (app *App) tabPolicies(request *http.Request, tab string, admin bool) (webu
 			keep = true
 		}
 		policies.KeptHistory = onOff(keep)
+		ask, err := app.Store.DeleteRequiresName(request.Context())
+		if err = unreadable(webui.GroupDeleteName, err); err != nil {
+			return webui.Policies{}, err
+		}
+		if policies.Unreadable[webui.GroupDeleteName] {
+			ask = true
+		}
+		policies.DeleteRequiresName = onOff(ask)
 	}
 	if tab == webui.SettingsStorage {
 		retention, err := app.Store.CheckLogRetention(request.Context())
@@ -133,6 +161,15 @@ type settingsJSON struct {
 	// KeptHistory is "on" when repositories that follow the server keep
 	// overwritten and deleted history, and "off" when they do not.
 	KeptHistory *string `json:"kept_history,omitempty"`
+	// DeleteRequiresName is "on" when deleting a repository asks for its
+	// typed name, and "off" when it does not.
+	DeleteRequiresName *string `json:"delete_requires_name,omitempty"`
+	// LoginLimits are the login attempt limits. A PATCH may name some of
+	// them; the others keep their saved values.
+	LoginLimits *loginLimitsJSON `json:"login_limits,omitempty"`
+	// CrossSiteLinks is "strict" or "lax": whether a link from another site
+	// keeps the shared sign-in.
+	CrossSiteLinks *string `json:"cross_site_links,omitempty"`
 }
 
 type gitTransferJSON struct {
@@ -228,6 +265,43 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgKeptHistorySavedOff))
 			}
 		}
+		if change.DeleteRequiresName != nil {
+			ask, valid := parseOnOff(*change.DeleteRequiresName)
+			if !valid {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "delete_requires_name must be on or off.", nil)
+				return
+			}
+			policies.DeleteRequiresName = &ask
+			if !ask {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgDeleteNameSavedOff))
+			}
+		}
+		if change.LoginLimits != nil {
+			limits, problem, err := app.changedLoginLimits(request.Context(), *change.LoginLimits)
+			if err != nil {
+				app.writeSettingsReadError(writer, request, err)
+				return
+			}
+			if problem != "" {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
+				return
+			}
+			policies.LoginLimits = &limits
+			if limits.Looser() {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgLoginLimitsSavedLooser))
+			}
+		}
+		if change.CrossSiteLinks != nil {
+			links, valid := state.ParseCrossSiteLinks(*change.CrossSiteLinks)
+			if !valid {
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "cross_site_links must be one of "+choiceList(state.CrossSiteChoices)+".", nil)
+				return
+			}
+			policies.CrossSiteLinks = &links
+			if links == state.CrossSiteLax {
+				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCrossSiteSavedLax))
+			}
+		}
 		if err := app.Store.SavePolicies(request.Context(), policies); err != nil {
 			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
 			return
@@ -277,6 +351,15 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	}
 	if kept, readErr := app.Store.KeptHistory(ctx); keep(readErr) {
 		current.KeptHistory = pointer(onOff(kept))
+	}
+	if ask, readErr := app.Store.DeleteRequiresName(ctx); keep(readErr) {
+		current.DeleteRequiresName = pointer(onOff(ask))
+	}
+	if limits, readErr := app.Store.LoginLimits(ctx); keep(readErr) {
+		current.LoginLimits = loginLimitsAPI(limits)
+	}
+	if links, readErr := app.Store.CrossSiteLinks(ctx); keep(readErr) {
+		current.CrossSiteLinks = pointer(string(links))
 	}
 	return current, unreadable, err
 }

@@ -45,12 +45,15 @@ func (e *PolicyError) Advice() string { return policyNames[e.Key].advice }
 // policyNames describes each policy, by metadata key, in the names an owner
 // uses to set it.
 var policyNames = map[string]struct{ field, advice string }{
-	generalSessionKey:    {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
-	initialBranchKey:     {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
-	gitTransferLimitsKey: {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size and --transfer-time."},
-	checkLogRetentionKey: {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
-	keptHistoryKey:       {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
-	repositoryPolicyKey:  {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
+	generalSessionKey:     {"session", "The saved sign-in length cannot be read. Set it again under Settings, Access, or with owngit settings set --session."},
+	initialBranchKey:      {"initial_branch", "The saved initial branch for new repositories cannot be read. Set it again under Settings, Repositories, or with owngit settings set --initial-branch."},
+	gitTransferLimitsKey:  {"git_transfer", "The saved Git transfer limits cannot be read. Set them again under Settings, Repositories, or with owngit settings set --transfer-size and --transfer-time."},
+	checkLogRetentionKey:  {"check_logs", "The saved raw check log retention cannot be read. Set it again under Settings, Storage & recovery, or with owngit settings set --check-logs."},
+	keptHistoryKey:        {"kept_history", "The saved server-wide kept history choice cannot be read. Set it again under Settings, Repositories, or with owngit settings set --kept-history."},
+	deleteRequiresNameKey: {"delete_requires_name", "The saved choice whether deleting a repository asks for its name cannot be read. Set it again under Settings, Repositories, or with owngit settings set --delete-requires-name."},
+	loginLimitsKey:        {"login_limits", "The saved login attempt limits cannot be read, so a wrong password cannot be counted. Set them again under Settings, Access, or with owngit settings set --login-attempts, --login-window and --login-pause."},
+	crossSiteLinksKey:     {"cross_site_links", "The saved choice for links from other sites cannot be read, so the shared password cannot start a sign-in. Set it again under Settings, Access, or with owngit settings set --cross-site-links."},
+	repositoryPolicyKey:   {"repository_policy", "This repository's saved kept history and default branch protection cannot be read. Set both again in the repository's Settings tab, or with owngit repo settings set --kept-history and --protect-default-branch."},
 }
 
 // policyValue reads the metadata row key with query, the store or a
@@ -71,6 +74,11 @@ type PolicyChange struct {
 	GitTransfer   *GitTransferLimits
 	CheckLogs     *CheckLogRetention
 	KeptHistory   *bool
+	// DeleteRequiresName, LoginLimits and CrossSiteLinks are the access
+	// policies (access_policies.go).
+	DeleteRequiresName *bool
+	LoginLimits        *LoginLimits
+	CrossSiteLinks     *CrossSiteLinks
 }
 
 // SavePolicies checks every policy change names and saves them all in one
@@ -107,6 +115,25 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 	}
 	if change.KeptHistory != nil {
 		values[keptHistoryKey] = onOff(*change.KeptHistory)
+	}
+	if change.DeleteRequiresName != nil {
+		values[deleteRequiresNameKey] = onOff(*change.DeleteRequiresName)
+	}
+	if change.LoginLimits != nil {
+		if err := change.LoginLimits.Validate(); err != nil {
+			return err
+		}
+		stored, err := change.LoginLimits.stored()
+		if err != nil {
+			return err
+		}
+		values[loginLimitsKey] = stored
+	}
+	if change.CrossSiteLinks != nil {
+		if _, valid := ParseCrossSiteLinks(string(*change.CrossSiteLinks)); !valid {
+			return fmt.Errorf("invalid cross-site link choice %q", *change.CrossSiteLinks)
+		}
+		values[crossSiteLinksKey] = string(*change.CrossSiteLinks)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -283,13 +310,7 @@ func (s *Store) GitTransferLimits(ctx context.Context) (GitTransferLimits, error
 	}
 	limits := DefaultGitTransferLimits
 	var stored gitTransferJSON
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	err = decoder.Decode(&stored)
-	if err == nil && decoder.More() {
-		err = errors.New("more than one JSON value")
-	}
-	if err == nil {
+	if err = decodeStoredJSON(raw, &stored); err == nil {
 		if stored.MaximumBytes != nil {
 			limits.MaximumBytes = *stored.MaximumBytes
 		}
