@@ -47,7 +47,8 @@ allowed events, execution limits, queue and concurrency limits, a lease
 duration, and [source limits](#source-limits). A container policy also names
 an immutable image, such as `sha256:<64 lowercase hex digits>` or
 `registry.example/checks@sha256:<64 lowercase hex digits>`, a `none` or
-`bridge` network, and CPU, memory, process, and scratch-space limits. A minimal
+`bridge` network, and CPU, memory, process, and scratch-space limits, plus the
+[container options](#container-options) the owner chooses. A minimal
 host or external-runner policy leaves `execution.source` empty for the default
 source limits:
 
@@ -79,8 +80,24 @@ owngit check-policy enable \
   --password-file ./admin-password
 ```
 
+Or save and enable in one step, for exactly the policy in the file:
+
+```sh
+owngit check-policy set --enable \
+  --server https://git.example.test \
+  --repository project \
+  --password-file ./admin-password \
+  --policy-file ./check-policy.json
+```
+
 `check-policy enable` approves the exact policy version that is stored, so
 saving a different policy turns execution off until you enable it again.
+`check-policy set --enable` saves the file's policy and approves exactly it in
+one transaction, so the changed commands may run immediately. Over the API it
+is `POST .../check-policy/save-and-enable` with `{"policy": {...}}`; an
+optional `"expected": {"version": N, "digest": "..."}` names the stored policy
+the change was reviewed against (version 0 and an empty digest mean none), and
+another stored policy refuses the step with `check_policy_stale`.
 `check-policy disable` stops new jobs, and a restore turns execution off.
 Nothing runs without both a matching workflow file and current consent.
 `check-policy show` prints the policy and whether the check runtime is
@@ -104,6 +121,12 @@ available, and the next thing to do) and walks through five steps: where
 checks run, when they run, the check file (with a minimal example to copy),
 saving, and turning checks on. Enabling approves the policy version shown on
 screen, and is refused if someone saved a different policy in the meantime.
+**Save and turn checks on**, beside Save, first shows each setting that would
+change, with its saved and new value and the warning that changed commands may
+run immediately, and saves nothing. Confirming saves exactly the reviewed
+settings and turns checks on for them; if the form was edited after the review
+or someone saved in between, the review is shown again instead. Ordinary Save
+never turns checks on.
 
 Limits sit under **Advanced limits** with working values filled in. Times take
 seconds, minutes, or hours, and sizes take bytes, KB, MB, or GB (1 KB is 1024
@@ -208,20 +231,48 @@ OwnGit's state and credentials. Use it only for fully trusted repositories.
 ### Restricted local Docker
 
 Container mode uses only a local Linux Docker daemon, selected without
-`DOCKER_HOST`, `DOCKER_CONTEXT`, or TLS overrides, and never pulls an image. It
-runs the owner's pinned image with:
+`DOCKER_HOST`, `DOCKER_CONTEXT`, or TLS overrides, and pulls an image only when
+the policy allows it. It resolves the image once per job to an image ID and
+runs every command of the job from that ID, with:
 
-- a nonroot user and a read-only root filesystem;
+- OwnGit's own nonroot user and, unless the policy allows a writable root, a
+  read-only root filesystem;
 - all Linux capabilities dropped and `no-new-privileges`;
-- the selected `none` or `bridge` network;
+- the selected `none`, `bridge`, or named network;
 - CPU, memory, and process limits, with no swap;
 - a size-limited, executable `/tmp`;
 - only the job's source directory mounted, read-write, at `/workspace`, which
   shares the host disk and has no separate size limit;
 - Docker logging turned off.
 
-OwnGit refuses an image that declares volumes, and a daemon that does not
-enforce the memory, swap, CPU, and process limits.
+Unless the policy chooses otherwise, OwnGit refuses an image that declares
+volumes, and a daemon that does not enforce the memory, swap, CPU, and process
+limits.
+
+#### Container options
+
+Each option is off until the owner turns it on, applies only to container mode,
+and is shown with what it allows. Changing one saves a new policy version, so
+checks turn off until they are enabled again. They are fields of `execution`:
+
+| Field | Dashboard | What it allows |
+|---|---|---|
+| `container_allow_tags` | Allow image tags | The image may be a tag such as `registry.example/checks:1`. A tag can point to different code next time; each job resolves it when the job starts and records the image ID. |
+| `container_pull_missing` | Download missing images | When this computer lacks the image, OwnGit downloads it from its registry before the job (bounded to 15 minutes). It uses no saved registry login or credential helper, so only images the registry serves to anyone can be downloaded. It needs an image name, not a bare `sha256:` ID. |
+| `container_network` | Use a Docker network I created | A network name other than `none` or `bridge` names a Docker network the owner created. Checks can reach every service on it. `host` is never accepted, because checks could then reach this computer's services, including OwnGit; a network ID or a network using the `host` driver is refused when the job starts. |
+| `container_image_volumes` | Give image volumes temporary space | Each path the image declares as a volume gets its own in-memory space with the temporary space limit, discarded with the container. Docker is checked to have made no volume of its own. Paths at or around `/workspace`, `/tmp`, `/proc`, `/sys`, `/dev` and Docker's `/etc` files keep the image refused. |
+| `container_writable_root` | Let commands change the container's files | The root filesystem is writable. Commands still run as OwnGit's own user, so they can change only the image files that user may change, and the changes are discarded with the container. |
+| `container_missing_enforcement` | Limits this computer's Docker may not enforce | A list of `memory`, `swap`, `cpu` and `pids`. A listed limit that Docker cannot enforce no longer stops the check; the check can then use more of it than its limit. A limit not listed still stops the check, naming it. |
+
+When a job runs a tag, downloads its image, or runs without an accepted limit,
+the first check's output starts with the image ID and the limits that were
+not enforced, so the job page and `check-job show` state what actually ran.
+
+Commands always run as OwnGit's own user (or a fixed nonroot user when OwnGit
+runs as root), never as the image's user. The files they write in the
+workspace then belong to a user OwnGit can remove them as after the check.
+There is no privileged mode, no host network, no Docker socket or host mount,
+and no free-form Docker flags.
 
 ### External runner
 
