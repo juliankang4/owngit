@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/user"
 	"path/filepath"
 	"runtime"
@@ -31,7 +32,7 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 			Shell: commandShell(runtime.GOOS),
 		}
 		// An uploaded backup is in the state folder, which moves first.
-		if relative, err := filepath.Rel(stateDir, input); err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		if relative, inside := pathInside(stateDir, input); inside {
 			input = filepath.Join(guide.MovedState, relative)
 		}
 		guide.Command = runAs + "owngit restore --input " + commandWord(input) + " --state-dir " + commandWord(stateDir) +
@@ -41,6 +42,23 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 		}
 		return guide
 	}
+}
+
+// pathInside returns the path of input relative to the folder dir when
+// input is inside it. The folders are compared as files, not as names, so
+// that a way through a link or another spelling of either still matches.
+func pathInside(dir, input string) (string, bool) {
+	folder, err := os.Stat(dir)
+	if err != nil {
+		return "", false
+	}
+	for parent := filepath.Dir(input); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
+		if info, err := os.Stat(parent); err == nil && os.SameFile(info, folder) {
+			relative, err := filepath.Rel(parent, input)
+			return relative, err == nil
+		}
+	}
+	return "", false
 }
 
 // commandWord quotes a path for this computer's shell (shellWord).

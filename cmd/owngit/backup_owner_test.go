@@ -1,12 +1,14 @@
 package main
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -176,11 +178,7 @@ func TestServeRunsBackups(t *testing.T) {
 	}
 	unpacked := filepath.Join(root, "unpacked")
 	noErr(t, os.Mkdir(unpacked, 0o700))
-	untar, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	if output, err := exec.CommandContext(untar, "tar", "-xf", archive, "-C", unpacked).CombinedOutput(); err != nil {
-		t.Fatalf("tar: %v %s", err, output)
-	}
+	unpackTar(t, archive, unpacked)
 	if output := cliOutput(t, backupState, "verify", filepath.Join(unpacked, filepath.Base(started.Run.Path))); !strings.Contains(output, "passed") {
 		t.Fatalf("backup verify of the unpacked download: %s", output)
 	}
@@ -214,10 +212,27 @@ func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
 		guide.Command != "owngit restore --input "+commandWord(elsewhere)+" --state-dir "+commandWord(stateDir)+" --repository-root "+commandWord(repositories)+" --verify" {
 		t.Fatalf("guide: %+v", guide)
 	}
-	uploaded := restoreGuide(stateDir, true)(filepath.Join(stateDir, "backup-uploads", "b"), repositories)
+	upload := filepath.Join(stateDir, "backup-uploads", "b")
+	noErr(t, os.MkdirAll(upload, 0o700))
+	uploaded := restoreGuide(stateDir, true)(upload, repositories)
 	if uploaded.Stop != "owngit service stop" || uploaded.Start != "owngit service start" ||
 		!strings.Contains(uploaded.Command, "--input "+commandWord(filepath.Join(stateDir+".before-restore", "backup-uploads", "b"))) {
 		t.Fatalf("uploaded guide: %+v", uploaded)
+	}
+
+	// The state folder named through a link, and the upload by its real
+	// path, as the state store names it: the upload still moves with the
+	// state folder.
+	if runtime.GOOS == "windows" {
+		return
+	}
+	link := filepath.Join(t.TempDir(), "state-link")
+	noErr(t, os.Symlink(stateDir, link))
+	for _, folders := range [][2]string{{link, upload}, {stateDir, filepath.Join(link, "backup-uploads", "b")}} {
+		guide := restoreGuide(folders[0], false)(folders[1], repositories)
+		if want := "--input " + commandWord(filepath.Join(folders[0]+".before-restore", "backup-uploads", "b")); !strings.Contains(guide.Command, want) {
+			t.Fatalf("guide for %s with the upload %s: %s, want %s", folders[0], folders[1], guide.Command, want)
+		}
 	}
 }
 
@@ -241,5 +256,37 @@ func TestRestoreCommandWordsAreLiteral(t *testing.T) {
 	}
 	if commandShell("windows") != "PowerShell" || commandShell("darwin") != "" {
 		t.Fatal("the shell is not named for Windows only")
+	}
+}
+
+// unpackTar unpacks the tar archive of folders and regular files into dir,
+// as any tar program would, without depending on the one this computer has.
+func unpackTar(t *testing.T, archive, dir string) {
+	t.Helper()
+	file, err := os.Open(archive)
+	noErr(t, err)
+	defer file.Close()
+	reader := tar.NewReader(file)
+	for {
+		header, err := reader.Next()
+		if errors.Is(err, io.EOF) {
+			return
+		}
+		noErr(t, err)
+		target := filepath.Join(dir, filepath.FromSlash(header.Name))
+		if !filepath.IsLocal(filepath.FromSlash(header.Name)) {
+			t.Fatalf("archive entry outside the folder: %s", header.Name)
+		}
+		switch header.Typeflag {
+		case tar.TypeDir:
+			noErr(t, os.MkdirAll(target, 0o700))
+		case tar.TypeReg:
+			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			noErr(t, err)
+			_, err = io.Copy(out, reader)
+			noErr(t, errors.Join(err, out.Close()))
+		default:
+			t.Fatalf("archive entry %s of type %c", header.Name, header.Typeflag)
+		}
 	}
 }
