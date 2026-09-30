@@ -582,7 +582,7 @@ A few tasks are on one side only, on purpose:
 - Command line only: `owngit reset-admin`, `owngit setup-link` and `owngit approve-host` recover access from the installation host when the dashboard cannot be used ([Host-owner recovery](#host-owner-recovery), [Host names](#host-names)). `owngit uninstall` removes the service that serves the dashboard ([Uninstall](#uninstall)).
 - Dashboard only: accepting the plain HTTP warning that a browser shows, because it concerns that browser's own connection. A client command such as `settings` or `repo` accepts plain HTTP for itself each time with `--accept-insecure-http`. `owngit network set --accept-insecure-http` records the same acceptance as the dashboard, once, when it saves an address other computers reach ([Network settings](#network-settings)).
 - Running programs: `owngit serve` runs OwnGit, `owngit service` installs and controls it as a service, `owngit runner` runs automatic checks, and `owngit mcp` serves a coding tool. They have no dashboard form because they start or control a process.
-- Records from coding tools: check tasks, correction rounds and attempts (`owngit check task new`, `check cycle reserve`, `check run`) are evidence that a coding tool records ([Coding tools](CODING_TOOLS.md)). The dashboard shows them but does not create them.
+- Records from coding tools: check tasks, correction rounds and attempts (`owngit check task new`, `check cycle reserve`, `check run`) are evidence that a coding tool records ([Coding tools](CODING_TOOLS.md)). The dashboard shows them but does not create them. `owngit tasks` prints what the dashboard shows of them.
 
 ### How long a sign-in lasts
 
@@ -1321,6 +1321,20 @@ curl --fail --get --user owngit \
 ```
 
 An archive download counts as a Git transfer with the [limits below](#git-transfer-limits). When Git fails, a limit is reached, or OwnGit stops before the end, OwnGit closes the connection without finishing the response. The download then fails (curl reports `(18) transfer closed with outstanding read data remaining`), and the part received is not a valid archive.
+
+### All activity
+
+All activity in the sidebar shows, for one year, how many commits each day has across every repository, and lists the commits of the year, or of one day when you pick it in the graph. The list shows at most the newest 1,000 commits and says so above the list when there are more; pick a day to see others. The graph still counts every commit it read. A commit's author name and date are what the commit records, not a verified identity. The count leaves out repositories that are still being prepared or whose Git data could not be read, and names the unreadable ones.
+
+`owngit activity` prints the same as JSON, with general access like `owngit repo list`:
+
+```sh
+owngit activity --server https://owngit.example.test
+owngit activity --server https://owngit.example.test --year 2025
+owngit activity --server https://owngit.example.test --date 2026-09-29
+```
+
+The result has `year`, `date` (when given), `repository_count`, `total` (commits in the year), `complete`, `incomplete_reason` when `complete` is false (`counting`, `preparing`, `unreadable`, `preparing_or_unreadable` or `limit`), `unreadable` (repository names), `days` (each day with commits and its `count`), `entries` (newest first, with `repository`, `repository_name`, `ref`, `ref_retained`, `oid`, `subject`, `author_name` and `author_date`) and `truncated`, which is true when more than 1,000 commits matched. A year outside 1970 to 9999, or a date that is not a day of the given year, fails with `invalid_request`. When no repository could be read the command fails with `activity_unavailable` instead of reporting zero commits. The API route is `GET /api/v1/activity`, with the optional query parameters `year` and `date`.
 
 ### Repositories being prepared
 

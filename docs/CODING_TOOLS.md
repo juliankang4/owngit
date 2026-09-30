@@ -104,6 +104,36 @@ release folder under `%LOCALAPPDATA%\Programs\OwnGit` on Windows, and changes
 no `PATH` setting. When the binary is not on `PATH`, give the coding tool the
 full path instead of editing shell startup files on its behalf.
 
+## Coding tools page
+
+The dashboard's sidebar has Coding tools (`/coding-tools`). It shows the
+server's address and commands for this server, each with a copy button:
+
+- `owngit skill --install ~/.agents/skills` installs the skill.
+- `claude mcp add --scope user owngit -- owngit mcp --server ORIGIN` adds the
+  MCP server to Claude Code, `codex mcp add owngit -- owngit mcp --server ORIGIN`
+  adds it to Codex, and `owngit mcp --server ORIGIN` is the command for any
+  other client that uses the stdio transport.
+
+When the address uses plain HTTP, the commands include
+`--accept-insecure-http` and the page warns about it. When the server asks for
+the shared password, the commands include `--password-file PASSWORD_FILE`:
+save the password in a file only you can read and put its path there. The
+check tools also need `--credential-file` and a repository (`--repository`, or
+`--workdir` with a clone). When `owngit` is not on the tool's `PATH`, write its
+full path after `--`.
+
+The page lists every repository's helper credentials with their label,
+repository, issue time, last use (or "Never used") and revocation, but only in
+a browser confirmed as administrator, or while the administrator password
+check is off; others see a link to confirm. A label is the name given when the
+credential was issued, not proof of who used it. No token is ever shown. The
+repository's Helper credentials page issues and revokes them.
+
+The page also lists the 10 check tasks that changed most recently across all
+repositories (the later of the task's own change and its latest attempt), and
+says when there are more.
+
 ## Inside a clone
 
 Inside a clone of an OwnGit repository, `owngit pr`, `owngit check`, and
@@ -267,7 +297,18 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
 - `helper-credential create` issues a credential (`--label`, `--output`
   required, `--password-file` instead of `--credential-file`);
   `helper-credential list` and `helper-credential revoke --id ID` manage
-  existing credentials.
+  existing credentials. `helper-credential list` without `--repository` lists
+  every repository's credentials (API `GET /api/v1/helper-credentials`).
+- `owngit tasks` prints check tasks as the dashboard shows them, with general
+  access (`--password-file` with the shared password, no helper credential):
+  without `--repository`, the 10 tasks that changed most recently across all
+  repositories and `truncated`; with `--repository ID`, that repository's
+  tasks in the order of its Checks tab; with `--task TASK` too, the task with
+  its newest 100 attempts and `attempts_truncated`. Each listed task carries
+  `latest_attempt`, or null when it has none. Errors include
+  `repository_not_found`, `task_not_found`, and `invalid_arguments` (`--task`
+  without `--repository`). The API routes are `GET /api/v1/tasks`,
+  `GET /api/v1/tasks/ID`, and `GET /api/v1/tasks/ID/TASK`.
 
 ## Reading the result
 
@@ -610,6 +651,7 @@ Read tools change nothing:
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 | `backup_status` | No command; a summary of `backup status`, described below |
+| `activity` | `activity`; `year` and `date` stand for `--year` and `--date` ([All activity](OPERATIONS.md#all-activity)) |
 
 `backup_status` tells the tool what OwnGit's backup records say, for example before a risky change. It uses general access like the repository tools. It reads only the records and never looks in the backup folder, so a backup removed outside OwnGit still counts until the next backup notices it. It returns a summary:
 

@@ -582,7 +582,7 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http \
 - 명령줄에만 있음: `owngit reset-admin`, `owngit setup-link`, `owngit approve-host`는 대시보드를 쓸 수 없을 때 설치 호스트에서 접근을 되찾는 명령입니다([설치 호스트에서 복구하기](#설치-호스트에서-복구하기), [호스트 이름](#호스트-이름) 참고). `owngit uninstall`은 대시보드를 제공하는 서비스 자체를 지웁니다([제거](#제거) 참고).
 - 대시보드에만 있음: 브라우저에 나오는 일반 HTTP 경고에 동의하는 일입니다. 그 브라우저 자신의 연결에 관한 경고라서 대시보드에만 둡니다. `settings`나 `repo` 같은 클라이언트 명령은 실행할 때마다 `--accept-insecure-http`로 그 명령이 쓰는 일반 HTTP에 따로 동의합니다. `owngit network set --accept-insecure-http`는 다른 컴퓨터가 접속하는 주소를 저장할 때 대시보드와 같은 동의를 한 번 기록합니다([네트워크 설정](#네트워크-설정) 참고).
 - 실행되는 프로그램: `owngit serve`는 OwnGit을 실행하고, `owngit service`는 서비스로 설치하고 제어하며, `owngit runner`는 자동 체크를 실행하고, `owngit mcp`는 코딩 도구에 MCP 서버를 제공합니다. 프로세스를 시작하거나 제어하는 명령이라 대시보드 양식이 없습니다.
-- 코딩 도구의 기록: 작업(task), 수정 라운드, 시도(`owngit check task new`, `check cycle reserve`, `check run`)는 코딩 도구가 남기는 증거입니다([코딩 도구](CODING_TOOLS.ko.md) 참고). 대시보드는 이 기록을 보여 주기만 하고 만들지는 않습니다.
+- 코딩 도구의 기록: 작업(task), 수정 라운드, 시도(`owngit check task new`, `check cycle reserve`, `check run`)는 코딩 도구가 남기는 증거입니다([코딩 도구](CODING_TOOLS.ko.md) 참고). 대시보드는 이 기록을 보여 주기만 하고 만들지는 않습니다. `owngit tasks`는 대시보드에 보이는 이 기록을 출력합니다.
 
 ### 로그인 유지 시간
 
@@ -1321,6 +1321,20 @@ curl --fail --get --user owngit \
 ```
 
 압축 파일 내려받기도 Git 전송이므로 [아래 제한](#git-전송-제한)을 똑같이 받습니다. Git이 실패하거나, 제한에 닿거나, 끝나기 전에 OwnGit이 멈추면 응답을 마무리하지 않은 채 연결을 닫습니다. 그러면 내려받기는 실패하고(curl은 `(18) transfer closed with outstanding read data remaining`을 표시합니다) 받은 부분도 올바른 압축 파일이 아닙니다.
+
+### 전체 활동
+
+사이드바의 전체 활동은 한 해 동안 모든 저장소에 날마다 커밋이 몇 개 있었는지 보여 주고, 그해의 커밋을 나열합니다. 그래프에서 날짜를 고르면 그 날짜의 커밋만 나열합니다. 목록에는 최신 커밋을 1,000개까지만 보여 주고, 더 있으면 목록 위에 그렇게 알립니다. 다른 커밋은 날짜를 골라서 보세요. 그래프는 읽은 커밋을 모두 셉니다. 커밋의 작성자 이름과 날짜는 커밋에 적힌 값이며 확인된 신원이 아닙니다. 아직 준비 중이거나 Git 데이터를 읽지 못한 저장소는 집계에서 빠지고, 읽지 못한 저장소는 이름이 표시됩니다.
+
+`owngit activity`는 같은 내용을 JSON으로 출력합니다. `owngit repo list`처럼 일반 접근을 씁니다.
+
+```sh
+owngit activity --server https://owngit.example.test
+owngit activity --server https://owngit.example.test --year 2025
+owngit activity --server https://owngit.example.test --date 2026-09-29
+```
+
+결과에는 `year`, `date`(지정했을 때), `repository_count`, `total`(그해의 커밋 수), `complete`, `complete`가 false일 때의 `incomplete_reason`(`counting`, `preparing`, `unreadable`, `preparing_or_unreadable`, `limit` 중 하나), `unreadable`(저장소 이름), `days`(커밋이 있는 날과 그날의 `count`), `entries`(최신순이며 `repository`, `repository_name`, `ref`, `ref_retained`, `oid`, `subject`, `author_name`, `author_date`가 들어 있음), `truncated`가 들어 있습니다. `truncated`는 해당하는 커밋이 1,000개보다 많을 때 true입니다. 1970년부터 9999년 밖의 연도나 지정한 해의 날짜가 아닌 값은 `invalid_request`로 실패합니다. 읽을 수 있는 저장소가 하나도 없으면 커밋 0개로 답하지 않고 `activity_unavailable`로 실패합니다. API 경로는 `GET /api/v1/activity`이고 선택 쿼리 매개변수는 `year`와 `date`입니다.
 
 ### 준비 중인 저장소
 

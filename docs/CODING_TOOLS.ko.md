@@ -54,6 +54,19 @@ cp -R integrations/skills/owngit-checks ~/.agents/skills/
 
 Homebrew, npm, Arch Linux 패키지는 `owngit`을 `PATH`에 넣습니다. 소스 빌드와 포터블 압축 파일은 넣지 않으므로 소스 체크아웃에서는 `bin/owngit`, 압축을 푼 디렉터리에서는 `./owngit`을 쓰세요. 한 줄 설치 스크립트는 Linux와 macOS에서는 `~/.local/bin/owngit`이나 `/usr/local/bin/owngit`에, Windows에서는 `%LOCALAPPDATA%\Programs\OwnGit` 아래의 릴리스 폴더에 프로그램을 두며 `PATH` 설정은 바꾸지 않습니다. 실행 파일이 `PATH`에 없으면 코딩 도구를 대신해 셸 시작 파일을 고치지 말고, 코딩 도구에 전체 경로를 알려 주세요.
 
+## 코딩 도구 화면
+
+대시보드 사이드바에 코딩 도구(`/coding-tools`)가 있습니다. 서버 주소와 이 서버에 맞춘 명령을 보여 주며 명령마다 복사 버튼이 있습니다.
+
+- `owngit skill --install ~/.agents/skills`는 스킬을 설치합니다.
+- `claude mcp add --scope user owngit -- owngit mcp --server ORIGIN`은 Claude Code에, `codex mcp add owngit -- owngit mcp --server ORIGIN`은 Codex에 MCP 서버를 추가합니다. stdio 방식을 쓰는 다른 클라이언트에는 `owngit mcp --server ORIGIN`을 설정합니다.
+
+주소가 일반 HTTP이면 명령에 `--accept-insecure-http`가 들어가고 화면에 경고가 나옵니다. 서버가 공유 비밀번호를 요구하면 명령에 `--password-file PASSWORD_FILE`이 들어갑니다. 비밀번호를 나만 읽을 수 있는 파일에 저장하고 그 경로를 넣으세요. 체크 도구를 쓰려면 `--credential-file`과 저장소(`--repository`, 또는 클론을 가리키는 `--workdir`)도 필요합니다. 코딩 도구의 `PATH`에 `owngit`이 없으면 `--` 뒤에 전체 경로를 쓰세요.
+
+화면에는 모든 저장소의 체크 에이전트 토큰이 이름, 저장소, 발급 시각, 마지막 사용(또는 "사용한 적 없음"), 폐기 여부와 함께 나옵니다. 단, 관리자로 확인한 브라우저이거나 관리자 비밀번호 확인이 꺼져 있을 때만 나오고, 그 밖에는 관리자 확인 링크만 보입니다. 이름은 발급할 때 붙인 것이며 누가 썼는지를 증명하지 않습니다. 토큰 자체는 어디에도 보이지 않습니다. 발급과 폐기는 저장소의 체크 에이전트 토큰 화면에서 합니다.
+
+또 모든 저장소에서 가장 최근에 바뀐 체크 작업 10개(작업 자체가 바뀐 때와 가장 최근 시도 중 늦은 쪽 기준)를 보여 주고, 더 있으면 그렇게 알립니다.
+
 ## 클론 안에서 실행하기
 
 OwnGit 저장소의 클론 안에서는 `owngit pr`, `owngit check`, `owngit repo`가 `--server`나 `--repository`가 없을 때 서버와 저장소를 스스로 찾습니다. 클론의 `origin` 원격을 읽고 OwnGit 클론 주소인 `http(s)://HOST[:PORT]/git/ID.git` 형태만 받아들입니다. `check run`은 `--workdir`가 들어 있는 클론을 읽고, 다른 명령은 현재 디렉터리가 들어 있는 클론을 읽습니다. 직접 넘긴 플래그가 항상 우선하고, `--repository`만 넘기면 서버는 계속 `origin`에서 가져오며, `repo list`와 `repo create`는 서버만 가져옵니다. 명령은 무엇을 가져왔는지 표준 오류에 한 줄로 알립니다. 예를 들면 `owngit: using server https://owngit.example.test and repository example-project from the origin remote`이며, 표준 출력의 JSON은 바뀌지 않습니다. 일반 HTTP에는 여전히 `--accept-insecure-http`가 필요합니다.
@@ -152,7 +165,8 @@ owngit check cycle list --task TASK_ID --server URL --repository ID --credential
 - `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 합니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
 - `check cycle reserve`는 수정 라운드 하나를 예약하고(`--task` 필수), `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 - `check status`는 작업과 가장 최근 시도를 읽고, `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽으며, `check config show`는 브랜치와 관계없이 저장소에 가장 최근에 기록된 구성을 읽습니다. `check run`은 이 구성을 쓰지 않습니다.
-- `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다.
+- `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다. `--repository` 없이 `helper-credential list`를 실행하면 모든 저장소의 토큰을 보여 줍니다(API `GET /api/v1/helper-credentials`).
+- `owngit tasks`는 대시보드에 보이는 대로 체크 작업을 출력합니다. 일반 접근을 쓰므로 체크 에이전트 토큰 없이 공유 비밀번호가 든 `--password-file`로 실행합니다. `--repository`가 없으면 모든 저장소에서 가장 최근에 바뀐 작업 10개와 `truncated`를, `--repository ID`를 주면 그 저장소의 작업을 체크 탭과 같은 순서로, `--task TASK`까지 주면 그 작업과 최신 시도 100개, `attempts_truncated`를 출력합니다. 목록의 각 작업에는 `latest_attempt`가 들어 있고 시도가 없으면 null입니다. 오류에는 `repository_not_found`, `task_not_found`, `invalid_arguments`(`--repository` 없이 `--task`를 준 경우)가 있습니다. API 경로는 `GET /api/v1/tasks`, `GET /api/v1/tasks/ID`, `GET /api/v1/tasks/ID/TASK`입니다.
 
 ## 결과 읽기
 
@@ -315,6 +329,7 @@ tool_timeout_sec = 1800
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 | `backup_status` | 해당 명령 없음. `backup status`의 요약이며 아래에서 설명합니다 |
+| `activity` | `activity`. `year`와 `date`는 `--year`, `--date`에 해당합니다([전체 활동](OPERATIONS.ko.md#전체-활동)) |
 
 `backup_status`는 위험한 변경을 하기 전처럼 OwnGit의 백업 기록이 어떤지 알고 싶을 때 씁니다. 저장소 도구처럼 일반 접근을 씁니다. 기록만 읽고 백업 폴더는 보지 않으므로, OwnGit 밖에서 지운 백업도 다음 백업이 알아챌 때까지는 남아 있는 것으로 나옵니다. 돌려주는 요약은 다음과 같습니다.
 
