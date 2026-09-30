@@ -286,7 +286,6 @@ func (coordinator *Coordinator) containerCreateArguments(job state.CheckJob, pre
 		return nil, errors.New("container command is missing")
 	}
 	settings := job.Execution
-	cpu := fmt.Sprintf("%.3f", float64(settings.ContainerCPUMillis)/1000)
 	user, err := containerUserForWorkspace(workspace)
 	if err != nil {
 		return nil, err
@@ -300,15 +299,28 @@ func (coordinator *Coordinator) containerCreateArguments(job state.CheckJob, pre
 		"--user", user,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges=true",
-		"--cpus", cpu,
-		"--memory", strconv.FormatInt(settings.ContainerMemoryBytes, 10),
-		"--memory-swap", strconv.FormatInt(settings.ContainerMemoryBytes, 10),
-		"--pids-limit", strconv.FormatInt(settings.ContainerPIDs, 10),
 		"--mount", "type=bind,src=" + filepath.Clean(workspace) + ",dst=/workspace",
 		"--workdir", "/workspace",
 		"--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "TMP=/tmp", "--env", "TEMP=/tmp",
 		"--env", "XDG_CACHE_HOME=/tmp/.cache", "--env", "GOCACHE=/tmp/go-build", "--env", "GOTMPDIR=/tmp",
 		"--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=" + strconv.FormatInt(settings.ContainerScratchBytes, 10),
+	}
+	// Each limit is passed only when this Docker enforces it. Docker
+	// refuses a CPU limit it cannot enforce and drops the others, so a
+	// limit the policy accepted as unenforced is left out.
+	enforced := func(limit string) bool { return !slices.Contains(prepared.unenforced, limit) }
+	memory := strconv.FormatInt(settings.ContainerMemoryBytes, 10)
+	if enforced(state.ContainerLimitCPU) {
+		arguments = append(arguments, "--cpus", fmt.Sprintf("%.3f", float64(settings.ContainerCPUMillis)/1000))
+	}
+	if enforced(state.ContainerLimitMemory) {
+		arguments = append(arguments, "--memory", memory)
+		if enforced(state.ContainerLimitSwap) {
+			arguments = append(arguments, "--memory-swap", memory)
+		}
+	}
+	if enforced(state.ContainerLimitPIDs) {
+		arguments = append(arguments, "--pids-limit", strconv.FormatInt(settings.ContainerPIDs, 10))
 	}
 	if !settings.ContainerWritableRoot {
 		arguments = append(arguments, "--read-only")
