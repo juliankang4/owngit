@@ -415,7 +415,11 @@ func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPol
 	for _, check := range document.Checks {
 		request.Checks = append(request.Checks, state.CheckDefinition{Name: check.Name, Command: check.Command})
 	}
-	_, deduped, err := coordinator.Store.AdmitCheckJob(ctx, request, time.Now().UTC())
+	var deduped bool
+	err = pinned.WhilePresent(ctx, func() (err error) {
+		_, deduped, err = coordinator.Store.AdmitCheckJob(ctx, request, time.Now().UTC())
+		return err
+	})
 	if errors.Is(err, state.ErrInvalidCheckJob) {
 		return false, fmt.Errorf("%w: %w", errRevisionRejected, err)
 	}

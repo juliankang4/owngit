@@ -380,6 +380,23 @@ func (p *PinnedRepository) oid(side PinnedSide) (string, error) {
 	}
 }
 
+// WhilePresent runs record under the repository read lock after verifying
+// again that the pinned commits exist. Unused object cleanup reads the
+// unfinished check jobs under the write lock, so a job that record admits
+// is either seen by cleanup, which then waits, or refused here because
+// cleanup already removed its source. record must not take the repository
+// lock.
+func (p *PinnedRepository) WhilePresent(ctx context.Context, record func() error) error {
+	return p.withReadLock(ctx, func(repositoryPath string) error {
+		for _, oid := range []string{p.baseOID, p.headOID} {
+			if err := verifyPinnedCommit(ctx, p.manager.Git, repositoryPath, oid); err != nil {
+				return fmt.Errorf("verify pinned commit: %w", err)
+			}
+		}
+		return record()
+	})
+}
+
 func (p *PinnedRepository) withReadLock(ctx context.Context, operation func(string) error) error {
 	lock := p.manager.Locks.For(p.id)
 	if err := ctx.Err(); err != nil {

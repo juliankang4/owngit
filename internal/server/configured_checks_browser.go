@@ -229,7 +229,7 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 	} else {
 		var rerun state.CheckJob
 		var deduped bool
-		rerun, deduped, err = app.Store.RerunCheckJob(request.Context(), stored.ID, jobID, app.now())
+		rerun, deduped, err = app.rerunCheckJob(request.Context(), stored.ID, jobID)
 		notice = "check_job_rerun"
 		if err == nil {
 			follow = rerun.ID
@@ -250,6 +250,8 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 		case errors.Is(err, state.ErrCheckJobState), errors.Is(err, state.ErrCheckConsentRequired),
 			errors.Is(err, state.ErrCheckQueueFull), errors.Is(err, state.ErrCheckEventNotAllowed):
 			code, status = webui.MsgCCJobRefused, http.StatusConflict
+		case errors.Is(err, errRerunSourceMissing):
+			code, status = webui.MsgCCJobSourceMissing, http.StatusConflict
 		default:
 			code, status = webui.MsgCCFailed, unavailable(request, "configured check job change", err)
 		}

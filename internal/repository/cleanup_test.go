@@ -186,3 +186,67 @@ func TestCleanupKeepsTheSourceOfACheckBetweenReads(t *testing.T) {
 		t.Fatal("cleanup kept the old unreachable commit after the check ended")
 	}
 }
+
+// A check admission records its job under the repository read lock after
+// verifying the source again, so it cannot slip in between cleanup reading
+// the unfinished jobs and removing objects under the write lock. Admitted
+// first, cleanup waits; cleaned first, the admission is refused.
+func TestCheckAdmissionAndCleanupExcludeEachOther(t *testing.T) {
+	ctx := context.Background()
+	manager, remote, work := newTestRepository(t)
+	schedule := MaintenanceSchedule{}.withDefaults()
+	schedule.cleanupGrace = 2 * 24 * time.Hour
+	oldUnreachable := func(name string) string {
+		runGit(t, work, "checkout", "-q", "--orphan", name)
+		commitFile(t, work, name+"\n", name, "2024-01-01T00:00:00Z")
+		runGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/"+name)
+		old := time.Now().Add(-30 * 24 * time.Hour)
+		noErr(t, filepath.WalkDir(filepath.Join(remote, "objects"), func(path string, entry os.DirEntry, err error) error {
+			if err == nil && !entry.IsDir() {
+				err = os.Chtimes(path, old, old)
+			}
+			return err
+		}))
+		runGit(t, "", "--git-dir", remote, "update-ref", "-d", "refs/heads/"+name)
+		return gitOutput(t, work, "rev-parse", "HEAD")
+	}
+	present := func(oid string) bool {
+		_, err := gitCombined("", "--git-dir", remote, "cat-file", "-e", oid)
+		return err == nil
+	}
+
+	// Admitted first: cleanup sees the job and leaves the source.
+	admitted := oldUnreachable("admitted")
+	pinned, err := manager.PinRepository(ctx, "sample", admitted, admitted)
+	noErr(t, err)
+	noErr(t, pinned.WhilePresent(ctx, func() error {
+		admitCheckJob(t, manager, "sample", "admitted", admitted)
+		return nil
+	}))
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) || !present(admitted) {
+		t.Fatalf("cleanup after an admission: err=%v present=%v", err, present(admitted))
+	}
+	noErr(t, manager.Store.Exec(ctx, `UPDATE check_jobs SET status='passed' WHERE id='admitted'`))
+
+	// Cleanup first: while it holds the write lock, having found no
+	// unfinished job, an admission cannot record one; once cleanup removed
+	// the source, the admission is refused.
+	late := oldUnreachable("late")
+	pinned, err = manager.PinRepository(ctx, "sample", late, late)
+	noErr(t, err)
+	recorded := false
+	record := func() error { recorded = true; return nil }
+	lock := manager.Locks.For("sample")
+	lock.Lock()
+	err = pinned.WhilePresent(ctx, record)
+	lock.UnlockWithoutRefChanges()
+	if !errors.Is(err, ErrPinnedRepositoryBusy) || recorded {
+		t.Fatalf("admission during cleanup's step: err=%v recorded=%v", err, recorded)
+	}
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); err != nil || present(late) || present(admitted) {
+		t.Fatalf("cleanup with no unfinished job: err=%v", err)
+	}
+	if err := pinned.WhilePresent(ctx, record); !errors.Is(err, ErrPinnedObjectUnavailable) || recorded {
+		t.Fatalf("admission after cleanup: err=%v recorded=%v", err, recorded)
+	}
+}

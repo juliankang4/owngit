@@ -301,6 +301,7 @@ const (
 	MsgCCJobRerunQueued     MessageCode = "cc.result.job_rerun"
 	MsgCCJobRerunExisting   MessageCode = "cc.result.job_rerun_existing"
 	MsgCCJobRefused         MessageCode = "cc.result.job_refused"
+	MsgCCJobSourceMissing   MessageCode = "cc.result.job_source_missing"
 	MsgCCJobMissing         MessageCode = "cc.result.job_missing"
 	MsgCCPolicyRefused      MessageCode = "cc.result.policy_refused"
 	MsgCCPolicyMissing      MessageCode = "cc.result.policy_missing"
@@ -906,6 +907,10 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCJobRefused: {
 		en: "The job is not in a state that allows this.",
 		ko: "이 작업은 지금 그 동작을 할 수 있는 상태가 아닙니다.",
+	},
+	MsgCCJobSourceMissing: {
+		en: "The job's commit is no longer in this repository, so the job cannot run again.",
+		ko: "이 작업의 커밋이 더 이상 저장소에 없어 다시 실행할 수 없습니다.",
 	},
 	MsgCCJobMissing: {en: "That job does not exist in this repository.", ko: "이 저장소에 그런 작업이 없습니다."},
 	MsgCCPolicyRefused: {

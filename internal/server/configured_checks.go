@@ -200,9 +200,7 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 		case "cancel":
 			job, err = app.Store.CancelCheckJob(request.Context(), repositoryID, jobID, app.now())
 		case "rerun":
-			var deduped bool
-			job, deduped, err = app.Store.RerunCheckJob(request.Context(), repositoryID, jobID, app.now())
-			_ = deduped
+			job, _, err = app.rerunCheckJob(request.Context(), repositoryID, jobID)
 		default:
 			writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
 			return
@@ -669,12 +667,48 @@ func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 	}
 }
 
+// errRerunSourceMissing reports that the commit a job ran is no longer in
+// the repository, so the job cannot run again.
+var errRerunSourceMissing = errors.New("the job's commit is no longer in the repository")
+
+// rerunCheckJob queues a rerun of job jobID while the repository read lock
+// shows the job's commit is still present. Unused object cleanup reads the
+// unfinished jobs under the write lock, so it either sees the rerun and
+// waits, or already removed the commit and the rerun is refused.
+func (app *App) rerunCheckJob(ctx context.Context, repositoryID, jobID string) (state.CheckJob, bool, error) {
+	original, found, err := app.Store.CheckJob(ctx, repositoryID, jobID)
+	if err != nil {
+		return state.CheckJob{}, false, err
+	}
+	if !found {
+		return state.CheckJob{}, false, state.ErrCheckJobNotFound
+	}
+	var job state.CheckJob
+	var deduped bool
+	err = checksource.RetryWhileRepositoryBusy(ctx, runnerSourceBusyWait, func() error {
+		pinned, err := app.Repositories.PinRepository(ctx, repositoryID, original.SourceOID, original.SourceOID)
+		if err != nil {
+			return err
+		}
+		return pinned.WhilePresent(ctx, func() (err error) {
+			job, deduped, err = app.Store.RerunCheckJob(ctx, repositoryID, jobID, app.now())
+			return err
+		})
+	})
+	if errors.Is(err, repository.ErrPinnedObjectUnavailable) {
+		err = errRerunSourceMissing
+	}
+	return job, deduped, err
+}
+
 func writeConfiguredJobError(writer http.ResponseWriter, request *http.Request, err error) {
 	switch {
 	case errors.Is(err, state.ErrCheckJobNotFound):
 		writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
 	case errors.Is(err, state.ErrCheckJobState), errors.Is(err, state.ErrCheckConsentRequired):
 		writeAPIError(writer, http.StatusConflict, "check_job_state", err.Error(), nil)
+	case errors.Is(err, errRerunSourceMissing):
+		writeAPIError(writer, http.StatusConflict, "check_source_missing", "The job's commit is no longer in the repository, so the job cannot run again.", nil)
 	default:
 		writeAPIError(writer, unavailable(request, "configured check job change", err), "state_unavailable", "The configured-check job could not be changed.", nil)
 	}
