@@ -126,6 +126,9 @@ type BackupRestore struct {
 	// for when that is not the usual POSIX shell (PowerShell on Windows).
 	Command string
 	Shell   string
+	// Unchecked is the backup when where it will be after the move could
+	// not be checked, for Problem; there is then no Command.
+	Unchecked, Problem string
 }
 
 // backupIntervalLabels names each schedule interval.

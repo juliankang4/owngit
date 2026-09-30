@@ -82,6 +82,7 @@ const (
 	MsgBackupRestoreStopProcess  MessageCode = "backup.restore_stop_process"
 	MsgBackupRestoreMove         MessageCode = "backup.restore_move"
 	MsgBackupRestoreRun          MessageCode = "backup.restore_run"
+	MsgBackupRestoreUnchecked    MessageCode = "backup.restore_unchecked"
 	MsgBackupRestoreCommand      MessageCode = "backup.restore_command"
 	MsgBackupRestoreStartService MessageCode = "backup.restore_start_service"
 	MsgBackupRestoreStartProcess MessageCode = "backup.restore_start_process"
@@ -390,6 +391,10 @@ var backupsCatalog = map[MessageCode]message{
 	MsgBackupRestoreMove: {
 		en: "The restore refuses folders that exist, so rename the current ones first: %s to %s, and %s to %s.",
 		ko: "복원은 이미 있는 폴더에는 쓰지 않으므로, 먼저 지금 폴더의 이름을 바꾸세요. %s 폴더를 %s 폴더로, %s 폴더를 %s 폴더로 바꿉니다.",
+	},
+	MsgBackupRestoreUnchecked: {
+		en: "OwnGit could not check where %s will be once the state folder is renamed, so it gives no restore command. Check that OwnGit can read every folder on the way to it:",
+		ko: "상태 폴더 이름을 바꾼 뒤 %s이(가) 어디에 있게 될지 OwnGit이 확인하지 못해 복원 명령을 보여 주지 않습니다. 그곳까지 가는 모든 폴더를 OwnGit이 읽을 수 있는지 확인하세요:",
 	},
 	MsgBackupRestoreRun: {
 		en: "Run this command. It verifies the backup first and restores it only when it passes:",

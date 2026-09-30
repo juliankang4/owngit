@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -31,8 +33,14 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 			MovedState: stateDir + ".before-restore", MovedRepositories: repositoryRoot + ".before-restore",
 			Shell: commandShell(runtime.GOOS),
 		}
-		// An uploaded backup is in the state folder, which moves first.
-		if relative, inside := pathInside(stateDir, input); inside {
+		// An uploaded backup is in the state folder, which moves first. A
+		// command is given only when where input will be is known.
+		relative, inside, err := pathInside(stateDir, input)
+		if err != nil {
+			guide.Unchecked, guide.Problem = input, err.Error()
+			return guide
+		}
+		if inside {
 			input = filepath.Join(guide.MovedState, relative)
 		}
 		guide.Command = runAs + "owngit restore --input " + commandWord(input) + " --state-dir " + commandWord(stateDir) +
@@ -44,21 +52,31 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 	}
 }
 
-// pathInside returns the path of input relative to the folder dir when
-// input is inside it. The folders are compared as files, not as names, so
-// that a way through a link or another spelling of either still matches.
-func pathInside(dir, input string) (string, bool) {
+// pathInside reports whether input is inside the folder dir, and its path
+// relative to dir when it is. The folders are compared as files, not as
+// names, so that a way through a link or another spelling of either still
+// matches. A folder on the way that cannot be inspected is an error, not
+// an answer; one that does not exist means that input does not either, so
+// nothing of it moves with dir.
+func pathInside(dir, input string) (string, bool, error) {
 	folder, err := os.Stat(dir)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	for parent := filepath.Dir(input); parent != filepath.Dir(parent); parent = filepath.Dir(parent) {
-		if info, err := os.Stat(parent); err == nil && os.SameFile(info, folder) {
+		info, err := os.Stat(parent)
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", false, nil
+		}
+		if err != nil {
+			return "", false, err
+		}
+		if os.SameFile(info, folder) {
 			relative, err := filepath.Rel(parent, input)
-			return relative, err == nil
+			return relative, err == nil, err
 		}
 	}
-	return "", false
+	return "", false, nil
 }
 
 // commandWord quotes a path for this computer's shell (shellWord).

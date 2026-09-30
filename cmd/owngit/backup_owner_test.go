@@ -207,6 +207,8 @@ func TestServeRunsBackups(t *testing.T) {
 func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
 	stateDir, repositories := filepath.Join(t.TempDir(), "state"), filepath.Join(t.TempDir(), "repositories")
 	elsewhere := filepath.Join(t.TempDir(), "backups", "owngit-backup-1")
+	noErr(t, os.Mkdir(stateDir, 0o700))
+	noErr(t, os.MkdirAll(elsewhere, 0o700))
 	guide := restoreGuide(stateDir, false)(elsewhere, repositories)
 	if guide.Stop != "" || guide.Start != "" || guide.MovedState != stateDir+".before-restore" || guide.MovedRepositories != repositories+".before-restore" ||
 		guide.Command != "owngit restore --input "+commandWord(elsewhere)+" --state-dir "+commandWord(stateDir)+" --repository-root "+commandWord(repositories)+" --verify" {
@@ -233,6 +235,31 @@ func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
 		if want := "--input " + commandWord(filepath.Join(folders[0]+".before-restore", "backup-uploads", "b")); !strings.Contains(guide.Command, want) {
 			t.Fatalf("guide for %s with the upload %s: %s, want %s", folders[0], folders[1], guide.Command, want)
 		}
+	}
+}
+
+// When a folder on the way to an uploaded backup cannot be inspected, the
+// restore steps give no command, since the backup may move with the state
+// folder, and say which backup could not be checked.
+func TestRestoreGuideGivesNoCommandWhereItCannotCheck(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("folder permissions that keep this account out need a regular account on macOS or Linux")
+	}
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "state")
+	noErr(t, os.MkdirAll(filepath.Join(stateDir, "backup-uploads", "b"), 0o700))
+	// The upload is named through a link in a folder this account cannot
+	// search.
+	closed := filepath.Join(root, "closed")
+	noErr(t, os.Mkdir(closed, 0o700))
+	noErr(t, os.Symlink(stateDir, filepath.Join(closed, "state")))
+	upload := filepath.Join(closed, "state", "backup-uploads", "b")
+	noErr(t, os.Chmod(closed, 0))
+	defer os.Chmod(closed, 0o700)
+
+	guide := restoreGuide(stateDir, false)(upload, filepath.Join(root, "repositories"))
+	if guide.Command != "" || guide.Unchecked != upload || !strings.Contains(guide.Problem, "permission denied") {
+		t.Fatalf("guide for an upload that cannot be checked: %+v", guide)
 	}
 }
 

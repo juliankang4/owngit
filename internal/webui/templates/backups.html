@@ -168,7 +168,8 @@
   <ol class="bksteps">
     <li>{{if $r.Stop}}{{bi $lang "backup.restore_stop_service"}} <code>{{$r.Stop}}</code>{{else}}{{bi $lang "backup.restore_stop_process"}}{{end}}</li>
     <li>{{biF $lang "backup.restore_move" $r.StateDir $r.MovedState $r.RepositoryRoot $r.MovedRepositories}}</li>
-    <li>{{bi $lang "backup.restore_run"}}
+    {{if $r.Unchecked}}<li><p class="wn">{{icon "warning"}}<span>{{biF $lang "backup.restore_unchecked" $r.Unchecked}}</span> <span class="mono bkmsg" dir="auto">{{$r.Problem}}</span></p></li>
+    {{else}}<li>{{bi $lang "backup.restore_run"}}
       <div class="clonefield bkcmd" data-clone>
         <label class="clonefield__l" for="{{.ID}}">{{bi $lang "backup.restore_command"}}{{with $r.Shell}} ({{.}}){{end}}</label>
         <div class="clonefield__row">
@@ -180,7 +181,7 @@
           <span data-copy-fail hidden>{{icon "info"}}{{bi $lang "repo.overview.copy_failed"}}</span>
         </p>
       </div>
-    </li>
+    </li>{{end}}
     <li>{{if $r.Start}}{{bi $lang "backup.restore_start_service"}} <code>{{$r.Start}}</code>{{else}}{{bi $lang "backup.restore_start_process"}}{{end}}</li>
   </ol>
   <p class="f__help">{{bi $lang "backup.restore_after"}}</p>

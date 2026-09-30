@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"html"
 	"mime/multipart"
 	"net/http"
@@ -179,6 +181,27 @@ func TestBackupsInTheDashboard(t *testing.T) {
 	page = browserGET(t, client, storage)
 	if !strings.Contains(page.body, html.EscapeString("owngit restore --input "+status.Upload.Path)) {
 		t.Fatal("the page does not show how to restore the uploaded backup")
+	}
+
+	// Where the upload will be could not be checked: no command, and the
+	// page and the API say which backup and why.
+	fixture.app.RestoreGuide = func(input, _ string) *webui.BackupRestore {
+		return &webui.BackupRestore{Unchecked: input, Problem: "stat: permission denied"}
+	}
+	page = browserGET(t, client, storage)
+	if strings.Contains(page.body, "owngit restore --input") || !strings.Contains(page.body, html.EscapeString(fmt.Sprintf(webui.Text(webui.LangEN, webui.MsgBackupRestoreUnchecked), status.Upload.Path))) ||
+		!strings.Contains(page.body, "stat: permission denied") {
+		t.Fatal("the page does not say that the uploaded backup could not be checked")
+	}
+	response := adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/backups", nil, "admin-password")
+	defer response.Body.Close()
+	var answer struct {
+		Command string `json:"upload_restore_command"`
+		Problem string `json:"upload_restore_problem"`
+	}
+	noErr(t, json.NewDecoder(response.Body).Decode(&answer))
+	if answer.Command != "" || !strings.Contains(answer.Problem, status.Upload.Path) || !strings.Contains(answer.Problem, "permission denied") {
+		t.Fatalf("API status for an upload that could not be checked: %+v", answer)
 	}
 }
 

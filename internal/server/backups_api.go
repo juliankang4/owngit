@@ -68,15 +68,19 @@ func (app *App) handleBackupsAPI(writer http.ResponseWriter, request *http.Reque
 		if upload := status.Upload; upload != nil && upload.Status == backups.UploadPassed && upload.Path != "" {
 			restore = app.restoreGuide(upload.Path, settings)
 		}
-		var command string
+		var command, problem string
 		if restore != nil {
 			command = restore.Command
+			if restore.Unchecked != "" {
+				problem = "OwnGit could not check where " + restore.Unchecked + " will be once the state folder is renamed, so it gives no restore command: " + restore.Problem
+			}
 		}
 		writeAPIJSON(writer, http.StatusOK, struct {
 			OK bool `json:"ok"`
 			backups.Status
 			UploadRestoreCommand string `json:"upload_restore_command,omitempty"`
-		}{true, status, command})
+			UploadRestoreProblem string `json:"upload_restore_problem,omitempty"`
+		}{true, status, command, problem})
 	case "/api/v1/backups/runs":
 		if request.Method != http.MethodGet && request.Method != http.MethodPost {
 			writeAPIMethodError(writer, "GET, POST")
