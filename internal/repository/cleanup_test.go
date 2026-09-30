@@ -2,8 +2,10 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -84,6 +86,28 @@ func TestCleanupRemovesOnlyOldUnreachableObjects(t *testing.T) {
 			before := inventory(t, remote)
 
 			schedule.cleanupGrace = 14 * 24 * time.Hour
+			// An unfinished check job or an import in progress may still
+			// need an unreachable commit, so cleanup waits for them.
+			task, err := manager.Store.CreateTask(ctx, "cleanup", "check", time.Now())
+			noErr(t, err)
+			noErr(t, manager.Store.Exec(ctx, `INSERT INTO check_jobs(id,repository_id,task_id,trigger_kind,event_key,source_oid,trigger_ref,workflow_path,
+				workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,dedup_digest,status,admitted_at)
+				VALUES('job','cleanup',?,'push','event',?,'refs/heads/main','check.yml',?,1,'host',1,1,'{}','{}',?,'pending',1)`,
+				task.ID, oldLoose, strings.Repeat("a", 64), strings.Repeat("b", 64)))
+			noErr(t, manager.Store.Exec(ctx, `INSERT INTO import_runs(id,repository_id,source_generation,authority_revision,kind,status,started_at,created_at)
+				VALUES('run','cleanup',1,1,'refresh','fetching',1,1)`))
+			for _, finish := range []string{
+				`UPDATE check_jobs SET status='claimed' WHERE id='job'`,
+				`UPDATE check_jobs SET status='started' WHERE id='job'`,
+				`UPDATE check_jobs SET status='passed' WHERE id='job'`,
+				`UPDATE import_runs SET status='publishing' WHERE id='run'`,
+				`UPDATE import_runs SET status='complete' WHERE id='run'`,
+			} {
+				if _, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) || !exists(oldLoose) || !exists(oldPacked) {
+					t.Fatalf("cleanup with an unfinished consumer: err=%v", err)
+				}
+				noErr(t, manager.Store.Exec(ctx, finish))
+			}
 			steps, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule)
 			noErr(t, err, "cleanup")
 			if steps != 4 {

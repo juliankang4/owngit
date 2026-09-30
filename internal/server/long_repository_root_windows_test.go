@@ -50,7 +50,7 @@ func TestWindowsLongRepositoryRootSupportsBrowserPullRequestDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	app := &App{Repositories: manager}
+	app := &App{Store: store, Repositories: manager}
 	changes, err := app.comparePullRequestRevisions(ctx, stored.ID, sourceOID, targetOID)
 	noErr(t, err)
 	files := changes.Files

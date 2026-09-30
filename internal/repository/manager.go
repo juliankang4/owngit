@@ -541,7 +541,6 @@ is_null_oid() {
     *) return 0 ;;
   esac
 }
-is_null_oid "$old" && exit 0
 run_git() {
   /usr/bin/env -i PATH=%s HOME=%s XDG_CONFIG_HOME=%s GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=%s GIT_CONFIG_GLOBAL=%s GIT_TERMINAL_PROMPT=0 LC_ALL=C LANG=C TZ=UTC TMPDIR=%s GIT_DIR="$GIT_DIR" %s "$@"
 }
@@ -549,6 +548,16 @@ run_git_objects() {
   if test -z "${GIT_OBJECT_DIRECTORY:-}"; then run_git "$@"; return; fi
   /usr/bin/env -i PATH=%s HOME=%s XDG_CONFIG_HOME=%s GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_SYSTEM=%s GIT_CONFIG_GLOBAL=%s GIT_TERMINAL_PROMPT=0 LC_ALL=C LANG=C TZ=UTC TMPDIR=%s GIT_DIR="$GIT_DIR" GIT_OBJECT_DIRECTORY="$GIT_OBJECT_DIRECTORY" GIT_ALTERNATE_OBJECT_DIRECTORIES="$GIT_ALTERNATE_OBJECT_DIRECTORIES" %s "$@"
 }
+# A symbolic ref would pass the update on to its target, which may be a
+# ref this hook protects or reserves. Only HEAD is symbolic by design.
+if run_git symbolic-ref --quiet "$ref" >/dev/null 2>&1; then
+  printf 'OwnGit refused updating %%s because it is a symbolic ref that points to another ref. Push to the ref it points to directly.\n' "$ref" >&2
+  exit 1
+else
+  status=$?
+  test "$status" = 1 || { echo "OwnGit could not check whether the ref is symbolic" >&2; exit 1; }
+fi
+is_null_oid "$old" && exit 0
 actual=$(run_git show-ref --verify --hash "$ref" 2>/dev/null) || { echo "current ref is missing" >&2; exit 1; }
 test "$actual" = "$old" || { echo "current ref changed concurrently" >&2; exit 1; }
 run_git_objects cat-file -e "$old^{object}" || { echo "old object is unavailable" >&2; exit 1; }

@@ -50,6 +50,24 @@ func TestPushFollowsExtraRefNamespaces(t *testing.T) {
 			})
 			noErr(t, err)
 			runHTTPGit(t, work, "push", "-q", "origin", "refs/notes/commits")
+			// A symbolic ref under the namespace would pass an update on to
+			// its target, so every push through one is refused.
+			runHTTPGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/topic")
+			head := httpGitOutput(t, work, "rev-parse", "HEAD")
+			runHTTPGit(t, "", "--git-dir", remote, "update-ref", "refs/owngit/reserved-test", head)
+			runHTTPGit(t, work, "commit", "--allow-empty", "-q", "-m", "through an alias")
+			for alias, target := range map[string]string{"refs/notes/to-owngit": "refs/owngit/reserved-test", "refs/notes/to-main": "refs/heads/main", "refs/notes/to-topic": "refs/heads/topic"} {
+				runHTTPGit(t, "", "--git-dir", remote, "symbolic-ref", alias, target)
+				output, err := httpGitCombined(work, "push", "--force", "origin", "HEAD:"+alias)
+				if err == nil || !strings.Contains(output, "is a symbolic ref that points to another ref") {
+					t.Fatalf("push through %s: err=%v output=%s", alias, err, output)
+				}
+				if got := httpGitOutput(t, "", "--git-dir", remote, "rev-parse", target); got != head {
+					t.Fatalf("a push through %s moved %s to %s", alias, target, got)
+				}
+				runHTTPGit(t, "", "--git-dir", remote, "symbolic-ref", "--delete", alias)
+			}
+			runHTTPGit(t, work, "reset", "-q", "--hard", "HEAD~1")
 			first := httpGitOutput(t, work, "rev-parse", "refs/notes/commits")
 			runHTTPGit(t, work, "notes", "add", "-f", "-m", "rewritten note")
 			runHTTPGit(t, work, "update-ref", "refs/notes/commits", httpGitOutput(t, work, "commit-tree", "-m", "unrelated", httpGitOutput(t, work, "rev-parse", "refs/notes/commits^{tree}")))

@@ -157,6 +157,11 @@ func maintenanceCommands(kind MaintenanceKind, grace time.Duration) [][]string {
 	}
 }
 
+// errCleanupDeferred reports that a check or an import that may still need
+// an unreachable object was unfinished for the repository; its cleanup
+// waits for the next window.
+var errCleanupDeferred = errors.New("a check or an import of the repository has not finished")
+
 // errMaintenanceBusy reports that the repository was in use or still being
 // prepared; the maintenance runs later.
 var errMaintenanceBusy = errors.New("the repository is in use")
@@ -542,6 +547,11 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 		if job.night != "" {
 			entry.night = job.night
 		}
+	case errors.Is(err, errCleanupDeferred):
+		// Tonight's cleanup is over; a write still gets its small
+		// maintenance.
+		entry.pending = entry.pending || wasPending
+		entry.night = job.night
 	case errors.Is(err, errMaintenanceBusy) || jobContext.Err() != nil:
 		entry.pending = entry.pending || wasPending
 		entry.notBefore = schedule.Now().Add(schedule.Retry)
@@ -563,6 +573,8 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 		// Nothing ran; a deferral is retried without a log line.
 	case err == nil:
 		logf("repository %q maintenance (%s) completed in %s", job.id, kind, elapsed)
+	case errors.Is(err, errCleanupDeferred):
+		logf("repository %q maintenance (%s) deferred to the next window after %d of %d steps: %v", job.id, kind, steps, total, err)
 	case errors.Is(err, errMaintenanceBusy):
 		logf("repository %q maintenance (%s) paused after %s and %d of %d steps: %v; the rest runs later", job.id, kind, elapsed, steps, total, err)
 	case jobContext.Err() != nil:
@@ -613,6 +625,19 @@ func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind,
 		if m.heldForBackup(id) {
 			lock.UnlockWithoutRefChanges()
 			return index, errMaintenanceBusy
+		}
+		// A check or an import records the commits it will read only in
+		// the state, where no ref reaches them. Cleanup reads whether any
+		// is unfinished under the write lock it cleans under.
+		if kind == MaintenanceCleanup {
+			busy, err := m.Store.RepositoryObjectsInUse(ctx, id)
+			if err == nil && busy {
+				err = errCleanupDeferred
+			}
+			if err != nil {
+				lock.UnlockWithoutRefChanges()
+				return index, err
+			}
 		}
 		timeout := schedule.CommandTimeout
 		if kind != MaintenanceSmall && args[0] == "repack" {
