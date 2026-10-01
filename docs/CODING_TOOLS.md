@@ -427,9 +427,11 @@ stops (`until`). `repo list` returns at most 1000 repositories, with
 rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, `invalid_repository_description` (over 500
 bytes), `repository_name_busy` (an import for that name is still running or
-needs recovery; try again after it finishes), or `repository_storage_in_use`
+needs recovery; try again after it finishes), `repository_storage_in_use`
 (another running OwnGit server uses the repository folder; stop that server
-or choose another folder).
+or choose another folder), or `repository_create_kept` (the repository could
+not be recorded and its folder remains; check its contents and move it aside
+before trying that name again).
 
 These `repo` commands are owner actions and need the administrator password in
 `--password-file` instead:
