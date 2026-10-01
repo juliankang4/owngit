@@ -341,6 +341,7 @@ const (
 	MsgRepoDescriptionTooLong MessageCode = "repo.new.description_too_long"
 	MsgRepoNameLong           MessageCode = "repo.new.name_long"
 	MsgRepoCreateFail         MessageCode = "repo.new.failed"
+	MsgRepoCreationKept       MessageCode = "repo.new.kept_after_failure"
 	MsgRepoCreated            MessageCode = "repo.new.created"
 
 	MsgRepoEmpty            MessageCode = "repo.empty"
@@ -1362,6 +1363,10 @@ var catalog = map[MessageCode]message{
 	MsgRepoCreateFail: {
 		en: "The repository could not be created. Nothing was stored.",
 		ko: "저장소를 만들지 못했습니다. 저장된 내용은 없습니다.",
+	},
+	MsgRepoCreationKept: {
+		en: "The repository could not be recorded, and its folder remains. Check its contents and move it aside before trying that name again.",
+		ko: "저장소를 기록하지 못해 폴더가 남았습니다. 내용을 확인한 뒤 다른 곳으로 옮겨야 같은 이름으로 다시 만들 수 있습니다.",
 	},
 	MsgRepoCreated: {
 		en: "Repository created.",

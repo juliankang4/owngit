@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -230,7 +231,9 @@ func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
 	if len(kept) != 1 || !kept[0].IsDir() {
 		t.Fatalf("preserved folders=%v", kept)
 	}
-	if !strings.Contains(serverLog.String(), keptRoot) || !strings.Contains(serverLog.String(), "may be removed") {
+	// Causes are quoted in the log, including doubled Windows separators.
+	loggedRoot := strconv.Quote(keptRoot)
+	if !strings.Contains(serverLog.String(), loggedRoot[1:len(loggedRoot)-1]) || !strings.Contains(serverLog.String(), "may be removed") {
 		t.Fatal("log does not name the removable empty preservation folder")
 	}
 	listed := decodeRepositoryList(t, apiRequest(t, http.MethodGet, collection, nil, "", ""))
@@ -271,6 +274,44 @@ func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(keptRoot, kept[0].Name(), "config")); err != nil {
 		t.Fatalf("imports or backup removed the preserved tree: %v", err)
+	}
+}
+
+func TestCreationPreservationLimitNamesOnlyTheRequestedFolder(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	collection := server.URL + "/api/v1/repositories"
+	ctx := context.Background()
+	noErr(t, fixture.store.Exec(ctx, `CREATE TRIGGER refuse_creation BEFORE INSERT ON repositories BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	defer fixture.store.Exec(ctx, `DROP TRIGGER refuse_creation`)
+	for attempt := 0; attempt < 9; attempt++ {
+		response := apiRequest(t, http.MethodPost, collection, map[string]string{"name": "Kept"}, "", "")
+		var envelope pullrequest.ErrorEnvelope
+		noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+		response.Body.Close()
+		if response.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("attempt %d status=%d", attempt, response.StatusCode)
+		}
+		if attempt == 8 && (envelope.Error.Code != "repository_create_kept" || !strings.Contains(envelope.Error.Message, "kept.git") || !strings.Contains(envelope.Error.Message, "move it aside")) {
+			t.Fatalf("full preservation response=%+v", envelope.Error)
+		}
+		if strings.Contains(envelope.Error.Message, fixture.app.Repositories.RepositoryRoot()) || strings.Contains(envelope.Error.Message, ".owngit-failed-create") {
+			t.Fatal("creation response exposed a private or hidden preservation path")
+		}
+	}
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		client, jar := newBrowserClient(t)
+		browserGET(t, client, server.URL+"/repositories/new?lang="+string(lang))
+		name := "browser-" + string(lang)
+		response := browserForm(t, client, server.URL+"/repositories", url.Values{
+			"csrf": {cookieValue(t, jar, server.URL, generalCookie)}, "name": {name},
+		}, server.URL)
+		if response.status != http.StatusServiceUnavailable || !strings.Contains(response.body, webui.Text(lang, webui.MsgRepoCreationKept)) || !strings.Contains(response.body, name+".git") {
+			t.Fatalf("kept browser response language=%s status=%d", lang, response.status)
+		}
+		if strings.Contains(response.body, fixture.app.Repositories.RepositoryRoot()) || strings.Contains(response.body, ".owngit-failed-create") {
+			t.Fatal("browser response exposed a private or hidden preservation path")
+		}
 	}
 }
 

@@ -26,9 +26,10 @@ var (
 	validName      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)
 	ErrInvalidName = errors.New("invalid repository name")
 	// ErrReservedName wraps ErrInvalidName for names that address a form page.
-	ErrReservedName       = fmt.Errorf("%w: reserved name", ErrInvalidName)
-	ErrInvalidDescription = errors.New("invalid repository description")
-	ErrNameTaken          = errors.New("repository name is already in use")
+	ErrReservedName        = fmt.Errorf("%w: reserved name", ErrInvalidName)
+	ErrInvalidDescription  = errors.New("invalid repository description")
+	ErrNameTaken           = errors.New("repository name is already in use")
+	ErrFailedCreationLimit = errors.New("the failed-creation folder is full; check its contents and clear kept empty folders, then check and move the unaccepted repository folder aside before retrying")
 	// ErrFolderExists identifies a folder with no repository record. OwnGit
 	// never adopts or removes it when creating a repository.
 	ErrFolderExists      = fmt.Errorf("%w: a folder already exists; choose another name, or move the existing folder aside after checking its contents", ErrNameTaken)
@@ -71,6 +72,8 @@ type Manager struct {
 	// storageClaim holds this server's lock on the repository folder; see
 	// ClaimStorage.
 	storageClaim storageClaimState
+	// failedCreationMu serializes the preservation count and move across names.
+	failedCreationMu sync.Mutex
 	// PreparationRetry replaces the 30-second first wait after a failed
 	// preparation attempt. Tests shorten it; zero keeps the default.
 	PreparationRetry time.Duration
@@ -211,7 +214,12 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	}
 	created = true
 	repository := state.Repository{ID: id, Name: name, Address: id, Description: strings.TrimSpace(description), CreatedAt: time.Now()}
-	if err := m.Store.AddRepository(ctx, repository); err != nil {
+	// Publication has landed. Finish its durable record even if the client
+	// disconnects, but never keep recording alive without a bounded deadline.
+	recordCtx, finishRecord := context.WithTimeout(context.WithoutCancel(ctx), creationRecordTimeout)
+	recordErr := m.Store.AddRepository(recordCtx, repository)
+	finishRecord()
+	if err := recordErr; err != nil {
 		// A cancelled request or storage error must not remove a directory
 		// whose record might have committed. Read independently of the request.
 		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -226,12 +234,15 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		// No request can use this repository before its row exists. Move
 		// this attempt's unchanged empty tree out of the published name,
 		// without deleting files that another writer could replace.
-		if rollbackErr := creation.rollback(finalPath); rollbackErr != nil {
+		m.failedCreationMu.Lock()
+		rollbackErr := creation.rollback(finalPath)
+		m.failedCreationMu.Unlock()
+		if rollbackErr != nil {
 			keptPath := finalPath
 			if creation.preserved != "" {
 				keptPath = creation.preserved
 			}
-			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %v", err, keptPath, rollbackErr)
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %w", err, keptPath, rollbackErr)
 		}
 		return state.Repository{}, fmt.Errorf("record repository: %w; the unaccepted empty folder is preserved at %s and may be removed", err, creation.preserved)
 	}
@@ -244,7 +255,11 @@ type creationEntry struct {
 	digest [sha256.Size]byte
 }
 
-const failedCreateDirectory = ".owngit-failed-create"
+const (
+	failedCreateDirectory  = ".owngit-failed-create"
+	maximumFailedCreations = 8
+	creationRecordTimeout  = 5 * time.Second
+)
 
 // emptyCreation pins the storage parent and records this attempt's tree.
 // No handle on the child directory is kept across publication or rollback:
@@ -356,6 +371,21 @@ func (creation *emptyCreation) rollback(path string) error {
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return errors.New("the failed-creation folder is not an unlinked directory")
+	}
+	directory, err := creation.parent.Open(failedCreateDirectory)
+	if err != nil {
+		return err
+	}
+	entries, readErr := directory.Readdirnames(maximumFailedCreations)
+	closeErr := directory.Close()
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return errors.Join(readErr, closeErr)
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if len(entries) >= maximumFailedCreations {
+		return fmt.Errorf("%w (%d entries)", ErrFailedCreationLimit, maximumFailedCreations)
 	}
 	suffix := make([]byte, 16)
 	if _, err := rand.Read(suffix); err != nil {

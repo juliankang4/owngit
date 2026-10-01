@@ -3,12 +3,16 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestCreationRollbackPreservesMovedRootJunction(t *testing.T) {
@@ -27,13 +31,33 @@ func TestCreationRollbackPreservesMovedRootJunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create synthetic junction: %v %s", err, output)
 	}
+	before := junctionReparseData(t, path)
 	if err := creation.rollback(path); err == nil {
 		t.Fatal("rollback accepted a junction to the moved original")
 	}
 	if _, err := os.Stat(filepath.Join(moved, "config")); err != nil {
 		t.Fatalf("rollback changed the moved tree: %v", err)
 	}
-	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("rollback changed the substituted junction: %v %v", info, err)
+	if after := junctionReparseData(t, path); !bytes.Equal(before, after) {
+		t.Fatal("rollback changed the junction's reparse tag or target")
 	}
+	if creation.preserved != "" {
+		t.Fatal("rollback moved the substituted junction")
+	}
+}
+
+func junctionReparseData(t *testing.T, path string) []byte {
+	t.Helper()
+	name, err := windows.UTF16PtrFromString(path)
+	noErr(t, err)
+	handle, err := windows.CreateFile(name, 0, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	noErr(t, err)
+	defer windows.CloseHandle(handle)
+	data := make([]byte, windows.MAXIMUM_REPARSE_DATA_BUFFER_SIZE)
+	var returned uint32
+	noErr(t, windows.DeviceIoControl(handle, windows.FSCTL_GET_REPARSE_POINT, nil, 0, &data[0], uint32(len(data)), &returned, nil))
+	if returned < 8 || binary.LittleEndian.Uint32(data[:4]) != windows.IO_REPARSE_TAG_MOUNT_POINT {
+		t.Fatalf("entry is not a mount-point junction: returned=%d tag=%x", returned, binary.LittleEndian.Uint32(data[:4]))
+	}
+	return data[:returned]
 }
