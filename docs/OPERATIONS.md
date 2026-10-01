@@ -177,7 +177,7 @@ The chooser opens at the path in the field. With the field empty, it opens at th
 - "Create folder" makes one folder inside the open folder and opens it. It never replaces something that already exists.
 - A missing folder, a path that is not a folder, a folder the account cannot read, or a folder that does not answer within 3 seconds shows an error, never an empty list. Go to the parent folder or type another path.
 - In a very large folder, only the folders among the first 2,000 entries are listed, with a notice saying so.
-- "Use this folder" only fills in the field. Setup checks the path when you submit the form, as it does for a typed one.
+- "Use this folder" only fills in the field. Setup checks the path when you submit the form, as it does for a typed one, and refuses a folder that another running OwnGit server uses.
 
 Only the browser that is running setup can use the chooser, and only until setup finishes. OwnGit refuses it to anyone else, and after setup it is gone.
 
@@ -1958,10 +1958,11 @@ When OwnGit refuses the state directory itself, it cannot record why there. `own
 
 ### Repository folder
 
-The repository folder, chosen during setup, can be on another disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files alone and creates bare repositories ending in `.git` there. While it serves, it keeps a `.owngit-serve.lock` file locked in that folder, so a second server on the same folder, for example from a copy of the state directory, refuses to start. On a network share, this detection depends on the share's file locking.
+The repository folder, chosen during setup, can be on another disk or a mounted SMB or NFS share, with one OwnGit writer at a time. OwnGit leaves existing files alone and creates bare repositories ending in `.git` there. While it serves, it keeps a `.owngit-serve.lock` file locked in that folder, so a second server on the same folder, for example from a copy of the state directory, refuses to start. Setup, in the terminal or the browser, likewise refuses a folder that another running OwnGit server uses before it reports setup as finished; choose another folder, or stop that server and try again. On a network share, this detection depends on the share's file locking.
 
 - Repository names cannot end in `.git` or use Windows device names such as `CON`, `AUX`, `NUL`, `COM1` or `LPT1`, with or without an extension, on any platform. `new` and `new-import` are reserved.
-- New repositories are written under a temporary `.owngit-create-*` name and renamed into place. On Windows, antivirus or search indexing can briefly lock the new directory, and OwnGit retries for about 2 seconds.
+- New repositories are written under a temporary `.owngit-create-*` name and renamed into place. On Windows, antivirus or search indexing can briefly lock the new directory, and OwnGit retries for about 2 seconds. When creating a repository fails before OwnGit records it, OwnGit removes the empty folder it just made, if nothing changed it, so the same name can be tried again.
+- OwnGit never adopts or removes a folder that already has a new repository's name, including one an earlier version left without a record. Choose another name, or check the folder's contents and move it aside.
 - Deleted repositories use `.owngit-delete-*`, `.owngit-removed` and `.owngit-deletion-*` names ([Deleting a repository](#deleting-a-repository)).
 
 ### Busy repositories and caching
