@@ -51,6 +51,89 @@ func TestOpenPullRequestPagesMakeFairProgressPastFirstPageAndBusyHistory(t *test
 	}
 }
 
+func TestMergeReceiptBelongsOnlyToItsPublishedRevision(t *testing.T) {
+	record := PullRequest{RepositoryID: "project", Number: 1, Status: PullRequestOpen}
+	ref := "refs/owngit/pull-requests/1/merge-receipt"
+	oldSource, source, target := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40)
+	published := PullRequestMergeIntent{RepositoryID: record.RepositoryID, PullRequestNumber: record.Number,
+		SourceOID: source, TargetOID: target, ResultOID: source, ReceiptRef: ref, Status: MergeIntentReady}
+	for _, status := range []string{MergeIntentPreparing, MergeIntentPlanned, MergeIntentReady} {
+		t.Run(status, func(t *testing.T) {
+			abandoned := published
+			abandoned.SourceOID, abandoned.ResultOID, abandoned.Status = oldSource, oldSource, status
+			if status == MergeIntentPreparing {
+				abandoned.ResultOID = ""
+			}
+			intents := []PullRequestMergeIntent{abandoned, published}
+			owner, err := PullRequestMergeReceiptOwner(record, intents, source)
+			noErr(t, err)
+			if owner.SourceOID != source || owner.TargetOID != target {
+				t.Fatalf("receipt owner: %+v", owner)
+			}
+			if _, err := PullRequestMergeReceiptOwner(record, intents, strings.Repeat("d", 40)); err == nil {
+				t.Fatal("unrelated receipt was accepted")
+			}
+			merged := record
+			merged.Status, merged.MergeSourceOID, merged.MergeTargetOID = PullRequestMerged, source, target
+			merged.MergeOID, merged.MergeReceipt = source, ref
+			intents[1].Status = MergeIntentComplete
+			_, err = PullRequestMergeReceiptOwner(merged, intents, source)
+			noErr(t, err)
+			if _, err := PullRequestMergeReceiptOwner(merged, intents, oldSource); err == nil {
+				t.Fatal("abandoned receipt replaced the merged revision")
+			}
+		})
+	}
+	if _, err := PullRequestMergeReceiptOwner(record, []PullRequestMergeIntent{published, published}, source); err == nil {
+		t.Fatal("ambiguous receipt was accepted")
+	}
+	for _, status := range []string{MergeIntentPreparing, MergeIntentPlanned, MergeIntentComplete} {
+		intent := published
+		intent.Status = status
+		if _, err := PullRequestMergeReceiptOwner(record, []PullRequestMergeIntent{intent}, source); err == nil {
+			t.Fatalf("open PR accepted receipt for %s plan", status)
+		}
+	}
+	foreign := published
+	foreign.RepositoryID = "other"
+	if _, err := PullRequestMergeReceiptOwner(record, []PullRequestMergeIntent{foreign}, source); err == nil {
+		t.Fatal("another repository's receipt was accepted")
+	}
+}
+
+func TestCompletedMergeCannotBeReassignedToAnotherRevision(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
+	noErr(t, err)
+	defer store.Close()
+	now := time.Unix(1_800_000_000, 0).UTC()
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: now}))
+	source, target := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	request, err := store.CreatePullRequest(ctx, "project", "Already contained", "feature", "main", source, target, ReviewSkipped, now)
+	noErr(t, err)
+	complete := func(source string) (PullRequestMergeIntent, error) {
+		intent, err := store.BeginPullRequestMerge(ctx, PullRequestMergeIntent{RepositoryID: "project", PullRequestNumber: request.Number,
+			SourceOID: source, TargetOID: target, ReceiptRef: "refs/owngit/pull-requests/1/merge-receipt", CreatedAt: now})
+		noErr(t, err)
+		intent.Mode, intent.ResultOID, intent.Status = "up_to_date", target, MergeIntentReady
+		intent, err = store.UpdatePullRequestMergeIntent(ctx, intent)
+		noErr(t, err)
+		return intent, store.CompletePullRequestMerge(ctx, intent, now, Actor{})
+	}
+	first, err := complete(source)
+	noErr(t, err)
+	_, err = complete(strings.Repeat("c", 40))
+	if err == nil {
+		t.Fatal("another revision with the same result claimed the completed merge")
+	}
+	noErr(t, store.DeleteUnpublishedPullRequestMerge(ctx, first))
+	stored, ok, err := store.PullRequestMergeIntent(ctx, "project", request.Number, source, target)
+	noErr(t, err)
+	if !ok || stored.Status != MergeIntentComplete {
+		t.Fatal("discarding a plan removed published evidence")
+	}
+}
+
 func TestPullRequestNumbersAreDurableAndPerRepository(t *testing.T) {
 	ctx := context.Background()
 	directory := filepath.Join(t.TempDir(), "state")

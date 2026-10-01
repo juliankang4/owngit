@@ -158,6 +158,50 @@ func TestUpgradeBackupRestoresTheStateBeforeTheUpgrade(t *testing.T) {
 // When the backup cannot be made, the state is not upgraded: its files stay
 // as they were, so the earlier version can still use it, and the error
 // says what to do. The next start after the cause is fixed upgrades it.
+func TestUpgradeBackupWithReleasedAbandonedMergePlans(t *testing.T) {
+	fixtures := os.Getenv("OWNGIT_RELEASED_MERGE_FIXTURES")
+	if fixtures == "" {
+		t.Skip("requires synthetic older-schema state produced by a released binary")
+	}
+	for _, status := range []string{state.MergeIntentPreparing, state.MergeIntentPlanned, state.MergeIntentReady} {
+		t.Run(status, func(t *testing.T) {
+			// Copy the closed released database byte for byte. Its repository
+			// root remains the original synthetic fixture, not a live repository.
+			content, err := os.ReadFile(filepath.Join(fixtures, "upgrade", status, "state", "owngit.sqlite"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := t.TempDir()
+			stateDir := filepath.Join(root, "state")
+			if err := os.Mkdir(stateDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(stateDir, "owngit.sqlite"), content, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			lines, err := openStateForTest(t, stateDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(lines) == 0 || !strings.Contains(lines[0], "before upgrading it from schema 15 to 16") {
+				t.Fatalf("actual pre-upgrade backup did not run: %q", lines)
+			}
+			backups := upgradeBackups(t, stateDir)
+			if len(backups) != 1 {
+				t.Fatalf("upgrade backups: %v", backups)
+			}
+			backup := filepath.Join(state.UpgradeBackupFolder(stateDir), backups[0])
+			result, err := recovery.Verify(context.Background(), backup, root, "")
+			if err != nil || !result.Verified {
+				t.Fatalf("upgrade backup verification: %+v err=%v", result, err)
+			}
+			if err := recovery.Restore(context.Background(), backup, filepath.Join(root, "restored-state"), filepath.Join(root, "restored-repositories"), ""); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestFailedUpgradeBackupLeavesTheStateAsItWas(t *testing.T) {
 	for _, test := range []struct {
 		name    string

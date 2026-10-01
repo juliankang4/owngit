@@ -548,6 +548,90 @@ func TestMergeConflictLeavesTargetAndReceiptUnchanged(t *testing.T) {
 	if fixture.refExists(MergeReceiptRef(created.Number)) {
 		t.Fatal("conflicted merge created a receipt")
 	}
+	intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, false)
+	noErr(t, err)
+	if len(intents) != 0 {
+		t.Fatalf("conflicted merge left durable plans: %+v", intents)
+	}
+}
+
+func TestChangedRevisionMergeDiscardsUnpublishedPlans(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("synthetic Git fault wrapper uses a POSIX shell")
+	}
+	for _, fault := range []string{"result_full", "publication_full", "cancel_publication"} {
+		t.Run(fault, func(t *testing.T) {
+			fixture, number, source, target := newMovedHeadFixture(t)
+			realRunner := fixture.manager.Git
+			gitPath, err := exec.LookPath("git")
+			noErr(t, err)
+			root := t.TempDir()
+			marker := filepath.Join(root, "publication-started")
+			pattern := "*/merge-receipt*"
+			if fault == "result_full" {
+				pattern = "*/result*"
+			}
+			action := "printf '%s\\n' 'fatal: write failed: No space left on device' >&2; exit 128"
+			if fault == "cancel_publication" {
+				action = "printf started > " + shellQuote(marker) + "; sleep 20; exit 128"
+			}
+			shim := filepath.Join(root, "git-fault")
+			noErr(t, os.WriteFile(shim, []byte("#!/bin/sh\ncase \" $* \" in\n*' update-ref --stdin '*)\n input=$(cat)\n case \"$input\" in\n "+pattern+") "+action+";;\n esac\n printf '%s\\n' \"$input\" | "+shellQuote(gitPath)+" \"$@\"; exit $?;;\nesac\nexec "+shellQuote(gitPath)+" \"$@\"\n"), 0o700))
+			fixture.manager.Git, err = gitexec.New(shim, filepath.Join(root, "runtime"))
+			noErr(t, err)
+			ctx, cancel := context.WithTimeout(fixture.ctx, 10*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := fixture.service.Merge(ctx, fixture.repositoryID, number, RevisionInput{SourceOID: source, TargetOID: target})
+				done <- err
+			}()
+			if fault == "cancel_publication" {
+				deadline := time.Now().Add(5 * time.Second)
+				for {
+					if _, err := os.Stat(marker); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						t.Fatal("publication gate was not reached")
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				cancel()
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("faulted merge reported success")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("faulted merge did not stop")
+			}
+			fixture.manager.Git = realRunner
+			intent, exists, err := fixture.store.PullRequestMergeIntent(fixture.ctx, fixture.repositoryID, number, source, target)
+			noErr(t, err)
+			wantStatus := state.MergeIntentReady
+			if fault == "result_full" {
+				wantStatus = state.MergeIntentPlanned
+			}
+			if !exists || intent.Status != wantStatus {
+				t.Fatalf("fault checkpoint: %+v exists=%v", intent, exists)
+			}
+			if fixture.ref("refs/heads/main") != target || fixture.refExists(MergeReceiptRef(number)) {
+				t.Fatal("refused merge changed published state")
+			}
+			source = fixture.commitFile("third.txt", "third\n", "changed revision")
+			fixture.push("HEAD:refs/heads/feature")
+			merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, number, RevisionInput{SourceOID: source, TargetOID: target})
+			noErr(t, err)
+			intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, false)
+			noErr(t, err)
+			if len(intents) != 1 || intents[0].Status != state.MergeIntentComplete || merged.Merge == nil || fixture.ref(MergeReceiptRef(number)) != source {
+				t.Fatalf("changed revision did not settle its own receipt: %+v", intents)
+			}
+			noErr(t, fixture.service.ReconcileAll(fixture.ctx))
+		})
+	}
 }
 
 func TestMergeRejectsUnrelatedHistoriesWithoutChangingTarget(t *testing.T) {

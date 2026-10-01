@@ -725,6 +725,41 @@ func (s *Store) UpdatePullRequestMergeIntent(ctx context.Context, intent PullReq
 	return stored, err
 }
 
+// DeleteUnpublishedPullRequestMerge removes a plan only after its caller,
+// holding the repository write lock, has established that no receipt exists.
+func (s *Store) DeleteUnpublishedPullRequestMerge(ctx context.Context, intent PullRequestMergeIntent) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM pull_request_merge_intents
+		WHERE repository_id=? AND pull_request_number=? AND source_oid=? AND target_oid=? AND status <> 'complete'`,
+		intent.RepositoryID, intent.PullRequestNumber, intent.SourceOID, intent.TargetOID)
+	return err
+}
+
+// PullRequestMergeReceiptOwner binds a shared receipt to its published plan.
+// Older unpublished plans for other revisions cannot claim that receipt.
+func PullRequestMergeReceiptOwner(record PullRequest, intents []PullRequestMergeIntent, receiptOID string) (PullRequestMergeIntent, error) {
+	var owner PullRequestMergeIntent
+	for _, intent := range intents {
+		if intent.RepositoryID != record.RepositoryID || intent.PullRequestNumber != record.Number || intent.ReceiptRef != "refs/owngit/pull-requests/"+strconv.FormatInt(record.Number, 10)+"/merge-receipt" || intent.ResultOID == "" || intent.ResultOID != receiptOID {
+			continue
+		}
+		if record.Status == PullRequestMerged {
+			if intent.Status != MergeIntentComplete || intent.SourceOID != record.MergeSourceOID || intent.TargetOID != record.MergeTargetOID || intent.ResultOID != record.MergeOID || intent.ReceiptRef != record.MergeReceipt {
+				continue
+			}
+		} else if record.Status != PullRequestOpen || intent.Status != MergeIntentReady {
+			continue
+		}
+		if owner.RepositoryID != "" {
+			return PullRequestMergeIntent{}, errors.New("merge receipt has multiple durable owners")
+		}
+		owner = intent
+	}
+	if owner.RepositoryID == "" {
+		return PullRequestMergeIntent{}, errors.New("merge receipt does not match its durable intent")
+	}
+	return owner, nil
+}
+
 func (s *Store) PullRequestMergeIntent(ctx context.Context, repositoryID string, number int64, sourceOID, targetOID string) (PullRequestMergeIntent, bool, error) {
 	row := s.db.QueryRowContext(ctx, mergeIntentSelect+` WHERE repository_id=? AND pull_request_number=? AND source_oid=? AND target_oid=?`, repositoryID, number, sourceOID, targetOID)
 	intent, err := scanMergeIntent(row)
@@ -793,13 +828,13 @@ func (s *Store) CompletePullRequestMerge(ctx context.Context, intent PullRequest
 	if resultOID != intent.ResultOID || receiptRef != intent.ReceiptRef || (storedStatus != MergeIntentReady && storedStatus != MergeIntentComplete) {
 		return errors.New("stored merge intent does not match the published result")
 	}
-	var requestStatus, mergedOID string
-	if err := tx.QueryRowContext(ctx, `SELECT status,merge_oid FROM pull_requests WHERE repository_id=? AND number=?`, intent.RepositoryID, intent.PullRequestNumber).Scan(&requestStatus, &mergedOID); err != nil {
+	var requestStatus, mergedOID, mergedSource, mergedTarget, mergedReceipt string
+	if err := tx.QueryRowContext(ctx, `SELECT status,merge_oid,merge_source_oid,merge_target_oid,merge_receipt_ref FROM pull_requests WHERE repository_id=? AND number=?`, intent.RepositoryID, intent.PullRequestNumber).Scan(&requestStatus, &mergedOID, &mergedSource, &mergedTarget, &mergedReceipt); err != nil {
 		return err
 	}
 	if requestStatus == PullRequestMerged {
-		if mergedOID != intent.ResultOID {
-			return errors.New("pull request is already merged with another result")
+		if mergedOID != intent.ResultOID || mergedSource != intent.SourceOID || mergedTarget != intent.TargetOID || mergedReceipt != intent.ReceiptRef {
+			return errors.New("pull request is already merged for another revision")
 		}
 	} else if requestStatus == PullRequestOpen {
 		if _, err := tx.ExecContext(ctx, `UPDATE pull_requests SET status='merged',updated_at=?,merge_source_oid=?,merge_target_oid=?,merge_oid=?,merge_receipt_ref=?,merged_at=?,merged_by=?

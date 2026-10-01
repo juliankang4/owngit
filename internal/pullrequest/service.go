@@ -388,6 +388,12 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 	if err != nil {
 		return nil, err
 	}
+	if record.Status == state.PullRequestOpen {
+		record, err = service.completePublishedMergeLocked(ctx, repositoryPath, record)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if record.Status == state.PullRequestMerged {
 		if record.MergeSourceOID != input.SourceOID || record.MergeTargetOID != input.TargetOID {
 			return nil, NewProblem("stale_revision", "The pull request was merged for a different source and target revision.")
@@ -430,12 +436,18 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 		return nil, &Problem{Code: "merge_blocked", Message: "The pull request is not eligible to merge.", Details: view.MergeEligibility}
 	}
 
-	intent, err := service.Store.BeginPullRequestMerge(ctx, state.PullRequestMergeIntent{
-		RepositoryID: repositoryID, PullRequestNumber: number, SourceOID: input.SourceOID, TargetOID: input.TargetOID,
-		ReceiptRef: MergeReceiptRef(number), CreatedAt: service.now(),
-	})
+	if err := service.discardSupersededMergePlansLocked(ctx, repositoryPath, record, input); err != nil {
+		return nil, err
+	}
+	intent, exists, err := service.Store.PullRequestMergeIntent(ctx, repositoryID, number, input.SourceOID, input.TargetOID)
 	if err != nil {
-		return nil, &Problem{Code: "state_unavailable", Message: "The durable merge intent could not be saved.", Cause: err}
+		return nil, &Problem{Code: "state_unavailable", Message: "The durable merge intent could not be read.", Cause: err}
+	}
+	if !exists {
+		intent = state.PullRequestMergeIntent{
+			RepositoryID: repositoryID, PullRequestNumber: number, SourceOID: input.SourceOID, TargetOID: input.TargetOID,
+			ReceiptRef: MergeReceiptRef(number), CreatedAt: service.now(), Status: state.MergeIntentPreparing,
+		}
 	}
 	if intent.Status == state.MergeIntentReady {
 		published, reconcileErr := service.reconcileIntentLocked(ctx, repositoryPath, intent, input.Actor)
@@ -454,14 +466,20 @@ func (service *Service) Merge(ctx context.Context, repositoryID string, number i
 		return nil, err
 	}
 	if intent.Status == state.MergeIntentPreparing {
-		intent, err = service.planMerge(ctx, repositoryPath, intent)
+		planned, err := service.planMerge(ctx, repositoryPath, intent)
 		if err != nil {
 			return nil, err
 		}
-		if err := service.ensurePlannedMergeTree(ctx, repositoryPath, record, intent, true); err != nil {
+		if err := service.ensurePlannedMergeTree(ctx, repositoryPath, record, planned, true); err != nil {
 			return nil, err
 		}
-		intent, err = service.Store.UpdatePullRequestMergeIntent(ctx, intent)
+		// Planning cannot publish a receipt. Store only an accepted plan.
+		if !exists {
+			if _, err := service.Store.BeginPullRequestMerge(ctx, intent); err != nil {
+				return nil, &Problem{Code: "state_unavailable", Message: "The durable merge intent could not be saved.", Cause: err}
+			}
+		}
+		intent, err = service.Store.UpdatePullRequestMergeIntent(ctx, planned)
 		if err != nil {
 			return nil, &Problem{Code: "state_unavailable", Message: "The merge plan could not be saved.", Cause: err}
 		}
@@ -808,10 +826,58 @@ func (service *Service) validateReceipt(ctx context.Context, repositoryPath stri
 	if !exists {
 		return false, nil
 	}
-	if receiptOID != intent.ResultOID {
-		return false, NewProblem("repository_integrity_error", "The protected merge receipt does not match the durable merge intent.")
+	record, err := service.requirePullRequest(ctx, intent.RepositoryID, intent.PullRequestNumber)
+	if err != nil {
+		return false, err
+	}
+	intents, err := service.Store.PullRequestMergeIntents(ctx, false)
+	if err != nil {
+		return false, &Problem{Code: "state_unavailable", Message: "The merge receipt metadata could not be read.", Cause: err}
+	}
+	owner, err := state.PullRequestMergeReceiptOwner(record, intents, receiptOID)
+	if err != nil {
+		return false, &Problem{Code: "repository_integrity_error", Message: "The protected merge receipt does not match the durable merge intent.", Cause: err}
+	}
+	if owner.SourceOID != intent.SourceOID || owner.TargetOID != intent.TargetOID {
+		// The receipt belongs to another plan, whose protected result must
+		// still be intact before this plan can be left unpublished.
+		if err := service.validateProtectedMergeObjects(ctx, repositoryPath, owner); err != nil {
+			return false, err
+		}
+		return false, nil
 	}
 	return true, nil
+}
+
+func (service *Service) discardSupersededMergePlansLocked(ctx context.Context, repositoryPath string, record state.PullRequest, revision RevisionInput) error {
+	receiptOID, exists, err := service.readRef(ctx, repositoryPath, MergeReceiptRef(record.Number))
+	if err != nil {
+		return err
+	}
+	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
+	if err != nil {
+		return &Problem{Code: "state_unavailable", Message: "The merge metadata could not be read.", Cause: err}
+	}
+	if exists {
+		if _, err := state.PullRequestMergeReceiptOwner(record, intents, receiptOID); err != nil {
+			return &Problem{Code: "repository_integrity_error", Message: "The protected merge receipt does not match the durable merge intent.", Cause: err}
+		}
+		return NewProblem("merge_reconciliation_pending", "The published merge still needs reconciliation. Retry after the repository is available.")
+	}
+	for _, intent := range intents {
+		if intent.RepositoryID != record.RepositoryID || intent.PullRequestNumber != record.Number || (intent.SourceOID == revision.SourceOID && intent.TargetOID == revision.TargetOID) {
+			continue
+		}
+		if intent.Status != state.MergeIntentPreparing {
+			if err := service.validateProtectedMergeObjects(ctx, repositoryPath, intent); err != nil {
+				return err
+			}
+		}
+		if err := service.Store.DeleteUnpublishedPullRequestMerge(ctx, intent); err != nil {
+			return &Problem{Code: "state_unavailable", Message: "The superseded merge plan could not be discarded.", Cause: err}
+		}
+	}
+	return nil
 }
 
 // readViewLocked builds a view from the current heads without retaining a new

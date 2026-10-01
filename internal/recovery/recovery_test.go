@@ -398,6 +398,65 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	}
 }
 
+func TestBackupAfterRefusedThenResolvedMerge(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	work := filepath.Join(root, "backup-work")
+	remote, err := manager.Path("project")
+	noErr(t, err)
+	runGit(t, work, "checkout", "-b", "candidate")
+	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("candidate\n"), 0o600))
+	runGit(t, work, "commit", "-am", "candidate change")
+	runGit(t, work, "push", remote, "HEAD:refs/heads/candidate")
+	runGit(t, work, "checkout", "main")
+	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("target\n"), 0o600))
+	runGit(t, work, "commit", "-am", "target change")
+	runGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	service := &pullrequest.Service{Store: store, Repositories: manager}
+	request, err := service.Create(ctx, pullrequest.CreateInput{
+		Repository: "project", Title: "Resolve before merging", SourceBranch: "candidate", TargetBranch: "main", ReviewChoice: "skip",
+	})
+	noErr(t, err)
+	_, err = service.Merge(ctx, "project", request.Number, pullrequest.RevisionInput{SourceOID: request.Source.OID, TargetOID: request.Target.OID})
+	if recoveryProblemCode(err) != "merge_conflict" {
+		t.Fatalf("refused merge: %v", err)
+	}
+	// Move the source to a resolved descendant of the target.
+	runGit(t, work, "checkout", "-B", "candidate")
+	noErr(t, os.WriteFile(filepath.Join(work, "file"), []byte("resolved\n"), 0o600))
+	runGit(t, work, "commit", "-am", "resolved change")
+	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
+	runGit(t, work, "push", "--force", remote, "HEAD:refs/heads/candidate")
+	merged, err := service.Merge(ctx, "project", request.Number, pullrequest.RevisionInput{SourceOID: sourceOID, TargetOID: request.Target.OID})
+	noErr(t, err)
+	for _, serving := range []bool{true, false} {
+		name := "backup-serving-" + strconv.FormatBool(serving)
+		backup := filepath.Join(root, name)
+		if serving {
+			_, err = CreateWhileServing(ctx, store, manager, backup)
+		} else {
+			err = Create(ctx, store, manager, backup)
+		}
+		noErr(t, err)
+		if serving {
+			manifest, err := readManifest(filepath.Join(backup, manifestName))
+			noErr(t, err)
+			assertReceiptControls(t, manifest)
+		}
+		verification, err := Verify(ctx, backup, root, "")
+		noErr(t, err)
+		if !verification.Verified {
+			t.Fatalf("verification: %+v", verification)
+		}
+		restoredState := canonicalTestTarget(t, filepath.Join(root, name+"-state"))
+		restoredRepositories := canonicalTestTarget(t, filepath.Join(root, name+"-repositories"))
+		noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+		assertRef(t, filepath.Join(restoredRepositories, "project.git"), "refs/heads/main", merged.Merge.OID)
+		runGit(t, "", "--git-dir", filepath.Join(restoredRepositories, "project.git"), "fsck", "--full")
+	}
+}
+
 func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T) {
 	for _, intentStatus := range []string{state.MergeIntentPlanned, state.MergeIntentReady} {
 		t.Run(intentStatus, func(t *testing.T) {

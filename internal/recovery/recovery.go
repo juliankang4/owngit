@@ -2286,7 +2286,14 @@ func validateManifest(manifest Manifest) error {
 			return errors.New("backup is missing a protected pull request revision ref")
 		}
 	}
+	type requestKey struct {
+		repositoryID string
+		number       int64
+	}
+	mergeIntents := make(map[requestKey][]state.PullRequestMergeIntent)
 	for _, intent := range snapshot.PullRequestMergeIntents {
+		key := requestKey{intent.RepositoryID, intent.PullRequestNumber}
+		mergeIntents[key] = append(mergeIntents[key], intent)
 		refs := repositoryRefs[intent.RepositoryID]
 		if intent.Mode == "merge_commit" && intent.Status != state.MergeIntentPreparing {
 			treeRef := pullrequest.MergeTreeRef(intent.PullRequestNumber, intent.SourceOID, intent.TargetOID)
@@ -2300,12 +2307,30 @@ func validateManifest(manifest Manifest) error {
 				return errors.New("backup is missing its protected merge result ref")
 			}
 		}
-		receiptOID, exists := refs[intent.ReceiptRef]
-		if exists && (intent.ResultOID == "" || receiptOID != intent.ResultOID) {
-			return errors.New("backup merge receipt does not match its durable intent")
+	}
+	knownReceipts := make(map[string]map[string]bool)
+	for _, record := range snapshot.PullRequests {
+		receiptRef := pullrequest.MergeReceiptRef(record.Number)
+		receiptOID, exists := repositoryRefs[record.RepositoryID][receiptRef]
+		if !exists {
+			if record.Status == state.PullRequestMerged {
+				return errors.New("completed backup merge is missing its protected receipt")
+			}
+			continue
 		}
-		if intent.Status == state.MergeIntentComplete && !exists {
-			return errors.New("completed backup merge is missing its protected receipt")
+		if _, err := state.PullRequestMergeReceiptOwner(record, mergeIntents[requestKey{record.RepositoryID, record.Number}], receiptOID); err != nil {
+			return fmt.Errorf("backup %w", err)
+		}
+		if knownReceipts[record.RepositoryID] == nil {
+			knownReceipts[record.RepositoryID] = make(map[string]bool)
+		}
+		knownReceipts[record.RepositoryID][receiptRef] = true
+	}
+	for repositoryID, refs := range repositoryRefs {
+		for ref := range refs {
+			if strings.HasPrefix(ref, "refs/owngit/pull-requests/") && strings.HasSuffix(ref, "/merge-receipt") && !knownReceipts[repositoryID][ref] {
+				return errors.New("backup merge receipt has no durable owner")
+			}
 		}
 	}
 	if err := state.ValidateCheckRecovery(snapshot); err != nil {
