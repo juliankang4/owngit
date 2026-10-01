@@ -673,7 +673,7 @@ func (app *App) renderSettingsPage(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if tab == webui.SettingsStorage {
-		if page.Backups, err = app.backupsInfo(request, settings, chrome.Viewer.AdminConfirmed || view.AdminVerified); err != nil {
+		if page.Backups, err = app.backupsInfo(request, settings, chrome.Viewer.AdminConfirmed || view.AdminVerified, chrome.Lang); err != nil {
 			app.answerUnavailable(writer, request, "backup status read", err)
 			return
 		}

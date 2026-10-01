@@ -372,12 +372,17 @@ type commandRunner interface {
 // Create writes a backup of an OwnGit that is not running. It first
 // recovers unfinished pull request work, as a start of OwnGit would.
 func Create(ctx context.Context, store *state.Store, manager *repository.Manager, output string) error {
+	_, err := CreateWithReport(ctx, store, manager, output)
+	return err
+}
+
+// CreateWithReport writes an offline backup and reports its capture-time notices.
+func CreateWithReport(ctx context.Context, store *state.Store, manager *repository.Manager, output string) (CaptureReport, error) {
 	service := &pullrequest.Service{Store: store, Repositories: manager}
 	if err := service.ReconcileAll(ctx); err != nil {
-		return fmt.Errorf("reconcile pull request state before backup: %w", err)
+		return CaptureReport{}, fmt.Errorf("reconcile pull request state before backup: %w", err)
 	}
-	_, err := create(ctx, store, manager, manager.Git, output, manifestLimit)
-	return err
+	return create(ctx, store, manager, manager.Git, output, manifestLimit)
 }
 
 // CreateWhileServing writes a backup while OwnGit serves. manager must be
@@ -427,6 +432,9 @@ func createBackup(ctx context.Context, store *state.Store, manager *repository.M
 	snapshot := captured.snapshot
 	report.Repositories = len(captured.repositories)
 	report.Captured = true
+	for _, capturedRepository := range captured.repositories {
+		report.AliasBranches = append(report.AliasBranches, capturedRepository.aliasBranches...)
+	}
 	manifest := Manifest{
 		Format: backupFormat, CreatedAt: captured.at,
 		AccessMode: snapshot.AccessMode, AccessHash: snapshot.AccessPasswordHash, AdminHash: snapshot.AdminPasswordHash,
@@ -863,18 +871,21 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	return nil
 }
 
-func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath string, stored state.Repository, refStorage string) (RepositoryManifest, error) {
+func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath string, stored state.Repository, refStorage string) (RepositoryManifest, []AliasBranch, error) {
 	item := RepositoryManifest{
 		ID: stored.ID, Name: stored.Name, Description: stored.Description, CreatedAt: stored.CreatedAt,
 		AttemptSequence: stored.AttemptSequence,
 	}
-	refs, err := readRefs(ctx, runner, repositoryPath)
+	refs, aliases, err := readRefsAndAliases(ctx, runner, repositoryPath)
 	if err != nil {
-		return RepositoryManifest{}, err
+		return RepositoryManifest{}, nil, err
+	}
+	for index := range aliases {
+		aliases[index].Repository = stored.ID
 	}
 	item.Refs = refs
 	if item.Head, err = readHead(ctx, runner, repositoryPath, refStorage); err != nil {
-		return RepositoryManifest{}, err
+		return RepositoryManifest{}, nil, err
 	}
 	// A symbolic HEAD may name a branch that does not exist yet: no file at
 	// its path, or a folder of other branches such as main/topic. Anything
@@ -883,13 +894,13 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 	if item.Head.Symbolic != "" && refStorage == refStorageFiles && !slices.ContainsFunc(refs, func(ref Ref) bool { return ref.Name == item.Head.Symbolic }) {
 		info, err := os.Lstat(filepath.Join(repositoryPath, filepath.FromSlash(item.Head.Symbolic)))
 		if !errors.Is(err, os.ErrNotExist) && (err != nil || !info.IsDir()) {
-			return RepositoryManifest{}, fmt.Errorf("HEAD names %s, which exists but cannot be read", item.Head.Symbolic)
+			return RepositoryManifest{}, nil, fmt.Errorf("HEAD names %s, which exists but cannot be read", item.Head.Symbolic)
 		}
 	}
 	// Only a symbolic HEAD can name a branch that does not exist yet, so a
 	// repository is empty only when HEAD is symbolic and no ref exists.
 	item.Empty = len(refs) == 0 && item.Head.OID == ""
-	return item, nil
+	return item, aliases, nil
 }
 
 // readHead reads HEAD as symbolic or detached. The files backend keeps it
@@ -946,27 +957,46 @@ func readHeadFile(repositoryPath string) (Head, error) {
 }
 
 func readRefs(ctx context.Context, runner commandRunner, repositoryPath string) ([]Ref, error) {
-	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)")
+	refs, _, err := readRefsAndAliases(ctx, runner, repositoryPath)
+	return refs, err
+}
+
+func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPath string) ([]Ref, []AliasBranch, error) {
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Git leaves out a ref it cannot read and only warns, so a warning is
 	// an incomplete list, never the refs of the repository.
 	if warning, _, _ := strings.Cut(strings.TrimSpace(string(result.Stderr)), "\n"); warning != "" {
-		return nil, fmt.Errorf("Git could not read every ref: %q", warning)
+		return nil, nil, fmt.Errorf("Git could not read every ref: %q", warning)
 	}
 	var refs []Ref
+	var aliases []AliasBranch
 	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, string([]byte{0}), 2)
-		if len(parts) != 2 {
-			return nil, errors.New("Git returned malformed ref data")
+		parts := strings.SplitN(line, "\x00", 3)
+		if len(parts) != 3 || (parts[2] != "" && !validRefName(parts[2])) {
+			return nil, nil, errors.New("Git returned malformed ref data")
 		}
 		refs = append(refs, Ref{Name: parts[0], OID: parts[1]})
+		if parts[2] != "" && strings.HasPrefix(parts[0], "refs/heads/") {
+			// for-each-ref resolves a symbolic chain to its final target.
+			// The reconnect command needs the branch's immediate target.
+			symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--no-recurse", parts[0])
+			if err != nil {
+				return nil, nil, fmt.Errorf("read alias branch %q: %w", parts[0], err)
+			}
+			target := strings.TrimSpace(string(symbolic.Stdout))
+			if !validRefName(target) {
+				return nil, nil, fmt.Errorf("Git returned an invalid target for alias branch %q", parts[0])
+			}
+			aliases = append(aliases, AliasBranch{Name: parts[0], Target: target})
+		}
 	}
-	return refs, nil
+	return refs, aliases, nil
 }
 
 // repositoryFailure names the repository whose restore check failed.

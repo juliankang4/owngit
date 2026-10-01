@@ -69,13 +69,47 @@ type CaptureReport struct {
 	// ManifestSHA256 is the SHA-256 of the manifest the backup wrote, once
 	// it was written. It names this backup and no other.
 	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
+	// AliasBranches describes symbolic branches converted to ordinary refs.
+	// It is a capture-time notice, not part of the portable backup.
+	AliasBranches []AliasBranch `json:"alias_branches,omitempty"`
+}
+
+// AliasBranch names a branch and its immediate symbolic target at capture time.
+type AliasBranch struct {
+	Repository string `json:"repository"`
+	Name       string `json:"name"`
+	Target     string `json:"target"`
+}
+
+// AliasBranchNotice explains the entries in CaptureReport.AliasNotice.
+const AliasBranchNotice = "Alias branches are backed up as ordinary branches at the same commit, so they no longer follow their targets after restoring. Each entry below names the repository, alias -> target, and the command to reconnect in that restored repository using a POSIX shell."
+
+// ReconnectCommand quotes both refs as POSIX shell arguments, including names
+// containing quotes or shell metacharacters. It is displayed, never executed.
+func (alias AliasBranch) ReconnectCommand() string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	return "git symbolic-ref " + quote(alias.Name) + " " + quote(alias.Target)
+}
+
+// AliasNotice is empty for a capture without alias branches.
+func (report CaptureReport) AliasNotice() string {
+	if len(report.AliasBranches) == 0 {
+		return ""
+	}
+	entries := make([]string, 0, len(report.AliasBranches)+1)
+	entries = append(entries, AliasBranchNotice)
+	for _, alias := range report.AliasBranches {
+		entries = append(entries, fmt.Sprintf("%s: %s -> %s. %s", alias.Repository, alias.Name, alias.Target, alias.ReconnectCommand()))
+	}
+	return strings.Join(entries, "\n")
 }
 
 // capturedRepository is one repository as the backup describes it: its
 // manifest item with refs and HEAD read at the instant, and its folder.
 type capturedRepository struct {
-	item RepositoryManifest
-	path string
+	item          RepositoryManifest
+	aliasBranches []AliasBranch
+	path          string
 	repositoryStorage
 }
 
@@ -229,7 +263,7 @@ func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.
 		workers.Go(func() {
 			for index := range indexes {
 				captured := &repositories[index]
-				item, err := inspectRepository(ctx, runner, captured.path, roster[index], captured.refStorage)
+				item, aliases, err := inspectRepository(ctx, runner, captured.path, roster[index], captured.refStorage)
 				locks.release(roster[index].ID)
 				// Objects are never removed while the backup holds the
 				// repository, so a detached HEAD's object is checked after
@@ -243,7 +277,7 @@ func readCapturedRefs(ctx context.Context, runner commandRunner, roster []state.
 					failures[index] = fmt.Errorf("inspect repository %q: %w", roster[index].ID, err)
 					continue
 				}
-				captured.item = item
+				captured.item, captured.aliasBranches = item, aliases
 			}
 		})
 	}

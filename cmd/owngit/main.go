@@ -1164,23 +1164,31 @@ func backupState(arguments []string) error {
 		return fail("git_unavailable", err)
 	}
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
-	if err := recovery.Create(context.Background(), store, manager, *output); err != nil {
+	report, err := recovery.CreateWithReport(context.Background(), store, manager, *output)
+	if err != nil {
 		return fail("backup_failed", err)
 	}
 	result := offlineBackupResult{OK: true, Backup: *output, Note: "SHA-256 hashes detect corruption but do not authenticate a replaced backup."}
+	if notice := report.AliasNotice(); notice != "" {
+		result.Warnings = []string{notice}
+	}
 	if *asJSON {
 		return writeJSONValue(result)
 	}
 	fmt.Printf("Offline backup written to %s. %s\n", result.Backup, result.Note)
+	for _, warning := range result.Warnings {
+		fmt.Println(warning)
+	}
 	return nil
 }
 
 // offlineBackupResult is the result of owngit backup --output, printed as
 // text or as JSON.
 type offlineBackupResult struct {
-	OK     bool   `json:"ok"`
-	Backup string `json:"backup"`
-	Note   string `json:"note"`
+	OK       bool     `json:"ok"`
+	Backup   string   `json:"backup"`
+	Note     string   `json:"note"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // restoreResult is the result of owngit restore, printed as text or as

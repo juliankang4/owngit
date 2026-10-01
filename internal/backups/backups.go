@@ -328,6 +328,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		}
 	}
 	if run.BackupName != "" {
+		run.Message = joinSentences(run.Message, report.AliasNotice())
 		s.noteRestoreLimit(run.Destination)
 	}
 	run.FinishedAt = s.now()

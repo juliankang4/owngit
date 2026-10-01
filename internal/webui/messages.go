@@ -481,6 +481,9 @@ const (
 	MsgErrBackHome     MessageCode = "error.back_home"
 )
 
+// Capture-time backup notices.
+const MsgBackupAliasBranches MessageCode = "backup.alias_branches"
+
 // message is one catalog entry.
 type message struct {
 	en string
@@ -490,6 +493,10 @@ type message struct {
 // catalog holds every localized sentence. Korean uses the established Git
 // vocabulary: 브랜치, 커밋, 태그, 저장소.
 var catalog = map[MessageCode]message{
+	MsgBackupAliasBranches: {
+		en: "Alias branches are backed up as ordinary branches at the same commit, so they no longer follow their targets after restoring. Each entry below names the repository, alias -> target, and the command to reconnect in that restored repository using a POSIX shell.",
+		ko: "다른 브랜치를 가리키는 별칭 브랜치는 같은 커밋의 보통 브랜치로 백업됩니다. 복원한 뒤에는 대상 브랜치가 바뀌어도 따라가지 않습니다. 아래에는 저장소, 별칭 -> 대상, 다시 연결하는 명령이 나옵니다. 복원한 해당 저장소에서 POSIX 셸(예: sh, bash, zsh, Git Bash)로 명령을 실행하세요.",
+	},
 	// -- chrome --------------------------------------------------------
 	MsgAppName:        {en: "OwnGit", ko: "OwnGit"},
 	MsgSkipToContent:  {en: "Skip to content", ko: "본문으로 건너뛰기"},

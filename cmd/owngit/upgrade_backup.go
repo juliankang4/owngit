@@ -57,6 +57,9 @@ func backupBeforeUpgrade(held *os.File, gitPath string, report func(string, ...a
 		}
 		report("backed up the state to %s before upgrading it %s", backup.path, upgrade.Describe())
 		report("to go back to the earlier OwnGit, stop OwnGit, move %s aside and run with the earlier version: %s", stateDir, backup.restoreCommand)
+		if backup.aliasNotice != "" {
+			report("%s", backup.aliasNotice)
+		}
 		return nil
 	}
 }
@@ -83,6 +86,7 @@ func refuseUpgrade(_ context.Context, upgrade *state.Upgrade) error {
 type upgradeBackup struct {
 	path           string
 	restoreCommand string
+	aliasNotice    string
 }
 
 // createUpgradeBackup writes the backup of the state in stateDir, as it is
@@ -132,19 +136,21 @@ func createUpgradeBackup(ctx context.Context, stateDir string, upgrade *state.Up
 	}
 	output := filepath.Join(folder.Name(), name)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
-	if err := recovery.Create(ctx, store, manager, output); err != nil {
+	capture, err := recovery.CreateWithReport(ctx, store, manager, output)
+	if err != nil {
 		return upgradeBackup{}, err
 	}
+	aliasNotice := strings.ReplaceAll(capture.AliasNotice(), "\n", " ")
 	// The restored repositories go into the backup folder, where this
 	// account has just created the backup, so the command works as printed
 	// even when it cannot create a folder beside the repository folder.
 	restoreCommand := "owngit restore --input " + quoteForShell(output) + " --state-dir " + quoteForShell(stateDir) +
 		" --repository-root " + quoteForShell(output+"-repositories")
-	if err := writeUpgradeNote(output, stateDir, upgrade, restoreCommand); err != nil {
+	if err := writeUpgradeNote(output, stateDir, upgrade, restoreCommand, aliasNotice); err != nil {
 		return upgradeBackup{}, fmt.Errorf("the backup %s is complete, but its note could not be written: %w", output, err)
 	}
 	removeOlderUpgradeBackups(folder, name, stateDir, report)
-	return upgradeBackup{path: output, restoreCommand: restoreCommand}, nil
+	return upgradeBackup{path: output, restoreCommand: restoreCommand, aliasNotice: aliasNotice}, nil
 }
 
 // newUpgradeBackupName names a new backup after the version that makes it
@@ -167,7 +173,7 @@ func newUpgradeBackupName(folder string, now time.Time) (string, error) {
 }
 
 // writeUpgradeNote writes upgradeNoteName into the completed backup.
-func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCommand string) error {
+func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCommand, aliasNotice string) error {
 	file, err := state.CreatePrivateFile(filepath.Join(backup, upgradeNoteName))
 	if err != nil {
 		return err
@@ -178,6 +184,9 @@ func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCo
 		"OwnGit removes this backup once it has made a newer one for this state directory before a later upgrade.\n\n"+
 		upgradeNoteStatePrefix+"%s\n",
 		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand, stateDir)
+	if err == nil && aliasNotice != "" {
+		_, err = fmt.Fprintf(file, "\n%s\n", aliasNotice)
+	}
 	if err == nil {
 		err = file.Sync()
 	}
