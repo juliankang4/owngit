@@ -46,6 +46,7 @@ func TestHealthCommandRefusesUnusableState(t *testing.T) {
 	noErr(t, os.WriteFile(regularFile, []byte("not a state directory"), 0600))
 	emptyDir := t.TempDir()
 	missing := filepath.Join(t.TempDir(), "missing")
+	backslashes := filepath.Join(t.TempDir(), `state\copy\path`)
 	for _, test := range []struct {
 		name      string
 		arguments []string
@@ -55,6 +56,7 @@ func TestHealthCommandRefusesUnusableState(t *testing.T) {
 		{"empty directory", []string{"--state-dir", emptyDir}, emptyDir},
 		{"missing explicit state", []string{"--state-dir", missing}, missing},
 		{"missing default state", nil, defaultDir},
+		{"backslashes in missing path", []string{"--state-dir", backslashes}, backslashes},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			output, err := captureStdout(func() error { return run(append([]string{"health"}, test.arguments...)) })

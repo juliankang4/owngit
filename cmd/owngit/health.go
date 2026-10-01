@@ -33,22 +33,22 @@ func healthCommand(arguments []string) error {
 	}
 	target, running, observed, err := healthStatus(*stateDir)
 	if err != nil {
-		return fmt.Errorf("state directory %q: %w", *stateDir, err)
+		return fmt.Errorf("state directory %s: %w", *stateDir, err)
 	}
 	if running {
 		target, err = localIPTarget(observed.Record.Address)
 		if err != nil {
-			return fmt.Errorf("state directory %q: %w", *stateDir, err)
+			return fmt.Errorf("state directory %s: %w", *stateDir, err)
 		}
 	} else {
 		switch observed.Server {
 		case state.ServerStarting:
-			return fmt.Errorf("OwnGit is still starting for state directory %q; try again shortly", *stateDir)
+			return fmt.Errorf("OwnGit is still starting for state directory %s; try again shortly", *stateDir)
 		case state.ServerUnknown:
-			return fmt.Errorf("cannot confirm that OwnGit is running for state directory %q: another program holds the state directory, or its running record cannot be vouched for", *stateDir)
+			return fmt.Errorf("cannot confirm that OwnGit is running for state directory %s: another program holds the state directory, or its running record cannot be vouched for", *stateDir)
 		}
 		if _, err := localIPTarget(target); err != nil {
-			return fmt.Errorf("OwnGit is not running for state directory %q", *stateDir)
+			return fmt.Errorf("OwnGit is not running for state directory %s", *stateDir)
 		}
 	}
 	if err := checkHealthRun(*stateDir, target, observed.Record); err != nil {
@@ -227,10 +227,10 @@ func checkHealthRun(stateDir, target string, record *state.RunningNetwork) error
 	}
 	_, running, confirmed, err := healthStatus(stateDir)
 	if err != nil {
-		return fmt.Errorf("cannot confirm that OwnGit is still running for state directory %q: %w", stateDir, err)
+		return fmt.Errorf("cannot confirm that OwnGit is still running for state directory %s: %w", stateDir, err)
 	}
 	if !running || confirmed.Record.PID != record.PID || confirmed.Record.StartedAt != record.StartedAt || confirmed.Record.Address != record.Address {
-		return fmt.Errorf("cannot confirm that the same OwnGit is still running for state directory %q at http://%s; try again shortly", stateDir, target)
+		return fmt.Errorf("cannot confirm that the same OwnGit is still running for state directory %s at http://%s; try again shortly", stateDir, target)
 	}
 	return nil
 }
