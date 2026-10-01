@@ -519,11 +519,11 @@ func (host *serviceHost) uninstall() error {
 		return nil
 	case installed.Mode == service.ModeUser:
 		if err := service.UninstallUserUnit(context.Background(), serviceRunner, installed.UnitPath); err != nil {
-			return err
+			return fmt.Errorf("OwnGit service uninstall did not finish: %w", err)
 		}
 	default:
 		if err := host.runAsRoot(service.RootUninstallScript(), "Removing the system service: root stops it and removes "+installed.UnitPath+"."); err != nil {
-			return err
+			return fmt.Errorf("OwnGit service uninstall did not finish: %w", err)
 		}
 	}
 	readable, err := host.actForService(installed)

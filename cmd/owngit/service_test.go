@@ -761,6 +761,39 @@ func TestUninstallOfAUserServiceMentionsLingering(t *testing.T) {
 // The serve error file belongs to the service account, and root may read
 // it after switching accounts: only a regular file counts, at most 4 KiB is
 // read, and control characters never reach the terminal.
+func TestUninstallReportsAnIncompleteServiceRemoval(t *testing.T) {
+	for _, mode := range []service.Mode{service.ModeUser, service.ModeSystem} {
+		t.Run(string(mode), func(t *testing.T) {
+			unitPath := filepath.Join(t.TempDir(), service.UnitName)
+			noErr(t, os.WriteFile(unitPath, []byte("unit"), 0o644))
+			existing := &service.Installed{Mode: mode, StateDir: t.TempDir(), UnitPath: unitPath}
+			fixture := newInstallFixture(t, service.Environment{Linux: true, EUID: 0}, existing, false)
+			stopErr := errors.New("Unit refuses manual stop")
+			serviceRunner = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if strings.Contains(strings.Join(args, " "), "show") {
+					return []byte("active\n"), nil
+				}
+				command := strings.Join(args, " ")
+				if strings.Contains(command, "stop ") || strings.Contains(command, "--now ") {
+					return nil, stopErr
+				}
+				return nil, nil
+			}
+			runScript = func(string, string, ...string) error { return stopErr }
+			err := fixture.host.uninstall()
+			if !errors.Is(err, stopErr) || !strings.Contains(err.Error(), "uninstall did not finish") {
+				t.Errorf("uninstall must report an incomplete removal and retain the cause: %v", err)
+			}
+			if out := fixture.out.String(); strings.Contains(out, "stopped and removed") {
+				t.Errorf("uninstall reported success: %s", out)
+			}
+			if content, err := os.ReadFile(unitPath); err != nil || string(content) != "unit" {
+				t.Errorf("unit was not preserved: %q, %v", content, err)
+			}
+		})
+	}
+}
+
 func TestServeErrorReadsOnlyABoundedRegularFile(t *testing.T) {
 	stateDir := t.TempDir()
 	path := filepath.Join(stateDir, serveErrorFile)

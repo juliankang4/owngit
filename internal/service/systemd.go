@@ -389,6 +389,8 @@ func RootInstallScript(plan Plan, unit string) (string, error) {
 	return script.String(), nil
 }
 
+const uninstallStopFailure = `Could not stop the OwnGit service. Stop it manually, then rerun "owngit service uninstall". The unit has not been removed.`
+
 // RootUninstallScript stops and removes the system unit. It removes no
 // state, repository, account or pointer file.
 func RootUninstallScript() string {
@@ -396,7 +398,17 @@ func RootUninstallScript() string {
 		"#!/bin/sh",
 		`# Written by "owngit service uninstall": the steps that need root.`,
 		"set -eu",
-		"systemctl disable --now --quiet " + UnitName + " || true",
+		"if ! systemctl stop " + UnitName + "; then",
+		"  active=$(systemctl show --property=ActiveState --value " + UnitName + ") || active=unknown",
+		`  if [ "$active" != inactive ]; then`,
+		"    printf '%s\\n' " + shellQuote(uninstallStopFailure) + " >&2",
+		"    exit 1",
+		"  fi",
+		"fi",
+		"if ! systemctl disable --quiet " + UnitName + "; then",
+		"  load=$(systemctl show --property=LoadState --value " + UnitName + ") || exit 1",
+		`  [ "$load" = not-found ] || exit 1`,
+		"fi",
 		"rm -f " + shellQuote(SystemUnitPath),
 		"systemctl daemon-reload",
 		"",
@@ -445,8 +457,19 @@ func InstallUserUnit(ctx context.Context, run Runner, path, unit string) error {
 // UninstallUserUnit stops the user unit and removes it. The state directory
 // and the repositories stay.
 func UninstallUserUnit(ctx context.Context, run Runner, path string) error {
-	// A unit that is already stopped or disabled is not an error.
-	_, _ = run(ctx, "systemctl", "--user", "disable", "--now", "--quiet", UnitName)
+	// Stop before disabling, so a refused stop keeps the installed unit usable.
+	if err := runStep(ctx, run, UserSystemctl("stop", UnitName)); err != nil {
+		active, queryErr := run(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", UnitName)
+		if queryErr != nil || strings.TrimSpace(string(active)) != "inactive" {
+			return fmt.Errorf("%s: %w", uninstallStopFailure, err)
+		}
+	}
+	if err := runStep(ctx, run, UserSystemctl("disable", "--quiet", UnitName)); err != nil {
+		load, queryErr := run(ctx, "systemctl", "--user", "show", "--property=LoadState", "--value", UnitName)
+		if queryErr != nil || strings.TrimSpace(string(load)) != "not-found" {
+			return err
+		}
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

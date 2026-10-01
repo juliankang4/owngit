@@ -335,7 +335,7 @@ func TestRootScripts(t *testing.T) {
 			t.Errorf("uninstall script touches %q:\n%s", kept, uninstall)
 		}
 	}
-	if !strings.Contains(uninstall, "rm -f '/etc/systemd/system/owngit.service'") || !strings.Contains(uninstall, "disable --now") {
+	if !strings.Contains(uninstall, "rm -f '/etc/systemd/system/owngit.service'") || !strings.Contains(uninstall, "systemctl stop owngit.service") || !strings.Contains(uninstall, "systemctl disable --quiet owngit.service") {
 		t.Errorf("uninstall script:\n%s", uninstall)
 	}
 }
@@ -404,7 +404,7 @@ func TestUserUnitInstallIsIdempotentAndUninstallKeepsData(t *testing.T) {
 	if content, err := os.ReadFile(stateFile); err != nil || string(content) != "data" {
 		t.Errorf("state after uninstall: %q, %v", content, err)
 	}
-	if want := []string{"systemctl --user disable --now --quiet owngit.service", "systemctl --user daemon-reload"}; !reflect.DeepEqual(runner.commands, want) {
+	if want := []string{"systemctl --user stop owngit.service", "systemctl --user disable --quiet owngit.service", "systemctl --user daemon-reload"}; !reflect.DeepEqual(runner.commands, want) {
 		t.Errorf("uninstall ran %q, want %q", runner.commands, want)
 	}
 	if _, found, err := FindInstalled(configDir); found || err != nil {
