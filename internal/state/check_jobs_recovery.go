@@ -119,16 +119,16 @@ func checkJobLimitsJSON(limits CheckJobLimits) (string, error) {
 	return string(encoded), nil
 }
 
-// latestCheckJobActivity is the last observed activity of an interrupted job.
-// Using stored facts keeps a restore deterministic.
+// latestCheckJobActivity follows the recorded lifecycle, not wall-clock order.
+// Using the last causal fact keeps a restore deterministic after clock correction.
 func latestCheckJobActivity(job CheckJob) time.Time {
-	latest := job.AdmittedAt
-	for _, candidate := range []*time.Time{job.ClaimedAt, job.StartedAt} {
-		if candidate != nil && candidate.After(latest) {
-			latest = *candidate
-		}
+	if job.StartedAt != nil {
+		return *job.StartedAt
 	}
-	return latest
+	if job.ClaimedAt != nil {
+		return *job.ClaimedAt
+	}
+	return job.AdmittedAt
 }
 
 // validatePortableCheckJobs validates policy and job records and returns them
@@ -208,7 +208,8 @@ func validatePortableCheckPolicy(policy CheckPolicy, repositories map[string]boo
 		return errors.New("active check consent does not match its policy")
 	}
 	// AuthorityEpoch is local, so a snapshot converted from a manifest has none.
-	if policy.RunnerGeneration < 0 || (policy.AuthorityEpoch != "" && !validAttemptID(policy.AuthorityEpoch)) || policy.CreatedAt.IsZero() || policy.UpdatedAt.Before(policy.CreatedAt) {
+	// Policy generations order changes; observed wall times can move backward.
+	if policy.RunnerGeneration < 0 || (policy.AuthorityEpoch != "" && !validAttemptID(policy.AuthorityEpoch)) || policy.CreatedAt.IsZero() || policy.UpdatedAt.IsZero() {
 		return errors.New("invalid check policy contents")
 	}
 	if policies[policy.RepositoryID].RepositoryID != "" {
@@ -300,7 +301,16 @@ func validatePortableCheckJob(job CheckJob, repositories map[string]bool, tasks 
 	return nil
 }
 
+// Check transitions establish causal order through status and linked evidence.
+// Their timestamps are wall-clock observations, including lease renewal and
+// restart, so a backward correction never contradicts that order. Lease
+// deadlines remain authority checks in the transitions, not historical ordering.
 func validateCheckJobTimelineAndLease(job CheckJob) error {
+	for _, observed := range []*time.Time{job.ClaimedAt, job.StartedAt, job.FinishedAt, job.LeaseExpiresAt, job.LeaseLostAt, job.CancelRequestedAt, job.InterruptedAt} {
+		if observed != nil && observed.IsZero() {
+			return errors.New("check job has an empty timestamp")
+		}
+	}
 	hasClaim := job.ClaimedAt != nil
 	hasStart := job.StartedAt != nil
 	hasFinish := job.FinishedAt != nil
@@ -363,32 +373,11 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 	default:
 		return errors.New("invalid check job status")
 	}
-	if hasClaim && job.ClaimedAt.Before(job.AdmittedAt) {
-		return errors.New("check job claim precedes admission")
-	}
-	if hasStart && job.StartedAt.Before(*job.ClaimedAt) {
-		return errors.New("check job start precedes its claim")
-	}
-	// Before OwnGit recorded the finish of a job that its attempt's
-	// completion ends, it kept the finish time the runner reported, from the
-	// runner's clock, so such a finish is not ordered against the server's
-	// times. A cancellation that completion recorded has the same time.
-	reportedFinish := hasFinish && hasAttempt && job.Status != CheckJobInterrupted
-	if hasFinish && !reportedFinish && (job.FinishedAt.Before(job.AdmittedAt) || (hasClaim && job.FinishedAt.Before(*job.ClaimedAt)) ||
-		(hasStart && job.FinishedAt.Before(*job.StartedAt))) {
-		return errors.New("check job finish precedes its execution")
-	}
-	if hasLease && !job.LeaseExpiresAt.After(*job.ClaimedAt) {
-		return errors.New("check job lease does not follow its claim")
-	}
-	// Started execution can lose authority at restart, before or after expiry.
-	// An unstarted expired claim still records the lease deadline as its loss.
-	if job.LeaseLostAt != nil && ((!hasStart && !job.LeaseLostAt.Equal(*job.LeaseExpiresAt)) ||
-		job.LeaseLostAt.Before(*job.ClaimedAt) || (hasStart && job.LeaseLostAt.Before(*job.StartedAt))) {
-		return errors.New("check job lease loss does not match its execution or expiry")
-	}
-	if job.CancelRequestedAt != nil && !(reportedFinish && job.CancelRequestedAt.Equal(*job.FinishedAt)) && job.CancelRequestedAt.Before(job.AdmittedAt) {
-		return errors.New("check job cancellation precedes admission")
+	// Unstarted claims lose authority only at expiry; restart instead interrupts
+	// them and clears their lease. Started execution can lose authority at restart
+	// at any observed wall time, or at its recorded deadline.
+	if job.LeaseLostAt != nil && !hasStart && !job.LeaseLostAt.Equal(*job.LeaseExpiresAt) {
+		return errors.New("check job lease loss does not match its expiry")
 	}
 	return nil
 }

@@ -167,7 +167,9 @@ type CheckJobLimits struct {
 	OutputLimitBytes int64 `json:"output_limit_bytes"`
 }
 
-// CheckJob is one durable automatic job.
+// CheckJob is one durable automatic job. Status and attempt linkage establish
+// causal order; timestamps preserve observed wall time across clock corrections.
+// Lease deadlines govern live execution and are never adjusted to order history.
 type CheckJob struct {
 	ID                   string
 	RepositoryID         string

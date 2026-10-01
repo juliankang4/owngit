@@ -39,7 +39,7 @@ func TestPreStartFailureRecoveryRejectsIncompleteFacts(t *testing.T) {
 				"protection":          func(j *CheckJob) { j.Protection = ProtectionHost },
 				"lease loss":          func(j *CheckJob) { j.LeaseLostAt = j.LeaseExpiresAt },
 				"interruption":        func(j *CheckJob) { j.InterruptedAt = j.FinishedAt },
-				"early finish":        func(j *CheckJob) { j.FinishedAt = &j.AdmittedAt },
+				"empty finish":        func(j *CheckJob) { zero := time.Time{}; j.FinishedAt = &zero },
 				"passed":              func(j *CheckJob) { j.Status = CheckJobPassed },
 				"failed":              func(j *CheckJob) { j.Status = CheckJobFailed },
 				"incomplete":          func(j *CheckJob) { j.Status = CheckJobIncomplete },
@@ -56,14 +56,13 @@ func TestPreStartFailureRecoveryRejectsIncompleteFacts(t *testing.T) {
 	}
 }
 
-func TestCheckJobRecoveryLeaseLossOrdering(t *testing.T) {
+func TestCheckJobRecoveryLeaseLossEvidence(t *testing.T) {
 	fixture := newJobRecoveryFixture(t)
 	job := fixture.snapshot.CheckJobs[recoveryJobIndex(t, fixture.snapshot, fixture.terminalID)]
 	beforeStart := job.StartedAt.Add(-time.Nanosecond)
 	job.LeaseLostAt = &beforeStart
-	if err := validateCheckJobTimelineAndLease(job); err == nil {
-		t.Fatal("accepted loss before execution")
-	}
+	// Restart can observe an earlier wall time after execution started.
+	noErr(t, validateCheckJobTimelineAndLease(job))
 	job.Status, job.StartedAt, job.FinishedAt, job.AttemptID, job.Protection = CheckJobAmbiguous, nil, nil, "", ProtectionUnknown
 	job.LeaseLostAt = job.LeaseExpiresAt
 	noErr(t, validateCheckJobTimelineAndLease(job))
