@@ -310,6 +310,7 @@ func TestHealthCommand(t *testing.T) {
 // an OwnGit that runs on this computer. It records the addresses checked.
 type fakeHealth struct {
 	checked   []string
+	hosts     []string
 	answering bool
 	onRequest func()
 }
@@ -326,6 +327,7 @@ func useFakeHealth(t *testing.T) *fakeHealth {
 
 func (fake *fakeHealth) RoundTrip(request *http.Request) (*http.Response, error) {
 	fake.checked = append(fake.checked, request.URL.Host)
+	fake.hosts = append(fake.hosts, request.Host)
 	if fake.onRequest != nil {
 		fake.onRequest()
 	}

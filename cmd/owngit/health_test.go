@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
+	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,13 +137,14 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 	for _, command := range []string{"health", "waitHealthy"} {
 		t.Run(command, func(t *testing.T) {
 			for _, test := range []struct {
-				name, listen, bound, target string
+				name, listen, bound, target, host, legacy string
 			}{
-				{"hostname with IPv4", "elsewhere.invalid:0", "127.0.0.1:18966", "127.0.0.1:18966"},
-				{"hostname with IPv6", "elsewhere.invalid:0", "[::1]:18966", "[::1]:18966"},
-				{"IPv4 wildcard", "0.0.0.0:0", "0.0.0.0:18966", "127.0.0.1:18966"},
-				{"IPv6 bound wildcard", "0.0.0.0:0", "[::]:18966", "[::1]:18966"},
-				{"hostname is not a bound IP", "127.0.0.1:0", "elsewhere.invalid:18966", ""},
+				{"hostname with IPv4", "elsewhere.invalid:0", "127.0.0.1:18966", "127.0.0.1:18966", "elsewhere.invalid:18966", "elsewhere.invalid:18966"},
+				{"hostname with IPv6", "elsewhere.invalid:0", "[::1]:18966", "[::1]:18966", "elsewhere.invalid:18966", "elsewhere.invalid:18966"},
+				{"numeric listen", "127.0.0.1:0", "127.0.0.1:18966", "127.0.0.1:18966", "127.0.0.1:18966", "127.0.0.1:18966"},
+				{"IPv4 wildcard", "0.0.0.0:0", "0.0.0.0:18966", "127.0.0.1:18966", "127.0.0.1:18966", "127.0.0.1:18966"},
+				{"IPv6 bound wildcard", "0.0.0.0:0", "[::]:18966", "[::1]:18966", "[::1]:18966", "127.0.0.1:18966"},
+				{"hostname is not a bound IP", "127.0.0.1:0", "elsewhere.invalid:18966", "", "", "127.0.0.1:18966"},
 			} {
 				t.Run(test.name, func(t *testing.T) {
 					health := useFakeHealth(t)
@@ -153,15 +157,20 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 						if err == nil || output != "" || len(health.checked) != 0 {
 							t.Fatalf("invalid bound address: output %q, error %v, requests %q", output, err, health.checked)
 						}
-						return
+					} else {
+						noErr(t, err)
+						want := test.target
+						if command == "health" {
+							want = "OwnGit answers at http://" + test.target + "\n"
+						}
+						if output != want || len(health.checked) != 1 || health.checked[0] != test.target || health.hosts[0] != test.host {
+							t.Fatalf("bound target: output %q, requests %q, Host headers %q, want %q with Host %q", output, health.checked, health.hosts, want, test.host)
+						}
 					}
+					target, running, err := healthAddress(stateDir)
 					noErr(t, err)
-					want := test.target
-					if command == "health" {
-						want = "OwnGit answers at http://" + test.target + "\n"
-					}
-					if output != want || len(health.checked) != 1 || health.checked[0] != test.target {
-						t.Fatalf("bound target: output %q, requests %q, want %q", output, health.checked, want)
+					if !running || target != test.legacy {
+						t.Fatalf("legacy address selection changed: %q, running=%v, want %q", target, running, test.legacy)
 					}
 				})
 			}
@@ -219,5 +228,63 @@ func TestHealthCommandWithAStoppedHostname(t *testing.T) {
 	noErr(t, err)
 	if running || target != "localhost:18968" {
 		t.Fatalf("saved-address selection changed: %q, running=%v", target, running)
+	}
+}
+
+type recordingHealthTransport struct {
+	next    http.RoundTripper
+	checked []string
+	hosts   []string
+}
+
+func (transport *recordingHealthTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	transport.checked = append(transport.checked, request.URL.Host)
+	transport.hosts = append(transport.hosts, request.Host)
+	return transport.next.RoundTrip(request)
+}
+
+func TestHealthWithAHostnameAndBaseURL(t *testing.T) {
+	stateDir := filepath.Join(t.TempDir(), "state")
+	_, port, err := net.SplitHostPort(freeLoopbackAddress(t))
+	noErr(t, err)
+	listen := net.JoinHostPort("localhost", port)
+	tailscalePath := filepath.Join(t.TempDir(), "no-tailscale")
+	instance := startServedWith(t, []string{"--state-dir", stateDir, "--listen", listen,
+		"--base-url", "http://owner.example:" + port, "--tailscale", tailscalePath, "--no-open", "--no-update-check"})
+	defer instance.stop()
+	output, err := captureStdout(func() error {
+		return run([]string{"tailscale", "status", "--state-dir", stateDir, "--tailscale", tailscalePath, "--json"})
+	})
+	noErr(t, err)
+	if !strings.Contains(output, `"installed": false`) || !strings.Contains(output, `"on": false`) {
+		t.Fatalf("Tailscale isolation: %s", output)
+	}
+	previous := healthClient
+	transport := &recordingHealthTransport{next: previous.Transport}
+	healthClient = &http.Client{Timeout: previous.Timeout, Transport: transport, CheckRedirect: previous.CheckRedirect}
+	t.Cleanup(func() { healthClient = previous })
+	_, _, observed, err := healthStatus(stateDir)
+	noErr(t, err)
+	target := observed.Record.Address
+	for _, command := range []string{"health", "waitHealthy"} {
+		output, err := runHealthCheck(t, command, stateDir)
+		noErr(t, err)
+		want := target
+		if command == "health" {
+			want = "OwnGit answers at http://" + target + "\n"
+		}
+		if output != want {
+			t.Fatalf("%s output %q, want %q", command, output, want)
+		}
+	}
+	if len(transport.checked) != 2 {
+		t.Fatalf("health requests: %q", transport.checked)
+	}
+	for index, address := range transport.checked {
+		host, _, err := net.SplitHostPort(address)
+		noErr(t, err)
+		if _, err := netip.ParseAddr(host); err != nil || address != target || transport.hosts[index] != listen {
+			t.Fatalf("health connected to %s with Host %q, want numeric %s with Host %q", address, transport.hosts[index], target, listen)
+		}
 	}
 }

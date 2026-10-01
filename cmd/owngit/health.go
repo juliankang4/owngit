@@ -35,7 +35,12 @@ func healthCommand(arguments []string) error {
 	if err != nil {
 		return fmt.Errorf("state directory %q: %w", *stateDir, err)
 	}
-	if !running {
+	if running {
+		target, err = localIPTarget(observed.Record.Address)
+		if err != nil {
+			return fmt.Errorf("state directory %q: %w", *stateDir, err)
+		}
+	} else {
 		switch observed.Server {
 		case state.ServerStarting:
 			return fmt.Errorf("OwnGit is still starting for state directory %q; try again shortly", *stateDir)
@@ -85,19 +90,23 @@ func healthStatus(stateDir string) (string, bool, state.RunningObservation, erro
 		return "", false, observed, err
 	}
 	address, running := healthTarget(observed, saved.Listen)
-	var target string
-	if running {
-		target, err = localIPTarget(address)
-	} else {
-		target, err = localTarget(address)
-	}
+	target, err := localTarget(address)
 	return target, running, observed, err
 }
 
-// healthTarget returns the actual bound address of the running server,
-// or savedListen or the default when no server has published an address.
+// healthTarget returns the address where the server of a state directory
+// answers, and whether a running server published it: its bound address in
+// the family of its listen setting, or else savedListen or the default.
 func healthTarget(observed state.RunningObservation, savedListen string) (string, bool) {
 	if record := observed.Record; observed.Server == state.ServerRunning && record != nil && record.Address != "" {
+		// The listen setting says which family to use: 0.0.0.0 is
+		// reached at 127.0.0.1 even when the socket reports [::].
+		// The bound address has the actual port.
+		listenHost, _, listenErr := net.SplitHostPort(record.Listen)
+		_, port, addressErr := net.SplitHostPort(record.Address)
+		if listenErr == nil && addressErr == nil {
+			return net.JoinHostPort(listenHost, port), true
+		}
 		return record.Address, true
 	}
 	return cmp.Or(savedListen, server.DefaultListenAddress), false
@@ -174,7 +183,19 @@ var healthClient = &http.Client{
 
 // checkHealth asks the liveness check at target once.
 func checkHealth(target string) error {
-	response, err := healthClient.Get("http://" + target + server.HealthPath)
+	return checkHealthHost(target, "")
+}
+
+// checkHealthHost keeps HTTP routing separate from the connection target.
+func checkHealthHost(target, requestHost string) error {
+	request, err := http.NewRequest(http.MethodGet, "http://"+target+server.HealthPath, nil)
+	if err != nil {
+		return err
+	}
+	if requestHost != "" {
+		request.Host = requestHost
+	}
+	response, err := healthClient.Do(request)
 	if err != nil {
 		return err
 	}
@@ -188,7 +209,17 @@ func checkHealth(target string) error {
 // checkHealthRun checks the response and re-observes the locked running record.
 // Without an observed run, an answer belongs to another program.
 func checkHealthRun(stateDir, target string, record *state.RunningNetwork) error {
-	if err := checkHealth(target); err != nil {
+	requestHost := ""
+	// The admitted listen hostname may differ from the numeric bound address.
+	if record != nil {
+		if host, _, err := net.SplitHostPort(record.Listen); err == nil && host != "" {
+			if _, err := netip.ParseAddr(host); err != nil {
+				_, port, _ := net.SplitHostPort(target)
+				requestHost = net.JoinHostPort(host, port)
+			}
+		}
+	}
+	if err := checkHealthHost(target, requestHost); err != nil {
 		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
 	}
 	if record == nil {
@@ -288,6 +319,9 @@ func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
 		target, running, observed, err := healthStatus(stateDir)
 		if errors.Is(err, state.ErrNotExist) || err == nil && !running {
 			err = errors.New("no running server has published its address yet")
+		}
+		if err == nil {
+			target, err = localIPTarget(observed.Record.Address)
 		}
 		if err == nil {
 			if err = checkHealthRun(stateDir, target, observed.Record); err == nil {
