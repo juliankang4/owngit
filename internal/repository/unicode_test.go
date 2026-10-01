@@ -106,6 +106,12 @@ func TestBrowseServesLooseDecomposedRefsByExactName(t *testing.T) {
 	branch, tag := "\u1112\u1161\u11ab\u1100\u1173\u11af-follow", "cafe\u0301-tag"
 	runGit(t, "", "--git-dir", remote, "config", "core.precomposeUnicode", "true")
 	runGit(t, work, "-c", "core.precomposeUnicode=false", "push", "origin", oid+":refs/heads/"+branch, oid+":refs/tags/"+tag)
+	for namespace, name := range map[string]string{"heads": branch, "tags": tag} {
+		entries, err := os.ReadDir(filepath.Join(remote, "refs", namespace))
+		if err != nil || len(entries) != 1 || entries[0].Name() != name {
+			t.Fatalf("loose %s ref was not stored with exact name %q: entries=%v err=%v", namespace, name, entries, err)
+		}
+	}
 	summary, err := manager.Summary(ctx, "sample")
 	noErr(t, err)
 	if len(summary.Branches) != 1 || summary.Branches[0].Name != branch || summary.Branches[0].OID != oid || len(summary.Tags) != 1 || summary.Tags[0].Name != tag || summary.Tags[0].OID != oid {
