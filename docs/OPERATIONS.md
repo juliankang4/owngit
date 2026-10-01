@@ -295,6 +295,8 @@ The service keeps two files in the log folder, `~/Library/Logs/owngit`, or `$(br
 - `owngit.log` is the server log. OwnGit writes it itself (`--log-file` with `--service`) and makes it readable only by your account. It keeps the file below 10 MB by moving it to `owngit.log.1`, which replaces the older one, when it reaches that size.
 - `owngit.stderr.log` receives what launchd collects from OwnGit's output. That is only what the log cannot hold, such as a crash report or the error that kept OwnGit from opening its log, so it stays small; launchd does not limit its size.
 
+OwnGit also removes any access list (ACL, extra permissions for other accounts) that these files inherit from their folder, so only your account can read them. It does this for `owngit.log` and `owngit.log.1` whenever it opens the log, and for the LaunchAgent's `owngit.stderr.log` whenever `owngit service install` writes the agent, including files that already exist.
+
 An installation from an earlier version keeps writing everything to one unlimited `owngit.log` until you run `owngit service install` again, or, for Homebrew, upgrade and run `brew services restart owngit`.
 
 ### What the service may do
@@ -1109,7 +1111,7 @@ Every command that reads a password or token file you wrote yourself, including 
 
 A password file holds the password on one line; one line break after it is fine. A file with more lines, or a password that is too short, is refused with a message that says so.
 
-On macOS and Linux, create the file while `umask 077` is in effect, or fix it with `chmod 600 FILE`. On Windows, a file made with Notepad or `echo` inherits its folder's access entries, so in PowerShell create the file, limit it to your account, and only then write the password:
+On macOS and Linux, create the file while `umask 077` is in effect, or fix it with `chmod 600 FILE`. On macOS a file can also carry an access list (ACL), a set of extra permissions for named accounts on top of its mode. OwnGit refuses a file whose access list lets another account read it, even with mode 600, and says "its access list gives other accounts read access"; remove the list with `chmod -N FILE`, then make sure of the mode with `chmod 600 FILE`. On Windows, a file made with Notepad or `echo` inherits its folder's access entries, so in PowerShell create the file, limit it to your account, and only then write the password:
 
 ```powershell
 $file = "$HOME\owngit-password.txt"
