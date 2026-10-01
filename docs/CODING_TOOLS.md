@@ -425,8 +425,11 @@ the earlier addresses that still lead to the repository, each with the time it
 stops (`until`). `repo list` returns at most 1000 repositories, with
 `truncated` true when there are more. `repo create` applies the browser form's
 rules and fails with `repository_exists`, `invalid_repository_name`,
-`reserved_repository_name`, or `invalid_repository_description` (over 500
-bytes).
+`reserved_repository_name`, `invalid_repository_description` (over 500
+bytes), `repository_name_busy` (an import for that name is still running or
+needs recovery; try again after it finishes), or `repository_storage_in_use`
+(another running OwnGit server uses the repository folder; stop that server
+or choose another folder).
 
 These `repo` commands are owner actions and need the administrator password in
 `--password-file` instead:

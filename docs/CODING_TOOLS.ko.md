@@ -202,7 +202,7 @@ owngit repo create --server https://owngit.example.test --name example-project \
   --description "Optional description"
 ```
 
-저장소마다 `id`, `name`, `address`, `description`, `created_at`, `clone_url`이 있습니다. `address`는 저장소에 접속하는 주소로, 지금 이름의 소문자입니다. 이름을 바꾸기 전에는 ID와 같습니다. `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 주며 아직 이 저장소로 안내하는 예전 주소를 `aliases`에 안내가 끝나는 시각(`until`)과 함께 보여 줍니다. 푸시로 바꿀 수 있는 ref 이름공간은 `push_ref_namespaces`에 나옵니다([다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 참고). `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과)으로 실패합니다.
+저장소마다 `id`, `name`, `address`, `description`, `created_at`, `clone_url`이 있습니다. `address`는 저장소에 접속하는 주소로, 지금 이름의 소문자입니다. 이름을 바꾸기 전에는 ID와 같습니다. `repo show`는 그 순간 브랜치를 읽을 수 있으면 `default_branch`도 보여 주며 아직 이 저장소로 안내하는 예전 주소를 `aliases`에 안내가 끝나는 시각(`until`)과 함께 보여 줍니다. 푸시로 바꿀 수 있는 ref 이름공간은 `push_ref_namespaces`에 나옵니다([다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 참고). `repo list`는 저장소를 최대 1000개까지 돌려주고 더 있으면 `truncated`가 true입니다. `repo create`는 브라우저 양식과 같은 규칙을 적용하며 `repository_exists`, `invalid_repository_name`, `reserved_repository_name`, `invalid_repository_description`(500바이트 초과), `repository_name_busy`(그 이름의 가져오기가 아직 실행 중이거나 복구가 필요함. 끝난 뒤 다시 시도), `repository_storage_in_use`(실행 중인 다른 OwnGit 서버가 저장소 폴더를 사용 중임. 그 서버를 멈추거나 다른 폴더를 선택)로 실패합니다.
 
 `repo` 명령 가운데 다음 명령은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
 
