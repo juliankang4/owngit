@@ -1635,13 +1635,13 @@ Each run fetches a full copy into a private staging area. Before anything reache
 By default, a refresh never overwrites local work. Two [refresh choices](#refs-and-refresh-choices) change that, and the rules below say where.
 
 - A missing ref is created, and an identical one is left alone.
-- A branch follows the source only while it still holds the value OwnGit last saw from this source URL, or moved forward from it and the new source value includes it. If Git cannot tell whether it does, the refresh stops with `publish_failed` before writing anything, and the next refresh starts again from the same point.
+- A branch follows the source only while it still holds the value OwnGit last saw from this source URL, or moved forward from it and the new source value includes it. If Git cannot tell whether it does, the refresh stops with `publish_failed` before changing any ref or HEAD (fetched objects may already be stored), and the next refresh starts again from the same point.
 - A tag, or a ref in an extra namespace, changes only while it still holds the exact value last seen.
 - Anything else is divergent and kept, and the run reports it. [Overwrite diverged branches](#overwrite-diverged-branches) replaces it instead.
 - A ref deleted at the source stays locally (**Deleted at source** in the Import tab and `import status`). [Follow upstream deletions](#follow-upstream-deletions) deletes it instead.
 - A source ref whose name, or any folder in its name, matches a local ref in the way described under [Moving an existing repository into OwnGit](#moving-an-existing-repository-into-owngit) is reported as divergent instead of created, and HEAD does not follow the source to such a name. `cafe` and `café` are different names.
 - A replaced branch or tag value stays in kept history when kept history was on for the repository as the refresh started; with Do not keep it is not kept. A replaced value in an extra namespace is never kept.
-- HEAD follows the source only when OwnGit set it on an earlier import from the same source and nothing changed it since.
+- HEAD follows the source only when OwnGit recorded that it set HEAD on an earlier import from the same source, and nothing changed it since. If an import was interrupted after changing HEAD but before recording that, OwnGit leaves HEAD as it is from then on and reports it as a ref that differs from the source. You can still choose the default branch on the repository's Settings tab or with `owngit repo default-branch`, but that does not make HEAD follow the source again.
 
 After you change the source URL, OwnGit has not yet seen the new source's refs, so refs that differ are reported as divergent instead of being replaced, and no ref is deleted.
 
