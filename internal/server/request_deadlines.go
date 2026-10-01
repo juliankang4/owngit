@@ -24,12 +24,11 @@ import (
 // than the page deadline, and so does the rest of a body the handler left
 // unread, which net/http reads after the handler to reuse the connection.
 //
-// The reply is written under the same deadline. The work stops a reply
-// reserve earlier, so a request that runs out of time can still get an
-// error page. Work that cannot be interrupted, such as a password hash, can
-// outlast the reserve. A handler that returns after the deadline cannot
-// answer any more: the connection closes, the client gets no reply or a
-// cut-off one, and finish logs the request.
+// Work stops a reply reserve earlier, so a request that runs out of time
+// can still get an error page. A fully rendered page starts a bounded-chunk
+// transfer before its deadline, and each chunk has a fresh idle deadline.
+// Reading the body and authentication never gain that extra time. A handler
+// that already outlasted its deadline cannot start a transfer.
 
 // requestDeadlinesKey finds a request's requestDeadlines in its context.
 type requestDeadlinesKey struct{}
@@ -50,6 +49,8 @@ type requestDeadlines struct {
 	reserve   time.Duration
 	// current is the connection deadline in force.
 	current time.Time
+	// replyIdle bounds one page chunk, independently of total transfer time.
+	replyIdle time.Duration
 	// name is the request's method and escaped path, for the log. The
 	// escaping keeps a decoded line break in the path out of the log.
 	name string
@@ -86,7 +87,7 @@ func startDeadlines(writer http.ResponseWriter, request *http.Request, pageTimeo
 	deadlines := &requestDeadlines{
 		controller: http.NewResponseController(writer), body: body, parent: request.Context(),
 		page: page, operation: started.Add(operationTimeout), reserve: operationReserve, current: page,
-		name: logtext.Request(request),
+		name: logtext.Request(request), replyIdle: min(pageTimeout, operationTimeout),
 	}
 	_ = deadlines.controller.SetReadDeadline(page)
 	_ = deadlines.controller.SetWriteDeadline(page)
@@ -134,6 +135,48 @@ func (app *App) beginImportRun(writer http.ResponseWriter, request *http.Request
 		deadlines.operation = time.Now().Add(ImportRunRequestTimeout(runTimeout))
 	}
 	return app.beginOperation(writer, request)
+}
+
+const pageReplyChunkBytes = 32 << 10
+
+// writePage sends an already rendered body in bounded, flushed chunks. An
+// expired work/operation connection deadline is never revived. Operations
+// and backup transfers keep their own existing connection rules.
+func writePage(writer http.ResponseWriter, request *http.Request, status int, content []byte) error {
+	controller := http.NewResponseController(writer)
+	deadlines, _ := request.Context().Value(requestDeadlinesKey{}).(*requestDeadlines)
+	progress := deadlines != nil && deadlines.cancel == nil && time.Now().Before(deadlines.current)
+	if progress {
+		if deadlines.body.ended.Load() {
+			// net/http's disconnect watcher must not mistake the old body-read
+			// deadline for a disconnect while the reply is still progressing.
+			_ = controller.SetReadDeadline(time.Time{})
+		} else {
+			writer.Header().Set("Connection", "close")
+		}
+	}
+	writer.WriteHeader(status)
+	for len(content) > 0 {
+		if progress {
+			deadlines.current = time.Now().Add(deadlines.replyIdle)
+			if err := controller.SetWriteDeadline(deadlines.current); err != nil && !errors.Is(err, http.ErrNotSupported) {
+				return err
+			}
+		}
+		chunk := content[:min(len(content), pageReplyChunkBytes)]
+		n, err := writer.Write(chunk)
+		if err != nil {
+			return err
+		}
+		if n != len(chunk) {
+			return io.ErrShortWrite
+		}
+		if err := controller.Flush(); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			return err
+		}
+		content = content[n:]
+	}
+	return nil
 }
 
 // finish runs after the handler returns. Without an operation, net/http may

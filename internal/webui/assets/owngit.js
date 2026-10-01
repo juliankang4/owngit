@@ -942,6 +942,25 @@
     });
   });
 
+  /* A fragment is not sent to the server. Route an out-of-page line to
+   * its pinned, script-free line address without accumulating page content. */
+  function routeCodeLine() {
+    var panel = document.querySelector('[data-line-page]');
+    var match = /^#L([1-9][0-9]*)$/.exec(window.location.hash);
+    if (!panel || !match) { return; }
+    var line = Number(match[1]);
+    var first = Number(panel.getAttribute('data-line-first'));
+    var last = Number(panel.getAttribute('data-line-last'));
+    var total = Number(panel.getAttribute('data-line-total'));
+    if (!Number.isSafeInteger(line) || line > total || (line >= first && line <= last)) { return; }
+    var address = new URL(panel.getAttribute('data-line-page'), window.location.href);
+    address.searchParams.set('line', String(line));
+    address.hash = window.location.hash;
+    window.location.replace(address.href);
+  }
+  routeCodeLine();
+  window.addEventListener('hashchange', routeCodeLine);
+
   /* Wrap switch for code and diffs. Long lines scroll sideways by default;
    * the switch wraps them, and the choice is remembered in this browser. The
    * button is rendered hidden, because without this file it could not work. */

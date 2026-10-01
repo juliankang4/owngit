@@ -1,14 +1,20 @@
 package repository
 
 import (
+	"bufio"
 	"bytes"
+	"container/heap"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"path"
+	"sort"
 	"strconv"
 	"strings"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/markdown"
 )
 
 // This file holds the browsing reads that name their commit by object ID.
@@ -278,6 +284,191 @@ func parseTreeListing(output []byte, directory string) ([]TreeEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+// DirectoryPageEntries bounds both the folder and the file drawer.
+const DirectoryPageEntries = 1000
+
+// TreePage contains one immutable directory page. After names the final entry
+// in display order; Readme is found independently of the displayed entries.
+type TreePage struct {
+	Entries []TreeEntry
+	Readme  []TreeEntry
+	Total   int
+	Before  int
+	After   string
+}
+
+func treeCursor(entry TreeEntry) string {
+	if entry.Type == "tree" {
+		return "d:" + entry.Name
+	}
+	return "f:" + entry.Name
+}
+
+func treeEntryLess(left, right TreeEntry) bool {
+	if (left.Type == "tree") != (right.Type == "tree") {
+		return left.Type == "tree"
+	}
+	a, b := strings.ToLower(left.Name), strings.ToLower(right.Name)
+	if a != b {
+		return a < b
+	}
+	return left.Name < right.Name
+}
+
+// A maximum heap retains only the next page while Git's listing is streamed.
+type treePageHeap []TreeEntry
+
+func (h treePageHeap) Len() int           { return len(h) }
+func (h treePageHeap) Less(i, j int) bool { return treeEntryLess(h[j], h[i]) }
+func (h treePageHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *treePageHeap) Push(value any)    { *h = append(*h, value.(TreeEntry)) }
+func (h *treePageHeap) Pop() any {
+	last := len(*h) - 1
+	value := (*h)[last]
+	*h = (*h)[:last]
+	return value
+}
+
+// TreePageAt counts the listing without constructing it, retaining at most
+// DirectoryPageEntries entries and one README. The cursor and commit pin the
+// ordering even if a branch moves between requests.
+func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, after string) (TreePage, error) {
+	if !isOID(commitOID) {
+		return TreePage{}, errInvalidCommitID
+	}
+	if err := validateTreePath(directory); err != nil {
+		return TreePage{}, fmt.Errorf("%w: %w", errDirectoryNotFound, err)
+	}
+	cursor := TreeEntry{}
+	if after != "" {
+		kind, name, ok := strings.Cut(after, ":")
+		if !ok || (kind != "d" && kind != "f") || name == "" || strings.ContainsAny(name, "/\x00") {
+			return TreePage{}, errDirectoryNotFound
+		}
+		cursor.Name = name
+		if kind == "d" {
+			cursor.Type = "tree"
+		}
+	}
+	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil {
+		return TreePage{}, err
+	}
+	if !exists {
+		return TreePage{}, ErrRepositoryNotFound
+	}
+	lock := m.Locks.For(id)
+	if err := readLock(ctx, lock); err != nil {
+		return TreePage{}, err
+	}
+	defer lock.RUnlock()
+	args := []string{"--git-dir", ".", "ls-tree", "-z", "-l", commitOID}
+	prefix := ""
+	if directory != "" {
+		prefix = directory + "/"
+		args = append(args, "--", ":(top,literal)"+prefix)
+	}
+	page := TreePage{}
+	cursorFound := after == ""
+	entries := treePageHeap{}
+	_, err = m.Git.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
+		stream := bufio.NewReader(reader)
+		for {
+			record, err := stream.ReadBytes(0)
+			if err == io.EOF && len(record) == 0 {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			entry, err := parseTreeEntry(record[:len(record)-1])
+			if err != nil {
+				return err
+			}
+			name, ok := strings.CutPrefix(entry.Name, prefix)
+			if !ok || name == "" || strings.Contains(name, "/") {
+				return errors.New("Git returned mismatched tree listing data")
+			}
+			entry.Path, entry.Name = entry.Name, name
+			page.Total++
+			if after != "" && treeCursor(entry) == after {
+				cursorFound = true
+			}
+			if entry.Type == "blob" && entry.Mode != "120000" && markdown.IsDocument(name) &&
+				strings.EqualFold(strings.TrimSuffix(name, path.Ext(name)), "readme") &&
+				(len(page.Readme) == 0 || name < page.Readme[0].Name) {
+				page.Readme = []TreeEntry{entry}
+			}
+			if after != "" && !treeEntryLess(cursor, entry) {
+				page.Before++
+				continue
+			}
+			if len(entries) < DirectoryPageEntries {
+				heap.Push(&entries, entry)
+			} else if treeEntryLess(entry, entries[0]) {
+				entries[0] = entry
+				heap.Fix(&entries, 0)
+			}
+		}
+	}, args...)
+	if err != nil {
+		return TreePage{}, err
+	}
+	if !cursorFound || (directory != "" && page.Total == 0) {
+		return TreePage{}, errDirectoryNotFound
+	}
+	sort.Slice(entries, func(i, j int) bool { return treeEntryLess(entries[i], entries[j]) })
+	page.Entries = []TreeEntry(entries)
+	if page.Before+len(entries) < page.Total {
+		page.After = treeCursor(entries[len(entries)-1])
+	}
+	return page, nil
+}
+
+// PathPageAt looks up the exact path before reading a bounded sibling page.
+// The lookup never depends on whether the file occurs in that page.
+func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after string) (PathView, TreePage, error) {
+	view := PathView{Folder: filePath == ""}
+	directory := filePath
+	if filePath != "" {
+		if !isOID(commitOID) {
+			return PathView{}, TreePage{}, errInvalidCommitID
+		}
+		if err := validateTreePath(filePath); err != nil {
+			return PathView{}, TreePage{}, fmt.Errorf("%w: %w", errFileNotFound, err)
+		}
+		result, err := m.cachedRead(ctx, id, "path-entry", commitOID+"\x00"+filePath, func(repositoryPath string) (cachedResult, bool, error) {
+			output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", commitOID, "--", ":(top,literal)"+filePath)
+			return cachedResult{data: output.Stdout}, true, err
+		})
+		if err != nil {
+			return PathView{}, TreePage{}, err
+		}
+		if len(result.data) == 0 {
+			return PathView{}, TreePage{}, errFileNotFound
+		}
+		entry, err := parseTreeEntry(bytes.TrimSuffix(result.data, []byte{0}))
+		if err != nil {
+			return PathView{}, TreePage{}, err
+		}
+		if entry.Name != filePath || (entry.Type != "blob" && entry.Type != "tree") {
+			return PathView{}, TreePage{}, errFileNotFound
+		}
+		view.Folder = entry.Type == "tree"
+		if !view.Folder {
+			entry.Path = filePath
+			view.File = entry
+			directory = path.Dir(filePath)
+			if directory == "." {
+				directory = ""
+			}
+		}
+	}
+	page, err := m.TreePageAt(ctx, id, commitOID, directory, after)
+	view.Entries = page.Entries
+	return view, page, err
 }
 
 // ReadBlob reads filePath at requestedRef. It returns the commit ID the ref

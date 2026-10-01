@@ -518,6 +518,10 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
+	if errors.Is(err, errPageAddress) {
+		app.renderError(writer, request, http.StatusBadRequest, webui.MsgErrNotFound, "")
+		return
+	}
 	// A read that failed is explained instead of the page, before any 404:
 	// it is never reported as a missing ref, commit or path. So is one that
 	// ran out of time, since it can leave a side panel unread too.
@@ -761,11 +765,11 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 		}
 		// The README answers what the repository is. It is found and
 		// rendered exactly as the code view does for the top folder.
-		entries, err := app.Repositories.TreeAt(request.Context(), page.Repo.ID, page.Ref.Revision, "")
+		listing, err := app.Repositories.TreePageAt(request.Context(), page.Repo.ID, page.Ref.Revision, "", "")
 		if err != nil {
 			return err
 		}
-		page.Overview.Readme = app.folderReadme(request, page.Repo, selectedRef, "", entries)
+		page.Overview.Readme = app.folderReadme(request, page.Repo, selectedRef, "", listing.Readme)
 	}
 	// A shared page shows the code only: pull requests, checks, kept history
 	// and the activity graph, which counts kept history, are the owner's.
@@ -937,6 +941,113 @@ func recoveredTarget(oid string, branches []repository.Ref) string {
 	}
 }
 
+var errPageAddress = errors.New("invalid page address")
+
+// requestedLinePage accepts both page links and script-free line addresses.
+func requestedLinePage(request *http.Request) (int, error) {
+	query := request.URL.Query()
+	value := query.Get("line")
+	if value == "" {
+		value = query.Get("from")
+	}
+	if value == "" {
+		return 1, nil
+	}
+	line, err := strconv.Atoi(value)
+	if err != nil || line < 1 {
+		return 0, errPageAddress
+	}
+	return (line-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1, nil
+}
+
+func sourceLinePage(content []byte, first int) ([]string, int) {
+	var lines []string
+	total := 0
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(content), "\n"), "\n") {
+		total++
+		if total >= first && len(lines) < maximumCommitDiffLines {
+			lines = append(lines, strings.TrimSuffix(line, "\r"))
+		}
+	}
+	return lines, total
+}
+
+func pinnedPageURL(address, revision, blob string) string {
+	parsed, _ := url.Parse(address)
+	query := parsed.Query()
+	if revision != "" {
+		query.Set("revision", revision)
+	}
+	if blob != "" {
+		query.Set("blob", blob)
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
+}
+
+func lineContinuation(address string, first, shown, total int) webui.PageContinuation {
+	continuation := webui.PageContinuation{First: first, Last: first + shown - 1, Total: total}
+	if total <= maximumCommitDiffLines {
+		return continuation
+	}
+	parsed, _ := url.Parse(address)
+	query := parsed.Query()
+	query.Del("line")
+	query.Del("from")
+	parsed.RawQuery = query.Encode()
+	if first > 1 {
+		continuation.FirstURL = parsed.String()
+	}
+	if continuation.Last < total {
+		query.Set("from", strconv.Itoa(continuation.Last+1))
+		parsed.RawQuery = query.Encode()
+		continuation.MoreURL = parsed.String()
+	}
+	return continuation
+}
+
+func directoryContinuation(address, revision string, listing repository.TreePage) webui.PageContinuation {
+	continuation := webui.PageContinuation{First: listing.Before + 1, Last: listing.Before + len(listing.Entries), Total: listing.Total}
+	address = pinnedPageURL(address, revision, "")
+	if listing.Before > 0 {
+		continuation.FirstURL = address
+	}
+	if listing.After != "" {
+		parsed, _ := url.Parse(address)
+		query := parsed.Query()
+		query.Set("after", listing.After)
+		parsed.RawQuery = query.Encode()
+		continuation.MoreURL = parsed.String()
+	}
+	return continuation
+}
+
+func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPage) (string, error) {
+	revision := request.URL.Query().Get("revision")
+	if revision == "" || revision == page.Ref.Revision {
+		return page.Ref.Revision, nil
+	}
+	_, pinned, err := app.Repositories.ResolveRevision(request.Context(), page.Repo.ID, revision)
+	if err != nil {
+		return "", err
+	}
+	if pinned != revision {
+		return "", repository.ErrNotFound
+	}
+	if page.Shared {
+		// A share never gains access to commits held only by kept history.
+		reachable, err := app.Repositories.CommitReachableFrom(request.Context(), page.Repo.ID, page.Ref.Revision, pinned)
+		if err != nil {
+			return "", err
+		}
+		if !reachable {
+			return "", repository.ErrNotFound
+		}
+	}
+	page.Ref.Revision, page.Ref.ShortRevision = pinned, shortOID(pinned)
+	return pinned, nil
+}
+
 // fillCode fills the Code tab. A ref or path that does not exist is marked
 // on the page; a read that failed is returned.
 func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, requestedPath string) error {
@@ -950,9 +1061,16 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		}
 		return nil
 	}
-	// The ref was resolved once, above; every read below names its commit.
-	commitOID := page.Ref.Revision
-	lookup, err := app.Repositories.PathAt(request.Context(), page.Repo.ID, commitOID, requestedPath)
+	// A continuation names the original commit, not the branch's new tip.
+	commitOID, err := app.codePageRevision(request, page)
+	if errors.Is(err, repository.ErrNotFound) {
+		page.Code.NotFound = true
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	lookup, listing, err := app.Repositories.PathPageAt(request.Context(), page.Repo.ID, commitOID, requestedPath, request.URL.Query().Get("after"))
 	if errors.Is(err, repository.ErrNotFound) {
 		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath)}
 		return nil
@@ -986,13 +1104,30 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		if lookup.File.Size >= 0 {
 			file.Size = lookup.File.Size
 		}
+		if pinnedBlob := request.URL.Query().Get("blob"); pinnedBlob != "" && pinnedBlob != blob.OID {
+			page.Code.NotFound = true
+			return nil
+		}
 		if !binary {
-			content := strings.ReplaceAll(string(blob.Content), "\r\n", "\n")
-			file.Lines = strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+			first, err := requestedLinePage(request)
+			if err != nil {
+				return err
+			}
+			file.Lines, file.Continuation.Total = sourceLinePage(blob.Content, first)
+			if len(file.Lines) == 0 {
+				return errPageAddress
+			}
+			file.FirstLine = first
+			lineAddress := codeURL(page.Repo.URL, selectedRef, requestedPath)
+			if markdown.IsDocument(requestedPath) {
+				lineAddress += "&view=source"
+			}
+			file.LineURL = pinnedPageURL(lineAddress, commitOID, blob.OID)
+			file.Continuation = lineContinuation(file.LineURL, first, len(file.Lines), file.Continuation.Total)
 		}
 		if !binary && markdown.IsDocument(requestedPath) {
 			file.Document = true
-			file.ShowSource = request.URL.Query().Get("view") == "source"
+			file.ShowSource = request.URL.Query().Get("view") == "source" || request.URL.Query().Get("line") != "" || request.URL.Query().Get("from") != ""
 			file.PreviewURL = codeURL(page.Repo.URL, selectedRef, requestedPath)
 			file.SourceURL = file.PreviewURL + "&view=source"
 			// A cut-off document would render a broken ending, so only a
@@ -1004,6 +1139,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			}
 		}
 		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.URL, selectedRef, lookup.Entries)}
+		view.Continuation = directoryContinuation(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, listing)
 		// The drawer lists the file's folder, so "up" leaves that folder.
 		if parent != "" {
 			view.UpURL = codeURL(page.Repo.URL, selectedRef, path.Dir(parent))
@@ -1022,7 +1158,8 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		view.UpURL = codeURL(page.Repo.URL, selectedRef, path.Dir(requestedPath))
 	}
 	view.Entries = treeViewEntries(page.Repo.URL, selectedRef, lookup.Entries)
-	view.Readme = app.folderReadme(request, page.Repo, selectedRef, requestedPath, lookup.Entries)
+	view.Continuation = directoryContinuation(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, listing)
+	view.Readme = app.folderReadme(request, page.Repo, selectedRef, requestedPath, listing.Readme)
 	page.Code = view
 	// The whole branch or tag downloads from its top folder, where no folder
 	// or file could be taken for what the archive holds.
@@ -1173,6 +1310,10 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			return err
 		}
 		view.Truncated = truncated
+		first, err := requestedLinePage(request)
+		if err != nil {
+			return err
+		}
 		for _, file := range files {
 			if file.Path != requestedPath {
 				continue
@@ -1180,7 +1321,12 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			item := diffFileItem(file, fileURL)
 			item.Selected = true
 			if !item.Binary {
-				item.Hunks = parsePatch(patch)
+				var total, shown int
+				item.Hunks, total, shown = patchLinePage(patch, first, maximumCommitDiffLines)
+				if shown == 0 && first > 1 {
+					return errPageAddress
+				}
+				view.Continuation = lineContinuation(fileURL(requestedPath), first, shown, total)
 			}
 			view.Files = append(view.Files, item)
 		}
@@ -1713,19 +1859,26 @@ func shortOID(oid string) string {
 var hunkHeader = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@`)
 
 func parsePatch(patch string) []webui.DiffHunk {
+	hunks, _, _ := patchLinePage(patch, 1, int(^uint(0)>>1))
+	return hunks
+}
+
+// patchLinePage counts patch rows while retaining only the requested page.
+func patchLinePage(patch string, first, limit int) ([]webui.DiffHunk, int, int) {
 	var hunks []webui.DiffHunk
 	var current *webui.DiffHunk
-	oldLine, newLine := 0, 0
-	for _, line := range strings.Split(strings.ReplaceAll(patch, "\r\n", "\n"), "\n") {
+	header := ""
+	oldLine, newLine, total, shown := 0, 0, 0, 0
+	for line := range strings.SplitSeq(patch, "\n") {
+		line = strings.TrimSuffix(line, "\r")
 		match := hunkHeader.FindStringSubmatch(line)
 		if match != nil {
 			oldLine, _ = strconv.Atoi(match[1])
 			newLine, _ = strconv.Atoi(match[3])
-			hunks = append(hunks, webui.DiffHunk{Header: line})
-			current = &hunks[len(hunks)-1]
+			header, current = line, nil
 			continue
 		}
-		if current == nil || line == "\\ No newline at end of file" || line == "" {
+		if header == "" || line == "\\ No newline at end of file" || line == "" {
 			continue
 		}
 		diffLine := webui.DiffLine{Kind: "context", Text: line}
@@ -1743,7 +1896,16 @@ func parsePatch(patch string) []webui.DiffHunk {
 		default:
 			continue
 		}
+		total++
+		if total < first || shown >= limit {
+			continue
+		}
+		if current == nil {
+			hunks = append(hunks, webui.DiffHunk{Header: header})
+			current = &hunks[len(hunks)-1]
+		}
 		current.Lines = append(current.Lines, diffLine)
+		shown++
 	}
-	return hunks
+	return hunks, total, shown
 }

@@ -227,7 +227,7 @@
     {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
     {{with $f}}
     <div class="codebar__tools">
-      {{if not .Binary}}<span class="codebar__fact">{{biCount $lang "line" (len .Lines)}}</span>{{end}}
+      {{if not .Binary}}<span class="codebar__fact">{{if .Continuation.Total}}{{biCount $lang "line" .Continuation.Total}}{{else}}{{biCount $lang "line" (len .Lines)}}{{end}}</span>{{end}}
       {{if and .Image .ImageWidth}}<span class="codebar__fact">{{.ImageWidth}} &times; {{.ImageHeight}} px</span>{{end}}
       <span class="codebar__fact">{{bytes .Size}}</span>
       {{/* The source view renders nothing, so it offers the switch unless the
@@ -280,12 +280,14 @@
       {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
       {{/* Repository content is rendered as text through the template's
            escaping. It is never inserted as markup. */}}
-      <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}">
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
+      {{$first := .FirstLine}}{{if not $first}}{{$first = 1}}{{end}}
+      <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}"{{if .LineURL}} data-line-page="{{.LineURL}}" data-line-first="{{$first}}" data-line-last="{{.Continuation.Last}}" data-line-total="{{.Continuation.Total}}"{{end}}>
         <table class="codetable">
           <tbody>
             {{range $i, $line := .Lines}}
-              <tr>
-                <td class="codetable__n">{{add $i 1}}</td>
+              <tr id="L{{add $i $first}}">
+                <td class="codetable__n">{{if $f.LineURL}}<a href="{{$f.LineURL}}&amp;line={{add $i $first}}#L{{add $i $first}}">{{add $i $first}}</a>{{else}}{{add $i $first}}{{end}}</td>
                 <td class="codetable__t">{{$line}}</td>
               </tr>
             {{end}}
@@ -298,6 +300,7 @@
     {{end}}
   {{else}}
     {{/* A folder: its listing, then its README. */}}
+    {{template "pageContinuation" dict "Lang" $lang "C" $c.Continuation}}
     <nav class="flist" {{biAttr $lang "aria-label" "app.files_label"}}>
       <ul>
         {{with $c.UpURL}}<li><a class="flist__row" href="{{.}}">{{icon "up"}}<span class="flist__name">{{bi $lang "app.up_one_level"}}</span></a></li>{{end}}
@@ -362,6 +365,7 @@
       {{/* Every file's diff in turn. A commit opened for one file by address
            shows that file alone and says so. */}}
       {{with .AllFilesURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{template "diffFiles" dict "Lang" $lang "Files" .Files "Title" "app.changed_files"}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
     {{end}}
@@ -398,6 +402,7 @@
 {{$lang := .Lang}}{{$c := .C}}
 <nav class="tree" {{biAttr $lang "aria-label" "app.files_label"}}>
   <p class="tree__h mono">/{{$c.Dir}}</p>
+  {{template "pageContinuation" dict "Lang" $lang "C" $c.Continuation}}
   <ul class="tree__list">
     {{with $c.UpURL}}
       <li><a class="tree__row tree__row--up" href="{{.}}">{{icon "up"}}<span class="tree__name">{{bi $lang "app.up_one_level"}}</span></a></li>
@@ -413,6 +418,16 @@
     {{end}}
   </ul>
 </nav>
+{{end}}
+
+{{define "pageContinuation"}}
+{{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
+<nav class="pager" data-page-continuation>
+  <p>{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}</p>
+  {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
+  {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
+</nav>
+{{end}}{{end}}
 {{end}}
 
 {{/* A folder's README below its listing, or the top README on the overview.

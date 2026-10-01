@@ -1022,7 +1022,16 @@ type RefLine struct {
 }
 
 // CodeView is the file browser panel.
+// PageContinuation describes one bounded page, not an accumulated prefix.
+type PageContinuation struct {
+	First, Last, Total int
+	MoreURL, FirstURL  string
+}
+
+func (p PageContinuation) Shown() int { return max(0, p.Last-p.First+1) }
+
 type CodeView struct {
+	Continuation PageContinuation
 	// Path is the current repository-relative path. Empty at the root.
 	Path string
 	// Crumbs are the navigable path segments, root first.
@@ -1070,7 +1079,10 @@ type FileView struct {
 	Path string
 	Size int64
 	// Lines are the text lines without trailing newlines.
-	Lines []string
+	Lines        []string
+	FirstLine    int
+	LineURL      string
+	Continuation PageContinuation
 	// Binary is true when the file is not displayable text.
 	Binary bool
 	// Truncated is true when only the first Lines were loaded.
@@ -1167,6 +1179,7 @@ type CommitDetail struct {
 	// then holds only that file, and AllFilesURL shows every file again.
 	SelectedPath string
 	AllFilesURL  string
+	Continuation PageContinuation
 	// Truncated is true when the diff was too large to load completely.
 	Truncated bool
 	// Unavailable is true when the diff could not be produced, for example for

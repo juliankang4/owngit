@@ -378,6 +378,9 @@ const (
 	MsgCodePathMissing MessageCode = "code.path_missing"
 	MsgCodeBinary      MessageCode = "code.binary"
 	MsgCodeTruncated   MessageCode = "code.truncated"
+	MsgCodeShowing     MessageCode = "code.showing"
+	MsgCodeMore        MessageCode = "code.more"
+	MsgCodeFirstPage   MessageCode = "code.first_page"
 	MsgCodeRawLink     MessageCode = "code.raw_link"
 	MsgCodeSubmodule   MessageCode = "code.submodule"
 	MsgCodeSymlink     MessageCode = "code.symlink"
@@ -1509,6 +1512,12 @@ var catalog = map[MessageCode]message{
 		en: "This file is not text, so it is not shown here.",
 		ko: "이 파일은 텍스트가 아니어서 여기에 표시하지 않습니다.",
 	},
+	MsgCodeShowing: {
+		en: "Showing %s of %s (%s to %s).",
+		ko: "전체 %[2]s개 중 %[1]s개를 표시합니다 (%[3]s번부터 %[4]s번까지).",
+	},
+	MsgCodeMore:      {en: "More", ko: "더 보기"},
+	MsgCodeFirstPage: {en: "First page", ko: "첫 페이지"},
 	MsgCodeTruncated: {
 		en: "Only the beginning of this file is shown.",
 		ko: "이 파일의 앞부분만 표시했습니다.",

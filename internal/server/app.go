@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -492,8 +493,12 @@ func (app *App) render(writer http.ResponseWriter, request *http.Request, status
 	}
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(status)
-	_, _ = writer.Write(output.Bytes())
+	// An incomplete reply must not have valid HTTP framing for a whole page.
+	writer.Header().Set("Content-Length", strconv.Itoa(output.Len()))
+	if err := writePage(writer, request, status, output.Bytes()); err != nil {
+		logFailure(request, "page transfer", err)
+		panic(http.ErrAbortHandler)
+	}
 }
 
 // renderError answers with an error page. A page frame that cannot be read
