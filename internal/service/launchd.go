@@ -123,6 +123,9 @@ func RenderLaunchAgent(plan Plan) (string, error) {
 	line("\t<true/>")
 	line("\t<key>KeepAlive</key>")
 	line("\t<true/>")
+	// Serving requests and their Git children must not inherit utility I/O throttling.
+	line("\t<key>ProcessType</key>")
+	line("\t%s", str("Interactive"))
 	// Aqua is the desktop session. Background lets "owngit service install"
 	// start the agent over SSH while the user is not logged in at the
 	// desktop; it runs until the Mac restarts, and a later desktop login

@@ -49,6 +49,7 @@ func TestRenderLaunchAgent(t *testing.T) {
 		"EnvironmentVariables":   map[string]any{"PATH": plan.Path},
 		"RunAtLoad":              true,
 		"KeepAlive":              true,
+		"ProcessType":            "Interactive",
 		"LimitLoadToSessionType": []any{"Aqua", "Background"},
 		"Umask":                  "63",
 		"ExitTimeOut":            "150",

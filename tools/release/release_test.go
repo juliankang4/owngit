@@ -941,6 +941,16 @@ func TestNoticeTreeRejectsUndeclaredAndSymlink(t *testing.T) {
 	})
 }
 
+func TestHomebrewServicePriority(t *testing.T) {
+	for _, app := range []bool{false, true} {
+		formula, err := renderTemplate(filepath.Join(repoRoot(t), "packaging", "homebrew", "owngit.rb.tmpl"), packagingData{DarwinApp: app})
+		noErr(t, err)
+		if !strings.Contains(string(formula), "\n    process_type :interactive\n") {
+			t.Fatalf("the Homebrew service lacks interactive process priority (app: %t)", app)
+		}
+	}
+}
+
 // TestPackagingRendering builds every target and exercises the ready, unready,
 // per-format, and rejected publication inputs.
 func TestPackagingRendering(t *testing.T) {
