@@ -311,7 +311,7 @@ The unit also sets `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKern
 
 ### Health check
 
-`GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup, and reads no state. Like every other path, it answers only a Host name OwnGit accepts, so a monitor on another device must use an approved name or address. `owngit health` checks the server of a state directory on this computer and exits 0 when it answers; `owngit service status` and `install` use the same check.
+`GET /healthz` answers `200 OK` with an empty body while OwnGit serves HTTP, before and after setup, and reads no state. Like every other path, it answers only a Host name OwnGit accepts, so a monitor on another device must use an approved name or address. `owngit health` checks the OwnGit of a state directory on this computer and exits 0 only when that installation's OwnGit is running and answers. Otherwise it exits with an error that says what it found: another program answers at the address, OwnGit is still starting (try again shortly), it cannot confirm what holds the state directory, nothing answers, or the state directory is missing or unusable. `owngit service status` and `install` look at the same address but only check that something answers there, and use the default address while the state directory does not exist yet.
 
 ## Checkup
 
@@ -379,7 +379,7 @@ docker compose exec -it owngit owngit setup-link
 
 Setup offers open access by default, where anyone who can reach OwnGit gets in without a password. With open access, finish setup at the computer's name or address, even on the computer that runs the container. After setup, OwnGit in a container refuses `localhost` from outside the container, and [localhost and other addresses](#localhost-and-other-addresses) explains why.
 
-`docker compose ps` shows the container as `healthy` once `owngit health` inside it gets an answer. Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
+`docker compose ps` shows the container as `healthy` once `owngit health` inside it succeeds, that is, once the container's own OwnGit is running and answers. Other commands run the same way, for example `docker compose exec owngit owngit doctor`.
 
 The image holds the release's `owngit` program and Git on Debian 13. It runs as the account `owngit` (user and group ID 10001), never as root. OwnGit needs no privileged mode, Linux capabilities, Docker socket or host network, and `compose.yaml` drops every capability and blocks new privileges.
 

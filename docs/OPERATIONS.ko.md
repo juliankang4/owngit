@@ -311,7 +311,7 @@ Linux의 시스템 서비스에는 systemd 강화 설정이 걸리지만 이 컴
 
 ### 상태 확인
 
-`GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 설정 전후와 관계없이 빈 본문의 `200 OK`로 응답하며 상태를 읽지 않습니다. 다른 경로와 마찬가지로 OwnGit이 받아들이는 Host 이름에만 응답하므로, 다른 기기의 모니터는 승인된 이름이나 주소를 써야 합니다. `owngit health`는 이 컴퓨터의 상태 디렉터리를 쓰는 서버를 확인하고 응답하면 종료 코드 0으로 끝납니다. `owngit service status`와 `install`도 같은 확인을 씁니다.
+`GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 설정 전후와 관계없이 빈 본문의 `200 OK`로 응답하며 상태를 읽지 않습니다. 다른 경로와 마찬가지로 OwnGit이 받아들이는 Host 이름에만 응답하므로, 다른 기기의 모니터는 승인된 이름이나 주소를 써야 합니다. `owngit health`는 이 컴퓨터의 상태 디렉터리를 쓰는 OwnGit을 확인하며, 그 설치의 OwnGit이 실행 중이고 응답할 때만 종료 코드 0으로 끝납니다. 그 밖에는 오류로 끝나며 무엇을 발견했는지 알려 줍니다. 그 주소에서 다른 프로그램이 응답하는 경우, OwnGit이 아직 시작하는 중인 경우(잠시 뒤 다시 시도하세요), 상태 디렉터리를 무엇이 쥐고 있는지 확인할 수 없는 경우, 아무것도 응답하지 않는 경우, 상태 디렉터리가 없거나 쓸 수 없는 경우입니다. `owngit service status`와 `install`은 같은 주소를 보지만 그 주소에서 무언가 응답하는지만 확인하며, 상태 디렉터리가 아직 없으면 기본 주소를 씁니다.
 
 ## 점검
 
@@ -379,7 +379,7 @@ docker compose exec -it owngit owngit setup-link
 
 설정은 기본으로 공개 접속을 제안합니다. 공개 접속에서는 OwnGit에 접속할 수 있는 누구나 비밀번호 없이 들어옵니다. 공개 접속으로 쓴다면 컨테이너를 실행하는 컴퓨터에서도 그 컴퓨터의 이름이나 주소로 설정을 마치세요. 설정을 마친 뒤에는 컨테이너 안의 OwnGit이 컨테이너 밖에서 온 `localhost`를 거부합니다. 그 이유는 [localhost와 다른 주소](#localhost와-다른-주소)에 있습니다.
 
-컨테이너 안에서 `owngit health`가 응답을 받으면 `docker compose ps`에 `healthy`로 표시됩니다. 다른 명령도 같은 방식으로 실행합니다. 예: `docker compose exec owngit owngit doctor`
+컨테이너 안에서 `owngit health`가 성공하면, 즉 컨테이너 자신의 OwnGit이 실행 중이고 응답하면 `docker compose ps`에 `healthy`로 표시됩니다. 다른 명령도 같은 방식으로 실행합니다. 예: `docker compose exec owngit owngit doctor`
 
 이미지에는 Debian 13 위에 릴리스의 `owngit` 프로그램과 Git이 들어 있습니다. OwnGit은 root가 아닌 `owngit` 계정(사용자와 그룹 ID 10001)으로 실행됩니다. 특권 모드, Linux 권한(capability), Docker 소켓, 호스트 네트워크는 필요하지 않으며, `compose.yaml`은 모든 권한을 빼고 새 권한을 얻지 못하게 막습니다.
 
