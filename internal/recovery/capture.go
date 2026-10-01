@@ -88,7 +88,7 @@ const AliasBranchNotice = "Alias branches are backed up as ordinary branches at 
 // containing quotes or shell metacharacters. It is displayed, never executed.
 func (alias AliasBranch) ReconnectCommand() string {
 	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
-	return "git symbolic-ref " + quote(alias.Name) + " " + quote(alias.Target)
+	return "git symbolic-ref -- " + quote(alias.Name) + " " + quote(alias.Target)
 }
 
 // AliasNotice is empty for a capture without alias branches.

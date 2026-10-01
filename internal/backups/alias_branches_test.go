@@ -19,7 +19,7 @@ func TestServingBackupRecordsAliasNoticeButVerificationDoesNotInventOne(t *testi
 	if run.Status != state.BackupSucceeded || run.Verification != state.BackupVerifyPassed {
 		t.Fatalf("alias prevented backup or verification: %+v", run)
 	}
-	for _, want := range []string{recovery.AliasBranchNotice, "project: refs/heads/alias -> refs/heads/main", "git symbolic-ref 'refs/heads/alias' 'refs/heads/main'"} {
+	for _, want := range []string{recovery.AliasBranchNotice, "project: refs/heads/alias -> refs/heads/main", "git symbolic-ref -- 'refs/heads/alias' 'refs/heads/main'"} {
 		if !strings.Contains(run.Message, want) {
 			t.Fatalf("serving backup lacks %q: %s", want, run.Message)
 		}

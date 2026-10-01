@@ -64,7 +64,7 @@ func TestOfflineBackupReportsAliasAndReconnectCommand(t *testing.T) {
 			}
 			text = result.Warnings[0]
 		}
-		for _, want := range []string{recovery.AliasBranchNotice, "project: refs/heads/alias -> refs/heads/main", "git symbolic-ref 'refs/heads/alias' 'refs/heads/main'"} {
+		for _, want := range []string{recovery.AliasBranchNotice, "project: refs/heads/alias -> refs/heads/main", "git symbolic-ref -- 'refs/heads/alias' 'refs/heads/main'"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("offline backup lacks %q: %s", want, text)
 			}
@@ -100,7 +100,7 @@ func TestUpgradeBackupReportsAliasesInLogAndNote(t *testing.T) {
 	note, err := os.ReadFile(filepath.Join(state.UpgradeBackupFolder(stateDir), backups[0], upgradeNoteName))
 	noErr(t, err)
 	for _, text := range []string{strings.Join(lines, "\n"), string(note)} {
-		for _, want := range []string{recovery.AliasBranchNotice, testfixture.BaselineRepositoryID + ": refs/heads/alias -> refs/heads/main", "git symbolic-ref 'refs/heads/alias' 'refs/heads/main'"} {
+		for _, want := range []string{recovery.AliasBranchNotice, testfixture.BaselineRepositoryID + ": refs/heads/alias -> refs/heads/main", "git symbolic-ref -- 'refs/heads/alias' 'refs/heads/main'"} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("upgrade backup result lacks %q: %s", want, text)
 			}

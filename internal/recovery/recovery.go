@@ -978,7 +978,7 @@ func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPat
 			continue
 		}
 		parts := strings.SplitN(line, "\x00", 3)
-		if len(parts) != 3 || (parts[2] != "" && !validRefName(parts[2])) {
+		if len(parts) != 3 || (parts[2] != "" && !validRefName("refs/"+parts[2])) {
 			return nil, nil, errors.New("Git returned malformed ref data")
 		}
 		refs = append(refs, Ref{Name: parts[0], OID: parts[1]})
@@ -990,7 +990,8 @@ func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPat
 				return nil, nil, fmt.Errorf("read alias branch %q: %w", parts[0], err)
 			}
 			target := strings.TrimSpace(string(symbolic.Stdout))
-			if !validRefName(target) {
+			// A symbolic target can also be a one-level ref such as HEAD.
+			if !validRefName("refs/" + target) {
 				return nil, nil, fmt.Errorf("Git returned an invalid target for alias branch %q", parts[0])
 			}
 			aliases = append(aliases, AliasBranch{Name: parts[0], Target: target})

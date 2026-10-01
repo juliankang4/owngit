@@ -51,7 +51,7 @@ func TestBackupReportsAliasBranchesAsOrdinaryBranches(t *testing.T) {
 	if len(result.Aliases) != 1 || result.Aliases[0].Repository != "project" || result.Aliases[0].Name != "refs/heads/alias" || result.Aliases[0].Target != "refs/heads/main" {
 		t.Fatalf("successful backup did not report the alias and target: %s", content)
 	}
-	if notice := report.AliasNotice(); !strings.Contains(notice, AliasBranchNotice) || !strings.Contains(notice, "project: refs/heads/alias -> refs/heads/main") || !strings.Contains(notice, "git symbolic-ref 'refs/heads/alias' 'refs/heads/main'") {
+	if notice := report.AliasNotice(); !strings.Contains(notice, AliasBranchNotice) || !strings.Contains(notice, "project: refs/heads/alias -> refs/heads/main") || !strings.Contains(notice, "git symbolic-ref -- 'refs/heads/alias' 'refs/heads/main'") {
 		t.Fatalf("alias notice lacks the conversion or reconnect instructions: %s", notice)
 	}
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
@@ -74,13 +74,13 @@ func TestBackupAliasNoticeNamesImmediateTargets(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	remote, err := manager.Path("project")
 	noErr(t, err)
-	for _, pair := range [][2]string{{"refs/heads/alias", "refs/heads/main"}, {"refs/heads/chained", "refs/heads/alias"}, {"refs/heads/quote';&$name", "refs/heads/main"}} {
+	for _, pair := range [][2]string{{"refs/heads/alias", "refs/heads/main"}, {"refs/heads/chained", "refs/heads/alias"}, {"refs/heads/quote';&$name", "refs/heads/main"}, {"refs/heads/through-head", "HEAD"}} {
 		runGit(t, remote, "--git-dir", ".", "symbolic-ref", pair[0], pair[1])
 	}
 	backup := filepath.Join(root, "backup")
 	report, err := CreateWithReport(ctx, store, manager, backup)
 	noErr(t, err)
-	if len(report.AliasBranches) != 3 || report.AliasBranches[1].Name != "refs/heads/chained" || report.AliasBranches[1].Target != "refs/heads/alias" {
+	if len(report.AliasBranches) != 4 || report.AliasBranches[1].Name != "refs/heads/chained" || report.AliasBranches[1].Target != "refs/heads/alias" || report.AliasBranches[3].Target != "HEAD" {
 		t.Fatalf("immediate alias targets were not captured: %+v", report.AliasBranches)
 	}
 	if runtime.GOOS == "windows" {
