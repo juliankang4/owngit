@@ -1267,7 +1267,7 @@ After you create a link, OwnGit shows its address once, such as `https://HOST/sh
 
 OwnGit warns, without refusing, when a link has no expiry, when it allows cloning (a copy cannot be taken back by revoking the link) and when it has no extra password.
 
-**What a visitor sees.** Opening the address sets a cookie for that link in the browser and moves to `/share/ID`, so the secret leaves the address bar. The visitor sees the repository's overview, files, README, commits of its branches and tags, and raw files, within the browsing limits. A visitor never sees other repositories, the dashboard, activity, pull requests, checks and their logs, kept history, import details, settings or any control that changes something. A commit that only kept history or a ref outside branches and tags holds is not found. An unknown, expired or revoked link answers *not found*. With an extra password, a wrong password says so, and wrong passwords are counted per address under the [login attempt limits](#login-attempt-limits), apart from sign-in, so they never pause your own sign-in.
+**What a visitor sees.** Opening the address sets a cookie for that link in the browser and moves to `/share/ID`, so the secret leaves the address bar. The visitor sees the repository's overview, files, README, commits of its branches and tags, and raw files, within the browsing limits. A visitor never sees other repositories, the dashboard, activity, pull requests, checks and their logs, kept history, import details, settings or any control that changes something. A commit that only kept history or a ref outside branches and tags holds is not found. The More and First page links of a long file or folder stay on the commit the visitor started from, and stop working once no shared branch or tag holds that commit, for example after a force-push. An unknown, expired or revoked link answers *not found*. With an extra password, a wrong password says so, and wrong passwords are counted per address under the [login attempt limits](#login-attempt-limits), apart from sign-in, so they never pause your own sign-in.
 
 **Cloning.** A clone link's page shows its Git address, `https://HOST/share/ID.git`. Git asks for a user name and password:
 
@@ -1904,6 +1904,10 @@ Browsing limits cap how much one page reads to show a file, a diff or a pull req
 - The pull request diff of the API, `owngit pr diff` and the MCP tool `pull_request_diff` keep their own fixed budget, equal to the defaults.
 - Raising any limit above its default warns that larger views use more memory and may delay other pages.
 - In the settings API, the group `browse_limits` has `raw_bytes`, `file_bytes`, `commit_patch_bytes`, `file_patch_bytes`, `commit_file_bytes`, `compare_bytes` and `compare_seconds`.
+
+Within these limits, one page shows at most 10,000 lines of a file or of one file's diff, and at most 1,000 entries of a folder. Longer ones show "Showing N of M (first to last)." with More and First page links. These links stay on the same commit, so the pages fit together even when the branch moves meanwhile, and a link to a line beyond the first page (`line=`) opens the page that holds it. When the file view limit cut a file short, the line count reads "N loaded lines". Raw file addresses still follow the current branch or tag, so on a page of an earlier commit the download link reads "Download the file at the current ref".
+
+A page that arrives slowly keeps being sent as long as data moves, instead of stopping at the 30-second page time limit. If a page takes a while to arrive, its top shows "Receiving the page. If this notice remains, the page has not arrived in full." If the notice stays, reload the page.
 
 ## Check ceilings
 
