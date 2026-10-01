@@ -1389,6 +1389,8 @@ git for-each-ref --format='%(refname) %(objectname)' refs/heads refs/tags
 git ls-remote --heads --tags owngit
 ```
 
+OwnGit keeps every branch and tag name with exactly the bytes you pushed. That includes a name whose accented letters or Hangul syllables are stored as separate parts (decomposed Unicode), as names made on Linux or Windows can be, also when OwnGit runs on macOS.
+
 A push that creates or updates a branch or tag is refused when its name, or any folder in its name, matches another ref apart from letter case, apart from how an accented letter or a Hangul syllable is encoded (as one character or as parts), or through letters that some file systems treat as equal, such as `ß` and `ss` or `ı` and `i`. Those file systems store such names, or such folders, in the same place, so one ref can overwrite or hide another. Examples are `Main` beside `main`, `Release/x` beside `release/main`, and `기본` written as jamo beside `기본` written as syllables. Names that differ in their letters are different names, so `cafe` and `café` can both exist. Git then shows `OwnGit refused changing refs/heads/NAME because another branch or tag, or one of its folders, has a name that some file systems treat as the same, ...` Use a clearly different name.
 
 A repository can already hold two such names, for example after it was copied from a system that tells them apart. Pushes that create or update either one are refused until you delete one of them with `git push origin --delete NAME`. That deletion changes only the ref you name, and its last commit stays in kept history when kept history is on. The default branch cannot be deleted this way under any spelling: delete the other name, or choose another default branch first.
@@ -2212,6 +2214,7 @@ Restore checks every bundle, ref, object and record before it publishes the new 
 - Restore copies each bundle into the new repository folder as it checks it, and restores from that copy. Before it starts, the disk of the repository folder needs room for all bundles and the largest one once more; otherwise restore stops and says how much it needs.
 - Ctrl+C stops a restore, which then removes what it made, says that nothing was restored and exits with status 130. If both folders are already in place, it completes instead.
 - Git file names are kept exactly, so a name Git accepts but Windows does not, such as one with a backslash, may not check out there.
+- Branch and tag names are kept exactly too. A name stored as decomposed Unicode in a backup made on Linux keeps that form when you verify or restore the backup on macOS. OwnGit does not change names that a backup already records.
 - With `--json` a finished restore prints `ok`, `state_dir`, `repository_root`, the `verification` result when `--verify` was given, and `notes`, one sentence for each thing it did not restore and one for the server-wide settings that start at their defaults, each saying how to set it up again. Without `--json` the same notes follow the result, one per line. A refusal is a JSON error with a `code` and the same exit status: `backup_not_verified` (with the verification as `details`), `restore_failed`, or `interrupted` after Ctrl+C (status 130).
 
 ### Restore steps in the dashboard
