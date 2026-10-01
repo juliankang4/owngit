@@ -286,6 +286,8 @@ macOS lists the agent as OwnGit under System Settings, General, Login Items & Ex
 
 The agent starts OwnGit by the path you ran the command with, for example `/usr/local/bin/owngit`. It refuses a binary that an account other than yours or root could change; group write by macOS's `wheel` and `admin` groups is accepted. If a launchd job that `owngit service` did not create already runs `owngit serve`, the command names it and changes nothing. Unload and remove that job first, for example with `launchctl bootout gui/$(id -u)/LABEL`.
 
+The LaunchAgent and Homebrew's service both run OwnGit with interactive priority, so macOS does not slow its disk and network access, or that of the Git commands it starts, as background work. An installation from an earlier version gets this after you run `owngit service install` again, or, for Homebrew, upgrade OwnGit and run `brew services restart owngit`; a restart without the upgrade is not enough.
+
 #### Log files on macOS
 
 The service keeps two files in the log folder, `~/Library/Logs/owngit`, or `$(brew --prefix)/var/log` for Homebrew:

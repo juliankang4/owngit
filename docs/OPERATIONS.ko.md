@@ -286,6 +286,8 @@ sudo owngit service install --state-dir /var/lib/owngit/state-from-root
 
 에이전트는 명령을 실행한 경로(예: `/usr/local/bin/owngit`)로 OwnGit을 시작합니다. 본인이나 root가 아닌 계정이 바꿀 수 있는 실행 파일은 거부합니다. macOS의 `wheel`과 `admin` 그룹에 쓰기 권한이 있는 것은 받아들입니다. `owngit service`가 만들지 않은 launchd 작업이 이미 `owngit serve`를 실행하고 있으면 명령은 그 작업을 알려 주고 아무것도 바꾸지 않습니다. 먼저 그 작업을 내리고 지우세요. 예를 들어 `launchctl bootout gui/$(id -u)/LABEL`로 내릴 수 있습니다.
 
+LaunchAgent와 Homebrew 서비스는 모두 OwnGit을 대화형(interactive) 우선순위로 실행합니다. 그래서 macOS는 OwnGit과 OwnGit이 실행하는 Git 명령의 디스크와 네트워크 사용을 백그라운드 작업처럼 늦추지 않습니다. 이전 버전으로 설치한 서비스는 `owngit service install`을 다시 실행해야 이렇게 바뀝니다. Homebrew는 OwnGit을 업그레이드한 뒤 `brew services restart owngit`을 실행해야 하며, 업그레이드 없이 다시 시작하는 것만으로는 바뀌지 않습니다.
+
 #### macOS의 로그 파일
 
 서비스는 로그 폴더(`~/Library/Logs/owngit`, Homebrew는 `$(brew --prefix)/var/log`)에 파일 두 개를 둡니다.
