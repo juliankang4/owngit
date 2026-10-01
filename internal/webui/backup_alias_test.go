@@ -33,7 +33,7 @@ func TestBackupResultMessagesKeepPlainHTMLUnlessLocalized(t *testing.T) {
 		if lang == LangKO {
 			chosen = localized.MessageKO
 		}
-		want := `<p class="bkmsg mono" dir="auto"><span data-en="` + html.EscapeString(localized.MessageEN) + `" data-ko="` + html.EscapeString(localized.MessageKO) + `">` + html.EscapeString(chosen) + `</span></p>`
+		want := `<p class="bkmsg" dir="auto"><span data-en="` + html.EscapeString(localized.MessageEN) + `" data-ko="` + html.EscapeString(localized.MessageKO) + `">` + html.EscapeString(chosen) + `</span></p>`
 		if page := render(lang, localized); !strings.Contains(page, want) {
 			t.Fatalf("localized message lacks the escaped language pair: %s", page)
 		}

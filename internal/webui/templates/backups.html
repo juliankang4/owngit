@@ -106,7 +106,7 @@
         <div><dt>{{bi $lang "backup.verification"}}</dt><dd>{{backupWord $lang "verification" .Verification}}</dd></div>
         <div><dt>{{bi $lang "backup.hold"}}</dt><dd>{{if not .HoldKnown}}{{bi $lang "backup.none"}}{{else if .HoldRepository}}{{biF $lang "backup.hold_value" (print .HoldMS) .HoldRepository}}{{else}}{{bi $lang "backup.hold_none"}}{{end}}</dd></div>
       </dl>
-      {{if .Message}}<p class="bkmsg mono" dir="auto">{{if .MessageEN}}{{biText $lang .MessageEN .MessageKO}}{{else}}{{.Message}}{{end}}</p>{{end}}
+      {{if .Message}}<p class="bkmsg{{if not .MessageEN}} mono{{end}}" dir="auto">{{if .MessageEN}}{{biText $lang .MessageEN .MessageKO}}{{else}}{{.Message}}{{end}}</p>{{end}}
       {{if .Path}}
         <p class="bkpath mono" dir="ltr">{{.Path}}</p>
         {{if ne .Status "running"}}
