@@ -40,8 +40,16 @@ func pageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBu
 }
 
 func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("uses a paced TCP transfer")
+	}
+	// Leave room for TCP window probes under race instrumentation. The helper's
+	// work deadline is shorter than idle, and the paced transfer exceeds both.
+	idle := 3 * time.Second
+	workTimeout := idle - idle/4
+	transferTime := 4 * time.Second
 	content := bytes.Repeat([]byte("page bytes\n"), 1<<20)
-	server, results := pageTransferServer(t, 200*time.Millisecond, content)
+	server, results := pageTransferServer(t, idle, content)
 	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -74,15 +82,21 @@ func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testi
 				t.Fatalf("progressing body stopped at %d bytes: %v", received.Len(), err)
 			}
 			if round == 0 {
-				time.Sleep(5 * time.Millisecond)
+				// Pace by bytes, not read count: partial reads must not lengthen
+				// the fixture unpredictably under instrumentation.
+				time.Sleep(time.Duration(n) * transferTime / time.Duration(len(content)))
 			}
 		}
 		response.Body.Close()
 		if !bytes.Equal(received.Bytes(), content) || response.Close {
 			t.Fatalf("transfer round %d differs or closes keep-alive", round)
 		}
-		if round == 0 && time.Since(started) < 200*time.Millisecond {
-			t.Fatal("fixture did not outlast the work deadline")
+		if round == 0 {
+			elapsed := time.Since(started)
+			if elapsed < workTimeout || elapsed < idle {
+				t.Fatal("fixture did not outlast the work and initial connection deadlines")
+			}
+			t.Logf("progressing transfer: %s, %d byte-identical bytes; work %s, idle %s", elapsed, received.Len(), workTimeout, idle)
 		}
 		if err := <-results; err != nil {
 			t.Fatal(err)
