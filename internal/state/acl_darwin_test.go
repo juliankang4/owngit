@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,6 +105,80 @@ func TestMacOSPrivateInputAcceptsOwnerReadACL(t *testing.T) {
 	ordinary := filepath.Join(t.TempDir(), "ordinary")
 	noErr(t, os.WriteFile(ordinary, []byte("synthetic credential\n"), 0o600))
 	noErr(t, ValidatePrivateInputFile(ordinary))
+}
+
+func TestMacOSPrivateInputHandleKeepsValidatedObjectAfterReplacement(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "credential")
+	replacement := filepath.Join(directory, "replacement")
+	const original = "validated credential\n"
+	noErr(t, os.WriteFile(path, []byte(original), 0o600))
+	noErr(t, os.WriteFile(replacement, []byte("replacement credential\n"), 0o600))
+	noErr(t, exec.Command("chmod", "+a", "nobody allow read", replacement).Run())
+
+	file, err := OpenPrivateInputFile(path)
+	noErr(t, err)
+	defer file.Close()
+	noErr(t, os.Rename(replacement, path))
+	content, err := io.ReadAll(file)
+	noErr(t, err)
+	if string(content) != original {
+		t.Fatalf("read %q from the validated handle", content)
+	}
+	var notPrivate *NotPrivateError
+	if err := ValidatePrivateInputFile(path); !errors.As(err, &notPrivate) {
+		t.Fatalf("the replacement path is not the unsafe fixture: %v", err)
+	}
+}
+
+func TestMacOSPrivateInputHandleFollowsFinalSymlink(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target")
+	link := filepath.Join(directory, "credential")
+	noErr(t, os.WriteFile(target, []byte("linked credential\n"), 0o600))
+	noErr(t, os.Symlink(target, link))
+
+	file, err := OpenPrivateInputFile(link)
+	noErr(t, err)
+	content, readErr := io.ReadAll(file)
+	noErr(t, errors.Join(readErr, file.Close()))
+	if string(content) != "linked credential\n" {
+		t.Fatalf("linked content = %q", content)
+	}
+
+	noErr(t, exec.Command("chmod", "+a", "nobody allow read", target).Run())
+	var notPrivate *NotPrivateError
+	if file, err := OpenPrivateInputFile(link); !errors.As(err, &notPrivate) {
+		if file != nil {
+			file.Close()
+		}
+		t.Fatalf("unsafe linked target err=%v, want *NotPrivateError", err)
+	}
+}
+
+func TestMacOSPrivateInputACLQueryFailureFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))
+	original := getattrlistErr
+	t.Cleanup(func() { getattrlistErr = original })
+	var calls []uintptr
+	getattrlistErr = func(trap, a1, a2, a3, a4, a5, a6 uintptr) unix.Errno {
+		calls = append(calls, trap)
+		if trap == unix.SYS_FGETATTRLIST {
+			return unix.EIO
+		}
+		return original(trap, a1, a2, a3, a4, a5, a6)
+	}
+	file, err := OpenPrivateInputFile(path)
+	if file != nil {
+		file.Close()
+	}
+	if !errors.Is(err, unix.EIO) {
+		t.Fatalf("ACL query err=%v, want EIO", err)
+	}
+	if len(calls) != 1 || calls[0] != unix.SYS_FGETATTRLIST {
+		t.Fatalf("getattrlist calls = %v, want one held-file query", calls)
+	}
 }
 
 // An access list that a folder passes on survives the owner-only mode, so

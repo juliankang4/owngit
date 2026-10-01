@@ -61,8 +61,8 @@ func ChangeAccessListFix(path string) (string, error) {
 // validatePrivateInputAccessList refuses a read permit for anyone except the
 // file owner. Every group permit is refused explicitly, without trying to
 // prove its primary and nested membership. The supplied file is never changed.
-func validatePrivateInputAccessList(path string) error {
-	filesec, err := extendedSecurity(path, nil, 0)
+func validatePrivateInputAccessList(file *os.File, info os.FileInfo) error {
+	filesec, err := extendedSecurity(file.Name(), file, 0)
 	if err != nil {
 		return err
 	}
@@ -70,7 +70,7 @@ func validatePrivateInputAccessList(path string) error {
 	if err != nil || !found {
 		return err
 	}
-	owner, err := accessListOwner(path)
+	owner, err := accessListOwner(info)
 	if err != nil {
 		return err
 	}
@@ -87,18 +87,14 @@ func validatePrivateInputAccessList(path string) error {
 	}
 	return &NotPrivateError{
 		Problem: problem,
-		Fix:     "chmod -N " + shellQuote(operandPath(path)),
+		Fix:     "chmod -N " + shellQuote(operandPath(file.Name())),
 	}
 }
 
 // accessListOwner returns the GUID that macOS puts in an access-list entry for
-// the file owner. Numeric user IDs have no fixed GUID representation, so use
-// the system membership service that ACL evaluation uses.
-func accessListOwner(path string) ([]byte, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return nil, err
-	}
+// the held file owner. Numeric user IDs have no fixed GUID representation, so
+// use the system membership service that ACL evaluation uses.
+func accessListOwner(info os.FileInfo) ([]byte, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return nil, errors.New("file owner is unavailable")

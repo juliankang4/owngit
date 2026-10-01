@@ -220,6 +220,20 @@ const credentialOriginPrefix = "owngit-server:"
 // maximumOriginLineBytes bounds the server line of a secret file.
 const maximumOriginLineBytes = 2048
 
+// maximumSecretFileBytes bounds supplied token and import credential files.
+const maximumSecretFileBytes int64 = 1 << 20
+
+func readBoundedInput(reader io.Reader, limit int64) ([]byte, error) {
+	content, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(content)) > limit {
+		return nil, errors.New("file exceeds the supported size")
+	}
+	return content, nil
+}
+
 // splitOriginLine separates the server line from the rest of a secret file.
 // The line is parsed strictly: the exact prefix and one space at the start of
 // the file, one origin that the server flags would accept, and nothing else.
@@ -265,12 +279,9 @@ func errOriginLine(message string) error {
 // readPasswordFile reads a password file with owner-only permissions and
 // the optional server line.
 func readPasswordFile(path string) (secretFile, error) {
-	if err := state.ValidatePrivateInputFile(path); err != nil {
-		return secretFile{}, fmt.Errorf("inspect password file: %w", err)
-	}
-	file, err := os.Open(path)
+	file, err := state.OpenPrivateInputFile(path)
 	if err != nil {
-		return secretFile{}, err
+		return secretFile{}, fmt.Errorf("inspect password file: %w", err)
 	}
 	defer file.Close()
 	// The longest accepted password plus an optional CRLF line ending.
@@ -316,10 +327,17 @@ func (e *passwordContentError) Error() string { return "password file " + e.prob
 // readTokenFile reads a helper or runner credential file with owner-only
 // permissions and the optional server line.
 func readTokenFile(path string) (secretFile, error) {
-	if err := state.ValidatePrivateInputFile(path); err != nil {
+	file, err := state.OpenPrivateInputFile(path)
+	if err != nil {
 		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: secretFileMessage("The helper credential file", err), Cause: err}
 	}
-	content, err := os.ReadFile(path)
+	defer file.Close()
+	var content []byte
+	if runtime.GOOS == "darwin" {
+		content, err = readBoundedInput(file, maximumSecretFileBytes)
+	} else {
+		content, err = io.ReadAll(file)
+	}
 	if err != nil {
 		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file could not be read.", Cause: err}
 	}

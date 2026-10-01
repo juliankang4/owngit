@@ -666,6 +666,15 @@ func ValidatePrivateInputFile(path string) error {
 	return validatePrivateInput(descriptor, user, path)
 }
 
+// OpenPrivateInputFile keeps the existing Windows validation and then opens
+// the supplied file for the caller to read.
+func OpenPrivateInputFile(path string) (*os.File, error) {
+	if err := ValidatePrivateInputFile(path); err != nil {
+		return nil, err
+	}
+	return os.Open(path)
+}
+
 type tokenOwner struct {
 	Owner *windows.SID
 }
