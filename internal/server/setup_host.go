@@ -36,6 +36,7 @@ var setupPageAssets = map[string]bool{
 	"/assets/owngit.js":                      true,
 	"/assets/logo.svg":                       true,
 	"/assets/fonts/PretendardVariable.woff2": true,
+	"/assets/page-complete.css":              true,
 }
 
 // setupHostBinding records the Host of the one setup session redeemed from an

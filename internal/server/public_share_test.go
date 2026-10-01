@@ -58,6 +58,7 @@ func TestPublicShareAddressAnswersShareLinksOnly(t *testing.T) {
 		"/git/project.git/info/refs?service=git-upload-pack", "/git/project.git/info/refs?service=git-receive-pack",
 		HealthPath, TrayStatusPath, TrayEventsPath,
 		"/assets/", "/assets/owngit.css.map", "/assets/owngit.js.map", "/assets/fonts/PRETENDARD-LICENSE.txt", "/assets/../settings",
+		"/assets/page-complete.css.map", "/assets/page-complete.css/", "/assets/other-complete.css",
 		"/share", "/sharex", "/share/x/../../settings",
 	} {
 		for name, header := range map[string]http.Header{"plain": nil, "Funnel": withFunnel, "administrator": withAdmin} {
@@ -69,6 +70,9 @@ func TestPublicShareAddressAnswersShareLinksOnly(t *testing.T) {
 	}
 	if notFound != "404 page not found\n" {
 		t.Fatalf("not found body=%q", notFound)
+	}
+	if status, body := get("/assets/page-complete.css", withFunnel); status != http.StatusOK || body != ".page-transfer-pending { display: none; }\n" {
+		t.Fatalf("public completion stylesheet: status=%d body=%q", status, body)
 	}
 	for _, path := range publicAssets {
 		if status, _ := get(path, withFunnel); status != http.StatusOK {

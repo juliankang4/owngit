@@ -211,6 +211,9 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 					t.Fatalf("asset %s status=%d", match[1], status)
 				}
 			}
+			if status, css := browser.do(http.MethodGet, "/assets/page-complete.css", nil); status != http.StatusOK || css != ".page-transfer-pending { display: none; }\n" {
+				t.Fatalf("setup completion stylesheet: status=%d body=%q", status, css)
+			}
 			_, css := browser.do(http.MethodGet, "/assets/owngit.css", nil)
 			for _, match := range regexpCSSURL.FindAllStringSubmatch(css, -1) {
 				if status := browser.status(http.MethodGet, "/assets/"+match[1], nil); status != http.StatusOK {
@@ -221,6 +224,7 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 				{http.MethodGet, "/"}, {http.MethodHead, "/setup"}, {http.MethodGet, "/setup/approval"}, {http.MethodGet, "/settings"},
 				{http.MethodGet, "/login"}, {http.MethodGet, "/api/v1/repositories"}, {http.MethodGet, "/git/demo.git/info/refs?service=git-upload-pack"},
 				{http.MethodGet, "/assets/fonts/PRETENDARD-LICENSE.txt"}, {http.MethodGet, "/assets/"},
+				{http.MethodGet, "/assets/page-complete.css.map"}, {http.MethodPost, "/assets/page-complete.css"},
 			} {
 				if status := browser.status(refused.method, refused.path, nil); status != http.StatusMisdirectedRequest {
 					t.Fatalf("%s %s status=%d, want 421", refused.method, refused.path, status)
@@ -285,14 +289,14 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 				if status != http.StatusOK || app.Hosts.Allows("192.168.1.20", remotePeer) || accepted != 0 || len(trustedHosts(t, store)) != 0 {
 					t.Fatalf("not kept: status=%d accepted=%d trusted=%v", status, accepted, trustedHosts(t, store))
 				}
-				for _, path := range []string{"/", "/setup", "/assets/owngit.css"} {
+				for _, path := range []string{"/", "/setup", "/assets/owngit.css", "/assets/page-complete.css"} {
 					if status := browser.status(http.MethodGet, path, nil); status != http.StatusMisdirectedRequest {
 						t.Fatalf("after setup GET %s status=%d, want 421", path, status)
 					}
 				}
 			}
 			// After setup every other unknown Host is refused as before.
-			for _, request := range []struct{ method, path string }{{http.MethodGet, "/setup"}, {http.MethodGet, "/assets/owngit.css"}, {http.MethodPost, "/setup/redeem"}} {
+			for _, request := range []struct{ method, path string }{{http.MethodGet, "/setup"}, {http.MethodGet, "/assets/owngit.css"}, {http.MethodGet, "/assets/page-complete.css"}, {http.MethodPost, "/setup/redeem"}} {
 				if status := other.status(request.method, request.path, nil); status != http.StatusMisdirectedRequest {
 					t.Fatalf("after setup %s %s from another Host status=%d", request.method, request.path, status)
 				}
