@@ -182,8 +182,7 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrFailedCreationLimit):
-			logFailure(request, "repository creation", err)
-			writeAPIError(writer, http.StatusServiceUnavailable, "repository_create_kept", webui.Text(webui.LangEN, webui.MsgRepoCreationKept)+" ("+strings.ToLower(name)+".git)", nil)
+			writeAPIError(writer, unavailable(request, "repository creation", err), "repository_create_kept", webui.Text(webui.LangEN, webui.MsgRepoCreationKept)+" ("+strings.ToLower(name)+".git)", nil)
 		case errors.Is(err, repository.ErrStorageInUse):
 			logFailure(request, "repository creation", err)
 			writeAPIError(writer, http.StatusConflict, "repository_storage_in_use", webui.Text(webui.LangEN, webui.MsgSetupStorageInUse), nil)

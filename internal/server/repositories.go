@@ -235,8 +235,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 	if err != nil {
 		switch {
 		case errors.Is(err, repository.ErrFailedCreationLimit):
-			logFailure(request, "repository creation", err)
-			app.renderError(writer, request, http.StatusServiceUnavailable, webui.MsgRepoCreationKept, strings.ToLower(name)+".git")
+			app.renderError(writer, request, unavailable(request, "repository creation", err), webui.MsgRepoCreationKept, strings.ToLower(name)+".git")
 		case errors.Is(err, repository.ErrStorageInUse):
 			logFailure(request, "repository creation", err)
 			app.renderError(writer, request, http.StatusConflict, webui.MsgSetupStorageInUse, "")
