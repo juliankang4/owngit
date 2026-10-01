@@ -3,9 +3,39 @@ package repository
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRetentionHookGitCommandsKeepPrecompositionOff(t *testing.T) {
+	manager, remote, _ := newTestRepository(t)
+	runGit(t, "", "--git-dir", remote, "config", "core.precomposeUnicode", "true")
+	hook, err := os.ReadFile(filepath.Join(remote, "hooks", "update"))
+	noErr(t, err)
+	// Execute the generated helpers, including the quarantine-object route,
+	// without making a ref update. Both intentionally clear inherited config.
+	start := strings.Index(string(hook), "run_git() {")
+	end := strings.Index(string(hook), "\n# A symbolic ref")
+	if start < 0 || end <= start {
+		t.Fatal("generated hook has no Git command helpers")
+	}
+	script := string(hook[start:end]) + "\nrun_git config --get core.precomposeUnicode\nrun_git_objects config --get core.precomposeUnicode\n"
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("Git hook shell is unavailable")
+	}
+	command := exec.Command(shell)
+	command.Dir = remote
+	command.Stdin = strings.NewReader(script)
+	command.Env = manager.Git.Environment("GIT_DIR="+remote, "GIT_OBJECT_DIRECTORY="+filepath.Join(remote, "objects"), "GIT_ALTERNATE_OBJECT_DIRECTORIES=")
+	output, err := command.CombinedOutput()
+	if err != nil || string(output) != "false\nfalse\n" {
+		t.Fatalf("hook helper precomposition=%q err=%v", output, err)
+	}
+}
 
 func TestBrowseKeepsComposedAndDecomposedPathIdentity(t *testing.T) {
 	ctx := context.Background()
