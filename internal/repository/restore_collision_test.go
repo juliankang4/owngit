@@ -1,7 +1,9 @@
 package repository
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -33,6 +35,91 @@ func restoreCollisionCommits(t *testing.T, remote, prefix, child string) (string
 	fileCommit := object("file tree\n", append(commitArguments, fileTree)...)
 	directoryCommit := object("directory tree\n", append(commitArguments, directoryTree, "-p", fileCommit)...)
 	return fileCommit, directoryCommit
+}
+
+func duplicateFlattenedPathCommits(t *testing.T, work string) (valid, malformed string) {
+	t.Helper()
+	object := func(input []byte, arguments ...string) string {
+		return gitInputOutput(t, work, input, arguments...)
+	}
+	blob := func(content string) string {
+		return object([]byte(content), "hash-object", "-w", "--stdin")
+	}
+	tree := func(input string) string {
+		return object([]byte(input), "mktree")
+	}
+	commit := func(treeOID, message string) string {
+		return object([]byte(message+"\n"), "-c", "user.name=Restore Fixture", "-c", "user.email=restore@example.invalid", "commit-tree", treeOID)
+	}
+
+	first := blob("first unselected record\n")
+	second := blob("second unselected record\n")
+	validZ := blob("valid z\n")
+	malformedZ := blob("malformed z\n")
+	firstLeaf := tree("100644 blob " + first + "\tc\n")
+	firstParent := tree("040000 tree " + firstLeaf + "\tb\n")
+	secondLeaf := tree("100644 blob " + second + "\tc\n")
+
+	var raw bytes.Buffer
+	writeEntry := func(mode, name, oid string) {
+		raw.WriteString(mode + " " + name)
+		raw.WriteByte(0)
+		decoded, err := hex.DecodeString(oid)
+		if err != nil {
+			t.Fatalf("decode object ID %q: %v", oid, err)
+		}
+		raw.Write(decoded)
+	}
+	writeEntry("40000", "a", firstParent)
+	writeEntry("40000", "a/b", secondLeaf)
+	writeEntry("100644", "z", malformedZ)
+	malformedTree := object(raw.Bytes(), "hash-object", "--literally", "-t", "tree", "-w", "--stdin")
+	validTree := tree("100644 blob " + validZ + "\tz\n")
+	return commit(validTree, "valid tree"), commit(malformedTree, "duplicate flattened path")
+}
+
+func TestSelectedRestoreRejectsDuplicateFlattenedPaths(t *testing.T) {
+	for _, malformedSource := range []bool{false, true} {
+		name := "target tree"
+		if malformedSource {
+			name = "source tree"
+		}
+		t.Run(name, func(t *testing.T) {
+			manager, remote, work := newTestRepository(t)
+			valid, malformed := duplicateFlattenedPathCommits(t, work)
+			source, target := valid, malformed
+			if malformedSource {
+				source, target = malformed, valid
+			}
+			runGit(t, work, "push", "origin", source+":refs/heads/source", target+":refs/heads/main")
+
+			beforeObjects := gitOutput(t, remote, "--git-dir", ".", "count-objects", "-v")
+			beforeRecords := gitOutput(t, remote, "--git-dir", ".", "ls-tree", "-r", "--full-tree", malformed)
+			if count := strings.Count(beforeRecords, "\ta/b/c"); count != 2 {
+				t.Fatalf("duplicate flattened records=%d, want 2:\n%s", count, beforeRecords)
+			}
+			// The exact malformed-data error proves tree reading stops before a
+			// private index can be created in this deliberately missing directory.
+			manager.Git.TempDir = filepath.Join(t.TempDir(), "not-created")
+			request := RestoreRequest{Source: source, Target: "main", Mode: RestoreFiles, Paths: []string{"z"}, ExpectedHead: target}
+			const malformedTreeError = "Git returned malformed restore tree data"
+			if _, err := manager.PreviewRestore(context.Background(), "sample", request); err == nil || err.Error() != malformedTreeError {
+				t.Errorf("preview error=%v, want %q", err, malformedTreeError)
+			}
+			if _, err := manager.ApplyRestore(context.Background(), "sample", request); err == nil || err.Error() != malformedTreeError {
+				t.Errorf("apply error=%v, want %q", err, malformedTreeError)
+			}
+
+			assertRef(t, remote, "refs/heads/source", source)
+			assertRef(t, remote, "refs/heads/main", target)
+			if after := gitOutput(t, remote, "--git-dir", ".", "count-objects", "-v"); after != beforeObjects {
+				t.Errorf("refused restore wrote objects: before=%s after=%s", beforeObjects, after)
+			}
+			if after := gitOutput(t, remote, "--git-dir", ".", "ls-tree", "-r", "--full-tree", malformed); after != beforeRecords {
+				t.Errorf("refused restore changed duplicate records:\nbefore:\n%s\nafter:\n%s", beforeRecords, after)
+			}
+		})
+	}
 }
 
 func TestSelectedRestoreRefusesNonAdjacentPathCollisions(t *testing.T) {

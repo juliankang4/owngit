@@ -426,10 +426,14 @@ func (m *Manager) restoreTreeEntries(ctx context.Context, repositoryPath, commit
 		}
 		metadata, name, ok := bytes.Cut(record, []byte{'\t'})
 		fields := strings.Fields(string(metadata))
-		if !ok || len(fields) != 3 || validateTreePath(string(name)) != nil {
+		filePath := string(name)
+		if !ok || len(fields) != 3 || validateTreePath(filePath) != nil {
 			return nil, errors.New("Git returned malformed restore tree data")
 		}
-		entries[string(name)] = restoreTreeEntry{Mode: fields[0], Type: fields[1], OID: fields[2]}
+		if _, duplicate := entries[filePath]; duplicate {
+			return nil, errors.New("Git returned malformed restore tree data")
+		}
+		entries[filePath] = restoreTreeEntry{Mode: fields[0], Type: fields[1], OID: fields[2]}
 	}
 	return entries, nil
 }
