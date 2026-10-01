@@ -565,7 +565,7 @@ A new password never goes on the command line. `settings access` reads it from t
 
 In the dashboard, the saved values of these settings are shown only to a confirmed administrator: [how long a sign-in lasts](#how-long-a-sign-in-lasts), [links from other sites](#links-from-other-sites), [login attempt limits](#login-attempt-limits), [the branch new repositories start on](#changing-the-default-branch), the server-wide [kept history](#kept-history) choice, the [Git transfer limits](#git-transfer-limits), the [browsing limits](#browsing-limits), the [check ceilings](#check-ceilings), whether [deleting a repository](#deleting-a-repository) asks for its name, how long [raw check logs](#raw-check-logs) are kept, [repository maintenance](#maintenance) and [unused object cleanup](#unused-object-cleanup). Anyone else who opens Settings sees what each one does and a button to confirm as administrator.
 
-In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, and the browsing limits, check ceilings, repository maintenance and unused object cleanup are `browse_limits`, `check_ceilings`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others.
+In that JSON, and in the administrator API at `/api/v1/settings`, the Git transfer limits are the group `git_transfer`, the login attempt limits are `login_limits`, and the browsing limits, check ceilings, repository maintenance and unused object cleanup are `browse_limits`, `check_ceilings`, `maintenance` and `unused_object_cleanup`. A change that names some fields of a group keeps the others, even when another change to the same group is saved at the same moment. When two changes name the same field, the one saved last wins.
 
 When a saved setting cannot be read, for example after a hand edit of the state database, `show` fails and names it. `set` still saves the settings it names and lists the unreadable one under `unreadable`; setting it again replaces it. Meanwhile only what depends on that setting stops, and its message names the setting:
 
@@ -621,6 +621,7 @@ owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m
 ```
 
 - The number of wrong passwords goes from 1 to 100. The window and the pause each go from 1 minute to 24 hours. The limits cannot be turned off.
+- `owngit settings set` and the API can change one or two of the three alone; the others keep their saved values, also when someone changes another one at the same time. A value outside its range saves nothing.
 - New limits apply to wrong passwords after you save. An address already paused stays paused until its pause ends.
 - More attempts, a shorter window or a shorter pause lets people who can reach OwnGit try more passwords. Settings warns about it before you save, and `owngit settings set` lists the warning under `warnings`.
 - Until a proxy is trusted, everyone who reaches OwnGit through it arrives from the proxy's address, so they are paused together. Before you loosen the limits, add that proxy under Trusted proxies on the Network tab ([Behind a reverse proxy](#behind-a-reverse-proxy)); OwnGit then counts each person at their own address.
