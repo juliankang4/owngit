@@ -286,10 +286,7 @@
         <table class="codetable">
           <tbody>
             {{range $i, $line := .Lines}}
-              <tr id="L{{add $i $first}}">
-                <td class="codetable__n">{{if $f.LineURL}}<a href="{{$f.LineURL}}&amp;line={{add $i $first}}#L{{add $i $first}}">{{add $i $first}}</a>{{else}}{{add $i $first}}{{end}}</td>
-                <td class="codetable__t">{{$line}}</td>
-              </tr>
+              <tr id="L{{add $i $first}}"><td class="codetable__n">{{if $f.LineURL}}<a href="{{$f.LineURL}}&amp;line={{add $i $first}}#L{{add $i $first}}">{{add $i $first}}</a>{{else}}{{add $i $first}}{{end}}</td><td class="codetable__t">{{$line}}</td></tr>
             {{end}}
           </tbody>
         </table>

@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestCachedDirectoryPagesPreservePathBytes(t *testing.T) {
+	manager, remote, work := newTestRepository(t)
+	parent := commitTree(t, manager, work, "main", map[string]string{"keep.txt": "keep\n"})
+	name := "file-\xff.txt"
+	blob := hashBareBlob(t, remote, []byte("raw path\n"))
+	tree := makeBareTree(t, remote, map[string]rawTreeEntry{name: {mode: "100644", objectType: "blob", oid: blob}})
+	commit := commitBareTree(t, remote, tree, parent)
+	for round := 0; round < 2; round++ {
+		page, err := manager.TreePageAt(context.Background(), "sample", commit, "", "")
+		if err != nil || len(page.Entries) != 1 || page.Entries[0].Path != name {
+			t.Fatalf("round %d path bytes: %+v %v", round, page.Entries, err)
+		}
+	}
+}
+
 func TestDirectoryPagesKeepEveryEntryAtTheOriginalCommit(t *testing.T) {
 	manager, _, work := newTestRepository(t)
 	files := map[string]string{"readme.MD": "# Independent README\n", "a-folder/keep.txt": "keep\n", "[literal]/x.txt": "literal\n", "Upper.txt": "upper\n", "lower.txt": "lower\n"}

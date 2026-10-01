@@ -374,16 +374,17 @@ const (
 
 // Code browsing and commits.
 const (
-	MsgCodeEmptyDir    MessageCode = "code.empty_directory"
-	MsgCodePathMissing MessageCode = "code.path_missing"
-	MsgCodeBinary      MessageCode = "code.binary"
-	MsgCodeTruncated   MessageCode = "code.truncated"
-	MsgCodeShowing     MessageCode = "code.showing"
-	MsgCodeMore        MessageCode = "code.more"
-	MsgCodeFirstPage   MessageCode = "code.first_page"
-	MsgCodeRawLink     MessageCode = "code.raw_link"
-	MsgCodeSubmodule   MessageCode = "code.submodule"
-	MsgCodeSymlink     MessageCode = "code.symlink"
+	MsgCodeEmptyDir      MessageCode = "code.empty_directory"
+	MsgCodePathMissing   MessageCode = "code.path_missing"
+	MsgCodeBinary        MessageCode = "code.binary"
+	MsgCodeTruncated     MessageCode = "code.truncated"
+	MsgCodeShowing       MessageCode = "code.showing"
+	MsgCodeMore          MessageCode = "code.more"
+	MsgCodeFirstPage     MessageCode = "code.first_page"
+	MsgCodeReceivingPage MessageCode = "code.receiving_page"
+	MsgCodeRawLink       MessageCode = "code.raw_link"
+	MsgCodeSubmodule     MessageCode = "code.submodule"
+	MsgCodeSymlink       MessageCode = "code.symlink"
 
 	MsgCommitsEmpty     MessageCode = "commits.empty"
 	MsgCommitNotFound   MessageCode = "commits.not_found"
@@ -1515,6 +1516,10 @@ var catalog = map[MessageCode]message{
 	MsgCodeShowing: {
 		en: "Showing %s of %s (%s to %s).",
 		ko: "전체 %[2]s개 중 %[1]s개를 표시합니다 (%[3]s번부터 %[4]s번까지).",
+	},
+	MsgCodeReceivingPage: {
+		en: "Receiving the page. If this notice remains, the page has not arrived in full.",
+		ko: "페이지를 받는 중입니다. 이 안내가 계속 보이면 페이지가 끝까지 오지 않은 것입니다.",
 	},
 	MsgCodeMore:      {en: "More", ko: "더 보기"},
 	MsgCodeFirstPage: {en: "First page", ko: "첫 페이지"},

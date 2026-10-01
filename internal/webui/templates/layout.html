@@ -13,6 +13,13 @@
 <script src="{{.Asset "owngit.js"}}" defer></script>
 </head>
 <body>
+{{/* Outside document flow, and visible only when receiving the page takes
+     time. The final style hides it only after the body has arrived. */}}
+<style>
+.page-transfer-pending { position: fixed; z-index: 100; bottom: 1rem; left: 1rem; right: 1rem; max-width: 46rem; margin: 0 auto; padding: .65rem .85rem; border: 1px solid var(--sep-strong, #c9c9cf); border-radius: 5px; background: var(--bg-content, #fff); color: var(--text-1, #1d1d1f); font-size: .875rem; line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere; pointer-events: none; visibility: hidden; animation: page-transfer-show 0s 1.5s forwards; }
+@keyframes page-transfer-show { to { visibility: visible; } }
+</style>
+<p class="page-transfer-pending" role="status" data-page-transfer-pending>{{bi .Lang "code.receiving_page"}}</p>
 <a class="skip" href="#main">{{bi .Lang "app.skip_to_content"}}</a>
 
 <div class="app{{if not (or .Chrome.Nav.OverviewURL .Sidebar.InRepo)}} app--bare{{end}}{{if .Wide}} app--wide{{end}}">
@@ -26,6 +33,7 @@
     </main>
   </div>
 </div>
+<style data-page-transfer-complete>.page-transfer-pending { display: none; }</style>
 </body>
 </html>{{end}}
 
