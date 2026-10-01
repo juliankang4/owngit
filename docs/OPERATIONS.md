@@ -2024,7 +2024,7 @@ The administrator manages backups in Settings, on the Storage & recovery tab (`/
 
 - **Backups** holds the schedule and has its own Save: the backup folder, Scheduled backups on or off, Back up every (12 hours, Day or 7 days), Backups to keep (1 to 1000) and Verify each new backup on or off. They mean the same as the options of [`owngit backup schedule set`](#scheduled-backups). Turning scheduled backups or verification off shows a warning at once that says what you give up, and the warning shows again after you save. Until a folder is saved, the part says that OwnGit makes no backups.
 - **Current state** shows whether scheduled backups are on, off or not configured, the backup running now, the last backup with its result and time, the last verified backup and the next scheduled backup. It also shows the result of the last [verification you asked for](#verifying-a-kept-backup-again), and a warning when a restore cannot write to the backup folder's disk (see [Where backups can be written](#where-backups-can-be-written)). Back up now is here and works as [`owngit backup now`](#backing-up-now) does.
-- **Recorded backups** lists every recorded backup, newest first, with its result, start time, kind (Scheduled or Back up now), verification (Passed, Failed or Not verified), longest Git write wait, message and folder. A backup that OwnGit still keeps has three actions: Verify again, Download and Restore this backup. For a run whose backup is gone, the list says that OwnGit keeps no backup of it.
+- **Recorded backups** lists every recorded backup, newest first, with its result, start time, kind (Scheduled or Back up now), verification (Passed, Failed or Not verified), longest Git write wait, message and folder. The message names any [alias branches](#what-a-backup-holds) the backup turned into ordinary branches. A backup that OwnGit still keeps has three actions: Verify again, Download and Restore this backup. For a run whose backup is gone, the list says that OwnGit keeps no backup of it.
 - **Restore from a backup file** takes back a backup file that OwnGit downloaded; see [Restoring from a backup file](#restoring-from-a-backup-file).
 
 Each button asks for the administrator password when Settings would ask for it; see [Administrator password check](#administrator-password-check). Back up now, Verify again and an upload return at once; reload the page to see when they end.
@@ -2136,7 +2136,7 @@ A backup describes one moment. When it starts, OwnGit waits for pushes and other
 - Pushes, merges and imports after that moment are not in the backup.
 - While a repository is being written into the backup, it cannot be deleted and its maintenance waits.
 
-**A backup holds only the commits that a ref or HEAD reaches.** A ref is a name that points to a commit: a branch, a tag, or one of OwnGit's own refs, such as those for pull requests, imports and kept history. A backup carries every ref and the HEAD of each repository with the commits they reach; a commit that none of them reaches is not in it. With kept history on, an overwritten branch tip stays reachable from kept history and is backed up. With kept history off, an overwritten commit is not in a later backup unless another ref still reaches it. Check, pull request and import records keep the commit IDs they name; after a restore, a record whose commit is not in the repository shows the ID without its content.
+**A backup holds only the commits that a ref or HEAD reaches.** A ref is a name that points to a commit: a branch, a tag, or one of OwnGit's own refs, such as those for pull requests, imports and kept history. A backup carries every ref and the HEAD of each repository with the commits they reach (an [alias branch](#what-a-backup-holds) as an ordinary branch); a commit that none of them reaches is not in it. With kept history on, an overwritten branch tip stays reachable from kept history and is backed up. With kept history off, an overwritten commit is not in a later backup unless another ref still reaches it. Check, pull request and import records keep the commit IDs they name; after a restore, a record whose commit is not in the repository shows the ID without its content.
 
 A backup is refused, and the refusal names the repository, when:
 
@@ -2188,18 +2188,20 @@ owngit backup \
   --output /path/to/new-backup
 ```
 
-With `--json` it prints `ok`, the `backup` folder and a `note` about what the SHA-256 hashes show, and a refusal is a JSON error with a `code`, such as `offline_required` while an OwnGit runs with that state directory, `state_missing`, `setup_incomplete` or `backup_failed`.
+With `--json` it prints `ok`, the `backup` folder, a `note` about what the SHA-256 hashes show and, only when the backup holds [alias branches](#what-a-backup-holds), `warnings` with the alias notice. A refusal is a JSON error with a `code`, such as `offline_required` while an OwnGit runs with that state directory, `state_missing`, `setup_incomplete` or `backup_failed`.
 
 ### What a backup holds
 
 A backup holds a manifest and one Git bundle per nonempty repository. Together they carry:
 
-- every ref including kept history, and each repository's HEAD and metadata;
+- every ref including kept history, and each repository's HEAD and metadata (alias branches as described below);
 - each repository's own kept history choice, default branch protection and [other ref namespaces](#other-ref-namespaces);
 - pull requests, reviews and merge records;
 - tasks, check configurations and results, and automatic-check policies and jobs;
 - import sources and history, including each source's extra ref namespaces and refresh choices;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
+
+**Alias branches.** An alias branch is a branch that points to another ref, usually another branch, instead of to a commit (a symbolic ref). A backup keeps it as an ordinary branch at the same commit, so after a restore it no longer follows its target. When a backup holds alias branches, its result lists each repository, alias and target at backup time with the command that reconnects them, such as `git symbolic-ref -- 'refs/heads/alias' 'refs/heads/main'`, to run in the restored repository from a POSIX shell such as sh, bash, zsh or Git Bash. The backup does not record the targets, so verifying or restoring it cannot show them again; keep that result. A backup without alias branches has no such notice.
 
 A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, the check ceilings, repository maintenance, unused object cleanup and the raw log retention). Nor does it include sessions, network settings, share links, the recent pushes list, the records of Git lock files that imports created on this computer, or the switch for the backup before an upgrade. [After a restore](#after-a-restore) lists everything a restore leaves out and where to set it up again.
 
@@ -2207,7 +2209,7 @@ A backup holds up to 1 GiB of OwnGit records, counted by the memory they take an
 
 ### Backup versions
 
-OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, or its manifest would pass the 64 MiB that version 10 allows. Records that need version 11 include a repository's own kept history choice, default branch protection or other ref namespaces, the names of a [renamed](#renaming-a-repository) repository, an import source's extra ref namespaces or refresh choices, and a check policy's or check job's [container options](AUTOMATIC_CHECKS.md#container-options), including a named Docker network. Import history needs version 11 too when it records refs outside branches and tags, or a deletion that followed the source, even after those choices were turned off. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version. The exception is a backup whose automatic check records hold a time order that earlier builds refuse, such as a check job that appears to be picked up before it was queued. This can happen after the computer's clock was set back. Only OwnGit 1.1.4 or later restores such a backup.
+OwnGit restores backup versions 1, 2, 9, 10 and 11 and refuses others; older builds refuse a newer backup instead of dropping records. A backup is written in version 10, which OwnGit 1.0.3 to 1.1.2 restore, unless it holds records that only version 11 can hold, or its manifest would pass the 64 MiB that version 10 allows. Records that need version 11 include a repository's own kept history choice, default branch protection or other ref namespaces, the names of a [renamed](#renaming-a-repository) repository, an import source's extra ref namespaces or refresh choices, and a check policy's or check job's [container options](AUTOMATIC_CHECKS.md#container-options), including a named Docker network. Import history needs version 11 too when it records refs outside branches and tags, or a deletion that followed the source, even after those choices were turned off. So a backup of an installation that uses nothing new, including every [backup before an upgrade](#backup-before-an-upgrade), can still be restored with the earlier version. The exception is a backup whose automatic check records hold a time order that earlier builds refuse, such as a check job that appears to be picked up before it was queued. This can happen after the computer's clock was set back. Only OwnGit 1.1.4 or later restores such a backup. Branch and tag names that contain unusual space characters, such as a no-break space, now restore correctly, also from a backup an earlier version made; OwnGit 1.1.3 and earlier could not restore them.
 
 ### Restoring a backup
 
@@ -2220,7 +2222,7 @@ owngit restore \
   --repository-root /path/to/new-repositories
 ```
 
-Restore checks every bundle, ref, object and record before it publishes the new state, runs `git fsck` on each repository, and names every repository that fails. The SHA-256 hashes detect corruption, not a backup that someone replaced along with its manifest.
+Restore checks every bundle, ref, object and record before it publishes the new state, runs `git fsck` on each repository, and names every repository that fails. The SHA-256 hashes detect corruption, not a backup that someone replaced along with its manifest. A restored [alias branch](#what-a-backup-holds) is an ordinary branch; restore cannot name its earlier target, so use the notice from the backup's result.
 
 - Restore copies each bundle into the new repository folder as it checks it, and restores from that copy. Before it starts, the disk of the repository folder needs room for all bundles and the largest one once more; otherwise restore stops and says how much it needs.
 - Ctrl+C stops a restore, which then removes what it made, says that nothing was restored and exits with status 130. If both folders are already in place, it completes instead.
@@ -2331,7 +2333,7 @@ owngit backup verify /path/to/backup
 
 A backup is verified only when every check passed and the rehearsal folder was removed. The command exits with status 1 unless the backup is verified, and with 130 when it was stopped. `owngit restore --verify` makes the same rehearsal first and restores only a verified backup, so a damaged backup is refused before anything is created at the targets.
 
-The command restores the backup, with every check that `owngit restore` makes, into a new folder private to this account in the system's temporary folder. It removes that folder afterwards, also when you stop it with Ctrl+C.
+The command restores the backup, with every check that `owngit restore` makes, into a new folder private to this account in the system's temporary folder. Like restore, it cannot name the targets of [alias branches](#what-a-backup-holds), also for older backups. It removes that folder afterwards, also when you stop it with Ctrl+C.
 
 - For each repository, the bundle must match its SHA-256 hash, Git must restore it with exactly the refs and HEAD that the backup records, and `git fsck` must find every object those refs reach.
 - The restored database must have the schema this version creates and pass SQLite's integrity and foreign key checks.
@@ -2352,7 +2354,7 @@ When a newer OwnGit starts on a state whose schema is older than the one it writ
 
 - The backup is a new folder, such as `pre-1.1.3-20260929T101500Z`, in a folder beside the state directory named after it with `-backups`, for example `~/.config/owngit-backups` beside `~/.config/owngit`.
 - It holds every repository, so that disk needs room for them.
-- The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it. `owngit-upgrade-backup.txt` in the backup says the same.
+- The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it. `owngit-upgrade-backup.txt` in the backup says the same, including the notice about any [alias branches](#what-a-backup-holds).
 - A new state, and one whose setup is not complete, need no backup.
 - A state where an earlier version left a refused or stopped merge behind is backed up like any other.
 - OwnGit 1.0.3 and later restore it, with one exception. When an earlier version refused or stopped a merge, the pull request then changed, and it was merged at its new commits, the backup can hold a record of the earlier attempt that does not match the merge. Earlier builds refuse such a backup, and could not back up that state at all, so only OwnGit 1.1.4 or later restores it. A merge that was retried without changes and then succeeded leaves no such record.
