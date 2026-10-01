@@ -604,7 +604,7 @@ func (app *App) removedNotices(writer http.ResponseWriter, request *http.Request
 			return append(notices, webui.Info(webui.MsgRepoRemovedKeptRecovery))
 		}
 		return append(notices,
-			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.cloneURL(request, result.Name))),
+			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.cloneURL(request, strings.ToLower(result.Name)))),
 			webui.Info(webui.MsgRepoRemovedKeptWhere))
 	case webui.DeleteModeDeleteFiles:
 		return []webui.Notice{webui.Success(webui.MsgRepoRemovedDeleted).WithDetail(result.Name)}

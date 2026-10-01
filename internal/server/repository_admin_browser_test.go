@@ -331,51 +331,89 @@ func TestRepositoryDeleteKeepFilesNamesTheKeptFolder(t *testing.T) {
 	}
 }
 
-func TestRecoveryCommandRestoresARenamedRepositoryWithoutChangingTheFirstName(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	server, client, jar := openBrowser(t, fixture)
-	signInAdmin(t, fixture, server.URL, jar)
+func TestRecoveryCommandUsesTheCanonicalCurrentAddress(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		initial      string
+		renames      []string
+		reuseInitial bool
+	}{
+		{name: "never renamed mixed case", initial: "Original"},
+		{name: "renamed once mixed case", initial: "Original", renames: []string{"Renamed"}},
+		{name: "renamed twice with the first name reused", initial: "Original", renames: []string{"Middle", "Final"}, reuseInitial: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAPIFixture(t, false)
+			server, client, jar := openBrowser(t, fixture)
+			signInAdmin(t, fixture, server.URL, jar)
 
-	renamed := browserForm(t, client, server.URL+"/repositories/project/settings/rename", url.Values{
-		"csrf": {adminTestCSRF}, "name": {"renamed"},
-	}, server.URL)
-	if renamed.status != http.StatusSeeOther {
-		t.Fatalf("rename status=%d body=%s", renamed.status, renamed.body)
-	}
-	deleted := browserForm(t, client, server.URL+"/repositories/renamed/delete", url.Values{
-		"csrf": {adminTestCSRF}, "mode": {"keep_files"}, "confirm_name": {"renamed"}, "admin_password": {"admin-password"},
-	}, server.URL)
-	if deleted.status != http.StatusSeeOther || deleted.header.Get("Location") != "/?notice="+removedNotice {
-		t.Fatalf("keep-files delete status=%d location=%q body=%s", deleted.status, deleted.header.Get("Location"), deleted.body)
-	}
+			created, err := fixture.app.Repositories.Create(t.Context(), test.initial, "Recovery source")
+			noErr(t, err)
+			createdPath, err := fixture.app.Repositories.Path(created.ID)
+			noErr(t, err)
+			apiRunGit(t, fixture.work, "tag", "kept-v1", fixture.targetOID)
+			apiRunGit(t, fixture.work, "push", createdPath,
+				"refs/heads/main:refs/heads/main", "refs/heads/feature:refs/heads/feature", "refs/tags/kept-v1:refs/tags/kept-v1")
 
-	unrelated, err := fixture.app.Repositories.Create(t.Context(), "project", "Unrelated repository")
-	noErr(t, err)
-	unrelatedPath, err := fixture.app.Repositories.Path(unrelated.ID)
-	noErr(t, err)
-	apiRunGit(t, fixture.work, "push", unrelatedPath, "HEAD:refs/heads/unrelated")
-	unrelatedRefs := apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)")
+			currentName, currentAddress := created.Name, created.Address
+			for _, nextName := range test.renames {
+				renamed := browserForm(t, client, server.URL+"/repositories/"+currentAddress+"/settings/rename", url.Values{
+					"csrf": {adminTestCSRF}, "name": {nextName},
+				}, server.URL)
+				if renamed.status != http.StatusSeeOther {
+					t.Fatalf("rename %q to %q status=%d body=%s", currentName, nextName, renamed.status, renamed.body)
+				}
+				currentName, currentAddress = nextName, strings.ToLower(nextName)
+			}
 
-	recreated, err := fixture.app.Repositories.Create(t.Context(), "renamed", "Recreated repository")
-	noErr(t, err)
-	recreatedPath, err := fixture.app.Repositories.Path(recreated.ID)
-	noErr(t, err)
+			deleted := browserForm(t, client, server.URL+"/repositories/"+currentAddress+"/delete", url.Values{
+				"csrf": {adminTestCSRF}, "mode": {"keep_files"}, "confirm_name": {currentName}, "admin_password": {"admin-password"},
+			}, server.URL)
+			if deleted.status != http.StatusSeeOther || deleted.header.Get("Location") != "/?notice="+removedNotice {
+				t.Fatalf("keep-files delete status=%d location=%q body=%s", deleted.status, deleted.header.Get("Location"), deleted.body)
+			}
 
-	dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice)
-	parts := regexp.MustCompile(`git --git-dir '([^']+)' push '([^']+)' 'refs/heads/\*:refs/heads/\*' 'refs/tags/\*:refs/tags/\*'`).FindStringSubmatch(html.UnescapeString(dashboard.body))
-	if len(parts) != 3 {
-		t.Fatalf("dashboard lacks the recovery command:\n%s", dashboard.body)
-	}
-	apiRunGit(t, "", "--git-dir", parts[1], "push", parts[2], "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*")
+			var unrelatedPath, unrelatedRefs string
+			if test.reuseInitial {
+				unrelated, err := fixture.app.Repositories.Create(t.Context(), test.initial, "Unrelated repository")
+				noErr(t, err)
+				unrelatedPath, err = fixture.app.Repositories.Path(unrelated.ID)
+				noErr(t, err)
+				apiRunGit(t, fixture.work, "push", unrelatedPath, "HEAD:refs/heads/unrelated")
+				unrelatedRefs = apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)")
+			}
 
-	if after := apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)"); after != unrelatedRefs {
-		t.Fatalf("the displayed command changed the unrelated repository at the first name:\nbefore:\n%s\nafter:\n%s", unrelatedRefs, after)
-	}
-	if main := apiGitOutput(t, "", "--git-dir", recreatedPath, "rev-parse", "refs/heads/main"); main != fixture.targetOID {
-		t.Fatalf("recreated repository main=%s, want %s", main, fixture.targetOID)
-	}
-	if feature := apiGitOutput(t, "", "--git-dir", recreatedPath, "rev-parse", "refs/heads/feature"); feature != fixture.sourceOID {
-		t.Fatalf("recreated repository feature=%s, want %s", feature, fixture.sourceOID)
+			recreated, err := fixture.app.Repositories.Create(t.Context(), currentName, "Recreated repository")
+			noErr(t, err)
+			recreatedPath, err := fixture.app.Repositories.Path(recreated.ID)
+			noErr(t, err)
+
+			dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice)
+			parts := regexp.MustCompile(`git --git-dir '([^']+)' push '([^']+)' 'refs/heads/\*:refs/heads/\*' 'refs/tags/\*:refs/tags/\*'`).FindStringSubmatch(html.UnescapeString(dashboard.body))
+			if len(parts) != 3 {
+				t.Fatalf("dashboard lacks the recovery command:\n%s", dashboard.body)
+			}
+			expectedURL := server.URL + "/git/" + url.PathEscape(recreated.Address) + ".git"
+			if parts[2] != expectedURL {
+				t.Fatalf("recovery URL=%q, want current address %q", parts[2], expectedURL)
+			}
+			apiRunGit(t, "", "--git-dir", parts[1], "push", parts[2], "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*")
+
+			if test.reuseInitial {
+				if after := apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)"); after != unrelatedRefs {
+					t.Fatalf("the displayed command changed the unrelated repository at the first name:\nbefore:\n%s\nafter:\n%s", unrelatedRefs, after)
+				}
+			}
+			for ref, want := range map[string]string{
+				"refs/heads/main":    fixture.targetOID,
+				"refs/heads/feature": fixture.sourceOID,
+				"refs/tags/kept-v1":  fixture.targetOID,
+			} {
+				if got := apiGitOutput(t, "", "--git-dir", recreatedPath, "rev-parse", ref); got != want {
+					t.Fatalf("recreated repository %s=%s, want %s", ref, got, want)
+				}
+			}
+		})
 	}
 }
 
