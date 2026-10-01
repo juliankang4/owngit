@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -355,14 +354,12 @@ func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourc
 			delete(result, filePath)
 		}
 	}
-	resultPaths := make([]string, 0, len(result))
 	for filePath := range result {
-		resultPaths = append(resultPaths, filePath)
-	}
-	sort.Strings(resultPaths)
-	for index := 0; index+1 < len(resultPaths); index++ {
-		if strings.HasPrefix(resultPaths[index+1], resultPaths[index]+"/") {
-			return "", nil, fmt.Errorf("%w: selection would discard unselected descendants", ErrRestoreUnsupported)
+		// Every ancestor must be a directory, not another resulting entry.
+		for slash := strings.LastIndexByte(filePath, '/'); slash >= 0; slash = strings.LastIndexByte(filePath[:slash], '/') {
+			if _, exists := result[filePath[:slash]]; exists {
+				return "", nil, fmt.Errorf("%w: selection would discard unselected descendants", ErrRestoreUnsupported)
+			}
 		}
 	}
 
