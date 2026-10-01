@@ -31,23 +31,23 @@ func healthCommand(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("health takes no positional arguments")
 	}
-	target, running, status, err := healthStatus(*stateDir)
+	target, running, observed, err := healthStatus(*stateDir)
 	if err != nil {
 		return fmt.Errorf("state directory %q: %w", *stateDir, err)
 	}
 	if !running {
-		switch status {
+		switch observed.Server {
 		case state.ServerStarting:
 			return fmt.Errorf("OwnGit is still starting for state directory %q; try again shortly", *stateDir)
 		case state.ServerUnknown:
 			return fmt.Errorf("cannot confirm that OwnGit is running for state directory %q: another program holds the state directory, or its running record cannot be vouched for", *stateDir)
 		}
+		if _, err := localIPTarget(target); err != nil {
+			return fmt.Errorf("OwnGit is not running for state directory %q", *stateDir)
+		}
 	}
-	if err := checkHealth(target); err != nil {
-		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
-	}
-	if !running {
-		return fmt.Errorf("OwnGit is not running for this state directory, and another program answers at http://%s", target)
+	if err := checkHealthRun(*stateDir, target, observed.Record); err != nil {
+		return err
 	}
 	fmt.Printf("OwnGit answers at http://%s\n", target)
 	return nil
@@ -64,44 +64,40 @@ func healthAddress(stateDir string) (string, bool, error) {
 	return target, running, err
 }
 
-// healthStatus keeps the observation's status beside the selected target so
-// health can distinguish a starting server from an unrelated responder.
-func healthStatus(stateDir string) (string, bool, string, error) {
+// healthStatus keeps the observation beside the target so health can
+// distinguish startup and confirm the same run after its response.
+func healthStatus(stateDir string) (string, bool, state.RunningObservation, error) {
 	if err := state.RequireExisting(stateDir); err != nil {
-		return "", false, "", err
+		return "", false, state.RunningObservation{}, err
 	}
 	ctx := context.Background()
 	store, err := openLiveState(ctx, stateDir)
 	if err != nil {
-		return "", false, "", err
+		return "", false, state.RunningObservation{}, err
 	}
 	defer store.Close()
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
-		return "", false, "", err
+		return "", false, observed, err
 	}
 	saved, err := store.NetworkSettings(ctx)
 	if err != nil {
-		return "", false, "", err
+		return "", false, observed, err
 	}
 	address, running := healthTarget(observed, saved.Listen)
-	target, err := localTarget(address)
-	return target, running, observed.Server, err
+	var target string
+	if running {
+		target, err = localIPTarget(address)
+	} else {
+		target, err = localTarget(address)
+	}
+	return target, running, observed, err
 }
 
-// healthTarget returns the address where the server of a state directory
-// answers, and whether a running server published it: its bound address in
-// the family of its listen setting, or else savedListen or the default.
+// healthTarget returns the actual bound address of the running server,
+// or savedListen or the default when no server has published an address.
 func healthTarget(observed state.RunningObservation, savedListen string) (string, bool) {
 	if record := observed.Record; observed.Server == state.ServerRunning && record != nil && record.Address != "" {
-		// The listen setting says which family to use: 0.0.0.0 is
-		// reached at 127.0.0.1 even when the socket reports [::].
-		// The bound address has the actual port.
-		listenHost, _, listenErr := net.SplitHostPort(record.Listen)
-		_, port, addressErr := net.SplitHostPort(record.Address)
-		if listenErr == nil && addressErr == nil {
-			return net.JoinHostPort(listenHost, port), true
-		}
 		return record.Address, true
 	}
 	return cmp.Or(savedListen, server.DefaultListenAddress), false
@@ -157,6 +153,19 @@ func localTarget(address string) (string, error) {
 	return net.JoinHostPort(host, port), nil
 }
 
+// localIPTarget never resolves a hostname and uses the bound address's
+// family when reaching a wildcard listener through loopback.
+func localIPTarget(address string) (string, error) {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return "", fmt.Errorf("health address %q: %w", address, err)
+	}
+	if _, err := netip.ParseAddr(host); err != nil {
+		return "", fmt.Errorf("health address %q must use an IP address: %w", address, err)
+	}
+	return localTarget(address)
+}
+
 var healthClient = &http.Client{
 	Timeout:       5 * time.Second,
 	Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
@@ -172,6 +181,25 @@ func checkHealth(target string) error {
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("status %d", response.StatusCode)
+	}
+	return nil
+}
+
+// checkHealthRun checks the response and re-observes the locked running record.
+// Without an observed run, an answer belongs to another program.
+func checkHealthRun(stateDir, target string, record *state.RunningNetwork) error {
+	if err := checkHealth(target); err != nil {
+		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
+	}
+	if record == nil {
+		return fmt.Errorf("OwnGit is not running for this state directory, and another program answers at http://%s", target)
+	}
+	_, running, confirmed, err := healthStatus(stateDir)
+	if err != nil {
+		return fmt.Errorf("cannot confirm that OwnGit is still running for state directory %q: %w", stateDir, err)
+	}
+	if !running || confirmed.Record.PID != record.PID || confirmed.Record.StartedAt != record.StartedAt || confirmed.Record.Address != record.Address {
+		return fmt.Errorf("cannot confirm that the same OwnGit is still running for state directory %q at http://%s; try again shortly", stateDir, target)
 	}
 	return nil
 }
@@ -257,12 +285,12 @@ func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
 		if message, failed := serveErrorSince(stateDir, since); failed && !strings.Contains(message, state.ErrInspectionUnstable.Error()) {
 			return "", errServeFailed{message}
 		}
-		target, running, err := healthAddress(stateDir)
-		if err == nil && !running {
+		target, running, observed, err := healthStatus(stateDir)
+		if errors.Is(err, state.ErrNotExist) || err == nil && !running {
 			err = errors.New("no running server has published its address yet")
 		}
 		if err == nil {
-			if err = checkHealth(target); err == nil {
+			if err = checkHealthRun(stateDir, target, observed.Record); err == nil {
 				return target, nil
 			}
 		}

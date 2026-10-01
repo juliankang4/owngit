@@ -311,6 +311,7 @@ func TestHealthCommand(t *testing.T) {
 type fakeHealth struct {
 	checked   []string
 	answering bool
+	onRequest func()
 }
 
 // useFakeHealth answers the health checks of the rest of the test.
@@ -325,6 +326,9 @@ func useFakeHealth(t *testing.T) *fakeHealth {
 
 func (fake *fakeHealth) RoundTrip(request *http.Request) (*http.Response, error) {
 	fake.checked = append(fake.checked, request.URL.Host)
+	if fake.onRequest != nil {
+		fake.onRequest()
+	}
 	if !fake.answering {
 		return nil, errors.New("nothing answers there")
 	}
