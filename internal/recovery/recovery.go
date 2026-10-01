@@ -2374,21 +2374,23 @@ func validateManifest(manifest Manifest) error {
 }
 
 func parseBundleHeads(output []byte) ([]Ref, string, error) {
-	scanner := bufio.NewScanner(bytes.NewReader(output))
 	var refs []Ref
 	var head string
-	for scanner.Scan() {
-		fields := strings.Fields(scanner.Text())
-		if len(fields) != 2 {
+	if len(output) == 0 {
+		return refs, head, nil
+	}
+	for line := range strings.SplitSeq(strings.TrimSuffix(string(output), "\n"), "\n") {
+		oid, name, found := strings.Cut(line, " ")
+		if !found || !validOID(oid) || name == "" {
 			return nil, "", errors.New("Git returned malformed bundle heads")
 		}
-		if fields[1] == "HEAD" {
-			head = fields[0]
+		if name == "HEAD" {
+			head = oid
 			continue
 		}
-		refs = append(refs, Ref{Name: fields[1], OID: fields[0]})
+		refs = append(refs, Ref{Name: name, OID: oid})
 	}
-	return refs, head, scanner.Err()
+	return refs, head, nil
 }
 
 func sameRefs(left, right []Ref) bool {
