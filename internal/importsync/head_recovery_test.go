@@ -231,10 +231,21 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 				t.Fatal("owner push was not accepted")
 			}
 			f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
-			_, err = f.refresh()
+			next, err := f.refresh()
 			noErr(t, err)
-			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/main" {
-				t.Fatalf("next source HEAD was not followed: %s", got)
+			expectedHEAD := "refs/heads/main"
+			if phase == "after-head" {
+				// This crash preceded the private ownership-row commit. Matching
+				// repository files cannot supply the missing writer provenance.
+				expectedHEAD = "refs/heads/release"
+				intent, exists, err := f.store.CompletedImportIntentForRun(ctx, next.ID)
+				noErr(t, err)
+				if !exists || intent.HeadOwned || next.RefsDivergent == 0 {
+					t.Fatalf("unrecorded HEAD write acquired ownership: %+v", intent)
+				}
+			}
+			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != expectedHEAD {
+				t.Fatalf("recovered HEAD=%s want=%s", got, expectedHEAD)
 			}
 			noErr(t, f.manager.SetDefaultBranch(ctx, "project", "topic"))
 			f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/release")
@@ -358,7 +369,7 @@ func TestRecordedLockFingerprintChangesArePreserved(t *testing.T) {
 	}
 }
 
-func TestUnreadableWrittenHEADPreservesRecoveryEvidence(t *testing.T) {
+func TestAbsentRecordedLockDoesNotInspectOrAdoptHEAD(t *testing.T) {
 	f := killedPublicationFixture(t, "after-head")
 	ctx := context.Background()
 	_, err := f.service.Prepare(ctx)
@@ -372,23 +383,22 @@ func TestUnreadableWrittenHEADPreservesRecoveryEvidence(t *testing.T) {
 	path := filepath.Join(repositoryPath, "HEAD")
 	noErr(t, os.Rename(path, path+".held"))
 	noErr(t, os.Mkdir(path, 0700))
-	err = f.service.reconcileRecordedRefLock(ctx, "", repositoryPath, records[0])
-	if err == nil {
-		t.Error("unreadable written HEAD was treated as settled evidence")
-	}
-	retained, queryErr := f.store.ImportRefLocksPage(ctx, "", 100)
-	noErr(t, queryErr)
-	if len(retained) != 1 {
-		t.Error("unreadable HEAD discarded durable write proof")
+	// The lock is absent. Resource settlement must neither inspect the
+	// unrelated HEAD pathname nor turn its former fingerprint into ownership.
+	noErr(t, f.service.reconcileRecordedRefLock(ctx, "", repositoryPath, records[0]))
+	retained, err := f.store.ImportRefLocksPage(ctx, "", 100)
+	noErr(t, err)
+	if len(retained) != 0 {
+		t.Error("absent resource retained lock evidence")
 	}
 	noErr(t, os.Rename(path, filepath.Join(f.root, "preserved-unreadable-head")))
 	noErr(t, os.Rename(path+".held", path))
 	noErr(t, f.service.Reconcile(ctx))
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
-	_, err = f.refresh()
+	run, err := f.refresh()
 	noErr(t, err)
-	if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/main" {
-		t.Errorf("recovered HEAD ownership was lost after the read error: %s", got)
+	if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/release" || run.RefsDivergent == 0 {
+		t.Errorf("unrecorded HEAD write acquired ownership: %s", got)
 	}
 }
 

@@ -865,9 +865,6 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 				}); err != nil {
 					commandErr = newProblem(CodeStateUnavailable, "applied HEAD state could not be recorded", err)
 					finalizationBlocked = true
-				} else if err := lock.forgetProof(); err != nil {
-					commandErr = newProblem(CodeStateUnavailable, "applied HEAD lock evidence could not be settled", err)
-					finalizationBlocked = true
 				}
 			}
 		}

@@ -1505,8 +1505,8 @@ func (s *Store) UpdateImportIntent(ctx context.Context, id, status, receiptJSON,
 // UpdateImportIntentHEADOwnership records structured ownership only after an
 // applied exact HEAD write or for a validated complete synthetic fixture.
 func (s *Store) UpdateImportIntentHEADOwnership(ctx context.Context, id, status, reason string, now time.Time) error {
-	if status != ImportIntentApplied && status != ImportIntentComplete && status != ImportIntentInvalidated && status != ImportIntentUnresolved {
-		return errors.New("HEAD ownership requires a written or interrupted intent")
+	if status != ImportIntentApplied && status != ImportIntentComplete {
+		return errors.New("HEAD ownership requires an applied or complete intent")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
