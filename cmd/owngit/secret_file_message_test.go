@@ -75,6 +75,19 @@ func TestSecretFileRefusalSaysWhatIsWrongAndHowToFixIt(t *testing.T) {
 	}
 }
 
+func TestSecretFileOtherOwnerMessageNamesTheFile(t *testing.T) {
+	const path = "/synthetic/other-owner/credential"
+	cause := &state.PrivateInputOwnerError{Path: path}
+	for source, message := range map[string]string{
+		"password or token": secretFileMessage("The password file", cause),
+		"import":            importSecretFileMessage(cause),
+	} {
+		if !strings.Contains(message, path) || !strings.Contains(message, "must belong to you or root") {
+			t.Errorf("%s message = %q", source, message)
+		}
+	}
+}
+
 // A private password file whose content is refused says what the content
 // must be, not that the file is unavailable or not private. One line break
 // after the password is accepted.

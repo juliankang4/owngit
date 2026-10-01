@@ -95,6 +95,9 @@ func OpenPrivateInputFile(path string) (*os.File, error) {
 		err = validatePrivateFileInfo(path, info)
 	}
 	if err == nil {
+		err = validatePrivateInputOwner(path, info)
+	}
+	if err == nil {
 		err = validatePrivateInputAccessList(file, info)
 	}
 	if err == nil {
@@ -120,6 +123,17 @@ func ValidatePrivateInputFile(path string) error {
 		return err
 	}
 	return file.Close()
+}
+
+func validatePrivateInputOwner(path string, info os.FileInfo) error {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return errors.New("file owner is unavailable")
+	}
+	if int(stat.Uid) == os.Geteuid() || stat.Uid == 0 {
+		return nil
+	}
+	return &PrivateInputOwnerError{Path: path}
 }
 
 // ValidatePrivateFileHandle validates the open file rather than reopening its

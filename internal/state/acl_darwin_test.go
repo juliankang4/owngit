@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"golang.org/x/sys/unix"
@@ -105,6 +106,54 @@ func TestMacOSPrivateInputAcceptsOwnerReadACL(t *testing.T) {
 	ordinary := filepath.Join(t.TempDir(), "ordinary")
 	noErr(t, os.WriteFile(ordinary, []byte("synthetic credential\n"), 0o600))
 	noErr(t, ValidatePrivateInputFile(ordinary))
+}
+
+type privateInputOwnerInfo struct {
+	os.FileInfo
+	stat syscall.Stat_t
+}
+
+func (info privateInputOwnerInfo) Sys() any { return &info.stat }
+
+func TestMacOSPrivateInputOwnerMustBeCurrentUserOrRoot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))
+	info, err := os.Stat(path)
+	noErr(t, err)
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		t.Fatal("file owner is unavailable")
+	}
+
+	own := privateInputOwnerInfo{FileInfo: info, stat: *stat}
+	noErr(t, validatePrivateInputOwner(path, own))
+	root := own
+	root.stat.Uid = 0
+	noErr(t, validatePrivateInputOwner(path, root))
+
+	other := own
+	other.stat.Uid++
+	if other.stat.Uid == 0 || int(other.stat.Uid) == os.Geteuid() {
+		other.stat.Uid++
+	}
+	var owner *PrivateInputOwnerError
+	ownerErr := validatePrivateInputOwner(path, other)
+	if !errors.As(ownerErr, &owner) {
+		t.Fatalf("other owner err=%v, want *PrivateInputOwnerError", ownerErr)
+	}
+	if owner.Path != path || ownerErr.Error() != path+" must belong to you or root" {
+		t.Fatalf("other owner refusal = %v", ownerErr)
+	}
+
+	rootInfo, err := os.Stat("/etc/hosts")
+	if err != nil {
+		t.Fatalf("root-owned control: %v", err)
+	}
+	rootStat, ok := rootInfo.Sys().(*syscall.Stat_t)
+	if !ok || rootStat.Uid != 0 {
+		t.Fatalf("/etc/hosts owner = %#v, want root", rootInfo.Sys())
+	}
+	noErr(t, validatePrivateInputOwner("/etc/hosts", rootInfo))
 }
 
 func TestMacOSPrivateInputHandleKeepsValidatedObjectAfterReplacement(t *testing.T) {

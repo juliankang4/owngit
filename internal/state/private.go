@@ -20,6 +20,16 @@ type NotPrivateError struct {
 
 func (e *NotPrivateError) Error() string { return e.Problem }
 
+// PrivateInputOwnerError refuses a supplied secret owned by an untrusted
+// account. Root and the effective user are checked before this error is made.
+type PrivateInputOwnerError struct {
+	Path string
+}
+
+func (e *PrivateInputOwnerError) Error() string {
+	return fmt.Sprintf("%s must belong to you or root", e.Path)
+}
+
 // ExplainPrivateFileError keeps a private-file refusal wrapped while adding
 // the affected path and its repair command. Other errors keep their original
 // text because they already carry their operation and path where applicable.

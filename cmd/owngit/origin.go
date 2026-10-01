@@ -389,6 +389,10 @@ func secretFileMessage(what string, err error) string {
 	if errors.As(err, &content) {
 		return what + " " + content.problem + "."
 	}
+	var owner *state.PrivateInputOwnerError
+	if errors.As(err, &owner) {
+		return what + " " + owner.Error() + "."
+	}
 	var notPrivate *state.NotPrivateError
 	if errors.As(err, &notPrivate) {
 		run := "To fix it, run: "

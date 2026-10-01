@@ -1063,7 +1063,8 @@ func signalNumber(received os.Signal) int {
 // failures keep their cause, which names the path but never the content.
 func importSecretFileMessage(err error) string {
 	var notPrivate *state.NotPrivateError
-	if errors.As(err, &notPrivate) {
+	var owner *state.PrivateInputOwnerError
+	if errors.As(err, &notPrivate) || errors.As(err, &owner) {
 		return secretFileMessage("The credential file", err)
 	}
 	return "The credential file is unavailable or is not private: " + err.Error()
