@@ -17,6 +17,7 @@ func wantCommandConfig() [][2]string {
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
 		{"receive.autogc", "false"},
+		{"core.precomposeUnicode", "false"},
 	}
 	if runtime.GOOS == "windows" {
 		want = append(want, [2]string{"core.longpaths", "true"})
