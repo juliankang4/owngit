@@ -4,9 +4,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/repository"
 )
@@ -46,6 +48,73 @@ func TestSmartHTTPAdvertisesDecomposedRefsWithExactBytes(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSmartHTTPUpdatesAndRetainsDecomposedRefsAfterHookRefresh(t *testing.T) {
+	ctx := context.Background()
+	manager, runner := newHTTPTestRepository(t)
+	remote, err := manager.Path("sample")
+	noErr(t, err)
+	runHTTPGit(t, "", "--git-dir", remote, "config", "core.precomposeUnicode", "true")
+	hookPath := filepath.Join(remote, "hooks", "update")
+	hook, err := os.ReadFile(hookPath)
+	noErr(t, err)
+	// Recreate the previous hook's two Git invocations, which discarded the
+	// runner environment and had no command-scope precomposition setting.
+	oldHook := strings.ReplaceAll(string(hook), " -c core.precomposeUnicode=false", "")
+	noErr(t, os.WriteFile(hookPath, []byte(oldHook), 0o700))
+	handler, err := New(runner, manager, "")
+	noErr(t, err)
+	handler.Authorize = func(*http.Request) (bool, error) { return true, nil }
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	git := isolatedGit(t, "-c", "core.precomposeUnicode=false")
+	work := filepath.Join(t.TempDir(), "work")
+	git(t, "", "init", "--bare", work)
+	tree := git(t, work, "mktree")
+	original := git(t, work, "commit-tree", tree, "-m", "original")
+	next := git(t, work, "commit-tree", tree, "-p", original, "-m", "next")
+	replacement := git(t, work, "commit-tree", tree, "-m", "replacement")
+	branch, tag := "refs/heads/\u1112\u1161\u11ab\u1100\u1173\u11af-follow", "refs/tags/cafe\u0301-tag"
+	url := server.URL + "/git/sample.git"
+	git(t, work, "push", url, original+":"+branch, original+":"+tag)
+	configPath := filepath.Join(remote, "config")
+	before, err := os.ReadFile(configPath)
+	noErr(t, err)
+
+	preparation, cancel := context.WithCancel(ctx)
+	defer cancel()
+	defer func() { noErr(t, manager.StopPreparation(ctx)) }()
+	noErr(t, manager.StartPreparation(preparation, nil, 10*time.Second, nil))
+	if manager.Preparing("sample") {
+		t.Fatal("existing repository did not finish hook preparation")
+	}
+	after, err := os.ReadFile(configPath)
+	noErr(t, err)
+	if string(before) != string(after) {
+		t.Fatal("hook refresh changed repository config")
+	}
+	git(t, work, "push", url, next+":"+branch)
+	git(t, work, "push", "--force", url, replacement+":"+branch, next+":"+tag)
+	for ref, want := range map[string]string{branch: replacement, tag: next} {
+		if got := git(t, "", "--git-dir", remote, "rev-parse", ref); got != want {
+			t.Fatalf("updated %q=%s, want %s", ref, got, want)
+		}
+	}
+	listed := git(t, "", "--git-dir", remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/owngit/provenance")
+	for _, ref := range []string{
+		"refs/owngit/provenance/heads/" + strings.TrimPrefix(branch, "refs/heads/") + "/" + next,
+		"refs/owngit/provenance/tags/" + strings.TrimPrefix(tag, "refs/tags/") + "/" + original,
+	} {
+		if !strings.Contains(listed, ref+" ") {
+			t.Fatalf("exact retained provenance %q absent: %q", ref, listed)
+		}
+	}
+	retained, err := manager.RetainedRefs(ctx, "sample")
+	noErr(t, err)
+	if len(retained) != 2 {
+		t.Fatalf("retained history=%+v", retained)
 	}
 }
 

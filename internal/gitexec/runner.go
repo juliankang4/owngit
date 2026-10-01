@@ -124,16 +124,16 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 }
 
 // commandConfig is configuration every Git command receives at command-line
-// scope, which overrides the system, global and repository files. It keeps
-// Git's automatic maintenance off even in a repository whose own config OwnGit
-// has not written yet, such as one a restore is still filling. OwnGit runs
-// its own maintenance with explicit commands, which these settings do not
-// affect.
+// scope, which overrides the system, global and repository files. It preserves
+// exact Git name bytes and disables automatic maintenance, including before
+// OwnGit prepares a repository or finishes restoring one. Explicit maintenance
+// commands are unaffected.
 func commandConfig() [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
 		{"receive.autogc", "false"},
+		{"core.precomposeUnicode", "false"},
 	}
 	if runtime.GOOS == "windows" {
 		config = append(config, [2]string{"core.longpaths", "true"})
