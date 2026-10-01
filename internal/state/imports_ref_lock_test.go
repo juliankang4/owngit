@@ -8,6 +8,22 @@ import (
 	"testing"
 )
 
+func TestImportRefLockEvidenceSerializationIsBounded(t *testing.T) {
+	store := openTestStore(t)
+	proof := ImportRefLock{ID: strings.Repeat("a", 32), RepositoryID: "project", RunID: strings.Repeat("b", 32),
+		SessionID: strings.Repeat("c", 32), RepositoryPath: filepath.Join(t.TempDir(), strings.Repeat("\x01", 3500)),
+		Name: "HEAD", Content: strings.Repeat("\x01", 2048), Size: 2048}
+	noErr(t, validateImportRefLock(proof))
+	if err := store.SaveImportRefLock(context.Background(), proof); err == nil {
+		t.Fatal("oversized serialized evidence was stored")
+	}
+	records, err := store.ImportRefLocksPage(context.Background(), "", 100)
+	noErr(t, err)
+	if len(records) != 0 {
+		t.Fatal("refused evidence was persisted")
+	}
+}
+
 func TestImportRefLockEvidenceStaysMachineLocal(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)

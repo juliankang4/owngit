@@ -51,6 +51,9 @@ func (s *Store) SaveImportRefLock(ctx context.Context, record ImportRefLock) err
 	if err != nil {
 		return err
 	}
+	if len(content) > 16384 {
+		return errors.New("import lock evidence exceeds its bound")
+	}
 	_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
 		importRefLockPrefix+record.ID, string(content))
 	return err

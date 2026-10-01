@@ -396,14 +396,21 @@ func TestDiagnosticTextCannotGrantHEADOwnership(t *testing.T) {
 	if err != nil || !exists {
 		t.Fatalf("initial intent=%+v exists=%v err=%v", intent, exists, err)
 	}
-	// An initial destination created by this run now records structured HEAD
-	// ownership. The update below clears that field. Diagnostic text must not
-	// put it back.
-	reason := "read /synthetic/destination HEAD ownership proven by an applied publication/repository: permission denied"
-	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", reason, f.now))
+	// Owner acceptance clears structured ownership. Interruption alone keeps
+	// historical proof, but diagnostic text must never recreate revoked proof.
+	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "", f.now))
 	run.Status = state.ImportRunUnresolved
 	run.ErrorClass = CodeUnresolved
 	noErr(t, f.store.FinishImportRun(ctx, run))
+	_, err = f.service.ResolveUnresolved(ctx, "project")
+	noErr(t, err)
+	accepted, exists, err := f.store.ImportIntent(ctx, intent.ID)
+	noErr(t, err)
+	if !exists || accepted.HeadOwned {
+		t.Fatal("owner acceptance did not revoke structured ownership")
+	}
+	reason := "read /synthetic/destination HEAD ownership proven by an applied publication/repository: permission denied"
+	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", reason, f.now))
 	noErr(t, f.service.Reconcile(ctx))
 	f.git(f.source, "branch", "source-next", oid)
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/source-next")

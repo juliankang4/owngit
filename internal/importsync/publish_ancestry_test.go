@@ -72,6 +72,32 @@ func TestAncestryExitOneIsAProvenNonAncestor(t *testing.T) {
 	}
 }
 
+func TestHistoricalObservationMustBeExplicitlyMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the execution fault uses a POSIX Git wrapper")
+	}
+	f := newFixture(t)
+	f.commit("base", "base\n")
+	f.mustImport(ImportInput{})
+	run := &runState{limits: DefaultLimits()}
+	missing := strings.Repeat("f", 40)
+	present, err := f.service.objectsPresent(context.Background(), run, f.destinationPath(), []string{missing})
+	noErr(t, err)
+	if present {
+		t.Fatal("missing observation was reported as present")
+	}
+	original := f.manager.Git.GitPath
+	wrapper := filepath.Join(f.root, "git-malformed-object-inspection")
+	content := fmt.Sprintf("#!/bin/sh\nfor arg do\n if [ \"$arg\" = --batch-check ]; then\n  echo malformed\n  exit 0\n fi\ndone\nexec '%s' \"$@\"\n", original)
+	noErr(t, os.WriteFile(wrapper, []byte(content), 0700))
+	f.manager.Git.GitPath = wrapper
+	_, err = f.service.objectsPresent(context.Background(), run, f.destinationPath(), []string{missing})
+	f.manager.Git.GitPath = original
+	if problemCode(err) != CodeVerifyFailed {
+		t.Fatalf("malformed object inspection was treated as missing: %v", err)
+	}
+}
+
 func TestAncestryHealthyFastForwardControl(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the execution fault uses a POSIX Git wrapper")

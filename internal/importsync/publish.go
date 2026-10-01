@@ -591,13 +591,16 @@ func (s *Service) objectsPresent(ctx context.Context, run *runState, repositoryP
 	}
 	for index, line := range lines {
 		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[0] != wanted[index] {
+		if len(fields) == 2 && fields[0] == wanted[index] && fields[1] == "missing" {
 			return false, nil
+		}
+		if len(fields) != 3 || fields[0] != wanted[index] {
+			return false, newProblem(CodeVerifyFailed, "destination object inspection returned an invalid record", nil)
 		}
 		switch fields[1] {
 		case "commit", "tree", "blob", "tag":
 		default:
-			return false, nil
+			return false, newProblem(CodeVerifyFailed, "destination object inspection returned an invalid object type", nil)
 		}
 	}
 	return true, nil

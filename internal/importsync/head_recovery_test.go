@@ -59,10 +59,15 @@ func TestImportPublicationCrashChild(t *testing.T) {
 		t.Skip("subprocess fixture")
 	}
 	f := newFixture(t)
-	f.commit("initial", "initial\n")
-	f.git(f.source, "branch", "release")
+	first := f.commit("initial", "initial\n")
+	f.git(f.source, "checkout", "-b", "release")
+	f.commit("release", "release\n")
+	f.git(f.source, "tag", "v1", first)
+	f.git(f.source, "checkout", "main")
 	f.mustImport(ImportInput{})
-	f.commit("next", "next\n")
+	next := f.commit("next", "next\n")
+	f.git(f.source, "branch", "-f", "release", first)
+	f.git(f.source, "tag", "-f", "v1", next)
 	f.git(f.source, "branch", "topic")
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/release")
 	pause := func() {
@@ -179,7 +184,20 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			f := killedPublicationFixture(t, phase)
 			ctx := context.Background()
-			err := f.service.Reconcile(ctx)
+			history, _, err := f.store.ImportRuns(ctx, "project", 10)
+			noErr(t, err)
+			var initial state.ImportIntent
+			for _, run := range history {
+				if run.Kind == state.ImportKindInitial {
+					var exists bool
+					initial, exists, err = f.store.CompletedImportIntentForRun(ctx, run.ID)
+					noErr(t, err)
+					if !exists {
+						t.Fatal("initial receipt missing")
+					}
+				}
+			}
+			err = f.service.Reconcile(ctx)
 			if phase == "after-refs" || phase == "before-head" || phase == "head-locked" {
 				if problemCode(err) != CodeUnresolved {
 					t.Fatalf("partial publication was not unresolved: %v", err)
@@ -194,6 +212,17 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 			}
 			_, err = f.refresh()
 			noErr(t, err)
+			refs := f.destinationRefs()
+			for _, kind := range []string{"heads", "tags"} {
+				name := "refs/heads/release"
+				if kind == "tags" {
+					name = "refs/tags/v1"
+				}
+				tip := initial.Desired[name]
+				if tip == "" || refs[repository.RetainedRefName(kind, tip)] != tip {
+					t.Fatalf("replaced %s history was not retained: %s", kind, tip)
+				}
+			}
 			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/release" {
 				t.Fatalf("recovery HEAD=%s", got)
 			}
