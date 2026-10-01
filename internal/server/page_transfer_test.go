@@ -13,10 +13,10 @@ import (
 	"time"
 )
 
-func pageTransferServer(t *testing.T, idle time.Duration, content []byte) (*httptest.Server, <-chan error) {
+func pageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBuffer ...int) (*httptest.Server, <-chan error) {
 	t.Helper()
 	results := make(chan error, 8)
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		request, deadlines, cancel := startDeadlines(writer, request, idle, idle/4, time.Hour, time.Second)
 		defer cancel()
 		defer deadlines.finish()
@@ -27,6 +27,14 @@ func pageTransferServer(t *testing.T, idle time.Duration, content []byte) (*http
 			panic(http.ErrAbortHandler)
 		}
 	}))
+	if len(sendBuffer) > 0 {
+		server.Config.ConnState = func(connection net.Conn, state http.ConnState) {
+			if state == http.StateNew {
+				_ = connection.(*net.TCPConn).SetWriteBuffer(sendBuffer[0])
+			}
+		}
+	}
+	server.Start()
 	t.Cleanup(server.Close)
 	return server, results
 }
@@ -80,6 +88,45 @@ func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testi
 			t.Fatal(err)
 		}
 	}
+}
+
+func TestPageTransferVerySlowProgressCompletes(t *testing.T) {
+	content := bytes.Repeat([]byte("s"), 64<<10)
+	server, results := pageTransferServer(t, time.Second, content, 1024)
+	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	_ = connection.(*net.TCPConn).SetReadBuffer(1024)
+	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
+	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var received bytes.Buffer
+	chunk := make([]byte, 1024)
+	started := time.Now()
+	for {
+		n, err := response.Body.Read(chunk)
+		received.Write(chunk[:n])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("very slow transfer stopped: %v", err)
+		}
+		time.Sleep(75 * time.Millisecond)
+	}
+	response.Body.Close()
+	if !bytes.Equal(received.Bytes(), content) || time.Since(started) <= time.Second {
+		t.Fatal("slow transfer differs or did not outlast the work deadline")
+	}
+	if err := <-results; err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("slow transfer: %s, %d bytes with a 1-second idle deadline", time.Since(started), received.Len())
 }
 
 func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {

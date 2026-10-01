@@ -137,7 +137,7 @@ func (app *App) beginImportRun(writer http.ResponseWriter, request *http.Request
 	return app.beginOperation(writer, request)
 }
 
-const pageReplyChunkBytes = 32 << 10
+const pageReplyChunkBytes = 1 << 10
 
 // writePage sends an already rendered body in bounded, flushed chunks. An
 // expired work/operation connection deadline is never revived. Operations
