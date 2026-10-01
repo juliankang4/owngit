@@ -2339,11 +2339,11 @@ When a newer OwnGit starts on a state whose schema is older than the one it writ
 - The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it. `owngit-upgrade-backup.txt` in the backup says the same.
 - A new state, and one whose setup is not complete, need no backup.
 - A state where an earlier version left a refused or stopped merge behind is backed up like any other.
-- OwnGit 1.0.3 and later restore it, with one exception. When an earlier version refused or stopped a merge and that pull request was merged later, only OwnGit 1.1.4 or later restores the backup, because earlier builds refuse it. Those builds could not back up such a state at all.
+- OwnGit 1.0.3 and later restore it, with one exception. When an earlier version refused or stopped a merge, the pull request then changed, and it was merged at its new commits, the backup can hold a record of the earlier attempt that does not match the merge. Earlier builds refuse such a backup, and could not back up that state at all, so only OwnGit 1.1.4 or later restores it. A merge that was retried without changes and then succeeded leaves no such record.
 
 OwnGit creates the `-backups` folder so that only this account can use it. An existing one must belong to this account, and no other account may be able to change what is in it; otherwise OwnGit refuses the upgrade and says why.
 
-To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version. An installation whose backup only OwnGit 1.1.4 or later restores cannot go back this way and has to stay on 1.1.4 or later. For example:
+To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version. If the earlier version refuses the backup for the reason above, this installation cannot go back; move the original state directory back and keep using 1.1.4 or later. For example:
 
 ```sh
 owngit restore \
