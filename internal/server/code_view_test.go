@@ -5,14 +5,17 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"image"
 	"image/png"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"owngit/internal/markdown"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -83,8 +86,16 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("preview status=%d", status)
 	}
-	document := preview[strings.Index(preview, `<article class="md">`):]
-	document = document[:strings.Index(document, "</article>")]
+	start := strings.Index(preview, `<article class="md"`)
+	if start < 0 {
+		t.Fatal("preview has no Markdown article")
+	}
+	document := preview[start:]
+	end := strings.Index(document, "</article>")
+	if end < 0 {
+		t.Fatal("preview has no complete Markdown article")
+	}
+	document = document[:end]
 	for _, want := range []string{
 		`<h1 id="md-guide">Guide</h1>`,
 		`href="/repositories/docs-project/code?ref=refs%2Fheads%2Fmain&amp;path=docs%2Fsetup.md"`,
@@ -100,8 +111,14 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 			t.Errorf("rendered document contains %q:\n%s", bad, document)
 		}
 	}
-	if !strings.Contains(preview, `&amp;view=source">`) || !strings.Contains(preview, `ref=refs%2Fheads%2Fmain" aria-current="true">`) {
-		t.Error("the preview does not offer its source view")
+	selected := regexp.MustCompile(`<a class="seg__btn" href="([^"]+)" aria-current="true">`).FindStringSubmatch(preview)
+	if !strings.Contains(preview, `&amp;view=source">`) || selected == nil {
+		t.Fatal("the preview does not offer its source view")
+	}
+	address, err := url.Parse(html.UnescapeString(selected[1]))
+	noErr(t, err)
+	if query := address.Query(); query.Get("view") == "source" || query.Get("revision") == "" || query.Get("blob") == "" {
+		t.Error("the selected Preview control is not the pinned document")
 	}
 
 	source, _ := dashboardGET(t, client, base+"&path=README.md&view=source")
