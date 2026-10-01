@@ -21,9 +21,17 @@ func durableFileID(file *os.File) (string, error) {
 		return "", err
 	}
 	// A remote protocol must never supply automatic lock-release authority.
-	var remote [128]byte
+	var remote struct {
+		Version  uint16
+		Size     uint16
+		Protocol uint32
+		Reserved [172]byte
+	}
+	remote.Version, remote.Size = 2, uint16(unsafe.Sizeof(remote))
 	if err := windows.GetFileInformationByHandleEx(handle, windows.FileRemoteProtocolInfo, (*byte)(unsafe.Pointer(&remote)), uint32(unsafe.Sizeof(remote))); err == nil {
 		return "", errors.New("remote filesystem identity is not trusted")
+	} else if !errors.Is(err, windows.ERROR_INVALID_PARAMETER) && !errors.Is(err, windows.ERROR_INVALID_FUNCTION) && !errors.Is(err, windows.ERROR_NOT_SUPPORTED) {
+		return "", err
 	}
 	path, err := windows.GetFinalPathNameByHandle(handle, nil, 0, 0)
 	if err != nil || path == 0 {
@@ -37,7 +45,7 @@ func durableFileID(file *os.File) (string, error) {
 	if err := windows.GetVolumePathName(&buffer[0], &volume[0], uint32(len(volume))); err != nil {
 		return "", err
 	}
-	if windows.GetDriveType(&volume[0]) != windows.DRIVE_FIXED && windows.GetDriveType(&volume[0]) != windows.DRIVE_RAMDISK {
+	if drive := windows.GetDriveType(&volume[0]); drive != windows.DRIVE_FIXED && drive != windows.DRIVE_RAMDISK {
 		return "", errors.New("filesystem does not provide a trusted local file identity")
 	}
 	filesystem := make([]uint16, 32)
