@@ -71,7 +71,7 @@ func (r backupRefusal) notice() webui.Notice {
 // backupsInfo reads the Backups groups for the Settings page. visible is
 // false for a visitor who is not a confirmed administrator, who sees none
 // of it.
-func (app *App) backupsInfo(request *http.Request, settings state.Settings, visible bool, lang webui.Lang) (webui.BackupsInfo, error) {
+func (app *App) backupsInfo(request *http.Request, settings state.Settings, visible bool) (webui.BackupsInfo, error) {
 	info := webui.BackupsInfo{Visible: visible}
 	if !visible || app.Backups == nil {
 		return info, nil
@@ -93,7 +93,7 @@ func (app *App) backupsInfo(request *http.Request, settings state.Settings, visi
 	for _, choice := range backups.Intervals {
 		info.Intervals = append(info.Intervals, choice.Name)
 	}
-	info.Running, info.LastRun, info.LastVerified = app.backupRun(status.Running, settings, lang), app.backupRun(status.LastRun, settings, lang), app.backupRun(status.LastVerified, settings, lang)
+	info.Running, info.LastRun, info.LastVerified = app.backupRun(status.Running, settings), app.backupRun(status.LastRun, settings), app.backupRun(status.LastVerified, settings)
 	if next := status.NextRun; next != nil {
 		info.NextRun = *next
 		info.NextRunNow = status.Running != nil && !next.After(app.now())
@@ -102,7 +102,7 @@ func (app *App) backupsInfo(request *http.Request, settings state.Settings, visi
 		info.RestoreLimit = limit.FileSystem
 	}
 	for index := range runs {
-		info.Runs = append(info.Runs, *app.backupRun(&runs[index], settings, lang))
+		info.Runs = append(info.Runs, *app.backupRun(&runs[index], settings))
 	}
 	if check := status.Check; check != nil {
 		info.Check = &webui.BackupCheckInfo{Name: check.BackupName, Status: check.Status, Message: check.Message}
@@ -123,7 +123,7 @@ func (app *App) backupsInfo(request *http.Request, settings state.Settings, visi
 
 // backupRun describes a run for the dashboard, with how to restore its
 // backup when it has one.
-func (app *App) backupRun(run *backups.RunView, settings state.Settings, lang webui.Lang) *webui.BackupRunInfo {
+func (app *App) backupRun(run *backups.RunView, settings state.Settings) *webui.BackupRunInfo {
 	if run == nil {
 		return nil
 	}
@@ -131,7 +131,10 @@ func (app *App) backupRun(run *backups.RunView, settings state.Settings, lang we
 		ID: run.ID, Kind: run.Kind, Status: run.Status, Verification: run.Verification, Name: run.BackupName, Path: run.Path,
 		Message: run.Message, StartedAt: run.StartedAt, HoldRepository: run.LongestHoldRepository,
 	}
-	info.Message = strings.Replace(info.Message, recovery.AliasBranchNotice, webui.Text(lang, webui.MsgBackupAliasBranches), 1)
+	if strings.Contains(info.Message, recovery.AliasBranchNotice) {
+		info.MessageEN = info.Message
+		info.MessageKO = strings.Replace(info.Message, recovery.AliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupAliasBranches), 1)
+	}
 	if run.FinishedAt != nil {
 		info.FinishedAt = *run.FinishedAt
 	}

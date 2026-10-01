@@ -44,8 +44,11 @@ func TestBackupAliasNoticeIsLocalizedAndEscaped(t *testing.T) {
 		if strings.Contains(page.body, "<script>notice</script>") {
 			t.Fatal("alias was rendered as HTML instead of text")
 		}
-		if lang == webui.LangKO && strings.Contains(page.body, recovery.AliasBranchNotice) {
-			t.Fatal("the Korean page kept the English alias explanation")
+		if !strings.Contains(page.body, `">`+html.EscapeString(webui.Text(lang, webui.MsgBackupAliasBranches))) {
+			t.Fatalf("%s page did not select its alias explanation", lang)
+		}
+		if !strings.Contains(page.body, `data-en="`+html.EscapeString(recovery.AliasBranchNotice)) || !strings.Contains(page.body, `data-ko="`+html.EscapeString(webui.Text(webui.LangKO, webui.MsgBackupAliasBranches))) {
+			t.Fatal("the alias notice cannot switch language without reloading")
 		}
 	}
 }

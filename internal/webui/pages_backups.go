@@ -80,9 +80,10 @@ type BackupRunInfo struct {
 	// backup of this run.
 	Name, Path string
 	// Message is the run's own text, in English.
-	Message    string
-	StartedAt  time.Time
-	FinishedAt time.Time
+	Message              string
+	MessageEN, MessageKO string
+	StartedAt            time.Time
+	FinishedAt           time.Time
 	// HoldKnown says that Hold is how long Git writes to one repository,
 	// HoldRepository, waited for the backup at most.
 	HoldKnown      bool
