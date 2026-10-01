@@ -197,7 +197,7 @@ Before `owngit service install` registers its own service, it checks that no acc
 | --- | --- |
 | `owngit service status` | Whether OwnGit runs and answers, who runs it, the unit, agent or task, where the log is, the state directory and the addresses. |
 | `owngit service start`, `stop`, `restart` | Start, stop or restart the service. A stopped service starts again at its next boot or login trigger. |
-| `owngit service uninstall` | Stop the service and remove its unit, agent or task. The state directory, the repositories and, on Linux, the `owngit` account stay, and the command says where the data is. For a Linux user service it reminds you that lingering stays on (`loginctl disable-linger` turns it off). |
+| `owngit service uninstall` | Stop the service and remove its unit, agent or task. On Linux, a service that cannot be stopped is kept ([Linux](#linux)). The state directory, the repositories and, on Linux, the `owngit` account stay, and the command says where the data is. For a Linux user service it reminds you that lingering stays on (`loginctl disable-linger` turns it off). |
 | `owngit uninstall` | The same, and then how to remove the program itself; see [Update and uninstall](#update-and-uninstall). |
 
 After you replace the binary with a new release, run `owngit service install` again. It rewrites the unit and restarts the service in the same mode with the same state directory.
@@ -216,6 +216,8 @@ Which kind of service you get depends on where you run the command:
 The user service and the system service run the `owngit` you ran the command with. If another account could replace that file, directly or through a folder or link on its path, the command stops and names the path. Move `owngit` to a folder only you or root can change, such as `~/.local/bin`, or use the [one-line installer](#one-line-installer). On a desktop, the program that the icon's sign-in entry starts must pass the same check.
 
 The log goes to the systemd journal: `journalctl --user -u owngit.service -f` for a user service, `sudo journalctl -u owngit.service -f` for a system service.
+
+`owngit service uninstall` and `owngit uninstall` stop the service before removing it. If systemd cannot stop it, the command fails and its error says `Could not stop the OwnGit service. Stop it manually, then rerun "owngit service uninstall". The unit has not been removed.` The unit and its start at login or boot stay as they were. Stop it yourself, for example with `systemctl --user stop owngit.service` or `sudo systemctl stop owngit.service`, and run the command again. A service that is already stopped, or that systemd no longer knows, is removed as usual.
 
 #### Installing as root
 
@@ -360,7 +362,7 @@ What the printed command does with the service:
 - for a Homebrew install, `brew services`' registration (with `brew services stop`);
 - on Windows, the protected copy in `%ProgramFiles%\OwnGit` with its firewall rule.
 
-It never deletes the state directory or the repositories, and it prints where they are, so a later install uses them again. There is no separate step that deletes data. Files that a package manager installed are its to remove, so OwnGit leaves them and prints its command. A program you placed yourself stays, and OwnGit prints the command that deletes it. Running `owngit service install` again, or reinstalling with the same route, keeps the state and the repositories.
+It never deletes the state directory or the repositories, and it prints where they are, so a later install uses them again. There is no separate step that deletes data. If removing the service fails, `owngit uninstall` ends with that error and does not print how to remove the program. Files that a package manager installed are its to remove, so OwnGit leaves them and prints its command. A program you placed yourself stays, and OwnGit prints the command that deletes it. Running `owngit service install` again, or reinstalling with the same route, keeps the state and the repositories.
 
 ## Run in a container
 

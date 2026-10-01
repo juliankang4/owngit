@@ -197,7 +197,7 @@ OwnGit은 다음 경우를 화면이 없는 컴퓨터로 봅니다.
 | --- | --- |
 | `owngit service status` | OwnGit이 실행 중이고 응답하는지, 누가 실행하는지, 유닛, 에이전트 또는 작업, 로그 위치, 상태 디렉터리, 주소를 보여 줍니다. |
 | `owngit service start`, `stop`, `restart` | 서비스를 시작하거나 멈추거나 다시 시작합니다. 멈춘 서비스는 다음 부팅 또는 로그인 조건에 맞으면 다시 켜집니다. |
-| `owngit service uninstall` | 서비스를 멈추고 유닛, 에이전트 또는 작업을 지웁니다. 상태 디렉터리와 저장소, Linux에서는 `owngit` 계정도 남으며 데이터가 어디 있는지 알려 줍니다. Linux 사용자 서비스라면 lingering이 켜진 채 남는다고 알려 줍니다(`loginctl disable-linger`로 끕니다). |
+| `owngit service uninstall` | 서비스를 멈추고 유닛, 에이전트 또는 작업을 지웁니다. Linux에서 멈출 수 없는 서비스는 그대로 둡니다([Linux](#linux)). 상태 디렉터리와 저장소, Linux에서는 `owngit` 계정도 남으며 데이터가 어디 있는지 알려 줍니다. Linux 사용자 서비스라면 lingering이 켜진 채 남는다고 알려 줍니다(`loginctl disable-linger`로 끕니다). |
 | `owngit uninstall` | 위와 같이 한 뒤 프로그램 자체를 지우는 방법을 알려 줍니다. [업데이트와 제거](#업데이트와-제거)를 보세요. |
 
 실행 파일을 새 릴리스로 바꾼 뒤에는 `owngit service install`을 다시 실행하세요. 같은 방식과 같은 상태 디렉터리로 유닛을 다시 쓰고 서비스를 다시 시작합니다.
@@ -216,6 +216,8 @@ OwnGit은 다음 경우를 화면이 없는 컴퓨터로 봅니다.
 사용자 서비스와 시스템 서비스는 명령을 실행할 때 쓴 `owngit`을 실행합니다. 다른 계정이 그 파일을 직접 바꾸거나 경로 중간의 폴더나 링크로 바꿔치기할 수 있으면 명령은 멈추고 그 경로를 알려 줍니다. `~/.local/bin`처럼 나나 root만 바꿀 수 있는 폴더로 `owngit`을 옮기거나 [한 줄 설치](#한-줄-설치)를 쓰세요. 데스크톱에서는 아이콘의 로그인 항목이 시작하는 프로그램도 같은 확인을 거칩니다.
 
 로그는 systemd 저널에 남습니다. 사용자 서비스는 `journalctl --user -u owngit.service -f`, 시스템 서비스는 `sudo journalctl -u owngit.service -f`로 봅니다.
+
+`owngit service uninstall`과 `owngit uninstall`은 서비스를 멈춘 뒤에 지웁니다. systemd가 서비스를 멈추지 못하면 명령은 `Could not stop the OwnGit service. Stop it manually, then rerun "owngit service uninstall". The unit has not been removed.`라는 내용의 오류로 끝나고, 유닛과 로그인이나 부팅 때 시작하는 설정은 그대로 남습니다. `systemctl --user stop owngit.service`나 `sudo systemctl stop owngit.service`처럼 직접 멈춘 뒤 명령을 다시 실행하세요. 이미 멈춘 서비스나 systemd가 더 이상 알지 못하는 서비스는 평소처럼 지웁니다.
 
 #### root로 설치하기
 
@@ -360,7 +362,7 @@ OwnGit이 직접 고치지는 않으니 명령은 이 컴퓨터에서 실행하�
 - Homebrew로 설치했다면 `brew services`에 등록된 서비스(`brew services stop`으로)
 - Windows에서는 `%ProgramFiles%\OwnGit`의 보호된 복사본과 방화벽 규칙
 
-상태 디렉터리와 저장소는 절대 지우지 않고 위치를 알려 주므로, 나중에 다시 설치하면 그대로 이어서 씁니다. 데이터를 지우는 단계는 따로 없습니다. 패키지 관리자가 설치한 파일은 그 관리자가 지울 몫이라 OwnGit은 남겨 두고 해당 명령을 알려 줍니다. 직접 가져다 둔 프로그램도 남겨 두고 지우는 명령을 알려 줍니다. `owngit service install`을 다시 실행하거나 같은 방법으로 다시 설치해도 상태와 저장소는 그대로 남습니다.
+상태 디렉터리와 저장소는 절대 지우지 않고 위치를 알려 주므로, 나중에 다시 설치하면 그대로 이어서 씁니다. 데이터를 지우는 단계는 따로 없습니다. 서비스를 지우지 못하면 `owngit uninstall`은 그 오류로 끝나며 프로그램을 지우는 방법은 알려 주지 않습니다. 패키지 관리자가 설치한 파일은 그 관리자가 지울 몫이라 OwnGit은 남겨 두고 해당 명령을 알려 줍니다. 직접 가져다 둔 프로그램도 남겨 두고 지우는 명령을 알려 줍니다. `owngit service install`을 다시 실행하거나 같은 방법으로 다시 설치해도 상태와 저장소는 그대로 남습니다.
 
 ## 컨테이너로 실행하기
 
