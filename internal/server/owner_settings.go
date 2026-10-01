@@ -99,10 +99,7 @@ func (app *App) changeAdminPassword(ctx context.Context, proof adminPasswordProo
 // answer soon instead of waiting for the daily interval; turned off, it
 // stops at once, because the dashboard and the checker read the saved value.
 func (app *App) savePolicies(ctx context.Context, change state.PolicyChange) error {
-	err := app.Store.SavePolicies(ctx, change)
-	if err == nil && change.UpdateCheck != nil && *change.UpdateCheck && app.Releases != nil {
-		app.Releases.Wake()
-	}
+	_, err := app.patchPolicies(ctx, change, state.PolicyFields{})
 	return err
 }
 

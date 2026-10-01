@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -91,19 +92,115 @@ type PolicyChange struct {
 	UpdateCheck *bool
 }
 
+// PolicyFields names individual fields to change within a settings group.
+// Nil groups and fields keep their saved values.
+type PolicyFields struct {
+	GitTransfer   *GitTransferFields
+	Maintenance   *MaintenanceFields
+	Browse        *BrowseFields
+	Cleanup       *CleanupFields
+	CheckCeilings *CheckCeilingFields
+	LoginLimits   *LoginLimitFields
+}
+
+// LoginLimitFields is the API form of a partial login-limit change.
+type LoginLimitFields struct {
+	Attempts      *int   `json:"attempts,omitempty"`
+	WindowSeconds *int64 `json:"window_seconds,omitempty"`
+	PauseSeconds  *int64 `json:"pause_seconds,omitempty"`
+}
+
+// Apply validates the named fields together with the saved login limits.
+func (f LoginLimitFields) Apply(limits LoginLimits) (LoginLimits, error) {
+	if f.Attempts != nil {
+		limits.Attempts = *f.Attempts
+	}
+	for _, field := range []struct {
+		name    string
+		seconds *int64
+		target  *time.Duration
+	}{{"window_seconds", f.WindowSeconds, &limits.Window}, {"pause_seconds", f.PauseSeconds, &limits.Pause}} {
+		if field.seconds != nil {
+			var err error
+			if *field.target, err = LoginSeconds(*field.seconds); err != nil {
+				return LoginLimits{}, fmt.Errorf("%s is from %d to %d", field.name, int64(MinimumLoginDuration/time.Second), int64(MaximumLoginDuration/time.Second))
+			}
+		}
+	}
+	if err := limits.Validate(); err != nil {
+		return LoginLimits{}, err
+	}
+	return limits, nil
+}
+
+// PolicyFieldError reports an invalid submitted group change.
+type PolicyFieldError struct{ Message string }
+
+func (e *PolicyFieldError) Error() string { return e.Message }
+
+// PolicyReadError distinguishes a failed group read from a failed save.
+type PolicyReadError struct{ Cause error }
+
+func (e *PolicyReadError) Error() string { return e.Cause.Error() }
+func (e *PolicyReadError) Unwrap() error { return e.Cause }
+
 // SavePolicies checks every policy change names and saves them all in one
 // transaction, or none. Each applies to what starts after it is saved.
 func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
+	_, err := s.PatchPolicies(ctx, change, PolicyFields{})
+	return err
+}
+
+// PatchPolicies applies fields to the current groups and saves them together
+// with change in one transaction. It returns the merged change only after
+// commit. A complete group can replace an unreadable saved group.
+func (s *Store) PatchPolicies(ctx context.Context, change PolicyChange, fields PolicyFields) (PolicyChange, error) {
+	var saved PolicyChange
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return saved, err
+	}
+	defer tx.Rollback()
+	if change.GitTransfer, err = patchGroup(gitTransferLimitsKey, change.GitTransfer, fields.GitTransfer, func() (GitTransferLimits, error) {
+		return readGroup(ctx, tx, gitTransferLimitsKey, DefaultGitTransferLimits, GitTransferFields.Apply)
+	}); err != nil {
+		return saved, err
+	}
+	if change.Maintenance, err = patchGroup(maintenanceKey, change.Maintenance, fields.Maintenance, func() (Maintenance, error) {
+		return readGroup(ctx, tx, maintenanceKey, DefaultMaintenance, MaintenanceFields.Apply)
+	}); err != nil {
+		return saved, err
+	}
+	if change.Browse, err = patchGroup(browseLimitsKey, change.Browse, fields.Browse, func() (BrowseLimits, error) {
+		return readGroup(ctx, tx, browseLimitsKey, DefaultBrowseLimits, BrowseFields.Apply)
+	}); err != nil {
+		return saved, err
+	}
+	if change.Cleanup, err = patchGroup(unusedObjectCleanupKey, change.Cleanup, fields.Cleanup, func() (UnusedObjectCleanup, error) {
+		return readGroup(ctx, tx, unusedObjectCleanupKey, DefaultUnusedObjectCleanup, CleanupFields.Apply)
+	}); err != nil {
+		return saved, err
+	}
+	if change.CheckCeilings, err = patchGroup(checkCeilingsKey, change.CheckCeilings, fields.CheckCeilings, func() (CheckCeilings, error) {
+		return checkCeilings(ctx, tx)
+	}); err != nil {
+		return saved, err
+	}
+	if change.LoginLimits, err = patchGroup(loginLimitsKey, change.LoginLimits, fields.LoginLimits, func() (LoginLimits, error) {
+		return loginLimits(ctx, tx)
+	}); err != nil {
+		return saved, err
+	}
 	values := map[string]string{}
 	if change.Session != nil {
 		if change.Session.Length() == 0 {
-			return fmt.Errorf("invalid session length %q", *change.Session)
+			return saved, fmt.Errorf("invalid session length %q", *change.Session)
 		}
 		values[generalSessionKey] = strconv.FormatInt(int64(change.Session.Length()/time.Second), 10)
 	}
 	if change.InitialBranch != nil {
 		if err := ValidateInitialBranch(*change.InitialBranch); err != nil {
-			return err
+			return saved, err
 		}
 		values[initialBranchKey] = *change.InitialBranch
 	}
@@ -115,12 +212,12 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 		addGroup(values, checkCeilingsKey, change.CheckCeilings),
 	} {
 		if err != nil {
-			return err
+			return saved, err
 		}
 	}
 	if change.CheckLogs != nil {
 		if _, valid := ParseCheckLogRetention(string(*change.CheckLogs)); !valid {
-			return fmt.Errorf("invalid raw check log retention %q", *change.CheckLogs)
+			return saved, fmt.Errorf("invalid raw check log retention %q", *change.CheckLogs)
 		}
 		values[checkLogRetentionKey] = change.CheckLogs.stored()
 	}
@@ -132,34 +229,70 @@ func (s *Store) SavePolicies(ctx context.Context, change PolicyChange) error {
 	}
 	if change.LoginLimits != nil {
 		if err := change.LoginLimits.Validate(); err != nil {
-			return err
+			return saved, err
 		}
 		stored, err := change.LoginLimits.stored()
 		if err != nil {
-			return err
+			return saved, err
 		}
 		values[loginLimitsKey] = stored
 	}
 	if change.CrossSiteLinks != nil {
 		if _, valid := ParseCrossSiteLinks(string(*change.CrossSiteLinks)); !valid {
-			return fmt.Errorf("invalid cross-site link choice %q", *change.CrossSiteLinks)
+			return saved, fmt.Errorf("invalid cross-site link choice %q", *change.CrossSiteLinks)
 		}
 		values[crossSiteLinksKey] = string(*change.CrossSiteLinks)
 	}
 	if change.UpdateCheck != nil {
 		values[updateCheckKey] = onOff(*change.UpdateCheck)
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
 	for key, value := range values {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
-			return err
+			return saved, err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return saved, err
+	}
+	return change, nil
+}
+
+// patchGroup reads and merges through the save transaction, never the Store.
+func patchGroup[T any, F interface{ Apply(T) (T, error) }](key string, whole *T, fields *F, read func() (T, error)) (*T, error) {
+	if fields == nil {
+		return whole, nil
+	}
+	name := policyNames[key].field
+	if whole != nil {
+		return nil, &PolicyFieldError{Message: name + " cannot name both a complete group and individual fields."}
+	}
+	value := reflect.ValueOf(*fields)
+	named := 0
+	for index := range value.NumField() {
+		if !value.Field(index).IsNil() {
+			named++
+		}
+	}
+	if named == 0 {
+		message := name + " must name at least one of its fields."
+		if key == loginLimitsKey {
+			message = "login_limits must name attempts, window_seconds, pause_seconds or several of them."
+		}
+		return nil, &PolicyFieldError{Message: message}
+	}
+	saved, err := read()
+	if errors.As(err, new(*PolicyError)) && named == value.NumField() {
+		var zero T
+		saved, err = zero, nil
+	}
+	if err != nil {
+		return nil, &PolicyReadError{Cause: err}
+	}
+	merged, err := (*fields).Apply(saved)
+	if err != nil {
+		return nil, &PolicyFieldError{Message: name + ": " + err.Error() + "."}
+	}
+	return &merged, nil
 }
 
 // GeneralSession is how long a sign-in with the shared password lasts, one

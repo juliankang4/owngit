@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -417,21 +416,6 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			}
 			policies.InitialBranch = change.InitialBranch
 		}
-		if change.GitTransfer != nil {
-			limits, problem, err := changedGroup(request.Context(), "git_transfer", *change.GitTransfer, app.Store.GitTransferLimits)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.GitTransfer = &limits
-			if limits.Looser() {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgTransferSavedLooser))
-			}
-		}
 		if change.CheckLogs != nil {
 			retention, valid := state.ParseCheckLogRetention(*change.CheckLogs)
 			if !valid {
@@ -462,21 +446,6 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgDeleteNameSavedOff))
 			}
 		}
-		if change.LoginLimits != nil {
-			limits, problem, err := app.changedLoginLimits(request.Context(), *change.LoginLimits)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.LoginLimits = &limits
-			if limits.Looser() {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgLoginLimitsSavedLooser))
-			}
-		}
 		if change.CrossSiteLinks != nil {
 			links, valid := state.ParseCrossSiteLinks(*change.CrossSiteLinks)
 			if !valid {
@@ -488,66 +457,6 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCrossSiteSavedLax))
 			}
 		}
-		if change.BrowseLimits != nil {
-			limits, problem, err := changedGroup(request.Context(), "browse_limits", *change.BrowseLimits, app.Store.BrowseLimits)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.Browse = &limits
-			if limits.Looser() {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgBrowseWarning))
-			}
-		}
-		if change.Maintenance != nil {
-			choices, problem, err := changedGroup(request.Context(), "maintenance", *change.Maintenance, app.Store.Maintenance)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.Maintenance = &choices
-			if choices.Looser() {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgMaintenanceWarning))
-			}
-		}
-		if change.UnusedObjectCleanup != nil {
-			cleanup, problem, err := changedGroup(request.Context(), "unused_object_cleanup", *change.UnusedObjectCleanup, app.Store.UnusedObjectCleanup)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.Cleanup = &cleanup
-			if cleanup.Enabled {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCleanupWarning))
-			}
-		}
-		if change.CheckCeilings != nil {
-			ceilings, problem, err := changedGroup(request.Context(), "check_ceilings", *change.CheckCeilings, app.Store.CheckCeilings)
-			if err != nil {
-				app.writeSettingsReadError(writer, request, err)
-				return
-			}
-			if problem != "" {
-				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", problem, nil)
-				return
-			}
-			policies.CheckCeilings = &ceilings
-			if ceilings.Looser() {
-				warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCeilingsWarning))
-			}
-		}
 		if change.UpdateCheck != nil {
 			check, valid := parseOnOff(*change.UpdateCheck)
 			if !valid {
@@ -556,9 +465,42 @@ func (app *App) handleSettingsAPI(writer http.ResponseWriter, request *http.Requ
 			}
 			policies.UpdateCheck = &check
 		}
-		if err := app.savePolicies(request.Context(), policies); err != nil {
-			writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
+		fields := state.PolicyFields{
+			GitTransfer: change.GitTransfer, Browse: change.BrowseLimits,
+			Maintenance: change.Maintenance, Cleanup: change.UnusedObjectCleanup,
+			CheckCeilings: change.CheckCeilings, LoginLimits: change.LoginLimits,
+		}
+		var err error
+		if policies, err = app.patchPolicies(request.Context(), policies, fields); err != nil {
+			var invalid *state.PolicyFieldError
+			var read *state.PolicyReadError
+			switch {
+			case errors.As(err, &invalid):
+				writeAPIError(writer, http.StatusBadRequest, "invalid_settings", invalid.Error(), nil)
+			case errors.As(err, &read):
+				app.writeSettingsReadError(writer, request, err)
+			default:
+				writeAPIError(writer, unavailable(request, "settings save", err), "state_unavailable", "The settings could not be saved. Try again later.", nil)
+			}
 			return
+		}
+		if policies.LoginLimits != nil && policies.LoginLimits.Looser() {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgLoginLimitsSavedLooser))
+		}
+		if policies.GitTransfer != nil && policies.GitTransfer.Looser() {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgTransferSavedLooser))
+		}
+		if policies.Browse != nil && policies.Browse.Looser() {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgBrowseWarning))
+		}
+		if policies.Maintenance != nil && policies.Maintenance.Looser() {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgMaintenanceWarning))
+		}
+		if policies.Cleanup != nil && policies.Cleanup.Enabled {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCleanupWarning))
+		}
+		if policies.CheckCeilings != nil && policies.CheckCeilings.Looser() {
+			warnings = append(warnings, webui.Text(webui.LangEN, webui.MsgCeilingsWarning))
 		}
 		if policies.Maintenance != nil || policies.Cleanup != nil {
 			app.Repositories.WakeMaintenance()
@@ -654,38 +596,14 @@ func (app *App) savedSettings(ctx context.Context) (current settingsJSON, unread
 	return current, unreadable, err
 }
 
-// changedGroup applies change, a PATCH of the group named name in its
-// JSON form, to the value read saved. problem says why the result is
-// refused; err is a saved value that cannot be read, which a change that
-// names every field of the group replaces.
-func changedGroup[T any, F interface{ Apply(T) (T, error) }](ctx context.Context, name string, change F, read func(context.Context) (T, error)) (value T, problem string, err error) {
-	named, total := namedFields(change)
-	if named == 0 {
-		return value, name + " must name at least one of its fields.", nil
+// patchPolicies preserves named fields and wakes the release checker only
+// after a committed change enables it.
+func (app *App) patchPolicies(ctx context.Context, change state.PolicyChange, fields state.PolicyFields) (state.PolicyChange, error) {
+	saved, err := app.Store.PatchPolicies(ctx, change, fields)
+	if err == nil && saved.UpdateCheck != nil && *saved.UpdateCheck && app.Releases != nil {
+		app.Releases.Wake()
 	}
-	saved, err := read(ctx)
-	if errors.As(err, new(*state.PolicyError)) && named == total {
-		saved, err = value, nil
-	}
-	if err != nil {
-		return value, "", err
-	}
-	if value, err = change.Apply(saved); err != nil {
-		return value, name + ": " + err.Error() + ".", nil
-	}
-	return value, "", nil
-}
-
-// namedFields counts the fields a group's JSON form names: those that are
-// not nil, of all its fields.
-func namedFields(fields any) (named, total int) {
-	value := reflect.ValueOf(fields)
-	for index := range value.NumField() {
-		if !value.Field(index).IsNil() {
-			named++
-		}
-	}
-	return named, value.NumField()
+	return saved, err
 }
 
 // writeSettingsReadError answers a policy that could not be read: one whose
