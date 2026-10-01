@@ -42,6 +42,9 @@ func TestAssetPins(t *testing.T) {
 	}
 
 	pins := []assetPin{
+		{name: "a pending page notice stays outside document flow and is delayed", src: rule(".page-transfer-pending"),
+			has:   []string{"position: fixed", "visibility: hidden", "1.5s forwards", "pointer-events: none", "var(--text-1)", "var(--bg-content)"},
+			lacks: []string{"display: none"}},
 		// The sidebar replaced the repository tab strip. Below 900px the
 		// script folds it behind one button; the fold rule lives only in the
 		// narrow layout, so a wide window and a page without the script

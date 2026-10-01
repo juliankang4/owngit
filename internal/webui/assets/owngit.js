@@ -958,8 +958,10 @@
     address.hash = window.location.hash;
     window.location.replace(address.href);
   }
-  routeCodeLine();
-  window.addEventListener('hashchange', routeCodeLine);
+  if (document.querySelector('[data-line-page]')) {
+    routeCodeLine();
+    window.addEventListener('hashchange', routeCodeLine);
+  }
 
   /* Wrap switch for code and diffs. Long lines scroll sideways by default;
    * the switch wraps them, and the choice is remembered in this browser. The
