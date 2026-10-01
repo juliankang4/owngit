@@ -696,6 +696,49 @@ func TestDesktopUID(t *testing.T) {
 	}
 }
 
+func TestMacOSLaunchAgentLogsRemoveInheritedReadACL(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS access lists")
+	}
+	home := t.TempDir()
+	plan := launchAgentPlan(home)
+	folder := filepath.Dir(LaunchAgentLogPath(home))
+	noErr(t, os.MkdirAll(folder, 0o700))
+	output, err := exec.Command("chmod", "+a", "nobody allow read,list,file_inherit,directory_inherit", folder).CombinedOutput()
+	if err != nil {
+		t.Fatalf("add inherited access entry: %v: %s", err, output)
+	}
+	if !launchdHasAllowACL(t, folder) {
+		t.Fatal("the log folder lacks the test access entry")
+	}
+	t.Logf("log folder with inherited access entry:\n%s", launchdACL(t, folder))
+
+	agent, err := RenderLaunchAgent(plan)
+	noErr(t, err)
+	if _, err := InstallLaunchAgent(context.Background(), (&fakeLaunchd{gui: true}).run, plan, agent, 501, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{LaunchAgentLogPath(home), LaunchAgentOutputPath(home)} {
+		listing := launchdACL(t, path)
+		t.Logf("LaunchAgent log after protection:\n%s", listing)
+		if strings.Contains(listing, "allow") {
+			t.Errorf("%s kept an inherited access entry", path)
+		}
+	}
+}
+
+func launchdHasAllowACL(t *testing.T, path string) bool {
+	t.Helper()
+	return strings.Contains(launchdACL(t, path), "allow")
+}
+
+func launchdACL(t *testing.T, path string) string {
+	t.Helper()
+	output, err := exec.Command("ls", "-lde", path).CombinedOutput()
+	noErr(t, err)
+	return string(output)
+}
+
 // Log files left readable by everyone, as an earlier install or launchd
 // can leave them, are made private to the owner by the next install.
 func TestLaunchAgentInstallMakesExistingLogsPrivate(t *testing.T) {

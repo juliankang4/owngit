@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"owngit/internal/state"
 )
 
 // The macOS service is a LaunchAgent of the installing user. launchd starts
@@ -576,8 +578,7 @@ func InstallLaunchAgent(ctx context.Context, run Runner, plan Plan, agent string
 	for _, log := range logs {
 		logFile, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if err == nil {
-			err = logFile.Chmod(0o600)
-			logFile.Close()
+			err = errors.Join(state.ProtectPrivateHandle(logFile, false), logFile.Close())
 		}
 		if err != nil {
 			undo()

@@ -102,7 +102,7 @@ func (rotating *rotatingFile) protectOlder() error {
 		return err
 	}
 	defer older.Close()
-	return older.Chmod(0o600)
+	return state.ProtectPrivateHandle(older, false)
 }
 
 // logAndEarlier writes each log line to the log file and to the earlier
@@ -130,7 +130,7 @@ func (rotating *rotatingFile) open() error {
 	if err != nil {
 		return err
 	}
-	if err := file.Chmod(0o600); err != nil {
+	if err := state.ProtectPrivateHandle(file, false); err != nil {
 		file.Close()
 		return err
 	}

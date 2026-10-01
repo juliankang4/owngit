@@ -52,6 +52,62 @@ func TestRotatingLogFileKeepsOneOlderFile(t *testing.T) {
 	}
 }
 
+func TestMacOSLogFilesRemoveInheritedReadACL(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS access lists")
+	}
+	folder := filepath.Join(t.TempDir(), "logs")
+	noErr(t, os.Mkdir(folder, 0o700))
+	output, err := exec.Command("chmod", "+a", "nobody allow read,list,file_inherit,directory_inherit", folder).CombinedOutput()
+	if err != nil {
+		t.Fatalf("add inherited access entry: %v: %s", err, output)
+	}
+	path := filepath.Join(folder, "owngit.log")
+	for _, name := range []string{path, path + ".1"} {
+		noErr(t, os.WriteFile(name, []byte("earlier output\n"), 0o600))
+		t.Logf("log before protection:\n%s", macLogACL(t, name))
+		if !macLogHasAllowACL(t, name) {
+			t.Fatalf("%s did not inherit the test access entry", name)
+		}
+	}
+
+	previous := log.Writer()
+	closeLog, err := writeLogTo(path, true)
+	noErr(t, err)
+	closeLog()
+	log.SetOutput(previous)
+	for _, name := range []string{path, path + ".1"} {
+		listing := macLogACL(t, name)
+		t.Logf("log after protection:\n%s", listing)
+		if strings.Contains(listing, "allow") {
+			t.Errorf("%s kept an access entry after opening", name)
+		}
+	}
+
+	file, err := openRotatingFile(path, 40)
+	noErr(t, err)
+	_, err = file.Write([]byte("rotate the protected log\n"))
+	noErr(t, err)
+	noErr(t, file.Close())
+	for _, name := range []string{path, path + ".1"} {
+		if macLogHasAllowACL(t, name) {
+			t.Errorf("%s kept an access entry after rotation", name)
+		}
+	}
+}
+
+func macLogHasAllowACL(t *testing.T, path string) bool {
+	t.Helper()
+	return strings.Contains(macLogACL(t, path), "allow")
+}
+
+func macLogACL(t *testing.T, path string) string {
+	t.Helper()
+	output, err := exec.Command("ls", "-lde", path).CombinedOutput()
+	noErr(t, err)
+	return string(output)
+}
+
 // A service's log goes only to its log file, which is bounded; its standard
 // error is discarded or a file nothing bounds. Without --service the log
 // goes to both.

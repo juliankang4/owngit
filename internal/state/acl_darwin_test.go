@@ -3,7 +3,9 @@
 package state
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +46,50 @@ func TestMacOSVolumesWithoutAccessLists(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMacOSPrivateInputRejectsOtherAccountReadACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))
+	noErr(t, exec.Command("chmod", "+a", "nobody allow read", path).Run())
+	listing, err := exec.Command("ls", "-le", path).CombinedOutput()
+	noErr(t, err)
+	t.Logf("supplied file before validation:\n%s", listing)
+	before, err := extendedSecurity(path, nil, unix.FSOPT_NOFOLLOW)
+	noErr(t, err)
+
+	var notPrivate *NotPrivateError
+	if err := ValidatePrivateInputFile(path); !errors.As(err, &notPrivate) {
+		t.Fatalf("err=%v, want *NotPrivateError", err)
+	}
+	if notPrivate.Problem != "its access list gives other accounts read access" || notPrivate.Fix != "chmod -N "+shellQuote(path) {
+		t.Fatalf("refusal = %+v", notPrivate)
+	}
+	t.Logf("validation refusal: %s; fix: %s", notPrivate.Problem, notPrivate.Fix)
+	after, err := extendedSecurity(path, nil, unix.FSOPT_NOFOLLOW)
+	noErr(t, err)
+	if !bytes.Equal(after, before) {
+		t.Fatal("validation changed the supplied file's access list")
+	}
+
+	output, err := exec.Command("sh", "-c", notPrivate.Fix).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the fix failed: %v: %s", err, output)
+	}
+	noErr(t, ValidatePrivateInputFile(path))
+}
+
+func TestMacOSPrivateInputAcceptsOwnerReadACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))
+	owner, err := exec.Command("id", "-un").Output()
+	noErr(t, err)
+	noErr(t, exec.Command("chmod", "+a", strings.TrimSpace(string(owner))+" allow read", path).Run())
+	noErr(t, ValidatePrivateInputFile(path))
+
+	ordinary := filepath.Join(t.TempDir(), "ordinary")
+	noErr(t, os.WriteFile(ordinary, []byte("synthetic credential\n"), 0o600))
+	noErr(t, ValidatePrivateInputFile(ordinary))
 }
 
 // An access list that a folder passes on survives the owner-only mode, so

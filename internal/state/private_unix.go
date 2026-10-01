@@ -75,10 +75,20 @@ func ValidatePrivateFile(path string) error {
 }
 
 // ValidatePrivateInputFile checks a secret file that the owner may have made
-// by hand, such as a password or token file. On Unix it is the same check as
-// ValidatePrivateFile.
+// by hand, such as a password or token file. Besides the Unix mode check,
+// macOS refuses an access list that gives another account read access.
 func ValidatePrivateInputFile(path string) error {
-	return ValidatePrivateFile(path)
+	if err := ValidatePrivateFile(path); err != nil {
+		return err
+	}
+	fix, err := privateInputAccessListFix(path)
+	if err != nil || fix == "" {
+		return err
+	}
+	return &NotPrivateError{
+		Problem: "its access list gives other accounts read access",
+		Fix:     fix,
+	}
 }
 
 // ValidatePrivateFileHandle validates the open file rather than reopening its
