@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"owngit/internal/server"
 	"owngit/internal/service"
 	"owngit/internal/state"
 )
@@ -293,7 +292,7 @@ func TestHealthCommand(t *testing.T) {
 	if _, err := captureStdout(func() error { return run([]string{"health", "--state-dir", stateDir}) }); err == nil {
 		t.Fatal("health succeeded with no server running")
 	}
-	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open"})
+	instance := startServedWith(t, []string{"--state-dir", stateDir, "--listen", address, "--tailscale", filepath.Join(t.TempDir(), "no-tailscale"), "--no-open"})
 	output, err := captureStdout(func() error { return run([]string{"health", "--state-dir", stateDir}) })
 	waited, waitErr := waitHealthy(stateDir, serviceStartTimeout)
 	instance.stop()
@@ -304,19 +303,6 @@ func TestHealthCommand(t *testing.T) {
 	}
 	if _, err := captureStdout(func() error { return run([]string{"health", "--state-dir", stateDir}) }); err == nil {
 		t.Fatal("health succeeded after the server stopped")
-	}
-	// health never creates a state directory. Without one it checks the
-	// default address, where an OwnGit of this computer may answer.
-	health := useFakeHealth(t)
-	health.answering = true
-	missing := filepath.Join(t.TempDir(), "missing")
-	_, err = captureStdout(func() error { return run([]string{"health", "--state-dir", missing}) })
-	noErr(t, err)
-	if _, err := os.Stat(missing); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("health created %s: %v", missing, err)
-	}
-	if want, _ := localTarget(server.DefaultListenAddress); !reflect.DeepEqual(health.checked, []string{want}) {
-		t.Fatalf("health checked %q, want %q", health.checked, want)
 	}
 }
 

@@ -31,12 +31,23 @@ func healthCommand(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("health takes no positional arguments")
 	}
-	target, _, err := healthAddress(*stateDir)
+	target, running, status, err := healthStatus(*stateDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("state directory %q: %w", *stateDir, err)
+	}
+	if !running {
+		switch status {
+		case state.ServerStarting:
+			return fmt.Errorf("OwnGit is still starting for state directory %q; try again shortly", *stateDir)
+		case state.ServerUnknown:
+			return fmt.Errorf("cannot confirm that OwnGit is running for state directory %q: another program holds the state directory, or its running record cannot be vouched for", *stateDir)
+		}
 	}
 	if err := checkHealth(target); err != nil {
 		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
+	}
+	if !running {
+		return fmt.Errorf("OwnGit is not running for this state directory, and another program answers at http://%s", target)
 	}
 	fmt.Printf("OwnGit answers at http://%s\n", target)
 	return nil
@@ -46,24 +57,36 @@ func healthCommand(arguments []string) error {
 // whether a running server published it. Without a published address it
 // is the saved listen address or the default.
 func healthAddress(stateDir string) (string, bool, error) {
-	observed, savedListen := state.RunningObservation{}, ""
-	if state.RequireExisting(stateDir) == nil {
-		ctx := context.Background()
-		store, err := openLiveState(ctx, stateDir)
-		if err != nil {
-			return "", false, err
-		}
-		defer store.Close()
-		if observed, err = store.ObserveRunningNetwork(ctx); err != nil {
-			return "", false, err
-		}
-		if saved, err := store.NetworkSettings(ctx); err == nil {
-			savedListen = saved.Listen
-		}
+	target, running, _, err := healthStatus(stateDir)
+	if errors.Is(err, state.ErrNotExist) {
+		target, err = localTarget(server.DefaultListenAddress)
 	}
-	address, running := healthTarget(observed, savedListen)
-	target, err := localTarget(address)
 	return target, running, err
+}
+
+// healthStatus keeps the observation's status beside the selected target so
+// health can distinguish a starting server from an unrelated responder.
+func healthStatus(stateDir string) (string, bool, string, error) {
+	if err := state.RequireExisting(stateDir); err != nil {
+		return "", false, "", err
+	}
+	ctx := context.Background()
+	store, err := openLiveState(ctx, stateDir)
+	if err != nil {
+		return "", false, "", err
+	}
+	defer store.Close()
+	observed, err := store.ObserveRunningNetwork(ctx)
+	if err != nil {
+		return "", false, "", err
+	}
+	saved, err := store.NetworkSettings(ctx)
+	if err != nil {
+		return "", false, "", err
+	}
+	address, running := healthTarget(observed, saved.Listen)
+	target, err := localTarget(address)
+	return target, running, observed.Server, err
 }
 
 // healthTarget returns the address where the server of a state directory
