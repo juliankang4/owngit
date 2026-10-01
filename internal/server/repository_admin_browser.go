@@ -44,7 +44,7 @@ type removedResult struct {
 	// Incomplete means the records are gone but the file step is not done;
 	// the next start finishes it.
 	Incomplete bool `json:"i,omitempty"`
-	// ID names the repository in the recovery command's push address.
+	// ID identifies the kept folder's original storage path.
 	ID string `json:"d,omitempty"`
 }
 
@@ -604,7 +604,7 @@ func (app *App) removedNotices(writer http.ResponseWriter, request *http.Request
 			return append(notices, webui.Info(webui.MsgRepoRemovedKeptRecovery))
 		}
 		return append(notices,
-			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.cloneURL(request, result.ID))),
+			webui.Info(webui.MsgRepoRemovedKeptCommand).WithDetail(recoveryCommand(result.Kept, app.cloneURL(request, result.Name))),
 			webui.Info(webui.MsgRepoRemovedKeptWhere))
 	case webui.DeleteModeDeleteFiles:
 		return []webui.Notice{webui.Success(webui.MsgRepoRemovedDeleted).WithDetail(result.Name)}

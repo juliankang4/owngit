@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"os"
@@ -327,6 +328,54 @@ func TestRepositoryDeleteKeepFilesNamesTheKeptFolder(t *testing.T) {
 	again := browserGET(t, client, server.URL+"/?notice="+removedNotice)
 	if strings.Contains(again.body, removedFolderName) {
 		t.Fatal("the removal notice was shown twice")
+	}
+}
+
+func TestRecoveryCommandRestoresARenamedRepositoryWithoutChangingTheFirstName(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	signInAdmin(t, fixture, server.URL, jar)
+
+	renamed := browserForm(t, client, server.URL+"/repositories/project/settings/rename", url.Values{
+		"csrf": {adminTestCSRF}, "name": {"renamed"},
+	}, server.URL)
+	if renamed.status != http.StatusSeeOther {
+		t.Fatalf("rename status=%d body=%s", renamed.status, renamed.body)
+	}
+	deleted := browserForm(t, client, server.URL+"/repositories/renamed/delete", url.Values{
+		"csrf": {adminTestCSRF}, "mode": {"keep_files"}, "confirm_name": {"renamed"}, "admin_password": {"admin-password"},
+	}, server.URL)
+	if deleted.status != http.StatusSeeOther || deleted.header.Get("Location") != "/?notice="+removedNotice {
+		t.Fatalf("keep-files delete status=%d location=%q body=%s", deleted.status, deleted.header.Get("Location"), deleted.body)
+	}
+
+	unrelated, err := fixture.app.Repositories.Create(t.Context(), "project", "Unrelated repository")
+	noErr(t, err)
+	unrelatedPath, err := fixture.app.Repositories.Path(unrelated.ID)
+	noErr(t, err)
+	apiRunGit(t, fixture.work, "push", unrelatedPath, "HEAD:refs/heads/unrelated")
+	unrelatedRefs := apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)")
+
+	recreated, err := fixture.app.Repositories.Create(t.Context(), "renamed", "Recreated repository")
+	noErr(t, err)
+	recreatedPath, err := fixture.app.Repositories.Path(recreated.ID)
+	noErr(t, err)
+
+	dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice)
+	parts := regexp.MustCompile(`git --git-dir '([^']+)' push '([^']+)' 'refs/heads/\*:refs/heads/\*' 'refs/tags/\*:refs/tags/\*'`).FindStringSubmatch(html.UnescapeString(dashboard.body))
+	if len(parts) != 3 {
+		t.Fatalf("dashboard lacks the recovery command:\n%s", dashboard.body)
+	}
+	apiRunGit(t, "", "--git-dir", parts[1], "push", parts[2], "refs/heads/*:refs/heads/*", "refs/tags/*:refs/tags/*")
+
+	if after := apiGitOutput(t, "", "--git-dir", unrelatedPath, "for-each-ref", "--format=%(refname) %(objectname)"); after != unrelatedRefs {
+		t.Fatalf("the displayed command changed the unrelated repository at the first name:\nbefore:\n%s\nafter:\n%s", unrelatedRefs, after)
+	}
+	if main := apiGitOutput(t, "", "--git-dir", recreatedPath, "rev-parse", "refs/heads/main"); main != fixture.targetOID {
+		t.Fatalf("recreated repository main=%s, want %s", main, fixture.targetOID)
+	}
+	if feature := apiGitOutput(t, "", "--git-dir", recreatedPath, "rev-parse", "refs/heads/feature"); feature != fixture.sourceOID {
+		t.Fatalf("recreated repository feature=%s, want %s", feature, fixture.sourceOID)
 	}
 }
 
