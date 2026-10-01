@@ -292,10 +292,10 @@ LaunchAgent와 Homebrew 서비스는 모두 OwnGit을 대화형(interactive) 우
 
 서비스는 로그 폴더(`~/Library/Logs/owngit`, Homebrew는 `$(brew --prefix)/var/log`)에 파일 두 개를 둡니다.
 
-- `owngit.log`는 서버 로그입니다. OwnGit이 직접 쓰며(`--service`와 함께 준 `--log-file`) 내 계정만 읽을 수 있게 둡니다. 10MB 아래로 유지하며 그 크기에 이르면 `owngit.log.1`로 옮기고 이전 `.1` 파일을 대신합니다.
+- `owngit.log`는 서버 로그입니다. OwnGit이 직접 쓰며(`--service`와 함께 준 `--log-file`) 소유자만 읽고 쓸 수 있는 권한(모드 600)을 줍니다. 10MB 아래로 유지하며 그 크기에 이르면 `owngit.log.1`로 옮기고 이전 `.1` 파일을 대신합니다.
 - `owngit.stderr.log`에는 launchd가 OwnGit의 출력에서 모은 내용이 들어갑니다. 로그가 담지 못하는 것(예를 들어 비정상 종료 보고나 OwnGit이 로그를 열지 못한 오류)뿐이라 작게 유지됩니다. 이 파일의 크기는 launchd가 제한하지 않습니다.
 
-OwnGit은 `owngit.log`, `owngit.log.1`, LaunchAgent의 `owngit.stderr.log`가 폴더에서 물려받은 접근 목록(ACL, 다른 계정에 권한을 더 주는 설정)도 지워서 내 계정만 읽을 수 있게 합니다. `owngit.log`와 `owngit.log.1`은 로그를 열 때마다, LaunchAgent의 `owngit.stderr.log`는 `owngit service install`이 에이전트를 쓸 때마다 이렇게 하며, 이미 있는 파일도 마찬가지입니다. 지금 쓰는 `owngit.log`를 나만 읽게 만들 수 없으면 OwnGit은 시작하지 않고, 오류에 파일과 고치는 명령이 나옵니다. 예를 들면 `PATH: its access list gives other accounts access; to fix it, run: chmod -N PATH`입니다. `owngit.log.1`은 경고만 합니다. Homebrew 자체 서비스가 `$(brew --prefix)/var/log`에 쓰는 `owngit.stderr.log`의 접근 목록은 OwnGit이 지우지 않습니다. 그 폴더가 다른 계정에 접근을 허용한다면 그 파일에 직접 `chmod -N`을 실행하세요.
+OwnGit은 `owngit.log`, `owngit.log.1`, LaunchAgent의 `owngit.stderr.log`가 폴더에서 물려받은 접근 목록(ACL, 다른 계정에 권한을 더 주는 설정)도 지워서, 그 뒤로는 다른 계정이 이 파일들을 열 수 없게 합니다. 다른 계정이 이미 열어 둔 파일까지 되돌리지는 못하며, 새로 만든 로그에는 OwnGit이 지우기 전 잠깐 물려받은 항목이 남아 있을 수 있습니다. 처음부터 물려받는 것이 없도록 로그 폴더를 내 계정만의 것으로 두세요. 예를 들어 폴더에 `chmod -N`을 실행합니다. `owngit.log`와 `owngit.log.1`은 로그를 열 때마다, LaunchAgent의 `owngit.stderr.log`는 `owngit service install`이 에이전트를 쓸 때마다 이렇게 하며, 이미 있는 파일도 마찬가지입니다. 지금 쓰는 `owngit.log`를 나만 읽게 만들 수 없으면 OwnGit은 시작하지 않고, 오류에 파일과 고치는 명령이 나옵니다. 예를 들면 `PATH: its access list gives other accounts access; to fix it, run: chmod -N PATH`입니다. `owngit.log.1`은 경고만 합니다. Homebrew 자체 서비스가 `$(brew --prefix)/var/log`에 쓰는 `owngit.stderr.log`의 접근 목록은 OwnGit이 지우지 않습니다. 그 폴더가 다른 계정에 접근을 허용한다면 그 파일에 직접 `chmod -N`을 실행하세요.
 
 이전 버전으로 설치한 서비스는 `owngit service install`을 다시 실행하기 전까지(Homebrew는 업그레이드한 뒤 `brew services restart owngit`을 실행하기 전까지) 모든 내용을 크기 제한 없는 `owngit.log` 하나에 계속 씁니다.
 
