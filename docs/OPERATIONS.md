@@ -2339,11 +2339,11 @@ When a newer OwnGit starts on a state whose schema is older than the one it writ
 - The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it. `owngit-upgrade-backup.txt` in the backup says the same.
 - A new state, and one whose setup is not complete, need no backup.
 - A state where an earlier version left a refused or stopped merge behind is backed up like any other.
-- OwnGit 1.0.3 and later restore it.
+- OwnGit 1.0.3 and later restore it, with one exception. When an earlier version refused or stopped a merge and that pull request was merged later, only OwnGit 1.1.4 or later restores the backup, because earlier builds refuse it. Those builds could not back up such a state at all.
 
 OwnGit creates the `-backups` folder so that only this account can use it. An existing one must belong to this account, and no other account may be able to change what is in it; otherwise OwnGit refuses the upgrade and says why.
 
-To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version, for example:
+To go back to the earlier version, stop OwnGit, move the state directory aside, and run the printed command with the earlier version. An installation whose backup only OwnGit 1.1.4 or later restores cannot go back this way and has to stay on 1.1.4 or later. For example:
 
 ```sh
 owngit restore \
