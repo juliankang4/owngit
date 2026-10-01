@@ -1635,7 +1635,7 @@ Each run fetches a full copy into a private staging area. Before anything reache
 By default, a refresh never overwrites local work. Two [refresh choices](#refs-and-refresh-choices) change that, and the rules below say where.
 
 - A missing ref is created, and an identical one is left alone.
-- A branch follows the source only while it still holds the value OwnGit last saw from this source URL, or moved forward from it and the new source value includes it.
+- A branch follows the source only while it still holds the value OwnGit last saw from this source URL, or moved forward from it and the new source value includes it. If Git cannot tell whether it does, the refresh stops with `publish_failed` before writing anything, and the next refresh starts again from the same point.
 - A tag, or a ref in an extra namespace, changes only while it still holds the exact value last seen.
 - Anything else is divergent and kept, and the run reports it. [Overwrite diverged branches](#overwrite-diverged-branches) replaces it instead.
 - A ref deleted at the source stays locally (**Deleted at source** in the Import tab and `import status`). [Follow upstream deletions](#follow-upstream-deletions) deletes it instead.
@@ -1697,6 +1697,8 @@ With this choice on, a refresh deletes a ref that the source deleted. It does so
 
 A deleted branch or tag commit stays in kept history when kept history is on; a deleted ref in an extra namespace is not kept. Once a ref is deleted, its name is free, and a ref you later create with that name is treated as local work.
 
+A run's count of refs deleted at the source (`refs_deleted_upstream` in JSON) counts what the source deleted, whether or not the refresh also deleted those refs here.
+
 A refresh never deletes:
 
 - a symbolic ref;
@@ -1745,7 +1747,7 @@ OwnGit scans the fetched objects for LFS pointer files, up to the source's LFS o
 
 One run per repository is active at a time (`busy` otherwise), and a run is limited by the source's run time, 60 minutes by default (`limit`). Other outcomes are `cancelled`, `protected_default_branch` (see [Changing the default branch](#changing-the-default-branch)), `repository_taken`, `superseded`, `destination_changed`, `publication_unresolved` and `nothing_to_resolve`. A failure OwnGit did not classify is `unclassified`; `unsupported` means the source or destination uses a feature that import does not support.
 
-When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome. At the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
+When `owngit serve` stops, it cancels running imports and waits up to 45 seconds for each to record its outcome. At the next start it marks interrupted runs and checks any publication that was in progress, without repeating or rolling back a write. It also removes a Git lock file, such as `HEAD.lock`, that an interrupted import left in the repository, but only when it can prove the lock is that import's own and that the run on this computer has ended. A lock on a network folder, one left by an earlier version, or one it cannot prove stays where it is, and the publication becomes unresolved. If the import service cannot start, the Import tab and `import status` say so, and Git keeps working.
 
 ### Unresolved publications
 
@@ -1757,6 +1759,8 @@ A publication is unresolved when OwnGit cannot prove how it ended, for example w
 4. Run `owngit import resolve PROJECT`, or use the button on the Import tab.
 
 OwnGit records the current refs and HEAD as the accepted state without writing to Git. The next refresh then follows the source where the refs still hold the last confirmed value, and keeps the rest as divergent.
+
+Resolve does not remove Git lock files. When the reason says that lock ownership could not be confirmed, stop OwnGit and every Git writer for the repository, and move the named `.lock` file to a safe place outside the repository instead of deleting it. Then start OwnGit, check the refs and HEAD, and resolve again.
 
 If an initial import is unresolved and its repository does not exist yet, restart OwnGit. If the problem remains, move that import's `.owngit-create-*` directory out of the repository folder and restart again.
 
@@ -2192,7 +2196,7 @@ A backup holds a manifest and one Git bundle per nonempty repository. Together t
 - import sources and history, including each source's extra ref namespaces and refresh choices;
 - the access mode and password hashes. Keep backups private, because password hashes are sensitive.
 
-A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, the check ceilings, repository maintenance, unused object cleanup and the raw log retention). Nor does it include sessions, network settings, share links, the recent pushes list or the switch for the backup before an upgrade. [After a restore](#after-a-restore) lists everything a restore leaves out and where to set it up again.
+A backup does not include raw logs, credentials and tokens of every kind, import schedules, each import source's [connection choices and limits](#connection-choices-and-limits), the backup schedule and the records of earlier backups, consent, the [update check](#new-release-notice) setting, or the other server-wide settings (the sign-in length, the initial branch, the kept history choice, the Git transfer limits, the browsing limits, the check ceilings, repository maintenance, unused object cleanup and the raw log retention). Nor does it include sessions, network settings, share links, the recent pushes list, the records of Git lock files that imports created on this computer, or the switch for the backup before an upgrade. [After a restore](#after-a-restore) lists everything a restore leaves out and where to set it up again.
 
 A backup holds up to 1 GiB of OwnGit records, counted by the memory they take and not counting the repositories; backup refuses a larger state. Creating and restoring a backup hold its records in memory, so more records need more memory.
 
