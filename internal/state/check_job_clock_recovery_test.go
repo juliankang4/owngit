@@ -68,6 +68,35 @@ func TestCheckJobClockCorrectionRecovery(t *testing.T) {
 			if err != nil || !found {
 				t.Fatalf("read job found=%v err=%v", found, err)
 			}
+			if !job.AdmittedAt.Equal(fixture.now) {
+				t.Fatal("transition adjusted the original admission time")
+			}
+			if job.ClaimedAt != nil {
+				claimedAt := fixture.now
+				if transition == "claim" {
+					claimedAt = earlier
+				}
+				if !job.ClaimedAt.Equal(claimedAt) {
+					t.Fatal("transition adjusted the observed claim time")
+				}
+			}
+			if job.StartedAt != nil {
+				startedAt := fixture.now
+				if transition == "start" {
+					startedAt = earlier
+				}
+				if !job.StartedAt.Equal(startedAt) {
+					t.Fatal("transition adjusted the observed start time")
+				}
+			}
+			for _, observed := range []*time.Time{job.FinishedAt, job.LeaseLostAt, job.CancelRequestedAt, job.InterruptedAt} {
+				if observed != nil && !observed.Equal(earlier) {
+					t.Fatal("transition adjusted the corrected wall observation")
+				}
+			}
+			if transition == "renew" && !job.LeaseExpiresAt.Equal(earlier.Add(time.Minute)) {
+				t.Fatal("renewal adjusted its deadline to order history")
+			}
 			snapshot, err := fixture.store.RecoverySnapshot(ctx)
 			noErr(t, err)
 			noErr(t, ValidateCheckRecovery(snapshot))
