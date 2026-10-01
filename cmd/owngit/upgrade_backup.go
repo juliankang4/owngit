@@ -174,7 +174,7 @@ func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCo
 	}
 	_, err = fmt.Fprintf(file, "OwnGit %s made this backup before it upgraded the state in %s %s.\n\n"+
 		"To go back to the earlier OwnGit version, stop OwnGit, move %s aside, and run this with the earlier version:\n\n  %s\n\n"+
-		"Then start the earlier version. The restored repositories are in the folder after --repository-root; another new folder in a place this account can create works as well.\n"+
+		"If the earlier version refuses this backup, keep using this OwnGit version; otherwise, start the earlier version. The restored repositories are in the folder after --repository-root; another new folder in a place this account can create works as well.\n"+
 		"OwnGit removes this backup once it has made a newer one for this state directory before a later upgrade.\n\n"+
 		upgradeNoteStatePrefix+"%s\n",
 		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand, stateDir)

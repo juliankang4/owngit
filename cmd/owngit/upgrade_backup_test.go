@@ -121,6 +121,9 @@ func TestUpgradeBackupRestoresTheStateBeforeTheUpgrade(t *testing.T) {
 	if err != nil || !strings.Contains(string(note), command) {
 		t.Fatalf("note %q err=%v", note, err)
 	}
+	if !strings.Contains(string(note), "If the earlier version refuses this backup, keep using this OwnGit version; otherwise, start the earlier version.") {
+		t.Fatalf("note does not explain the older-version restore limit: %q", note)
+	}
 
 	// The previous release reads backup format 10. When the format
 	// changes, the backup before an upgrade must still be written in the
