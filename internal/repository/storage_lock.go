@@ -57,18 +57,43 @@ func (m *Manager) ReleaseStorage() {
 	}
 }
 
+// SetRootForSetup holds the selected folder's claim through save. A failed
+// save releases only this tentative claim and leaves the manager unchanged.
+// Empty folders keep the same lazy claim as startup.
+func (m *Manager) SetRootForSetup(root string, save func() error) error {
+	s := &m.storageClaim
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.release != nil {
+		return errors.New("repository storage is already selected")
+	}
+	canonical, err := canonicalRoot(root)
+	if err != nil {
+		return err
+	}
+	release, err := claimStorageRoot(canonical, false)
+	if err != nil {
+		return err
+	}
+	if err := save(); err != nil {
+		if release != nil {
+			release()
+		}
+		return err
+	}
+	m.SetRoot(canonical)
+	s.enabled = true
+	s.release = release
+	return nil
+}
+
 // claimStorageForWrite claims the repository folder before OwnGit writes a
-// repository or its hooks to it. Only another server holding the folder is
-// an error; a folder that cannot be locked for another reason is written as
-// before.
+// repository or its hooks to it. Failed claims never authorize a write.
 func (m *Manager) claimStorageForWrite() error {
 	s := &m.storageClaim
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := m.claimStorageLocked(true); errors.Is(err, ErrStorageInUse) {
-		return err
-	}
-	return nil
+	return m.claimStorageLocked(true)
 }
 
 func (m *Manager) claimStorageLocked(writing bool) error {
@@ -78,12 +103,23 @@ func (m *Manager) claimStorageLocked(writing bool) error {
 	}
 	root, err := canonicalRoot(m.RepositoryRoot())
 	if err != nil {
-		// Not configured yet, or unavailable: claimed before the first write.
-		return nil
+		if !writing {
+			// Not configured yet, or unavailable: claimed before the first write.
+			return nil
+		}
+		return err
 	}
+	release, err := claimStorageRoot(root, writing)
+	if err == nil {
+		s.release = release
+	}
+	return err
+}
+
+func claimStorageRoot(root string, writing bool) (func(), error) {
 	if !writing {
 		if empty, err := emptyDirectory(root); err != nil || empty {
-			return err
+			return nil, err
 		}
 	}
 	// The lock refuses a link or another account's file at its name (see
@@ -97,13 +133,12 @@ func (m *Manager) claimStorageLocked(writing bool) error {
 	// folder on another disk.
 	release, err := state.AcquireExclusiveFileLock(filepath.Join(root, storageLockName))
 	if errors.Is(err, state.ErrInstanceRunning) {
-		return fmt.Errorf("%w: %s", ErrStorageInUse, root)
+		return nil, fmt.Errorf("%w: %s", ErrStorageInUse, root)
 	}
 	if err != nil {
-		return fmt.Errorf("lock the repository folder: %w", err)
+		return nil, fmt.Errorf("lock the repository folder: %w", err)
 	}
-	s.release = release
-	return nil
+	return release, nil
 }
 
 func emptyDirectory(path string) (bool, error) {

@@ -636,8 +636,8 @@ var catalog = map[MessageCode]message{
 		ko: "그 경로는 파일입니다. 폴더를 선택하세요.",
 	},
 	MsgSetupStorageInUse: {
-		en: "That folder already holds another installation's data.",
-		ko: "그 폴더에는 이미 다른 OwnGit 서버의 데이터가 있습니다.",
+		en: "Another OwnGit server is using that folder. Choose another folder, or stop that server and try again.",
+		ko: "다른 OwnGit 서버가 이 폴더를 사용 중입니다. 다른 폴더를 선택하거나, 해당 서버를 종료한 뒤 다시 시도하세요.",
 	},
 	MsgSetupStorageOverlap: {
 		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",
@@ -1342,8 +1342,8 @@ var catalog = map[MessageCode]message{
 		ko: "new와 new-import는 예약된 이름입니다. 다른 이름을 입력하세요.",
 	},
 	MsgRepoNameTaken: {
-		en: "A repository with that name already exists.",
-		ko: "같은 이름의 저장소가 이미 있습니다.",
+		en: "That name is already in use, or its folder already exists. Choose another name. OwnGit does not adopt or remove existing folders.",
+		ko: "이미 사용 중인 이름이거나, 같은 이름의 폴더가 있습니다. 다른 이름을 입력하세요. OwnGit은 기존 폴더를 저장소로 등록하거나 삭제하지 않습니다.",
 	},
 	MsgRepoNameBusy: {
 		en: "An import for that name is in progress, so no repository was created. Try again after the import finishes, or restart OwnGit if no import is running.",

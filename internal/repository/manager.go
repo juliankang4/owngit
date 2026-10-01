@@ -3,9 +3,12 @@ package repository
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,7 +29,10 @@ var (
 	ErrReservedName       = fmt.Errorf("%w: reserved name", ErrInvalidName)
 	ErrInvalidDescription = errors.New("invalid repository description")
 	ErrNameTaken          = errors.New("repository name is already in use")
-	ErrUnsupportedFormat  = errors.New("unsupported repository object format")
+	// ErrFolderExists identifies a folder with no repository record. OwnGit
+	// never adopts or removes it when creating a repository.
+	ErrFolderExists      = fmt.Errorf("%w: a folder already exists; choose another name, or move the existing folder aside after checking its contents", ErrNameTaken)
+	ErrUnsupportedFormat = errors.New("unsupported repository object format")
 	// ErrImportInProgress wraps ErrNameTaken when no repository has the name
 	// yet but an import for it is running or still needs recovery.
 	ErrImportInProgress = fmt.Errorf("%w: an import for this name is still running or needs recovery; try again after it finishes, or restart OwnGit if no import is running", ErrNameTaken)
@@ -158,7 +164,7 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	}
 	finalPath := filepath.Join(root, id+".git")
 	if info, err := os.Lstat(finalPath); err == nil {
-		return state.Repository{}, fmt.Errorf("%w: repository path already exists (%s)", ErrNameTaken, info.Name())
+		return state.Repository{}, fmt.Errorf("%w (%s)", ErrFolderExists, info.Name())
 	} else if !os.IsNotExist(err) {
 		return state.Repository{}, fmt.Errorf("inspect repository path: %w", err)
 	}
@@ -172,6 +178,11 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		}
 	}
 
+	// Claim before even the temporary folder is written. Another server's
+	// claim must not leave creation debris in its storage.
+	if err := m.claimStorageForWrite(); err != nil {
+		return state.Repository{}, err
+	}
 	suffix := make([]byte, 8)
 	if _, err := rand.Read(suffix); err != nil {
 		return state.Repository{}, err
@@ -190,15 +201,134 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	if err := m.InitBareRepository(ctx, temporaryPath, options); err != nil {
 		return state.Repository{}, err
 	}
+	creation, err := captureEmptyCreation(temporaryPath)
+	if err != nil {
+		return state.Repository{}, fmt.Errorf("inspect new repository: %w", err)
+	}
+	defer creation.root.Close()
 	if err := publishdir.Rename(ctx, temporaryPath, finalPath); err != nil {
 		return state.Repository{}, fmt.Errorf("publish repository directory: %w", err)
 	}
 	created = true
 	repository := state.Repository{ID: id, Name: name, Address: id, Description: strings.TrimSpace(description), CreatedAt: time.Now()}
 	if err := m.Store.AddRepository(ctx, repository); err != nil {
-		return state.Repository{}, fmt.Errorf("record repository (the new bare repository remains at %s for owner recovery): %w", finalPath, err)
+		// A cancelled request or storage error must not remove a directory
+		// whose record might have committed. Read independently of the request.
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		_, accepted, checkErr := m.Store.Repository(checkCtx, id)
+		cancel()
+		if checkErr != nil {
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s because its record could not be checked: %v", err, finalPath, checkErr)
+		}
+		if accepted {
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve the recorded repository at %s", err, finalPath)
+		}
+		// No request can use this repository before its row exists. Remove
+		// only this attempt's unchanged empty tree, never a substituted
+		// directory or newly added history.
+		if rollbackErr := creation.rollback(finalPath); rollbackErr != nil {
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %v", err, finalPath, rollbackErr)
+		}
+		return state.Repository{}, fmt.Errorf("record repository: %w", err)
 	}
 	return repository, nil
+}
+
+type creationEntry struct {
+	name   string
+	info   os.FileInfo
+	digest [sha256.Size]byte
+}
+
+// emptyCreation records the exact tree initialized by this attempt. The open
+// root follows the directory across publication, rather than a reused path.
+type emptyCreation struct {
+	root    *os.Root
+	entries []creationEntry
+}
+
+func captureEmptyCreation(path string) (*emptyCreation, error) {
+	root, err := os.OpenRoot(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := creationEntries(root)
+	if err != nil {
+		root.Close()
+		return nil, err
+	}
+	return &emptyCreation{root: root, entries: entries}, nil
+}
+
+func creationEntries(root *os.Root) ([]creationEntry, error) {
+	var entries []creationEntry
+	err := fs.WalkDir(root.FS(), ".", func(name string, item fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !item.IsDir() && !item.Type().IsRegular() {
+			return fmt.Errorf("unexpected entry in new repository: %s", name)
+		}
+		file, err := root.Open(name)
+		if err != nil {
+			return err
+		}
+		info, err := file.Stat()
+		entry := creationEntry{name: name, info: info}
+		if err == nil && info.Mode().IsRegular() {
+			hash := sha256.New()
+			_, err = io.Copy(hash, file)
+			copy(entry.digest[:], hash.Sum(nil))
+		}
+		if err := errors.Join(err, file.Close()); err != nil {
+			return err
+		}
+		entries = append(entries, entry)
+		return nil
+	})
+	return entries, err
+}
+
+func (creation *emptyCreation) rollback(path string) error {
+	identity, err := capturePinnedRepositoryIdentity(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(creation.entries[0].info, identity) {
+		return errors.New("the new repository folder was replaced")
+	}
+	current, err := creationEntries(creation.root)
+	if err != nil {
+		return err
+	}
+	if len(current) != len(creation.entries) {
+		return errors.New("the new repository is no longer empty and unchanged")
+	}
+	for index, expected := range creation.entries {
+		found := current[index]
+		if expected.name != found.name || !os.SameFile(expected.info, found.info) ||
+			expected.info.Mode() != found.info.Mode() || expected.digest != found.digest {
+			return errors.New("the new repository is no longer empty and unchanged")
+		}
+	}
+	// Remove known entries only. An unexpected child stops directory removal;
+	// recursive removal would instead destroy data not created by this attempt.
+	for index := len(creation.entries) - 1; index > 0; index-- {
+		if err := creation.root.Remove(creation.entries[index].name); err != nil {
+			return err
+		}
+	}
+	if err := creation.root.Close(); err != nil {
+		return err
+	}
+	identity, err = capturePinnedRepositoryIdentity(path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(creation.entries[0].info, identity) {
+		return errors.New("the new repository folder was replaced")
+	}
+	return os.Remove(path)
 }
 
 // InitBareRepository initializes a bare repository at directory. It does not

@@ -183,6 +183,8 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 		switch {
 		case errors.Is(err, repository.ErrImportInProgress):
 			writeAPIError(writer, http.StatusConflict, "repository_name_busy", "An import for this name is still running or needs recovery. Try again after it finishes.", nil)
+		case errors.Is(err, repository.ErrFolderExists):
+			writeAPIError(writer, http.StatusConflict, "repository_exists", "A folder already exists for this name. OwnGit has not adopted or removed it. Choose another name, or move the folder aside after checking its contents.", nil)
 		case errors.Is(err, repository.ErrNameTaken):
 			writeAPIError(writer, http.StatusConflict, "repository_exists", "The repository name is already in use.", nil)
 		case errors.Is(err, repository.ErrReservedName):

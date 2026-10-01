@@ -59,3 +59,40 @@ func TestClaimStorageWaitsForTheFirstWriteToAnEmptyFolder(t *testing.T) {
 	}
 	first.ReleaseStorage()
 }
+
+func TestStorageSetupKeepsTheClaimDuringSave(t *testing.T) {
+	first, _, _ := newTestRepository(t)
+	second := secondServer(first)
+	if err := first.SetRootForSetup(first.RepositoryRoot(), func() error {
+		if err := second.ClaimStorage(); !errors.Is(err, ErrStorageInUse) {
+			second.ReleaseStorage()
+			t.Fatalf("claim was not held during save: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.ClaimStorage(); !errors.Is(err, ErrStorageInUse) {
+		t.Fatalf("claim was not retained after save: %v", err)
+	}
+	first.ReleaseStorage()
+}
+
+func TestFailedWriteClaimDoesNotCreateTemporaryFolders(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	noErr(t, manager.ClaimStorage())
+	t.Cleanup(manager.ReleaseStorage)
+	second := secondServer(manager)
+	if err := second.ClaimStorage(); !errors.Is(err, ErrStorageInUse) {
+		t.Fatalf("second claim error=%v", err)
+	}
+	before, err := os.ReadDir(manager.RepositoryRoot())
+	noErr(t, err)
+	if _, err := second.Create(context.Background(), "refused", ""); !errors.Is(err, ErrStorageInUse) {
+		t.Fatalf("create error=%v", err)
+	}
+	after, err := os.ReadDir(manager.RepositoryRoot())
+	if err != nil || len(after) != len(before) {
+		t.Fatalf("failed claim wrote storage entries: before=%v after=%v err=%v", before, after, err)
+	}
+}

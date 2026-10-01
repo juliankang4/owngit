@@ -29,6 +29,12 @@ func TestStorageClaimChangesNoFileAtTheLockName(t *testing.T) {
 				manager.ReleaseStorage()
 				t.Fatal("the folder was claimed through the planted lock name")
 			}
+			if _, err := manager.Create(t.Context(), "refused", ""); err == nil {
+				t.Fatal("creation proceeded without owning the storage claim")
+			}
+			if _, err := os.Lstat(filepath.Join(manager.RepositoryRoot(), "refused.git")); !os.IsNotExist(err) {
+				t.Fatalf("unclaimed creation published storage: %v", err)
+			}
 			if info, err := os.Stat(target); err != nil || info.Mode().Perm() != 0o755 {
 				t.Fatalf("the planted file changed: %v %v", info.Mode(), err)
 			}

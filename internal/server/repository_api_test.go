@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -174,6 +176,34 @@ func TestRepositoryAPIKeepsGeneralAccessAndCrossSiteRules(t *testing.T) {
 	if created.Repository.ID != "allowed" {
 		t.Fatalf("created repository=%+v", created.Repository)
 	}
+}
+
+func TestRepositoryAPICreationFailureCanRetryAndPreservesUnknownFolders(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	collection := server.URL + "/api/v1/repositories"
+	ctx := context.Background()
+	noErr(t, fixture.store.Exec(ctx, `CREATE TRIGGER refuse_creation BEFORE INSERT ON repositories BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	response := apiRequest(t, http.MethodPost, collection, map[string]string{"name": "fresh"}, "", "")
+	if response.StatusCode != http.StatusServiceUnavailable || apiErrorCode(t, response) != "repository_create_failed" {
+		t.Fatalf("recording failure status=%d", response.StatusCode)
+	}
+	noErr(t, fixture.store.Exec(ctx, `DROP TRIGGER refuse_creation`))
+	decodeRepositoryResponse(t, apiRequest(t, http.MethodPost, collection, map[string]string{"name": "fresh"}, "", ""), http.StatusCreated)
+	unknown := filepath.Join(fixture.app.Repositories.RepositoryRoot(), "unknown.git")
+	noErr(t, os.Mkdir(unknown, 0o700))
+	noErr(t, os.WriteFile(filepath.Join(unknown, "keep"), []byte("unrelated data"), 0o600))
+	response = apiRequest(t, http.MethodPost, collection, map[string]string{"name": "unknown"}, "", "")
+	var envelope pullrequest.ErrorEnvelope
+	noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || envelope.Error.Code != "repository_exists" || !strings.Contains(envelope.Error.Message, "has not adopted or removed") || !strings.Contains(envelope.Error.Message, "Choose another name") {
+		t.Fatalf("unknown folder status=%d error=%+v", response.StatusCode, envelope.Error)
+	}
+	if data, err := os.ReadFile(filepath.Join(unknown, "keep")); err != nil || string(data) != "unrelated data" {
+		t.Fatalf("unknown folder changed: %q %v", data, err)
+	}
+	decodeRepositoryResponse(t, apiRequest(t, http.MethodPost, collection, map[string]string{"name": "another"}, "", ""), http.StatusCreated)
 }
 
 func fixtureRepositoryExists(t *testing.T, fixture apiFixture, id string) bool {

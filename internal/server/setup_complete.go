@@ -14,6 +14,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/bootstrap"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -140,16 +141,30 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
 	}
+	defer unlock()
+	settings, err := app.Store.Settings(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
+	}
+	if settings.Initialized {
+		return nil, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, state.ErrSetupComplete)
+	}
 	var keepHosts []string
 	if answers.KeepHost != "" {
 		keepHosts = append(keepHosts, answers.KeepHost)
 	}
-	completeErr := app.Store.CompleteSetup(ctx, canonical, answers.AccessMode, accessHash, adminHash, answers.InsecureAccepted, keepHosts...)
+	saved := false
+	completeErr := app.Repositories.SetRootForSetup(canonical, func() error {
+		saved = true
+		return app.Store.CompleteSetup(ctx, canonical, answers.AccessMode, accessHash, adminHash, answers.InsecureAccepted, keepHosts...)
+	})
+	if completeErr != nil && !saved {
+		return []webui.Notice{storageNotice(answers.StoragePath, completeErr)}, nil
+	}
 	var cleanupErr error
 	if completeErr == nil {
 		cleanupErr = bootstrap.RemoveOwnerSetupFiles(app.Store.Dir())
 	}
-	unlock()
 	if errors.Is(completeErr, state.ErrSetupComplete) {
 		return nil, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, completeErr)
 	}
@@ -159,7 +174,6 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	// Setup is committed, so this process serves it even when removing the
 	// obsolete owner setup files failed. The failure is still reported, and
 	// the next capability issue removes those files.
-	app.Repositories.SetRoot(canonical)
 	app.setupHosts.clear()
 	// A kept Host is accepted from now on, also by this process; for a Host
 	// the policy already accepts this changes nothing.
@@ -206,6 +220,8 @@ func (app *App) CheckRepositoryFolder(value string) webui.MessageCode {
 // storageProblem names what is wrong with a repository folder.
 func storageProblem(err error) webui.MessageCode {
 	switch {
+	case errors.Is(err, repository.ErrStorageInUse):
+		return webui.MsgSetupStorageInUse
 	case errors.Is(err, syscall.EROFS):
 		// Also a service's system folders, and the home folders for the
 		// owngit account, which the unit makes read-only.
@@ -374,10 +390,7 @@ func (app *App) repositoryRoot(value string, create bool) (string, error) {
 		return "", err
 	}
 	probePath := probe.Name()
-	if err := probe.Close(); err != nil {
-		return "", err
-	}
-	if err := os.Remove(probePath); err != nil {
+	if err := errors.Join(probe.Close(), os.Remove(probePath)); err != nil {
 		return "", err
 	}
 	return canonical, nil
