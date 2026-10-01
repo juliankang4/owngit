@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 )
@@ -53,6 +54,10 @@ func TestDirectoryPagesKeepEveryEntryAtTheOriginalCommit(t *testing.T) {
 		if page.After == "" {
 			if len(seen) != page.Total || seen["new.txt"] {
 				t.Fatalf("continuation followed the new tip: %d of %d", len(seen), page.Total)
+			}
+			last := treeCursor(page.Entries[len(page.Entries)-1])
+			if _, err := manager.TreePageAt(context.Background(), "sample", oid, "", last); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("cursor past the last entry claimed an empty folder: %v", err)
 			}
 			break
 		}

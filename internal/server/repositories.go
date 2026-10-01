@@ -1274,6 +1274,8 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		page.Commits.Unreadable = true
 		return nil
 	}
+	// A known commit stays browsable after its last public ref is removed.
+	page.Repo.Empty = false
 	// A commit opens with every file's diff. An address naming one file, as
 	// the note on a file left out of a large commit does, loads that file's
 	// diff alone.

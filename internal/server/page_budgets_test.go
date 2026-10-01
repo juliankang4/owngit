@@ -86,6 +86,10 @@ func TestFileAndSelectedDiffPagesKeepTheirOriginalContent(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, `id="L12345"`) || !strings.Contains(body, "original 12345") {
 		t.Fatalf("owner continuation lost its commit after branch deletion: status=%d", status)
 	}
+	body, status = dashboardGET(t, client, base+"/commits/"+oid+"?path=lines.txt&from=20001")
+	if status != http.StatusOK || strings.Count(body, `class="difftable__r is-add"`) != 7 {
+		t.Fatalf("diff continuation lost its commit after branch deletion: status=%d", status)
+	}
 }
 
 func TestByteLimitedLinePagesDoNotClaimTheWholeFileCount(t *testing.T) {

@@ -388,7 +388,7 @@ func (b *treePageBuilder) add(entry TreeEntry, directory string) error {
 }
 
 func (b *treePageBuilder) finish(directory string) (TreePage, error) {
-	if !b.cursorFound || (directory != "" && b.page.Total == 0) {
+	if !b.cursorFound || (b.after != "" && len(b.entries) == 0) || (directory != "" && b.page.Total == 0) {
 		return TreePage{}, errDirectoryNotFound
 	}
 	sort.Slice(b.entries, func(i, j int) bool { return treeEntryLess(b.entries[i], b.entries[j]) })
@@ -548,7 +548,14 @@ func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath strin
 	if err != nil {
 		return "", Blob{}, err
 	}
-	blob, _, err := m.FileAt(ctx, id, commitOID, filePath, limit)
+	view, _, err := m.PathPageAt(ctx, id, commitOID, filePath, "")
+	if err != nil {
+		return "", Blob{}, err
+	}
+	if view.Folder {
+		return "", Blob{}, errFileNotFound
+	}
+	blob, err := m.BlobAt(ctx, id, view.File, limit)
 	if err != nil {
 		return "", Blob{}, err
 	}
