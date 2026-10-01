@@ -90,6 +90,11 @@ func TestSmartHTTPUpdatesAndRetainsDecomposedRefsAfterHookRefresh(t *testing.T) 
 	if manager.Preparing("sample") {
 		t.Fatal("existing repository did not finish hook preparation")
 	}
+	refreshed, err := os.ReadFile(hookPath)
+	noErr(t, err)
+	if strings.Count(string(refreshed), " -c core.precomposeUnicode=false") != 2 {
+		t.Fatal("startup did not refresh both Git invocations in the existing hook")
+	}
 	after, err := os.ReadFile(configPath)
 	noErr(t, err)
 	if string(before) != string(after) {
