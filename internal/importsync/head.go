@@ -194,6 +194,9 @@ type headLock struct {
 	repositoryIdentity os.FileInfo
 	expected           headIdentity
 	committed          bool
+	store              *state.Store
+	proof              *state.ImportRefLock
+	beforeRename       func()
 }
 
 func (s *Service) acquireHEADLock(ctx context.Context, run *runState, repositoryPath string, expected headIdentity) (*headLock, error) {
@@ -230,7 +233,7 @@ func (s *Service) acquireRefFileLock(ctx context.Context, run *runState, reposit
 	// without following it. Such a pathname belongs to someone else.
 	file, err := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
-		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s is locked by another Git writer", name), err)
+		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s is locked. %s", name, refLockRecoveryMessage(name)), err)
 	}
 	locked, err := file.Stat()
 	if err == nil {
@@ -264,6 +267,13 @@ func (s *Service) acquireRefFileLock(ctx context.Context, run *runState, reposit
 		_ = lock.rollback()
 		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s changed before its write lock was acquired", name), nil)
 	}
+	if run.run.ID != "" {
+		if err := s.recordRefLock(ctx, run, lock, name); err != nil {
+			_ = lock.rollback()
+			return nil, newProblem(CodeStateUnavailable, "owned ref lock recovery evidence could not be recorded", err)
+		}
+	}
+	lock.beforeRename = s.beforeHEADRename
 	return lock, nil
 }
 
@@ -464,6 +474,12 @@ func (lock *headLock) commit(desired headIdentity) error {
 		return fmt.Errorf("close owned HEAD lock: %w", err)
 	}
 	lock.file = nil
+	if err := lock.saveProof(); err != nil {
+		return fmt.Errorf("record synced HEAD lock identity: %w", err)
+	}
+	if lock.beforeRename != nil {
+		lock.beforeRename()
+	}
 	if err := lock.checkRepositoryIdentity(); err != nil {
 		return err
 	}
@@ -507,7 +523,10 @@ func (lock *headLock) rollback() error {
 	if err := lock.checkRepositoryIdentity(); err != nil {
 		return errors.Join(closeErr, fmt.Errorf("preserving HEAD lock: %w", err))
 	}
-	return errors.Join(closeErr, removeOwnedHEADLock(lock.path, lock.identity))
+	if err := removeOwnedHEADLock(lock.path, lock.identity); err != nil {
+		return errors.Join(closeErr, err)
+	}
+	return errors.Join(closeErr, lock.forgetProof())
 }
 
 func removeOwnedHEADLock(path string, identity os.FileInfo) error {
@@ -522,6 +541,244 @@ func removeOwnedHEADLock(path string, identity os.FileInfo) error {
 		return errors.New("HEAD lock ownership changed; preserving it")
 	}
 	return os.Remove(path)
+}
+
+func refLockRecoveryMessage(name string) string {
+	return fmt.Sprintf("Lock ownership could not be confirmed. Stop OwnGit and all Git writers for this repository, move %s.lock to a safe location outside the repository, then restart OwnGit and resolve the import again. Do not move a live writer's lock.", name)
+}
+
+// A session belongs to the process, not to a Service or a runtime lease.
+// Reopening a service in this process cannot make its earlier locks abandoned.
+var refLockProcessSessionID, refLockProcessSessionErr = newImportID()
+
+func (s *Service) refLockSession() (string, error) {
+	return refLockProcessSessionID, refLockProcessSessionErr
+}
+
+type refFileSnapshot struct {
+	id      string
+	info    os.FileInfo
+	content string
+}
+
+func snapshotRefFile(path string) (refFileSnapshot, error) {
+	before, err := state.LstatIdentity(path)
+	if err != nil {
+		return refFileSnapshot{}, err
+	}
+	if !directRegularFile(path, before) {
+		return refFileSnapshot{}, errors.New("ref lock is not a direct regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return refFileSnapshot{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return refFileSnapshot{}, err
+	}
+	if !os.SameFile(before, info) {
+		return refFileSnapshot{}, errors.New("ref lock changed while opening it")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, 2049))
+	if err != nil {
+		return refFileSnapshot{}, err
+	}
+	after, err := file.Stat()
+	if err != nil {
+		return refFileSnapshot{}, err
+	}
+	if len(content) > 2048 || after.Size() != int64(len(content)) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) {
+		return refFileSnapshot{}, errors.New("ref lock changed or exceeded its content bound")
+	}
+	id, _ := durableFileID(file)
+	return refFileSnapshot{id: id, info: after, content: string(content)}, nil
+}
+
+func directoryFileID(path string) string {
+	before, err := state.LstatIdentity(path)
+	if err != nil || !directDirectory(path, before) {
+		return ""
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !os.SameFile(before, info) {
+		return ""
+	}
+	id, _ := durableFileID(file)
+	return id
+}
+
+func (s *Service) recordRefLock(ctx context.Context, run *runState, lock *headLock, name string) error {
+	if _, err := s.currentRuntime(run.runtimeGeneration); err != nil {
+		return err
+	}
+	session, err := s.refLockSession()
+	if err != nil {
+		return err
+	}
+	id, err := newImportID()
+	if err != nil {
+		return err
+	}
+	lock.store = s.Store
+	lock.proof = &state.ImportRefLock{ID: id, RepositoryID: run.run.RepositoryID, RunID: run.run.ID,
+		RepositoryPath: lock.repositoryPath, SessionID: session, Name: name, DirectoryID: directoryFileID(lock.repositoryPath)}
+	return lock.saveProof()
+}
+
+func (lock *headLock) saveProof() error {
+	if lock.proof == nil {
+		return nil
+	}
+	snapshot, err := snapshotRefFile(lock.path)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(snapshot.info, lock.identity) {
+		return errors.New("owned lock was replaced before its identity was recorded")
+	}
+	lock.proof.FileID = snapshot.id
+	lock.proof.Size = snapshot.info.Size()
+	lock.proof.ModTime = snapshot.info.ModTime().UnixNano()
+	lock.proof.Content = snapshot.content
+	ctx, cancel := recordContext(context.Background())
+	defer cancel()
+	return lock.store.SaveImportRefLock(ctx, *lock.proof)
+}
+
+func (lock *headLock) forgetProof() error {
+	if lock.proof == nil {
+		return nil
+	}
+	ctx, cancel := recordContext(context.Background())
+	defer cancel()
+	return lock.store.DeleteImportRefLock(ctx, lock.proof.ID)
+}
+
+func refLockMatches(record state.ImportRefLock, snapshot refFileSnapshot) bool {
+	return record.FileID != "" && record.FileID == snapshot.id && record.Size == snapshot.info.Size() &&
+		record.ModTime == snapshot.info.ModTime().UnixNano() && record.Content == snapshot.content
+}
+
+// The runtime lease excludes other importer processes. A fresh session and a
+// non-live run are required in addition to exact, local file evidence.
+func (s *Service) reconcileRecordedRefLocks(ctx context.Context, generation string) error {
+	session, err := s.refLockSession()
+	if err != nil {
+		return err
+	}
+	var problems []error
+	var afterID string
+	for {
+		if err := ctx.Err(); err != nil {
+			return errors.Join(append(problems, err)...)
+		}
+		records, err := s.Store.ImportRefLocksPage(ctx, afterID, 100)
+		if err != nil {
+			return errors.Join(append(problems, err)...)
+		}
+		for _, record := range records {
+			if record.SessionID == session || s.runIsLive(record.RunID) {
+				continue
+			}
+			path, _, exists, err := s.Repositories.ExistingPath(ctx, record.RepositoryID)
+			if err != nil {
+				problems = append(problems, &repositoryReconcileError{repositoryID: record.RepositoryID, err: err})
+				continue
+			}
+			if !exists {
+				continue
+			}
+			if path != record.RepositoryPath {
+				problems = append(problems, &repositoryReconcileError{repositoryID: record.RepositoryID,
+					err: newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), errors.New("recorded repository path changed"))})
+				continue
+			}
+			writer := s.Repositories.Locks.For(record.RepositoryID)
+			writer.Lock()
+			err = s.reconcileRecordedRefLock(ctx, generation, path, record)
+			writer.Unlock()
+			if errors.Is(err, ErrRuntimeLost) {
+				return err
+			}
+			if err != nil {
+				problems = append(problems, &repositoryReconcileError{repositoryID: record.RepositoryID, err: err})
+			}
+		}
+		if len(records) < 100 {
+			break
+		}
+		afterID = records[len(records)-1].ID
+	}
+	return errors.Join(problems...)
+}
+
+func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repositoryPath string, record state.ImportRefLock) error {
+	if _, err := s.currentRuntime(generation); err != nil {
+		return err
+	}
+	directoryOwned := record.DirectoryID != "" && record.DirectoryID == directoryFileID(repositoryPath)
+	run, exists, err := s.Store.ImportRun(ctx, record.RunID)
+	if err != nil {
+		return err
+	}
+	if !exists || run.RepositoryID != record.RepositoryID || s.runIsLive(record.RunID) {
+		return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), nil)
+	}
+	if record.Name != "HEAD" {
+		if err := validateDirectRefPath(repositoryPath, record.Name); err != nil {
+			return err
+		}
+	}
+	path := filepath.Join(repositoryPath, filepath.FromSlash(record.Name))
+	locked, err := snapshotRefFile(path + ".lock")
+	if err == nil {
+		if !directoryOwned || !refLockMatches(record, locked) {
+			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), nil)
+		}
+		if _, err := s.currentRuntime(generation); err != nil {
+			return err
+		}
+		// Recheck every fingerprint immediately before unlinking, not just the ID.
+		check, err := snapshotRefFile(path + ".lock")
+		if err != nil || !refLockMatches(record, check) {
+			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), err)
+		}
+		if err := removeOwnedHEADLock(path+".lock", check.info); err != nil {
+			return err
+		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		// Rename preserves identity. This proves the otherwise unrecorded HEAD
+		// write without granting permission to execute the interrupted intent.
+		written, readErr := snapshotRefFile(path)
+		if directoryOwned && record.Name == "HEAD" && readErr == nil && refLockMatches(record, written) {
+			intents, err := s.Store.PendingImportIntents(ctx, record.RepositoryID)
+			if err != nil {
+				return err
+			}
+			for _, intent := range intents {
+				if intent.RunID != record.RunID {
+					continue
+				}
+				head, err := parseRawHEAD([]byte(written.content))
+				desired, decodeErr := decodeHeadIdentity(intent.Desired[state.ImportHeadRef])
+				if err == nil && decodeErr == nil && sameHEADIdentity(head, desired) {
+					if err := s.Store.UpdateImportIntentHEADOwnership(ctx, intent.ID, intent.Status, intent.Reason, s.clock()); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	} else {
+		return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), err)
+	}
+	return s.Store.DeleteImportRefLock(ctx, record.ID)
 }
 
 func detachedHEADRetentionNames(oid string) []string {

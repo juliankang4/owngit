@@ -86,6 +86,7 @@ type Service struct {
 	whileRefsPrepared          func()
 	afterPreparedRefResult     func() error
 	beforeFinalHEADLock        func()
+	beforeHEADRename           func()
 	// beforeObservationRead runs with the run context before publication reads
 	// the recorded observations, so a test can stop the run at a state read.
 	beforeObservationRead func(context.Context)
@@ -1510,6 +1511,12 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		return newProblem(CodeStateUnavailable, "interrupted import authority could not be recorded", err)
 	}
 	var problems []error
+	if err := s.reconcileRecordedRefLocks(ctx, generation); err != nil {
+		if errors.Is(err, ErrRuntimeLost) {
+			return err
+		}
+		problems = append(problems, err)
+	}
 	if issues, err := s.reconcileStaging(ctx, generation); err != nil {
 		if errors.Is(err, ErrRuntimeLost) {
 			return err

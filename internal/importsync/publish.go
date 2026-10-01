@@ -204,25 +204,50 @@ func (s *Service) planPublication(ctx context.Context, run *runState, repository
 			plan.desired[ref.Name] = upstream
 			plan.unchanged++
 		case mayReplaceLocal(run.source, observations.refs[ref.Name], destination):
-			if run.writes.ProtectDefaultBranch && strings.HasPrefix(ref.Name, "refs/heads/") && !s.isAncestor(ctx, run, repositoryPath, destination, upstream) {
-				if ref.Name == protected {
-					return nil, protectedRewriteProblem(ref.Name)
+			if run.writes.ProtectDefaultBranch && strings.HasPrefix(ref.Name, "refs/heads/") {
+				ancestor, err := s.isAncestor(ctx, run, repositoryPath, destination, upstream)
+				if err != nil {
+					return nil, err
 				}
-				plan.rewrites[ref.Name] = true
+				if !ancestor {
+					if ref.Name == protected {
+						return nil, protectedRewriteProblem(ref.Name)
+					}
+					plan.rewrites[ref.Name] = true
+				}
 			}
 			plan.desired[ref.Name] = upstream
 			plan.updated++
 			if err := s.addRetention(ctx, run, repositoryPath, plan, dest, destSymrefs, ref.Name, destination, upstream); err != nil {
 				return nil, err
 			}
-		case observations.refs[ref.Name] != "" && strings.HasPrefix(ref.Name, "refs/heads/") &&
-			s.isAncestor(ctx, run, repositoryPath, observations.refs[ref.Name], destination) && s.isAncestor(ctx, run, repositoryPath, destination, upstream):
-			plan.desired[ref.Name] = upstream
-			plan.updated++
 		default:
-			plan.desired[ref.Name] = destination
-			plan.divergent++
-			plan.divergentRefs = append(plan.divergentRefs, ref.Name)
+			forward := false
+			if observed := observations.refs[ref.Name]; observed != "" && strings.HasPrefix(ref.Name, "refs/heads/") {
+				// An old observation can have been pruned. Only an explicit
+				// missing-object result makes it unavailable as ownership proof.
+				present, err := s.objectsPresent(ctx, run, repositoryPath, []string{observed})
+				if err != nil {
+					return nil, err
+				}
+				if present {
+					forward, err = s.isAncestor(ctx, run, repositoryPath, observed, destination)
+					if err == nil && forward {
+						forward, err = s.isAncestor(ctx, run, repositoryPath, destination, upstream)
+					}
+					if err != nil {
+						return nil, err
+					}
+				}
+			}
+			if forward {
+				plan.desired[ref.Name] = upstream
+				plan.updated++
+			} else {
+				plan.desired[ref.Name] = destination
+				plan.divergent++
+				plan.divergentRefs = append(plan.divergentRefs, ref.Name)
+			}
 		}
 	}
 	// A deletion candidate is held to the same spelling rule: a local ref
@@ -327,20 +352,19 @@ func protectedRewriteProblem(branch string) error {
 	return newProblem(CodeProtectedBranch, fmt.Sprintf("the source rewrote %s, the protected default branch; nothing was changed. Turn off its protection in the repository settings to follow the source", branch), nil)
 }
 
-func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) bool {
+func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath, oldOID, newOID string) (bool, error) {
 	if oldOID == "" || newOID == "" {
-		return false
+		return false, nil
 	}
 	_, err := s.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, run.limits.commandLimits(run.limits.PublishTimeout),
 		"--git-dir", ".", "merge-base", "--is-ancestor", "--end-of-options", oldOID, newOID)
 	if err == nil {
-		return true
+		return true, nil
 	}
 	if code, ok := gitexec.ExitCode(err); ok && code == 1 {
-		return false
+		return false, nil
 	}
-	// The old tip may be absent from the pack when history was rewritten.
-	return false
+	return false, newProblem(CodePublishFailed, "destination ancestry could not be verified", err)
 }
 
 // addRetention keeps the tip a branch or tag had before the plan replaces or
@@ -348,8 +372,17 @@ func (s *Service) isAncestor(ctx context.Context, run *runState, repositoryPath,
 // moves forward. Refs in extra namespaces keep no history.
 func (s *Service) addRetention(ctx context.Context, run *runState, repositoryPath string, plan *publicationPlan, dest, destSymrefs map[string]string, refName, oldOID, newOID string) error {
 	kind, ok := refKind(refName)
-	if !plan.keepHistory || !ok || (kind == "heads" && s.isAncestor(ctx, run, repositoryPath, oldOID, newOID)) {
+	if !plan.keepHistory || !ok {
 		return nil
+	}
+	if kind == "heads" {
+		ancestor, err := s.isAncestor(ctx, run, repositoryPath, oldOID, newOID)
+		if err != nil {
+			return err
+		}
+		if ancestor {
+			return nil
+		}
 	}
 	for _, name := range []string{repository.RetainedRefName(kind, oldOID), repository.ProvenanceRefName(kind, refShortName(refName), oldOID)} {
 		if err := addRequiredRetention(plan, dest, destSymrefs, name, oldOID); err != nil {
@@ -829,6 +862,9 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 				}); err != nil {
 					commandErr = newProblem(CodeStateUnavailable, "applied HEAD state could not be recorded", err)
 					finalizationBlocked = true
+				} else if err := lock.forgetProof(); err != nil {
+					commandErr = newProblem(CodeStateUnavailable, "applied HEAD lock evidence could not be settled", err)
+					finalizationBlocked = true
 				}
 			}
 		}
@@ -918,10 +954,16 @@ func (s *Service) applyIntent(ctx context.Context, run *runState, repositoryPath
 		if commandErr != nil {
 			finalReason = importIntentReason(intent, "a write command reported failure, but exact readback proved the desired outcome")
 		}
+		if s.beforeRecord != nil {
+			s.beforeRecord(ctx, "completed publication")
+		}
 		if err := s.Store.FinalizeImportPublication(ctx, intent.ID, receipt, digest, finalReason, observations, run.run); err != nil {
 			return newProblem(CodeStateUnavailable, "publication receipt, observations, and run outcome could not be finalized", err)
 		}
 		run.publicationFinalized = true
+		if s.beforeRecord != nil {
+			s.beforeRecord(ctx, "publication response")
+		}
 		return nil
 	}
 	if observation.matchesExpected {
@@ -1497,6 +1539,13 @@ func (s *Service) reconcileIntentListLocked(ctx context.Context, repositoryPath,
 		}
 		authorityMatches := sourceExists && source.SourceGeneration == intent.SourceGeneration && source.AuthorityRevision == intent.AuthorityRevision
 		observation, err := s.observeIntent(ctx, repositoryPath, intent)
+		if err == nil {
+			if _, lockErr := os.Lstat(filepath.Join(repositoryPath, "HEAD.lock")); lockErr == nil {
+				err = errors.New(refLockRecoveryMessage("HEAD"))
+			} else if !errors.Is(lockErr, os.ErrNotExist) {
+				err = lockErr
+			}
+		}
 		if err != nil {
 			if _, ownershipErr := s.currentRuntime(generation); ownershipErr != nil {
 				return ownershipErr

@@ -8,10 +8,95 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 )
+
+// ImportRefLock is machine-local evidence, not portable publication authority.
+// It binds a lock to its creator session and the exact file last inspected.
+type ImportRefLock struct {
+	ID             string `json:"id"`
+	RepositoryID   string `json:"repository_id"`
+	RepositoryPath string `json:"repository_path"`
+	RunID          string `json:"run_id"`
+	SessionID      string `json:"session_id"`
+	Name           string `json:"name"`
+	DirectoryID    string `json:"directory_id"`
+	FileID         string `json:"file_id"`
+	Size           int64  `json:"size"`
+	ModTime        int64  `json:"mtime_ns"`
+	Content        string `json:"content"`
+}
+
+const importRefLockPrefix = "import_ref_lock/"
+
+func validateImportRefLock(record ImportRefLock) error {
+	if !isLowerHex(record.ID, 32) || !isLowerHex(record.SessionID, 32) || !validText(record.RunID, 64) ||
+		!validText(record.RepositoryID, 100) || !filepath.IsAbs(record.RepositoryPath) || len(record.RepositoryPath) > 4096 ||
+		(record.Name != "HEAD" && !validImportRefName(record.Name)) ||
+		len(record.Content) > 2048 || record.Size < 0 || record.Size != int64(len(record.Content)) ||
+		len(record.FileID) > 200 || len(record.DirectoryID) > 200 {
+		return errors.New("invalid import ref lock evidence")
+	}
+	return nil
+}
+
+func (s *Store) SaveImportRefLock(ctx context.Context, record ImportRefLock) error {
+	if err := validateImportRefLock(record); err != nil {
+		return err
+	}
+	content, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`,
+		importRefLockPrefix+record.ID, string(content))
+	return err
+}
+
+func (s *Store) ImportRefLocksPage(ctx context.Context, afterID string, limit int) ([]ImportRefLock, error) {
+	if limit < 1 || limit > 100 {
+		return nil, errors.New("invalid import lock page limit")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT key,value FROM metadata WHERE key>? AND substr(key,1,?)=? ORDER BY key LIMIT ?`,
+		importRefLockPrefix+afterID, len(importRefLockPrefix), importRefLockPrefix, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []ImportRefLock
+	for rows.Next() {
+		var key, raw string
+		if err := rows.Scan(&key, &raw); err != nil {
+			return nil, err
+		}
+		var record ImportRefLock
+		if len(raw) > 16384 {
+			return nil, errors.New("import lock evidence exceeds its bound")
+		}
+		if err := json.Unmarshal([]byte(raw), &record); err != nil {
+			return nil, err
+		}
+		if err := validateImportRefLock(record); err != nil {
+			return nil, err
+		}
+		if key != importRefLockPrefix+record.ID {
+			return nil, errors.New("import lock evidence identity does not match its key")
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+func (s *Store) DeleteImportRefLock(ctx context.Context, id string) error {
+	if !isLowerHex(id, 32) {
+		return errors.New("invalid import lock identity")
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, importRefLockPrefix+id)
+	return err
+}
 
 // Inbound import state.
 //
@@ -977,7 +1062,7 @@ func (s *Store) InterruptImportAuthority(ctx context.Context, now time.Time, liv
 	if err != nil {
 		return 0, 0, err
 	}
-	intentQuery := `UPDATE import_publication_intents SET status=?,head_owned=0,reason=CASE WHEN reason='' THEN 'interrupted by restart' ELSE reason END,updated_at=?
+	intentQuery := `UPDATE import_publication_intents SET status=?,reason=CASE WHEN reason='' THEN 'interrupted by restart' ELSE reason END,updated_at=?
 		WHERE status IN (?,?)`
 	intentArguments := []any{ImportIntentInvalidated, now.Unix(), ImportIntentPlanning, ImportIntentApplied}
 	if len(live) > 0 {
@@ -1391,14 +1476,15 @@ func (s *Store) UpdateImportIntent(ctx context.Context, id, status, receiptJSON,
 	intent.ReceiptDigest = receiptDigest
 	intent.Reason = reason
 	intent.UpdatedAt = now
-	if status != ImportIntentApplied && status != ImportIntentComplete {
+	// Revoked execution authority does not erase a proven historical HEAD write.
+	if status == ImportIntentNotApplied || status == ImportIntentAbandoned || status == ImportIntentOwnerResolved {
 		intent.HeadOwned = false
 	}
 	if err := validateImportIntentRecord(intent); err != nil {
 		return err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE import_publication_intents SET status=?,receipt_json=?,receipt_digest=?,reason=?,
-		head_owned=CASE WHEN ? IN ('applied','complete') THEN head_owned ELSE 0 END,updated_at=? WHERE id=?`,
+		head_owned=CASE WHEN ? IN ('not_applied','abandoned','owner_resolved') THEN 0 ELSE head_owned END,updated_at=? WHERE id=?`,
 		status, receiptJSON, receiptDigest, reason, status, now.Unix(), id)
 	if err != nil {
 		return err
@@ -1416,8 +1502,8 @@ func (s *Store) UpdateImportIntent(ctx context.Context, id, status, receiptJSON,
 // UpdateImportIntentHEADOwnership records structured ownership only after an
 // applied exact HEAD write or for a validated complete synthetic fixture.
 func (s *Store) UpdateImportIntentHEADOwnership(ctx context.Context, id, status, reason string, now time.Time) error {
-	if status != ImportIntentApplied && status != ImportIntentComplete {
-		return errors.New("HEAD ownership requires an applied or complete intent")
+	if status != ImportIntentApplied && status != ImportIntentComplete && status != ImportIntentInvalidated && status != ImportIntentUnresolved {
+		return errors.New("HEAD ownership requires a written or interrupted intent")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2009,7 +2095,7 @@ func validateImportIntentRecord(record ImportIntent) error {
 		return errors.New("invalid import intent receipt digest")
 	}
 	if record.HeadOwned {
-		if record.Status != ImportIntentPlanning && record.Status != ImportIntentApplied && record.Status != ImportIntentComplete {
+		if record.Status == ImportIntentNotApplied || record.Status == ImportIntentAbandoned || record.Status == ImportIntentOwnerResolved {
 			return errors.New("HEAD ownership is attached to an ineligible intent status")
 		}
 		desiredHEAD, desiredExists := record.Desired[ImportHeadRef]

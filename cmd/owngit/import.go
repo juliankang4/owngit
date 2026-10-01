@@ -1155,7 +1155,7 @@ func printImportRun(name string, content []byte, asJSON bool) error {
 		fmt.Println("The cancellation arrived after the import was published, so it did not stop it.")
 	}
 	if deleted := response.Run.RefsDeletedUpstream; deleted > 0 {
-		fmt.Printf("%d %s deleted at the source and kept here.\n", deleted, plural(deleted, "ref was", "refs were"))
+		fmt.Printf("%d %s deleted at the source.\n", deleted, plural(deleted, "ref was", "refs were"))
 	}
 	if divergent == 0 {
 		return nil
