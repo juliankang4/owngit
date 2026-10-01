@@ -1812,7 +1812,7 @@ owngit pr reopen --number 1
 
   The answer is not stored and stops applying once either branch moves. To check whether an earlier answer still holds, pass its object IDs as `--source-oid` and `--target-oid`. A merge checks again by itself. On the page, a conflict answer turns off Merge until you open the page again.
 - Every command writes a JSON result. Failures carry a stable `error.code` and a nonzero exit status, and `connection_failed` names the cause. `checks` in a pull request result reports the evidence for the current source revision, or `absent`. It is `stale` when other checks ran than those in the `.owngit/checks.json` of that revision. Checks are advisory and never block a merge.
-- Merge makes a fast-forward, or a merge commit with the old target as first parent, authored as `OwnGit <owngit@localhost>` with the number and title in the message. It never squashes, rebases, force-updates or deletes the source branch, and a retried or interrupted merge never creates a second commit. When the target already contains the source, the pull request is recorded as merged with `merge.mode` `up_to_date` and no new commit. Merge needs Git 2.38 or newer on the OwnGit host (`unsupported_git` otherwise).
+- Merge makes a fast-forward, or a merge commit with the old target as first parent, authored as `OwnGit <owngit@localhost>` with the number and title in the message. It never squashes, rebases, force-updates or deletes the source branch, and a retried or interrupted merge never creates a second commit. A merge that was refused, for example for a conflict, or that stopped partway does not hold up a later merge or later backups. When the target already contains the source, the pull request is recorded as merged with `merge.mode` `up_to_date` and no new commit. Merge needs Git 2.38 or newer on the OwnGit host (`unsupported_git` otherwise).
 
 ## Project checks
 
@@ -2338,6 +2338,7 @@ When a newer OwnGit starts on a state whose schema is older than the one it writ
 - It holds every repository, so that disk needs room for them.
 - The server log, or standard error for `owngit backup`, says where the backup is and gives the command that restores it. `owngit-upgrade-backup.txt` in the backup says the same.
 - A new state, and one whose setup is not complete, need no backup.
+- A state where an earlier version left a refused or stopped merge behind is backed up like any other.
 - OwnGit 1.0.3 and later restore it.
 
 OwnGit creates the `-backups` folder so that only this account can use it. An existing one must belong to this account, and no other account may be able to change what is in it; otherwise OwnGit refuses the upgrade and says why.
