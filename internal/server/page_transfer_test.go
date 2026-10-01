@@ -92,7 +92,9 @@ func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testi
 
 func TestPageTransferVerySlowProgressCompletes(t *testing.T) {
 	content := bytes.Repeat([]byte("s"), 64<<10)
-	server, results := pageTransferServer(t, time.Second, content, 1024)
+	// A tiny TCP receive window can delay a window-update probe on Linux.
+	// Keep that transport scheduling interval below the scaled idle bound.
+	server, results := pageTransferServer(t, 3*time.Second, content, 1024)
 	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -120,13 +122,13 @@ func TestPageTransferVerySlowProgressCompletes(t *testing.T) {
 		time.Sleep(75 * time.Millisecond)
 	}
 	response.Body.Close()
-	if !bytes.Equal(received.Bytes(), content) || time.Since(started) <= time.Second {
+	if !bytes.Equal(received.Bytes(), content) || time.Since(started) <= 3*time.Second {
 		t.Fatal("slow transfer differs or did not outlast the work deadline")
 	}
 	if err := <-results; err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("slow transfer: %s, %d bytes with a 1-second idle deadline", time.Since(started), received.Len())
+	t.Logf("slow transfer: %s, %d bytes with a 3-second idle deadline", time.Since(started), received.Len())
 }
 
 func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
