@@ -750,6 +750,9 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 		if err != nil || !refLockMatches(record, check) {
 			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), err)
 		}
+		if record.DirectoryID != directoryFileID(repositoryPath) {
+			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), errors.New("repository changed during lock recovery"))
+		}
 		if err := removeOwnedHEADLock(path+".lock", check.info); err != nil {
 			return err
 		}
@@ -757,6 +760,9 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 		// Rename preserves identity. This proves the otherwise unrecorded HEAD
 		// write without granting permission to execute the interrupted intent.
 		written, readErr := snapshotRefFile(path)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return newProblem(CodeUnresolved, "written ref identity could not be verified; recovery evidence was preserved", readErr)
+		}
 		if directoryOwned && record.Name == "HEAD" && readErr == nil && refLockMatches(record, written) {
 			intents, err := s.Store.PendingImportIntents(ctx, record.RepositoryID)
 			if err != nil {
@@ -769,6 +775,12 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 				head, err := parseRawHEAD([]byte(written.content))
 				desired, decodeErr := decodeHeadIdentity(intent.Desired[state.ImportHeadRef])
 				if err == nil && decodeErr == nil && sameHEADIdentity(head, desired) {
+					if _, err := s.currentRuntime(generation); err != nil {
+						return err
+					}
+					if record.DirectoryID != directoryFileID(repositoryPath) {
+						return newProblem(CodeUnresolved, "repository changed while HEAD write ownership was verified", nil)
+					}
 					if err := s.Store.UpdateImportIntentHEADOwnership(ctx, intent.ID, intent.Status, intent.Reason, s.clock()); err != nil {
 						return err
 					}

@@ -358,6 +358,40 @@ func TestRecordedLockFingerprintChangesArePreserved(t *testing.T) {
 	}
 }
 
+func TestUnreadableWrittenHEADPreservesRecoveryEvidence(t *testing.T) {
+	f := killedPublicationFixture(t, "after-head")
+	ctx := context.Background()
+	_, err := f.service.Prepare(ctx)
+	noErr(t, err)
+	records, err := f.store.ImportRefLocksPage(ctx, "", 100)
+	noErr(t, err)
+	if len(records) != 1 {
+		t.Fatalf("records=%+v", records)
+	}
+	repositoryPath := f.destinationPath()
+	path := filepath.Join(repositoryPath, "HEAD")
+	noErr(t, os.Rename(path, path+".held"))
+	noErr(t, os.Mkdir(path, 0700))
+	err = f.service.reconcileRecordedRefLock(ctx, "", repositoryPath, records[0])
+	if err == nil {
+		t.Error("unreadable written HEAD was treated as settled evidence")
+	}
+	retained, queryErr := f.store.ImportRefLocksPage(ctx, "", 100)
+	noErr(t, queryErr)
+	if len(retained) != 1 {
+		t.Error("unreadable HEAD discarded durable write proof")
+	}
+	noErr(t, os.Rename(path, filepath.Join(f.root, "preserved-unreadable-head")))
+	noErr(t, os.Rename(path+".held", path))
+	noErr(t, f.service.Reconcile(ctx))
+	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
+	_, err = f.refresh()
+	noErr(t, err)
+	if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/main" {
+		t.Errorf("recovered HEAD ownership was lost after the read error: %s", got)
+	}
+}
+
 func TestLiveRecordedLockIsPreserved(t *testing.T) {
 	f := newFixture(t)
 	f.commit("initial", "initial\n")
