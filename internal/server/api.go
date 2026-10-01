@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -34,10 +35,19 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		return
 	}
 	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
-	if request.URL.RawQuery != "" && !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
-		!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
-		writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
-		return
+	if request.URL.RawQuery != "" {
+		// URL.Query drops malformed pairs and the parse error, so an invalid
+		// ref, year or commit pair would be read as an omitted one. Refuse
+		// query text that cannot be parsed instead.
+		if _, err := url.ParseQuery(request.URL.RawQuery); err != nil {
+			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "The query string is malformed.", nil)
+			return
+		}
+		if !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
+			!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
+			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
+			return
+		}
 	}
 	if request.URL.Path == "/api/v1/settings" {
 		app.handleSettingsAPI(writer, request)
