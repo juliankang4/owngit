@@ -1136,7 +1136,7 @@ Choose a source commit and a target branch, preview the complete list of additio
 
 A restore changes only Git content in OwnGit, never another computer's working tree. It never rewrites history, so it also works on a [protected default branch](#changing-the-default-branch) and adds nothing to kept history.
 
-A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, or a path whose replacement would remove unselected files beneath it.
+A selected-file restore keeps unselected files, modes, binary files and symbolic links as they are, and never follows links on the host. It refuses a submodule, and a selected path that would replace an unselected file or a folder that still holds unselected files, both in the preview and when applying. Names that only share a beginning, such as `node` and `node-neighbor`, do not conflict.
 
 OwnGit also refuses a target branch whose name some file systems treat as the same as another branch's, such as `Main` beside `main`. Delete or rename one of the two first. On the command line and through MCP, the refusal (`invalid_restore`) names the other branch.
 
