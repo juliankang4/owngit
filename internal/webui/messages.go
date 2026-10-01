@@ -376,6 +376,7 @@ const (
 const (
 	MsgCodeEmptyDir      MessageCode = "code.empty_directory"
 	MsgCodePathMissing   MessageCode = "code.path_missing"
+	MsgCodeLineNotFound  MessageCode = "code.line_not_found"
 	MsgCodeBinary        MessageCode = "code.binary"
 	MsgCodeTruncated     MessageCode = "code.truncated"
 	MsgCodeShowing       MessageCode = "code.showing"
@@ -1511,6 +1512,10 @@ var catalog = map[MessageCode]message{
 	MsgCodePathMissing: {
 		en: "That path does not exist at this revision.",
 		ko: "이 커밋에는 그 경로가 없습니다.",
+	},
+	MsgCodeLineNotFound: {
+		en: "This line is not in the file.",
+		ko: "이 파일에는 해당 줄이 없습니다.",
 	},
 	MsgCodeBinary: {
 		en: "This file is not text, so it is not shown here.",

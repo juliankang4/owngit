@@ -275,7 +275,7 @@
     {{else if and .Document (not .ShowSource) .Rendered}}
       {{/* Rendered by internal/markdown: raw HTML from the file is never
            passed through, and every address was resolved by OwnGit. */}}
-      <article class="md">{{.Rendered}}</article>
+      <article class="md"{{with .LineURL}} data-line-page="{{.}}"{{end}}>{{.Rendered}}</article>
     {{else}}
       {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
       {{/* Repository content is rendered as text through the template's

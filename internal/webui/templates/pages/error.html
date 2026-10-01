@@ -9,7 +9,7 @@
   {{with $p.Detail}}<p class="errpage__d mono" dir="auto">{{.}}</p>{{end}}
 
   {{if $p.RetryURL}}
-    <a class="btn btn--primary" href="{{$p.RetryURL}}">{{bi $lang "error.back_home"}}</a>
+    <a class="btn btn--primary" href="{{$p.RetryURL}}">{{if $p.RetryLabel}}{{bi $lang $p.RetryLabel}}{{else}}{{bi $lang "error.back_home"}}{{end}}</a>
   {{else if .Chrome.Nav.OverviewURL}}
     <a class="btn" href="{{.Chrome.Nav.OverviewURL}}">{{bi $lang "error.back_home"}}</a>
   {{end}}

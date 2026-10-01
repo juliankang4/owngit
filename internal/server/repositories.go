@@ -518,6 +518,12 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
+	var missingLine *lineNotFoundError
+	if errors.As(err, &missingLine) {
+		app.render(writer, request, http.StatusNotFound, webui.ErrorPage{Chrome: base.Chrome, Status: http.StatusNotFound,
+			Code: webui.MsgCodeLineNotFound, RetryURL: missingLine.firstURL, RetryLabel: webui.MsgCodeFirstPage})
+		return
+	}
 	if errors.Is(err, errPageAddress) {
 		app.renderError(writer, request, http.StatusBadRequest, webui.MsgErrNotFound, "")
 		return
@@ -943,21 +949,60 @@ func recoveredTarget(oid string, branches []repository.Ref) string {
 
 var errPageAddress = errors.New("invalid page address")
 
-// requestedLinePage accepts both page links and script-free line addresses.
-func requestedLinePage(request *http.Request) (int, error) {
-	query := request.URL.Query()
-	value := query.Get("line")
-	if value == "" {
-		value = query.Get("from")
+type linePageRequest struct {
+	First, Line, From int
+}
+
+type lineNotFoundError struct{ firstURL string }
+
+func (*lineNotFoundError) Error() string { return "line is not in the file" }
+
+// requestedLinePage validates every supplied position before choosing a page.
+// Keep the original positions so rounding cannot hide an out-of-range address.
+func requestedLinePage(request *http.Request) (linePageRequest, error) {
+	page := linePageRequest{First: 1}
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		return page, errPageAddress
 	}
-	if value == "" {
-		return 1, nil
+	for _, key := range []string{"line", "from"} {
+		values, present := query[key]
+		if !present {
+			continue
+		}
+		if len(values) != 1 {
+			return page, errPageAddress
+		}
+		position, err := strconv.Atoi(values[0])
+		if err != nil || position < 1 {
+			return page, errPageAddress
+		}
+		if key == "line" {
+			page.Line = position
+		} else {
+			page.From = position
+		}
 	}
-	line, err := strconv.Atoi(value)
-	if err != nil || line < 1 {
-		return 0, errPageAddress
+	position := max(1, page.From)
+	if page.Line != 0 {
+		position = page.Line
 	}
-	return (line-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1, nil
+	page.First = (position-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1
+	return page, nil
+}
+
+func (page linePageRequest) check(total int, incomplete bool, firstURL string) error {
+	if page.From > total {
+		return errPageAddress
+	}
+	if page.Line > total {
+		if incomplete {
+			// A byte-limited prefix cannot prove this line is absent in the file.
+			return errPageAddress
+		}
+		return &lineNotFoundError{firstURL: firstURL}
+	}
+	return nil
 }
 
 func sourceLinePage(content []byte, first int) ([]string, int) {
@@ -1056,6 +1101,10 @@ func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPa
 // fillCode fills the Code tab. A ref or path that does not exist is marked
 // on the page; a read that failed is returned.
 func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, requestedPath string) error {
+	pagination, err := requestedLinePage(request)
+	if err != nil {
+		return err
+	}
 	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
 	if err != nil {
 		return err
@@ -1119,29 +1168,27 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			page.Code.NotFound = true
 			return nil
 		}
+		fileAddress := pinnedPageURL(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, blob.OID)
+		firstAddress := fileAddress
 		if !binary {
-			first, err := requestedLinePage(request)
-			if err != nil {
-				return err
-			}
-			file.Lines, file.Continuation.Total = sourceLinePage(blob.Content, first)
-			if len(file.Lines) == 0 {
-				return errPageAddress
-			}
-			file.FirstLine = first
-			lineAddress := codeURL(page.Repo.URL, selectedRef, requestedPath)
+			file.Lines, file.Continuation.Total = sourceLinePage(blob.Content, pagination.First)
+			file.FirstLine = pagination.First
+			file.LineURL = fileAddress
 			if markdown.IsDocument(requestedPath) {
-				lineAddress += "&view=source"
+				file.LineURL += "&view=source"
 			}
-			file.LineURL = pinnedPageURL(lineAddress, commitOID, blob.OID)
-			file.Continuation = lineContinuation(file.LineURL, first, len(file.Lines), file.Continuation.Total)
+			firstAddress = file.LineURL
+			file.Continuation = lineContinuation(file.LineURL, pagination.First, len(file.Lines), file.Continuation.Total)
 			file.Continuation.Incomplete = blob.Truncated
+		}
+		if err := pagination.check(file.Continuation.Total, blob.Truncated, firstAddress); err != nil {
+			return err
 		}
 		if !binary && markdown.IsDocument(requestedPath) {
 			file.Document = true
-			file.ShowSource = request.URL.Query().Get("view") == "source" || request.URL.Query().Get("line") != "" || request.URL.Query().Get("from") != ""
-			file.PreviewURL = codeURL(page.Repo.URL, selectedRef, requestedPath)
-			file.SourceURL = file.PreviewURL + "&view=source"
+			file.ShowSource = request.URL.Query().Get("view") == "source" || pagination.Line != 0 || pagination.From != 0
+			file.PreviewURL = fileAddress
+			file.SourceURL = file.LineURL
 			// A cut-off document would render a broken ending, so only a
 			// whole file is rendered. The source view is always offered.
 			if blob.Truncated {
@@ -1164,6 +1211,9 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		}
 		page.Code = view
 		return nil
+	}
+	if pagination.Line != 0 || pagination.From != 0 {
+		return errPageAddress
 	}
 	view := webui.CodeView{Path: requestedPath, Dir: requestedPath, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath)}
 	if requestedPath != "" {
@@ -1212,6 +1262,14 @@ func (app *App) noteUnreadableCommits(request *http.Request, page *webui.Reposit
 // ref, commit or path that does not exist is marked on the page, and so is a
 // commit that could not be read; any other read that failed is returned.
 func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) error {
+	pagination, err := requestedLinePage(request)
+	if err != nil {
+		return err
+	}
+	requestedPath := request.URL.Query().Get("path")
+	if (pagination.Line != 0 || pagination.From != 0) && (openedOID == "" || requestedPath == "") {
+		return errPageAddress
+	}
 	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
 	if err != nil {
 		return err
@@ -1279,7 +1337,6 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	// A commit opens with every file's diff. An address naming one file, as
 	// the note on a file left out of a large commit does, loads that file's
 	// diff alone.
-	requestedPath := request.URL.Query().Get("path")
 	if requestedPath != "" {
 		found := false
 		for _, file := range files {
@@ -1311,6 +1368,9 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	}
 	page.Downloads = ownerArchiveLinks(page, commit.OID)
 	if len(commit.Parents) > 1 {
+		if pagination.Line != 0 || pagination.From != 0 {
+			return errPageAddress
+		}
 		view.Unavailable = true
 		view.UnavailableReason = webui.MsgCommitDiffMerge
 		page.Commits.Detail = &view
@@ -1327,24 +1387,20 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 			return err
 		}
 		view.Truncated = truncated
-		first, err := requestedLinePage(request)
-		if err != nil {
-			return err
-		}
 		for _, file := range files {
 			if file.Path != requestedPath {
 				continue
 			}
 			item := diffFileItem(file, fileURL)
 			item.Selected = true
+			var total, shown int
 			if !item.Binary {
-				var total, shown int
-				item.Hunks, total, shown = patchLinePage(patch, first, maximumCommitDiffLines)
-				if shown == 0 && first > 1 {
-					return errPageAddress
-				}
-				view.Continuation = lineContinuation(fileURL(requestedPath), first, shown, total)
+				item.Hunks, total, shown = patchLinePage(patch, pagination.First, maximumCommitDiffLines)
+				view.Continuation = lineContinuation(fileURL(requestedPath), pagination.First, shown, total)
 				view.Continuation.Incomplete = truncated
+			}
+			if err := pagination.check(total, truncated, fileURL(requestedPath)); err != nil {
+				return err
 			}
 			view.Files = append(view.Files, item)
 		}

@@ -949,10 +949,7 @@
     var match = /^#L([1-9][0-9]*)$/.exec(window.location.hash);
     if (!panel || !match) { return; }
     var line = Number(match[1]);
-    var first = Number(panel.getAttribute('data-line-first'));
-    var last = Number(panel.getAttribute('data-line-last'));
-    var total = Number(panel.getAttribute('data-line-total'));
-    if (!Number.isSafeInteger(line) || line > total || (line >= first && line <= last)) { return; }
+    if (!Number.isSafeInteger(line) || document.getElementById('L' + line)) { return; }
     var address = new URL(panel.getAttribute('data-line-page'), window.location.href);
     address.searchParams.set('line', String(line));
     address.hash = window.location.hash;

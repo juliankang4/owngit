@@ -103,6 +103,10 @@ func TestByteLimitedLinePagesDoNotClaimTheWholeFileCount(t *testing.T) {
 	if strings.Contains(body, "of 1,100,000") {
 		t.Fatal("prefix page claimed a complete line count")
 	}
+	body, status = dashboardGET(t, &http.Client{}, server.URL+"/repositories/byte-limited/code?path=lines.txt&line=1050000")
+	if status != http.StatusBadRequest || strings.Contains(body, "This line is not in the file.") {
+		t.Fatalf("an unloaded line was claimed absent from the file: status=%d", status)
+	}
 }
 
 func nextPageAddress(t *testing.T, body string) string {

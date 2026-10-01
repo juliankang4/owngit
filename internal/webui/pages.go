@@ -1415,6 +1415,8 @@ type ErrorPage struct {
 	Detail string
 	// RetryURL offers a way forward. Empty when there is none.
 	RetryURL string
+	// RetryLabel defaults to the home label when empty.
+	RetryLabel MessageCode
 }
 
 func (ErrorPage) page() string     { return "error" }
