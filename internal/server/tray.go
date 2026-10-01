@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"log"
-	"net"
 	"net/http"
-	"net/netip"
 	"strings"
 	"sync"
 	"time"
@@ -21,9 +19,9 @@ import (
 )
 
 // TrayStatusPath is the status the tray icon reads. It answers only a
-// request carrying the token of state.TrayAccessFile, which only the account
-// that runs OwnGit can read. The token proves the icon independently of how a
-// trusted proxy setting classifies the connection.
+// loopback request with no forwarding data that carries the token of
+// state.TrayAccessFile, which only the account that runs OwnGit can read.
+// Trusting loopback as a proxy does not itself reject the icon.
 // Every answer carries the proof of the request's nonce (state.TrayProof),
 // so the icon knows it came from this server. HealthPath stays without
 // data.
@@ -128,8 +126,8 @@ func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Reque
 }
 
 // trayRequest answers a request for the tray that this server does not
-// answer, and otherwise returns its nonce. Only a GET with the token of the
-// tray access file is answered.
+// answer, and otherwise returns its nonce. Only a local GET with the token of
+// the tray access file is answered.
 func (app *App) trayRequest(writer http.ResponseWriter, request *http.Request) (string, bool) {
 	if app.TrayToken == "" || app.TrayProof == "" {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "Not found.", nil)
@@ -138,6 +136,10 @@ func (app *App) trayRequest(writer http.ResponseWriter, request *http.Request) (
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", "GET")
 		writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET.", nil)
+		return "", false
+	}
+	if !fromThisComputer(request) {
+		writeAPIError(writer, http.StatusForbidden, "not_local", "The tray icon's reads answer only programs on the computer that runs OwnGit.", nil)
 		return "", false
 	}
 	token, found := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
@@ -163,24 +165,25 @@ func (app *App) writeTrayAnswer(writer http.ResponseWriter, nonce string, value 
 	writeEncodedAPIJSON(writer, code, body)
 }
 
-// fromThisComputer reports whether request came over a direct connection
-// from this computer: from a loopback address or from the address it
-// reached, and not through a proxy, which would forward others' requests.
+var localityForwardingHeaders = [...]string{
+	"Forwarded", "X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Port", "X-Forwarded-Proto", "X-Real-IP",
+}
+
+// fromThisComputer reports only observed locality: the socket peer is
+// loopback and no forwarding data is present. Trusted-proxy membership is not
+// part of this decision, so the icon and local push filter share one rule.
 func fromThisComputer(request *http.Request) bool {
-	info := requestctx.Of(request)
-	if info.ClientProvenance != requestctx.ClientDirect || request.Header.Get("X-Forwarded-For") != "" || request.Header.Get("Forwarded") != "" {
+	if !loopbackPeer(requestctx.Of(request).Peer) {
 		return false
 	}
-	if loopbackPeer(info.Peer) {
-		return true
+	for name := range request.Header {
+		for _, forwarded := range localityForwardingHeaders {
+			if strings.EqualFold(name, forwarded) {
+				return false
+			}
+		}
 	}
-	peer, err := netip.ParseAddrPort(info.Peer)
-	local, ok := request.Context().Value(http.LocalAddrContextKey).(net.Addr)
-	if err != nil || !ok {
-		return false
-	}
-	own, err := netip.ParseAddrPort(local.String())
-	return err == nil && own.Addr().Unmap() == peer.Addr().Unmap()
+	return true
 }
 
 func (app *App) trayStatus(request *http.Request) (TrayStatus, error) {

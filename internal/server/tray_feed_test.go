@@ -17,7 +17,6 @@ import (
 
 	"owngit/internal/githttp"
 	"owngit/internal/pullrequest"
-	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
 
@@ -222,21 +221,40 @@ func TestTrayEventsDropWhatThisComputerDid(t *testing.T) {
 	}
 }
 
-func TestUnknownForwardedPushCountsAsAnotherComputer(t *testing.T) {
-	origins := trayOrigins{}
-	direct := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/git/project.git/git-receive-pack", nil)
-	direct.RemoteAddr = "127.0.0.1:50000"
-	origins.note(direct, "direct")
-	if !origins.fromThisComputer("direct") {
-		t.Fatal("a direct loopback push was not recorded as this computer")
-	}
+func TestTrustedLoopbackPushFilteringUsesObservedLocality(t *testing.T) {
+	app, clock, address, work := feedApp(t)
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+	})
+	others := url.Values{"only_others": {"1"}}
+	start := feedRead(t, app, "", others)
 
-	resolver := requestctx.Resolver{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}}
-	resolver.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
-		origins.note(request, "unknown-forwarded")
-	})).ServeHTTP(httptest.NewRecorder(), direct)
-	if origins.fromThisComputer("unknown-forwarded") {
-		t.Fatal("a push with unknown forwarded provenance was recorded as this computer")
+	first := commit(t, work, "first")
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/main")
+	second := commit(t, work, "second")
+	app.GitHTTP.OnPush = nil
+	apiRunGit(t, work, "push", address+"/git/notes.git", "HEAD:refs/heads/elsewhere")
+	app.GitHTTP.OnPush = app.RecordPush
+	forwarded := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/git/notes.git/git-receive-pack", nil)
+	forwarded.RemoteAddr = "127.0.0.1:50000"
+	forwarded.Header.Set("X-Forwarded-For", "192.0.2.10")
+	app.Network.Resolver().Middleware(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		app.RecordPush(request, "notes", []githttp.RefUpdate{{Ref: "refs/heads/main", Old: first, New: second}})
+	})).ServeHTTP(httptest.NewRecorder(), forwarded)
+	clock.add(time.Minute)
+
+	if !app.trayOrigins.fromThisComputer(pushOrigin(1)) {
+		t.Fatal("a direct loopback push was not recorded as this computer when loopback was trusted")
+	}
+	if app.trayOrigins.fromThisComputer(pushOrigin(2)) {
+		t.Fatal("a push carrying forwarding data was recorded as this computer")
+	}
+	got := onlyNotification(t, feedRead(t, app, start.Cursor, others))
+	if got.ID != "push:2-2" || got.Subtitle != "Pushed from another computer" || got.Title != "1 new commit in notes" || got.Body != "main: second" {
+		t.Fatalf("only others %+v", got)
+	}
+	if got := onlyNotification(t, feedRead(t, app, start.Cursor, nil)); got.Title != "2 pushes" || got.Subtitle != "" {
+		t.Fatalf("every push %+v", got)
 	}
 }
 

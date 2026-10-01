@@ -138,59 +138,93 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	}
 }
 
-// Only a program with the private tray token reads status or events. The
-// token remains authoritative when loopback is also configured as a trusted
-// proxy, and the liveness check stays empty.
-func TestTrayStatusRequiresThePrivateToken(t *testing.T) {
-	app := newConfiguredApp(t)
-	noErr(t, app.Hosts.Add("owngit.example"))
-	app.Network = NewLiveNetwork(LiveNetworkConfig{
-		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
-	})
-	handler := app.Handler()
-	for _, path := range []string{TrayStatusPath, TrayEventsPath} {
-		app.TrayToken, app.TrayProof = "", ""
-		if code, _, _ := trayRead(t, handler, path, trayTestToken, nil); code != http.StatusNotFound {
-			t.Fatalf("%s without a published token: %d, want 404", path, code)
-		}
-		app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
-		for name, test := range map[string]struct {
-			token  string
-			change func(*http.Request)
-			code   int
-			error  string
-		}{
-			"no token":    {"", nil, http.StatusUnauthorized, "unauthorized"},
-			"wrong token": {"another-token", nil, http.StatusUnauthorized, "unauthorized"},
-			"basic auth": {"", func(request *http.Request) { request.SetBasicAuth("owngit", trayTestToken) },
-				http.StatusUnauthorized, "unauthorized"},
-			"token from another address": {trayTestToken, func(request *http.Request) {
-				request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.10:50000"
-			}, http.StatusOK, ""},
-			"token through a proxy": {trayTestToken, func(request *http.Request) {
-				request.Header.Set("X-Forwarded-For", "192.0.2.10")
-			}, http.StatusOK, ""},
-			"post":        {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
-			"no nonce":    {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) }, http.StatusBadRequest, "invalid_nonce"},
-			"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") }, http.StatusBadRequest, "invalid_nonce"},
-			"this computer by its own address": {trayTestToken, func(request *http.Request) {
-				request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.5:50000"
-				local := &net.TCPAddr{IP: net.ParseIP("192.0.2.5"), Port: 7654}
-				*request = *request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, local))
-			}, http.StatusOK, ""},
-		} {
-			code, _, errorCode := trayRead(t, handler, path, test.token, test.change)
-			if code != test.code || errorCode != test.error {
-				t.Errorf("%s %s: %d %q, want %d %q", path, name, code, errorCode, test.code, test.error)
+// Status and events require all three independent conditions: a loopback
+// socket peer, no forwarding header data, and the private tray token. Trusting
+// loopback as a proxy does not by itself reject the icon.
+func TestTrayStatusRequiresLocalityAndThePrivateToken(t *testing.T) {
+	forwarding := func(name string, values ...string) func(*http.Request) {
+		return func(request *http.Request) {
+			for _, value := range values {
+				request.Header.Add(name, value)
 			}
 		}
 	}
-	request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7654"+HealthPath, nil)
-	request.RemoteAddr = "127.0.0.1:50000"
-	recorder := httptest.NewRecorder()
-	handler.ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusOK || recorder.Body.Len() != 0 {
-		t.Fatalf("health answered %d with %q", recorder.Code, recorder.Body.String())
+	for _, trusted := range []bool{false, true} {
+		name := "loopback untrusted"
+		if trusted {
+			name = "loopback trusted"
+		}
+		t.Run(name, func(t *testing.T) {
+			app := newConfiguredApp(t)
+			noErr(t, app.Hosts.Add("owngit.example"))
+			if trusted {
+				app.Network = NewLiveNetwork(LiveNetworkConfig{
+					Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+				})
+			}
+			handler := app.Handler()
+			for _, path := range []string{TrayStatusPath, TrayEventsPath} {
+				app.TrayToken, app.TrayProof = "", ""
+				if code, _, _ := trayRead(t, handler, path, trayTestToken, nil); code != http.StatusNotFound {
+					t.Fatalf("%s without a published token: %d, want 404", path, code)
+				}
+				app.TrayToken, app.TrayProof = trayTestToken, trayTestProof
+				for caseName, test := range map[string]struct {
+					token  string
+					change func(*http.Request)
+					code   int
+					error  string
+				}{
+					"local token": {trayTestToken, nil, http.StatusOK, ""},
+					"no token":    {"", nil, http.StatusUnauthorized, "unauthorized"},
+					"wrong token": {"another-token", nil, http.StatusUnauthorized, "unauthorized"},
+					"basic auth": {"", func(request *http.Request) { request.SetBasicAuth("owngit", trayTestToken) },
+						http.StatusUnauthorized, "unauthorized"},
+					"external peer": {trayTestToken, func(request *http.Request) {
+						request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.10:50000"
+					}, http.StatusForbidden, "not_local"},
+					"nonloopback own address": {trayTestToken, func(request *http.Request) {
+						request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.5:50000"
+						local := &net.TCPAddr{IP: net.ParseIP("192.0.2.5"), Port: 7654}
+						*request = *request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, local))
+					}, http.StatusForbidden, "not_local"},
+					"forwarded client":       {trayTestToken, forwarding("X-Forwarded-For", "192.0.2.10"), http.StatusForbidden, "not_local"},
+					"empty forwarded client": {trayTestToken, forwarding("X-Forwarded-For", ""), http.StatusForbidden, "not_local"},
+					"malformed forwarded client": {trayTestToken, forwarding("X-Forwarded-For", "not-an-address"),
+						http.StatusForbidden, "not_local"},
+					"repeated forwarded client": {trayTestToken, forwarding("X-Forwarded-For", "", "192.0.2.10"),
+						http.StatusForbidden, "not_local"},
+					"Forwarded header":       {trayTestToken, forwarding("Forwarded", "for=192.0.2.10"), http.StatusForbidden, "not_local"},
+					"empty Forwarded header": {trayTestToken, forwarding("Forwarded", ""), http.StatusForbidden, "not_local"},
+					"malformed Forwarded header": {trayTestToken, forwarding("Forwarded", "for=unknown;proto=ftp"),
+						http.StatusForbidden, "not_local"},
+					"repeated Forwarded header": {trayTestToken, forwarding("Forwarded", "", "for=192.0.2.10"),
+						http.StatusForbidden, "not_local"},
+					"forwarded scheme": {trayTestToken, forwarding("X-Forwarded-Proto", "https"), http.StatusForbidden, "not_local"},
+					"forwarded host":   {trayTestToken, forwarding("X-Forwarded-Host", "owngit.example"), http.StatusForbidden, "not_local"},
+					"real IP":          {trayTestToken, forwarding("X-Real-IP", "192.0.2.10"), http.StatusForbidden, "not_local"},
+					"forwarded port":   {trayTestToken, forwarding("X-Forwarded-Port", "443"), http.StatusForbidden, "not_local"},
+					"post": {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost },
+						http.StatusMethodNotAllowed, "method_not_allowed"},
+					"no nonce": {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) },
+						http.StatusBadRequest, "invalid_nonce"},
+					"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") },
+						http.StatusBadRequest, "invalid_nonce"},
+				} {
+					code, _, errorCode := trayRead(t, handler, path, test.token, test.change)
+					if code != test.code || errorCode != test.error {
+						t.Errorf("%s %s: %d %q, want %d %q", path, caseName, code, errorCode, test.code, test.error)
+					}
+				}
+			}
+			request := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:7654"+HealthPath, nil)
+			request.RemoteAddr = "127.0.0.1:50000"
+			recorder := httptest.NewRecorder()
+			handler.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusOK || recorder.Body.Len() != 0 {
+				t.Fatalf("health answered %d with %q", recorder.Code, recorder.Body.String())
+			}
+		})
 	}
 }
 
