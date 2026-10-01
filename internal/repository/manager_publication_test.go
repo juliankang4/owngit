@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -91,6 +92,90 @@ func TestCreatePreservesAnOlderUnrecordedFolder(t *testing.T) {
 	noErr(t, err)
 }
 
+func TestCreationRollbackPreservesMovedRootLink(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	path := filepath.Join(manager.RepositoryRoot(), "draft")
+	noErr(t, os.Mkdir(path, 0o700))
+	noErr(t, manager.InitBareRepository(context.Background(), path, CreateOptions{}))
+	creation, err := captureEmptyCreation(path)
+	noErr(t, err)
+	t.Cleanup(func() { _ = creation.parent.Close() })
+	moved := path + "-moved"
+	noErr(t, os.Rename(path, moved))
+	if err := os.Symlink(moved, path); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if err := creation.rollback(path); err == nil {
+		t.Error("rollback accepted a link to the moved original")
+	}
+	if _, err := os.Stat(filepath.Join(moved, "config")); err != nil {
+		t.Fatalf("rollback changed the moved tree: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("rollback changed the substituted link: %v %v", info, err)
+	}
+}
+
+func TestCreationSnapshotDoesNotBlockPublication(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	path := filepath.Join(manager.RepositoryRoot(), "draft")
+	noErr(t, os.Mkdir(path, 0o700))
+	noErr(t, manager.InitBareRepository(context.Background(), path, CreateOptions{}))
+	creation, err := captureEmptyCreation(path)
+	noErr(t, err)
+	t.Cleanup(func() { _ = creation.parent.Close() })
+	published := filepath.Join(manager.RepositoryRoot(), "published.git")
+	noErr(t, publishdir.Rename(context.Background(), path, published))
+	noErr(t, creation.rollback(published))
+	if _, err := os.Lstat(published); !os.IsNotExist(err) {
+		t.Fatalf("unaccepted publication remains: %v", err)
+	}
+	if !strings.HasPrefix(creation.preserved, filepath.Join(manager.RepositoryRoot(), failedCreateDirectory)+string(filepath.Separator)) {
+		t.Fatalf("unexpected preservation path: %s", creation.preserved)
+	}
+	if _, err := os.Stat(filepath.Join(creation.preserved, "config")); err != nil {
+		t.Fatalf("rollback deleted initialized files: %v", err)
+	}
+	// Later replacements and added data are never subject to a cleanup pass.
+	noErr(t, os.Rename(filepath.Join(creation.preserved, "config"), filepath.Join(creation.preserved, "original-config")))
+	noErr(t, os.WriteFile(filepath.Join(creation.preserved, "config"), []byte("new data"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(creation.preserved, "objects", "keep"), []byte("later history"), 0o600))
+	if err := creation.unchanged(filepath.Join(failedCreateDirectory, filepath.Base(creation.preserved))); err == nil {
+		t.Fatal("changed preserved content was considered the original empty tree")
+	}
+	if data, err := os.ReadFile(filepath.Join(creation.preserved, "config")); err != nil || string(data) != "new data" {
+		t.Fatalf("replacement data was deleted: %q %v", data, err)
+	}
+}
+
+func TestFailedRollbackMoveKeepsPublishedTree(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix write-permission enforcement for this account")
+	}
+	manager, _, _ := newTestRepository(t)
+	path := filepath.Join(manager.RepositoryRoot(), "draft")
+	noErr(t, os.Mkdir(path, 0o700))
+	noErr(t, manager.InitBareRepository(context.Background(), path, CreateOptions{}))
+	creation, err := captureEmptyCreation(path)
+	noErr(t, err)
+	t.Cleanup(func() { _ = creation.parent.Close() })
+	keptRoot := filepath.Join(manager.RepositoryRoot(), failedCreateDirectory)
+	noErr(t, os.Mkdir(keptRoot, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(keptRoot, 0o700) })
+	if err := creation.rollback(path); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("move failure=%v, want permission refusal", err)
+	}
+	if creation.preserved != "" {
+		t.Fatal("failed move reported a preserved destination")
+	}
+	if _, err := os.Stat(filepath.Join(path, "config")); err != nil {
+		t.Fatalf("failed move touched the published tree: %v", err)
+	}
+	if entries, err := os.ReadDir(keptRoot); err != nil || len(entries) != 0 {
+		t.Fatalf("failed move left partial entries: %v %v", entries, err)
+	}
+}
+
 func TestCreationRollbackPreservesReplacementsAndAddedData(t *testing.T) {
 	for _, change := range []string{"replacement", "extra-file", "changed-file", "symlink"} {
 		t.Run(change, func(t *testing.T) {
@@ -100,7 +185,7 @@ func TestCreationRollbackPreservesReplacementsAndAddedData(t *testing.T) {
 			noErr(t, manager.InitBareRepository(context.Background(), path, CreateOptions{}))
 			creation, err := captureEmptyCreation(path)
 			noErr(t, err)
-			t.Cleanup(func() { _ = creation.root.Close() })
+			t.Cleanup(func() { _ = creation.parent.Close() })
 			switch change {
 			case "replacement":
 				noErr(t, os.Rename(path, path+"-original"))

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"time"
 
 	"owngit/internal/pullrequest"
+	"owngit/internal/recovery"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 func decodeRepositoryResponse(t *testing.T, response *http.Response, want int) repositoryResponse {
@@ -204,6 +207,127 @@ func TestRepositoryAPICreationFailureCanRetryAndPreservesUnknownFolders(t *testi
 		t.Fatalf("unknown folder changed: %q %v", data, err)
 	}
 	decodeRepositoryResponse(t, apiRequest(t, http.MethodPost, collection, map[string]string{"name": "another"}, "", ""), http.StatusCreated)
+}
+
+func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	collection := server.URL + "/api/v1/repositories"
+	ctx := context.Background()
+	serverLog := captureServerLog(t)
+	noErr(t, fixture.store.Exec(ctx, `CREATE TRIGGER refuse_creation BEFORE INSERT ON repositories BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	response := apiRequest(t, http.MethodPost, collection, map[string]string{"name": "fresh"}, "", "")
+	var failure pullrequest.ErrorEnvelope
+	noErr(t, json.NewDecoder(response.Body).Decode(&failure))
+	response.Body.Close()
+	if response.StatusCode != http.StatusServiceUnavailable || failure.Error.Code != "repository_create_failed" || failure.Error.Message != "The repository could not be created." {
+		t.Fatalf("failed create status=%d error=%+v", response.StatusCode, failure.Error)
+	}
+	noErr(t, fixture.store.Exec(ctx, `DROP TRIGGER refuse_creation`))
+	keptRoot := filepath.Join(fixture.app.Repositories.RepositoryRoot(), ".owngit-failed-create")
+	kept, err := os.ReadDir(keptRoot)
+	noErr(t, err)
+	if len(kept) != 1 || !kept[0].IsDir() {
+		t.Fatalf("preserved folders=%v", kept)
+	}
+	if !strings.Contains(serverLog.String(), keptRoot) || !strings.Contains(serverLog.String(), "may be removed") {
+		t.Fatal("log does not name the removable empty preservation folder")
+	}
+	listed := decodeRepositoryList(t, apiRequest(t, http.MethodGet, collection, nil, "", ""))
+	if len(listed.Repositories) != 1 || listed.Repositories[0].ID != "project" {
+		t.Fatalf("preserved folder appeared in repository listing: %+v", listed)
+	}
+	if taken, err := fixture.store.RepositoryNameInUse(ctx, "fresh", time.Now()); err != nil || taken {
+		t.Fatalf("preserved creation blocked its name: taken=%v err=%v", taken, err)
+	}
+	noErr(t, fixture.app.Imports.Reconcile(ctx))
+	initials, err := fixture.store.ImportInitialDestinationsPage(ctx, "", 100)
+	noErr(t, err)
+	issues, more, err := fixture.app.Imports.StagingIssues(ctx, 100, "")
+	if err != nil || len(initials) != 0 || len(issues) != 0 || more {
+		t.Fatalf("preservation became an import issue: initials=%v issues=%v more=%v err=%v", initials, issues, more, err)
+	}
+	// Exercise the real import publication path with the fixture's empty
+	// fetch provider. It can reuse the failed name without touching the folder.
+	imported := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/fresh/import/run", map[string]any{
+		"name": "fresh", "url": "https://example.invalid/team/fresh.git", "mode": "standalone",
+	}, "admin-password")
+	if imported.StatusCode != http.StatusOK || !strings.Contains(importAPIBody(t, imported), `"status":"complete"`) {
+		t.Fatalf("same-name import status=%d", imported.StatusCode)
+	}
+	backup := filepath.Join(t.TempDir(), "backup")
+	noErr(t, recovery.Create(ctx, fixture.store, fixture.app.Repositories, backup))
+	manifestFile, err := os.Open(filepath.Join(backup, "manifest.json"))
+	noErr(t, err)
+	defer manifestFile.Close()
+	var manifest struct {
+		Repositories []struct {
+			ID string `json:"id"`
+		} `json:"repositories"`
+	}
+	noErr(t, json.NewDecoder(manifestFile).Decode(&manifest))
+	if len(manifest.Repositories) != 2 || manifest.Repositories[0].ID != "fresh" || manifest.Repositories[1].ID != "project" {
+		t.Fatalf("backup repository IDs=%+v", manifest.Repositories)
+	}
+	if _, err := os.Stat(filepath.Join(keptRoot, kept[0].Name(), "config")); err != nil {
+		t.Fatalf("imports or backup removed the preserved tree: %v", err)
+	}
+}
+
+func lazyStorageCollision(t *testing.T) (*App, *App, string) {
+	t.Helper()
+	first, _, root := newTestApp(t)
+	second, _, _ := newTestApp(t)
+	for _, app := range []*App{first, second} {
+		if notices, err := app.CompleteSetup(context.Background(), setupAnswers(root), true); err != nil || len(notices) != 0 {
+			t.Fatalf("empty-root setup notices=%v err=%v", notices, err)
+		}
+	}
+	_, err := first.Repositories.Create(context.Background(), "owner", "")
+	noErr(t, err)
+	return first, second, root
+}
+
+func TestLazyStorageClaimRefusalExplainsTheOwnerInAPI(t *testing.T) {
+	_, second, root := lazyStorageCollision(t)
+	server := serve(t, second.Handler())
+	before, err := os.ReadDir(root)
+	noErr(t, err)
+	head, err := os.ReadFile(filepath.Join(root, "owner.git", "HEAD"))
+	noErr(t, err)
+	response := apiRequest(t, http.MethodPost, server.URL+"/api/v1/repositories", map[string]string{"name": "blocked"}, "", "")
+	var envelope pullrequest.ErrorEnvelope
+	noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+	response.Body.Close()
+	if response.StatusCode != http.StatusConflict || envelope.Error.Code != "repository_storage_in_use" || envelope.Error.Message != webui.Text(webui.LangEN, webui.MsgSetupStorageInUse) {
+		t.Errorf("storage refusal status=%d error=%+v", response.StatusCode, envelope.Error)
+	}
+	after, err := os.ReadDir(root)
+	noErr(t, err)
+	if len(after) != len(before) {
+		t.Fatal("refused creation wrote into the owner's root")
+	}
+	if current, err := os.ReadFile(filepath.Join(root, "owner.git", "HEAD")); err != nil || string(current) != string(head) {
+		t.Fatalf("owner's HEAD changed: %q %v", current, err)
+	}
+}
+
+func TestLazyStorageClaimRefusalExplainsTheOwnerInBrowser(t *testing.T) {
+	_, second, root := lazyStorageCollision(t)
+	server := serve(t, second.Handler())
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		client, jar := newBrowserClient(t)
+		browserGET(t, client, server.URL+"/repositories/new?lang="+string(lang))
+		response := browserForm(t, client, server.URL+"/repositories", url.Values{
+			"csrf": {cookieValue(t, jar, server.URL, generalCookie)}, "name": {"blocked"},
+		}, server.URL)
+		if response.status != http.StatusConflict || !strings.Contains(response.body, webui.Text(lang, webui.MsgSetupStorageInUse)) {
+			t.Errorf("storage refusal language=%s status=%d body=%s", lang, response.status, response.body)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(root, "blocked.git")); !os.IsNotExist(err) {
+		t.Fatalf("refused browser creation published a directory: %v", err)
+	}
 }
 
 func fixtureRepositoryExists(t *testing.T, fixture apiFixture, id string) bool {

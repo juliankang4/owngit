@@ -181,6 +181,9 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 	created, err := app.Repositories.Create(request.Context(), name, description)
 	if err != nil {
 		switch {
+		case errors.Is(err, repository.ErrStorageInUse):
+			logFailure(request, "repository creation", err)
+			writeAPIError(writer, http.StatusConflict, "repository_storage_in_use", webui.Text(webui.LangEN, webui.MsgSetupStorageInUse), nil)
 		case errors.Is(err, repository.ErrImportInProgress):
 			writeAPIError(writer, http.StatusConflict, "repository_name_busy", "An import for this name is still running or needs recovery. Try again after it finishes.", nil)
 		case errors.Is(err, repository.ErrFolderExists):

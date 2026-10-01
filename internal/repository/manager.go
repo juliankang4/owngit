@@ -205,7 +205,7 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	if err != nil {
 		return state.Repository{}, fmt.Errorf("inspect new repository: %w", err)
 	}
-	defer creation.root.Close()
+	defer creation.parent.Close()
 	if err := publishdir.Rename(ctx, temporaryPath, finalPath); err != nil {
 		return state.Repository{}, fmt.Errorf("publish repository directory: %w", err)
 	}
@@ -223,13 +223,17 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		if accepted {
 			return state.Repository{}, fmt.Errorf("record repository: %w; preserve the recorded repository at %s", err, finalPath)
 		}
-		// No request can use this repository before its row exists. Remove
-		// only this attempt's unchanged empty tree, never a substituted
-		// directory or newly added history.
+		// No request can use this repository before its row exists. Move
+		// this attempt's unchanged empty tree out of the published name,
+		// without deleting files that another writer could replace.
 		if rollbackErr := creation.rollback(finalPath); rollbackErr != nil {
-			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %v", err, finalPath, rollbackErr)
+			keptPath := finalPath
+			if creation.preserved != "" {
+				keptPath = creation.preserved
+			}
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %v", err, keptPath, rollbackErr)
 		}
-		return state.Repository{}, fmt.Errorf("record repository: %w", err)
+		return state.Repository{}, fmt.Errorf("record repository: %w; the unaccepted empty folder is preserved at %s and may be removed", err, creation.preserved)
 	}
 	return repository, nil
 }
@@ -240,24 +244,33 @@ type creationEntry struct {
 	digest [sha256.Size]byte
 }
 
-// emptyCreation records the exact tree initialized by this attempt. The open
-// root follows the directory across publication, rather than a reused path.
+const failedCreateDirectory = ".owngit-failed-create"
+
+// emptyCreation pins the storage parent and records this attempt's tree.
+// No handle on the child directory is kept across publication or rollback:
+// a top-level directory handle would prevent its rename on Windows.
 type emptyCreation struct {
-	root    *os.Root
-	entries []creationEntry
+	parent    *os.Root
+	entries   []creationEntry
+	preserved string
 }
 
 func captureEmptyCreation(path string) (*emptyCreation, error) {
-	root, err := os.OpenRoot(path)
+	parent, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
 		return nil, err
 	}
-	entries, err := creationEntries(root)
+	root, err := parent.OpenRoot(filepath.Base(path))
 	if err != nil {
-		root.Close()
+		parent.Close()
 		return nil, err
 	}
-	return &emptyCreation{root: root, entries: entries}, nil
+	entries, inspectErr := creationEntries(root)
+	if err := errors.Join(inspectErr, root.Close()); err != nil {
+		parent.Close()
+		return nil, err
+	}
+	return &emptyCreation{parent: parent, entries: entries}, nil
 }
 
 func creationEntries(root *os.Root) ([]creationEntry, error) {
@@ -289,16 +302,22 @@ func creationEntries(root *os.Root) ([]creationEntry, error) {
 	return entries, err
 }
 
-func (creation *emptyCreation) rollback(path string) error {
-	identity, err := capturePinnedRepositoryIdentity(path)
+func (creation *emptyCreation) unchanged(name string) error {
+	// Lstat binds the proof to the directory entry, not a link to the
+	// original tree after the owner moved it somewhere else.
+	entry, err := creation.parent.Lstat(name)
 	if err != nil {
 		return err
 	}
-	if !os.SameFile(creation.entries[0].info, identity) {
-		return errors.New("the new repository folder was replaced")
+	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
+		return errors.New("the new repository directory entry was replaced")
 	}
-	current, err := creationEntries(creation.root)
+	root, err := creation.parent.OpenRoot(name)
 	if err != nil {
+		return err
+	}
+	current, inspectErr := creationEntries(root)
+	if err := errors.Join(inspectErr, root.Close()); err != nil {
 		return err
 	}
 	if len(current) != len(creation.entries) {
@@ -311,24 +330,51 @@ func (creation *emptyCreation) rollback(path string) error {
 			return errors.New("the new repository is no longer empty and unchanged")
 		}
 	}
-	// Remove known entries only. An unexpected child stops directory removal;
-	// recursive removal would instead destroy data not created by this attempt.
-	for index := len(creation.entries) - 1; index > 0; index-- {
-		if err := creation.root.Remove(creation.entries[index].name); err != nil {
-			return err
-		}
-	}
-	if err := creation.root.Close(); err != nil {
-		return err
-	}
-	identity, err = capturePinnedRepositoryIdentity(path)
+	// Recheck the no-follow entry after closing every child handle and before
+	// changing its name. If it changed meanwhile, leave its data in place.
+	entry, err = creation.parent.Lstat(name)
 	if err != nil {
 		return err
 	}
-	if !os.SameFile(creation.entries[0].info, identity) {
-		return errors.New("the new repository folder was replaced")
+	if !entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 || !os.SameFile(creation.entries[0].info, entry) {
+		return errors.New("the new repository directory entry was replaced")
 	}
-	return os.Remove(path)
+	return nil
+}
+
+func (creation *emptyCreation) rollback(path string) error {
+	name := filepath.Base(path)
+	if err := creation.unchanged(name); err != nil {
+		return err
+	}
+	if err := creation.parent.Mkdir(failedCreateDirectory, 0o700); err != nil && !os.IsExist(err) {
+		return fmt.Errorf("create failed-creation folder: %w", err)
+	}
+	info, err := creation.parent.Lstat(failedCreateDirectory)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("the failed-creation folder is not an unlinked directory")
+	}
+	suffix := make([]byte, 16)
+	if _, err := rand.Read(suffix); err != nil {
+		return err
+	}
+	kept := filepath.Join(failedCreateDirectory, hex.EncodeToString(suffix))
+	if _, err := creation.parent.Lstat(kept); !os.IsNotExist(err) {
+		return fmt.Errorf("failed-creation destination is not available: %v", err)
+	}
+	if err := creation.parent.Rename(name, kept); err != nil {
+		return fmt.Errorf("preserve unaccepted creation: %w", err)
+	}
+	creation.preserved = filepath.Join(creation.parent.Name(), kept)
+	// Nothing is deleted, including files changed after the snapshot. Verify
+	// the landed tree before describing it as the removable empty creation.
+	if err := creation.unchanged(kept); err != nil {
+		return fmt.Errorf("the preserved creation changed; inspect its contents: %w", err)
+	}
+	return nil
 }
 
 // InitBareRepository initializes a bare repository at directory. It does not
