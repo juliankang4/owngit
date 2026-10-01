@@ -81,14 +81,7 @@ func ValidatePrivateInputFile(path string) error {
 	if err := ValidatePrivateFile(path); err != nil {
 		return err
 	}
-	fix, err := privateInputAccessListFix(path)
-	if err != nil || fix == "" {
-		return err
-	}
-	return &NotPrivateError{
-		Problem: "its access list gives other accounts read access",
-		Fix:     fix,
-	}
+	return validatePrivateInputAccessList(path)
 }
 
 // ValidatePrivateFileHandle validates the open file rather than reopening its

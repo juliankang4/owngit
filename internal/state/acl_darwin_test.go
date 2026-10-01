@@ -79,6 +79,20 @@ func TestMacOSPrivateInputRejectsOtherAccountReadACL(t *testing.T) {
 	noErr(t, ValidatePrivateInputFile(path))
 }
 
+func TestMacOSPrivateInputRejectsGroupReadACL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "credential")
+	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))
+	noErr(t, exec.Command("chmod", "+a", "group:everyone allow read", path).Run())
+
+	var notPrivate *NotPrivateError
+	if err := ValidatePrivateInputFile(path); !errors.As(err, &notPrivate) {
+		t.Fatalf("err=%v, want *NotPrivateError", err)
+	}
+	if notPrivate.Problem != "its access list lets a group read it" || notPrivate.Fix != "chmod -N "+shellQuote(path) {
+		t.Fatalf("refusal = %+v", notPrivate)
+	}
+}
+
 func TestMacOSPrivateInputAcceptsOwnerReadACL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "credential")
 	noErr(t, os.WriteFile(path, []byte("synthetic credential\n"), 0o600))

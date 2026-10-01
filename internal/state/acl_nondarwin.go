@@ -6,6 +6,6 @@ import "os"
 
 func ChangeAccessListFix(string) (string, error) { return "", nil }
 
-func privateInputAccessListFix(string) (string, error) { return "", nil }
+func validatePrivateInputAccessList(string) error { return nil }
 
 func clearAccessList(*os.File) error { return nil }

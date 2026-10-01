@@ -58,25 +58,37 @@ func ChangeAccessListFix(path string) (string, error) {
 	return "chmod -N " + shellQuote(path), nil
 }
 
-// privateInputAccessListFix reports a read permit for anyone except the file
-// owner. It only reads the access list; a supplied secret file is never changed.
-func privateInputAccessListFix(path string) (string, error) {
+// validatePrivateInputAccessList refuses a read permit for anyone except the
+// file owner. Every group permit is refused explicitly, without trying to
+// prove its primary and nested membership. The supplied file is never changed.
+func validatePrivateInputAccessList(path string) error {
 	filesec, err := extendedSecurity(path, nil, 0)
 	if err != nil {
-		return "", err
+		return err
 	}
 	found, err := permitEntry(filesec, kauthReadRights)
 	if err != nil || !found {
-		return "", err
+		return err
 	}
 	owner, err := accessListOwner(path)
 	if err != nil {
-		return "", err
+		return err
 	}
-	if found, err = permitEntryOtherThan(filesec, kauthReadRights, owner); err != nil || !found {
-		return "", err
+	identities, err := matchingPermitIdentities(filesec, kauthReadRights, owner)
+	if err != nil || len(identities) == 0 {
+		return err
 	}
-	return "chmod -N " + shellQuote(operandPath(path)), nil
+	problem := "its access list gives other accounts read access"
+	for _, identity := range identities {
+		if accessListIdentityIsGroup(identity) {
+			problem = "its access list lets a group read it"
+			break
+		}
+	}
+	return &NotPrivateError{
+		Problem: problem,
+		Fix:     "chmod -N " + shellQuote(operandPath(path)),
+	}
 }
 
 // accessListOwner returns the GUID that macOS puts in an access-list entry for
@@ -91,14 +103,9 @@ func accessListOwner(path string) ([]byte, error) {
 	if !ok {
 		return nil, errors.New("file owner is unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	output, commandErr := exec.CommandContext(ctx, "/usr/bin/dsmemberutil", "getuuid", "-u", strconv.FormatUint(uint64(stat.Uid), 10)).Output()
-	if err := ctx.Err(); err != nil {
+	output, err := runMembershipCommand("getuuid", "-u", strconv.FormatUint(uint64(stat.Uid), 10))
+	if err != nil {
 		return nil, fmt.Errorf("find the file owner's access-list identity: %w", err)
-	}
-	if commandErr != nil {
-		return nil, fmt.Errorf("find the file owner's access-list identity: %w", commandErr)
 	}
 	encoded := strings.ReplaceAll(strings.TrimSpace(string(output)), "-", "")
 	owner, err := hex.DecodeString(encoded)
@@ -106,6 +113,28 @@ func accessListOwner(path string) ([]byte, error) {
 		return nil, errors.New("the file owner's access-list identity is unavailable")
 	}
 	return owner, nil
+}
+
+func runMembershipCommand(arguments ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, commandErr := exec.CommandContext(ctx, "/usr/bin/dsmemberutil", arguments...).Output()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return output, commandErr
+}
+
+type accessListIdentity [16]byte
+
+func accessListIdentityIsGroup(identity accessListIdentity) bool {
+	output, err := runMembershipCommand("getid", "-X", accessListIdentityString(identity))
+	return err == nil && strings.HasPrefix(strings.TrimSpace(string(output)), "gid:")
+}
+
+func accessListIdentityString(identity accessListIdentity) string {
+	encoded := strings.ToUpper(hex.EncodeToString(identity[:]))
+	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
 }
 
 func clearAccessList(file *os.File) error { return clearAccessListOf(file) }
@@ -144,37 +173,37 @@ func clearAccessListOf(file *os.File) error {
 // permitEntry reports whether the kauth_filesec holds an entry that allows
 // any of rights.
 func permitEntry(filesec []byte, rights uint32) (bool, error) {
-	return matchingPermitEntry(filesec, rights, nil)
+	identities, err := matchingPermitIdentities(filesec, rights, nil)
+	return len(identities) != 0, err
 }
 
-// permitEntryOtherThan ignores a permit for the supplied identity.
-func permitEntryOtherThan(filesec []byte, rights uint32, identity []byte) (bool, error) {
-	return matchingPermitEntry(filesec, rights, identity)
-}
-
-func matchingPermitEntry(filesec []byte, rights uint32, ignoredIdentity []byte) (bool, error) {
+func matchingPermitIdentities(filesec []byte, rights uint32, ignoredIdentity []byte) ([]accessListIdentity, error) {
 	if len(filesec) == 0 {
-		return false, nil
+		return nil, nil
 	}
 	if len(filesec) < kauthEntriesOffset || binary.NativeEndian.Uint32(filesec) != kauthFilesecMagic {
-		return false, errors.New("unrecognized access list")
+		return nil, errors.New("unrecognized access list")
 	}
 	count := binary.NativeEndian.Uint32(filesec[kauthEntriesOffset-8:])
 	if count == kauthFilesecNoACL {
-		return false, nil
+		return nil, nil
 	}
 	if uint64(count) > uint64(len(filesec)-kauthEntriesOffset)/kauthEntrySize {
-		return false, errors.New("truncated access list")
+		return nil, errors.New("truncated access list")
 	}
+	var identities []accessListIdentity
 	for index := range int(count) {
 		entry := filesec[kauthEntriesOffset+index*kauthEntrySize:]
 		flags := binary.NativeEndian.Uint32(entry[16:])
-		if flags&kauthACEKindMask == kauthACEPermit && binary.NativeEndian.Uint32(entry[20:])&rights != 0 &&
-			(len(ignoredIdentity) == 0 || !bytes.Equal(entry[:16], ignoredIdentity)) {
-			return true, nil
+		if flags&kauthACEKindMask != kauthACEPermit || binary.NativeEndian.Uint32(entry[20:])&rights == 0 ||
+			(len(ignoredIdentity) != 0 && bytes.Equal(entry[:16], ignoredIdentity)) {
+			continue
 		}
+		var identity accessListIdentity
+		copy(identity[:], entry[:16])
+		identities = append(identities, identity)
 	}
-	return false, nil
+	return identities, nil
 }
 
 var getattrlistErr = func(trap, a1, a2, a3, a4, a5, a6 uintptr) unix.Errno {

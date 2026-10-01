@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 
@@ -102,7 +103,24 @@ func (rotating *rotatingFile) protectOlder() error {
 		return err
 	}
 	defer older.Close()
-	return state.ProtectPrivateHandle(older, false)
+	return protectLogFile(older)
+}
+
+// protectLogFile removes a macOS ACL through the held file handle. Other
+// platforms keep the earlier mode-only log behavior of this scoped repair.
+// An ACL refusal names the held file and preserves its repair command.
+func protectLogFile(file *os.File) error {
+	var err error
+	if runtime.GOOS == "darwin" {
+		err = state.ProtectPrivateHandle(file, false)
+	} else {
+		err = file.Chmod(0o600)
+	}
+	return reportLogProtectionError(file.Name(), err)
+}
+
+func reportLogProtectionError(path string, err error) error {
+	return state.ExplainPrivateFileError(path, err)
 }
 
 // logAndEarlier writes each log line to the log file and to the earlier
@@ -130,7 +148,7 @@ func (rotating *rotatingFile) open() error {
 	if err != nil {
 		return err
 	}
-	if err := state.ProtectPrivateHandle(file, false); err != nil {
+	if err := protectLogFile(file); err != nil {
 		file.Close()
 		return err
 	}

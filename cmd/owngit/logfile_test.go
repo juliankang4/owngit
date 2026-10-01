@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/state"
 	"owngit/internal/version"
 )
 
@@ -106,6 +107,26 @@ func macLogACL(t *testing.T, path string) string {
 	output, err := exec.Command("ls", "-lde", path).CombinedOutput()
 	noErr(t, err)
 	return string(output)
+}
+
+// A retained ACL refusal is reported at the log boundary with the held file
+// and its repair command, while preserving the typed cause.
+func TestRetainedLogACLFailureNamesPathAndFix(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owngit.log")
+	cause := &state.NotPrivateError{
+		Problem: "its access list gives other accounts access",
+		Fix:     "chmod -N '" + path + "'",
+	}
+	reported := fmt.Errorf("open the log file: %w", reportLogProtectionError(path, cause))
+	var notPrivate *state.NotPrivateError
+	if !errors.As(reported, &notPrivate) {
+		t.Fatalf("reported error lost its cause: %v", reported)
+	}
+	for _, want := range []string{path, cause.Fix} {
+		if !strings.Contains(reported.Error(), want) {
+			t.Errorf("reported error lacks %q: %v", want, reported)
+		}
+	}
 }
 
 // A service's log goes only to its log file, which is bounded; its standard

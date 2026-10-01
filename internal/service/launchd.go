@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -536,6 +537,16 @@ const launchAgentUnloadTimeout = 170 * time.Second
 // and what to do.
 var ErrNotLoaded = errors.New("launchd did not load the OwnGit service")
 
+func protectLaunchAgentLog(file *os.File) error {
+	var err error
+	if runtime.GOOS == "darwin" {
+		err = state.ProtectPrivateHandle(file, false)
+	} else {
+		err = file.Chmod(0o600)
+	}
+	return state.ExplainPrivateFileError(file.Name(), err)
+}
+
 // InstallLaunchAgent writes the agent of plan and (re)loads it, which also
 // starts it. An agent that is already loaded is unloaded first, so launchd
 // reads the new file and runs the new binary. gui says whether the user is
@@ -578,7 +589,7 @@ func InstallLaunchAgent(ctx context.Context, run Runner, plan Plan, agent string
 	for _, log := range logs {
 		logFile, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 		if err == nil {
-			err = errors.Join(state.ProtectPrivateHandle(logFile, false), logFile.Close())
+			err = errors.Join(protectLaunchAgentLog(logFile), logFile.Close())
 		}
 		if err != nil {
 			undo()
