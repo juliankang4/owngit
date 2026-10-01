@@ -67,6 +67,88 @@ func TestCreationRecordSurvivesClientCancellation(t *testing.T) {
 	}
 }
 
+func TestCreationRecordTimeoutLeavesNoLateRecord(t *testing.T) {
+	manager, _, _ := newTestRepository(t)
+	database, err := sql.Open("sqlite", filepath.Join(manager.Store.Dir(), "owngit.sqlite"))
+	noErr(t, err)
+	defer database.Close()
+	connection, err := database.Conn(context.Background())
+	noErr(t, err)
+	defer connection.Close()
+	// CreateWithOptions does no import-settings write. WAL reads and Git
+	// preparation proceed; this writer lock blocks only the record step.
+	_, err = connection.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	noErr(t, err)
+	defer connection.ExecContext(context.Background(), "ROLLBACK")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	started := time.Now()
+	go func() {
+		_, err := manager.CreateWithOptions(ctx, "record-deadline", "", CreateOptions{})
+		result <- err
+	}()
+	published := filepath.Join(manager.RepositoryRoot(), "record-deadline.git")
+	// Preparation has a separate generous bound: loaded hosts can take
+	// longer to launch Git, but that time is not the recording timeout.
+	preparationDeadline := time.NewTimer(6 * creationRecordTimeout)
+	defer preparationDeadline.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(published); err == nil {
+			break
+		}
+		select {
+		case err := <-result:
+			t.Fatalf("creation ended before publication: %v", err)
+		case <-preparationDeadline.C:
+			t.Fatal("creation did not publish while the record writer was locked")
+		case <-ticker.C:
+		}
+	}
+	observedPublication := time.Now()
+	cancel()
+	// Keep the lock until the synchronous attempt returns. A stopped
+	// request must not turn this into an early cancellation or a late save.
+	select {
+	case err := <-result:
+		if err == nil || !strings.HasPrefix(err.Error(), "record repository:") {
+			t.Fatalf("record deadline result=%v", err)
+		}
+		// Start time is a conservative lower bound that avoids depending on
+		// when a loaded observer was scheduled after the actual rename.
+		if elapsed := time.Since(started); elapsed < creationRecordTimeout-time.Second {
+			t.Fatalf("recording returned before its timeout: elapsed=%v timeout=%v", elapsed, creationRecordTimeout)
+		}
+		t.Logf("record failure returned %v after observed publication (configured timeout %v)", time.Since(observedPublication), creationRecordTimeout)
+	case <-time.After(4 * creationRecordTimeout):
+		t.Fatal("recording did not stop within the timeout and scheduling slack")
+	}
+	if _, exists, err := manager.Store.Repository(context.Background(), "record-deadline"); err != nil || exists {
+		t.Fatalf("timed-out record before releasing writer: exists=%v err=%v", exists, err)
+	}
+	if _, err := os.Lstat(published); !os.IsNotExist(err) {
+		t.Fatalf("timed-out unaccepted folder remains at its final name: %v", err)
+	}
+	kept, err := os.ReadDir(filepath.Join(manager.RepositoryRoot(), failedCreateDirectory))
+	noErr(t, err)
+	if len(kept) != 1 || !kept[0].IsDir() {
+		t.Fatalf("timed-out creation preservation entries=%v", kept)
+	}
+	_, err = connection.ExecContext(context.Background(), "ROLLBACK")
+	noErr(t, err)
+	// CreateWithOptions has returned and has no background record worker.
+	// Check after release as well, allowing the driver scheduler to settle.
+	time.Sleep(250 * time.Millisecond)
+	if _, exists, err := manager.Store.Repository(context.Background(), "record-deadline"); err != nil || exists {
+		t.Fatalf("timed-out record appeared after releasing writer: exists=%v err=%v", exists, err)
+	}
+	if _, err := os.Stat(filepath.Join(manager.RepositoryRoot(), failedCreateDirectory, kept[0].Name(), "HEAD")); err != nil {
+		t.Fatalf("timed-out creation's initialized tree was not preserved: %v", err)
+	}
+}
+
 func TestConcurrentFailedCreationsShareThePreservationBound(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
 	ctx := context.Background()
