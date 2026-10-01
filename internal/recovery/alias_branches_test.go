@@ -74,13 +74,16 @@ func TestBackupAliasNoticeNamesImmediateTargets(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	remote, err := manager.Path("project")
 	noErr(t, err)
-	for _, pair := range [][2]string{{"refs/heads/alias", "refs/heads/main"}, {"refs/heads/chained", "refs/heads/alias"}, {"refs/heads/quote';&$name", "refs/heads/main"}, {"refs/heads/through-head", "HEAD"}} {
+	unicodeTarget := "refs/heads/main\u00a0"
+	oid := gitOutput(t, remote, "--git-dir", ".", "rev-parse", "refs/heads/main")
+	runGit(t, remote, "--git-dir", ".", "update-ref", unicodeTarget, oid)
+	for _, pair := range [][2]string{{"refs/heads/alias", "refs/heads/main"}, {"refs/heads/chained", "refs/heads/alias"}, {"refs/heads/quote';&$name", "refs/heads/main"}, {"refs/heads/through-head", "HEAD"}, {"refs/heads/unicode-space", unicodeTarget}} {
 		runGit(t, remote, "--git-dir", ".", "symbolic-ref", pair[0], pair[1])
 	}
 	backup := filepath.Join(root, "backup")
 	report, err := CreateWithReport(ctx, store, manager, backup)
 	noErr(t, err)
-	if len(report.AliasBranches) != 4 || report.AliasBranches[1].Name != "refs/heads/chained" || report.AliasBranches[1].Target != "refs/heads/alias" || report.AliasBranches[3].Target != "HEAD" {
+	if len(report.AliasBranches) != 5 || report.AliasBranches[1].Name != "refs/heads/chained" || report.AliasBranches[1].Target != "refs/heads/alias" || report.AliasBranches[3].Target != "HEAD" || report.AliasBranches[4].Target != unicodeTarget {
 		t.Fatalf("immediate alias targets were not captured: %+v", report.AliasBranches)
 	}
 	if runtime.GOOS == "windows" {
@@ -95,8 +98,10 @@ func TestBackupAliasNoticeNamesImmediateTargets(t *testing.T) {
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("reconnect command %s: %v %s", alias.ReconnectCommand(), err, output)
 		}
-		if got := gitOutput(t, restored, "--git-dir", ".", "symbolic-ref", "--no-recurse", alias.Name); got != alias.Target {
-			t.Fatalf("reconnected %s to %s, want %s", alias.Name, got, alias.Target)
+		output, err := gitCombined(restored, "--git-dir", ".", "symbolic-ref", "--no-recurse", alias.Name)
+		noErr(t, err)
+		if got := strings.TrimRight(output, "\r\n"); got != alias.Target {
+			t.Fatalf("reconnected %q to %q, want %q", alias.Name, got, alias.Target)
 		}
 	}
 }

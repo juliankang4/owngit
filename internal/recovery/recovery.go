@@ -973,7 +973,7 @@ func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPat
 	}
 	var refs []Ref
 	var aliases []AliasBranch
-	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(string(result.Stdout), "\r\n"), "\n") {
 		if line == "" {
 			continue
 		}
@@ -989,7 +989,7 @@ func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPat
 			if err != nil {
 				return nil, nil, fmt.Errorf("read alias branch %q: %w", parts[0], err)
 			}
-			target := strings.TrimSpace(string(symbolic.Stdout))
+			target := strings.TrimRight(string(symbolic.Stdout), "\r\n")
 			// A symbolic target can also be a one-level ref such as HEAD.
 			if !validRefName("refs/" + target) {
 				return nil, nil, fmt.Errorf("Git returned an invalid target for alias branch %q", parts[0])
