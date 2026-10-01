@@ -745,6 +745,11 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 		if !directoryOwned || !refLockMatches(record, locked) {
 			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), nil)
 		}
+		releasePrivatePath, err := s.holdPrivateRepositoryPath(repositoryPath)
+		if err != nil {
+			return newProblem(CodeUnresolved, "Automatic lock release was skipped because the repository folder is not private to this account. "+refLockRecoveryMessage(record.Name), nil)
+		}
+		defer releasePrivatePath()
 		if _, err := s.currentRuntime(generation); err != nil {
 			return err
 		}
@@ -765,6 +770,59 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 	// A missing lock settles only that resource. Even an exact fingerprint at
 	// HEAD cannot prove which writer renamed the file, so it grants no ownership.
 	return s.Store.DeleteImportRefLock(ctx, record.ID)
+}
+
+// holdPrivateRepositoryPath only verifies existing permissions. It keeps the
+// verified directories open while recovery checks and removes its lock. Normal
+// publication and recording remain usable on shared repository storage.
+func (s *Service) holdPrivateRepositoryPath(repositoryPath string) (func(), error) {
+	root, err := s.Repositories.CanonicalStorageRoot()
+	if err != nil {
+		return nil, err
+	}
+	relative, err := filepath.Rel(root, repositoryPath)
+	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, errors.New("repository is outside its storage root")
+	}
+	rootHandle, err := state.OpenDirectory(root, false)
+	if err != nil {
+		return nil, err
+	}
+	defer rootHandle.Close()
+	parent, err := os.Open(filepath.Dir(rootHandle.Name()))
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	privateRoot, err := state.OpenPrivateFolderIn(parent, filepath.Base(rootHandle.Name()))
+	if err != nil {
+		return nil, err
+	}
+	held := []*os.File{privateRoot}
+	release := func() {
+		for index := len(held) - 1; index >= 0; index-- {
+			_ = held[index].Close()
+		}
+	}
+	rootInfo, err := rootHandle.Stat()
+	if err != nil {
+		release()
+		return nil, err
+	}
+	privateInfo, err := privateRoot.Stat()
+	if err != nil || !os.SameFile(rootInfo, privateInfo) {
+		release()
+		return nil, errors.New("repository storage root changed during privacy verification")
+	}
+	for _, name := range strings.Split(relative, string(filepath.Separator)) {
+		child, err := state.OpenPrivateFolderIn(held[len(held)-1], name)
+		if err != nil {
+			release()
+			return nil, err
+		}
+		held = append(held, child)
+	}
+	return release, nil
 }
 
 func detachedHEADRetentionNames(oid string) []string {

@@ -59,12 +59,22 @@ func TestImportPublicationCrashChild(t *testing.T) {
 		t.Skip("subprocess fixture")
 	}
 	f := newFixture(t)
+	sharedRoot := os.Getenv("OWNGIT_IMPORT_SHARED_ROOT") == "1"
+	if sharedRoot {
+		makeRepositoryStorageSharedForTest(t, f.manager.RepositoryRoot())
+	}
 	first := f.commit("initial", "initial\n")
 	f.git(f.source, "checkout", "-b", "release")
 	f.commit("release", "release\n")
 	f.git(f.source, "tag", "v1", first)
 	f.git(f.source, "checkout", "main")
 	f.mustImport(ImportInput{})
+	// Positive recovery fixtures establish an owner-only directory boundary.
+	// This is test setup, not a change to normal repository creation policy.
+	if !sharedRoot {
+		noErr(t, state.ProtectPrivatePath(f.manager.RepositoryRoot(), true))
+		noErr(t, state.ProtectPrivatePath(f.destinationPath(), true))
+	}
 	next := f.commit("next", "next\n")
 	f.git(f.source, "branch", "-f", "release", first)
 	f.git(f.source, "tag", "-f", "v1", next)
