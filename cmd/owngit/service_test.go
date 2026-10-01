@@ -649,6 +649,9 @@ func newInstallFixture(t *testing.T, env service.Environment, existing *service.
 		if managerDown && strings.HasPrefix(command, "systemctl --user") {
 			return nil, errors.New("no user manager")
 		}
+		if command == "systemctl --user show --property=ActiveState --property=MainPID "+service.UnitName {
+			return []byte("MainPID=0\nActiveState=inactive\n"), nil
+		}
 		return nil, nil
 	}
 	lookPath = func(name string) (string, error) { return "", errors.New("no " + name + " in the test") }
@@ -758,9 +761,6 @@ func TestUninstallOfAUserServiceMentionsLingering(t *testing.T) {
 	}
 }
 
-// The serve error file belongs to the service account, and root may read
-// it after switching accounts: only a regular file counts, at most 4 KiB is
-// read, and control characters never reach the terminal.
 func TestUninstallReportsAnIncompleteServiceRemoval(t *testing.T) {
 	for _, mode := range []service.Mode{service.ModeUser, service.ModeSystem} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -771,7 +771,7 @@ func TestUninstallReportsAnIncompleteServiceRemoval(t *testing.T) {
 			stopErr := errors.New("Unit refuses manual stop")
 			serviceRunner = func(_ context.Context, _ string, args ...string) ([]byte, error) {
 				if strings.Contains(strings.Join(args, " "), "show") {
-					return []byte("active\n"), nil
+					return []byte("MainPID=4321\nActiveState=active\n"), nil
 				}
 				command := strings.Join(args, " ")
 				if strings.Contains(command, "stop ") || strings.Contains(command, "--now ") {
@@ -794,6 +794,32 @@ func TestUninstallReportsAnIncompleteServiceRemoval(t *testing.T) {
 	}
 }
 
+func TestUninstallNeverReportsSuccessForAZeroExitFailedStop(t *testing.T) {
+	unitPath := filepath.Join(t.TempDir(), service.UnitName)
+	noErr(t, os.WriteFile(unitPath, []byte("unit"), 0o644))
+	existing := &service.Installed{Mode: service.ModeUser, StateDir: t.TempDir(), UnitPath: unitPath}
+	fixture := newInstallFixture(t, desktopEnv, existing, false)
+	serviceRunner = func(_ context.Context, _ string, args ...string) ([]byte, error) {
+		if strings.Contains(strings.Join(args, " "), "show") {
+			return []byte("MainPID=4321\nActiveState=failed\n"), nil
+		}
+		return nil, nil
+	}
+	err := fixture.host.uninstall()
+	if err == nil || !strings.Contains(err.Error(), "uninstall did not finish") || !strings.Contains(err.Error(), "Stop it manually") {
+		t.Errorf("uninstall must report that the failed stop did not finish: %v", err)
+	}
+	if out := fixture.out.String(); strings.Contains(out, "stopped and removed") {
+		t.Errorf("uninstall reported success: %s", out)
+	}
+	if content, err := os.ReadFile(unitPath); err != nil || string(content) != "unit" {
+		t.Errorf("unit was not preserved: %q, %v", content, err)
+	}
+}
+
+// The serve error file belongs to the service account, and root may read
+// it after switching accounts: only a regular file counts, at most 4 KiB is
+// read, and control characters never reach the terminal.
 func TestServeErrorReadsOnlyABoundedRegularFile(t *testing.T) {
 	stateDir := t.TempDir()
 	path := filepath.Join(stateDir, serveErrorFile)

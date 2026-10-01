@@ -398,12 +398,24 @@ func RootUninstallScript() string {
 		"#!/bin/sh",
 		`# Written by "owngit service uninstall": the steps that need root.`,
 		"set -eu",
-		"if ! systemctl stop " + UnitName + "; then",
-		"  active=$(systemctl show --property=ActiveState --value " + UnitName + ") || active=unknown",
-		`  if [ "$active" != inactive ]; then`,
-		"    printf '%s\\n' " + shellQuote(uninstallStopFailure) + " >&2",
-		"    exit 1",
-		"  fi",
+		"stop_status=0",
+		"systemctl stop " + UnitName + " || stop_status=$?",
+		"properties=$(systemctl show --property=ActiveState --property=MainPID " + UnitName + ") || properties=",
+		"active=unknown",
+		"pid=unknown",
+		"while IFS='=' read -r property value; do",
+		`  case "$property" in`,
+		`    ActiveState) active=$value ;;`,
+		`    MainPID) pid=$value ;;`,
+		"  esac",
+		"done <<OWNGIT_STOP_PROPERTIES",
+		"$properties",
+		"OWNGIT_STOP_PROPERTIES",
+		`if [ "$active" != inactive ] || [ "$pid" != 0 ]; then`,
+		"  printf '%s\\n' " + shellQuote(uninstallStopFailure) + " >&2",
+		`  printf 'ActiveState=%s, MainPID=%s\n' "$active" "$pid" >&2`,
+		`  [ "$stop_status" -ne 0 ] || stop_status=1`,
+		`  exit "$stop_status"`,
 		"fi",
 		"if ! systemctl disable --quiet " + UnitName + "; then",
 		"  load=$(systemctl show --property=LoadState --value " + UnitName + ") || exit 1",
@@ -457,12 +469,27 @@ func InstallUserUnit(ctx context.Context, run Runner, path, unit string) error {
 // UninstallUserUnit stops the user unit and removes it. The state directory
 // and the repositories stay.
 func UninstallUserUnit(ctx context.Context, run Runner, path string) error {
-	// Stop before disabling, so a refused stop keeps the installed unit usable.
-	if err := runStep(ctx, run, UserSystemctl("stop", UnitName)); err != nil {
-		active, queryErr := run(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--value", UnitName)
-		if queryErr != nil || strings.TrimSpace(string(active)) != "inactive" {
-			return fmt.Errorf("%s: %w", uninstallStopFailure, err)
+	// A successful stop job can still leave a failed unit and a live process.
+	stopErr := runStep(ctx, run, UserSystemctl("stop", UnitName))
+	properties, queryErr := run(ctx, "systemctl", "--user", "show", "--property=ActiveState", "--property=MainPID", UnitName)
+	if queryErr != nil {
+		return fmt.Errorf("%s Could not confirm its stopped status: %w", uninstallStopFailure, errors.Join(stopErr, queryErr))
+	}
+	var active, pid string
+	for _, line := range strings.Split(string(properties), "\n") {
+		key, value, _ := strings.Cut(line, "=")
+		switch key {
+		case "ActiveState":
+			active = value
+		case "MainPID":
+			pid = value
 		}
+	}
+	if active != "inactive" || pid != "0" {
+		if stopErr != nil {
+			return fmt.Errorf("%s %w", uninstallStopFailure, stopErr)
+		}
+		return fmt.Errorf("%s ActiveState=%q, MainPID=%q", uninstallStopFailure, active, pid)
 	}
 	if err := runStep(ctx, run, UserSystemctl("disable", "--quiet", UnitName)); err != nil {
 		load, queryErr := run(ctx, "systemctl", "--user", "show", "--property=LoadState", "--value", UnitName)

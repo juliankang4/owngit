@@ -343,7 +343,11 @@ func TestRootScripts(t *testing.T) {
 type recordedRunner struct{ commands []string }
 
 func (runner *recordedRunner) run(_ context.Context, name string, args ...string) ([]byte, error) {
-	runner.commands = append(runner.commands, strings.Join(append([]string{name}, args...), " "))
+	command := strings.Join(append([]string{name}, args...), " ")
+	runner.commands = append(runner.commands, command)
+	if command == "systemctl --user show --property=ActiveState --property=MainPID "+UnitName {
+		return []byte("MainPID=0\nActiveState=inactive\n"), nil
+	}
 	return nil, nil
 }
 
@@ -404,7 +408,7 @@ func TestUserUnitInstallIsIdempotentAndUninstallKeepsData(t *testing.T) {
 	if content, err := os.ReadFile(stateFile); err != nil || string(content) != "data" {
 		t.Errorf("state after uninstall: %q, %v", content, err)
 	}
-	if want := []string{"systemctl --user stop owngit.service", "systemctl --user disable --quiet owngit.service", "systemctl --user daemon-reload"}; !reflect.DeepEqual(runner.commands, want) {
+	if want := []string{"systemctl --user stop owngit.service", "systemctl --user show --property=ActiveState --property=MainPID owngit.service", "systemctl --user disable --quiet owngit.service", "systemctl --user daemon-reload"}; !reflect.DeepEqual(runner.commands, want) {
 		t.Errorf("uninstall ran %q, want %q", runner.commands, want)
 	}
 	if _, found, err := FindInstalled(configDir); found || err != nil {

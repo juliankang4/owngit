@@ -16,6 +16,7 @@ type uninstallCase struct {
 	name          string
 	stopFails     bool
 	activeState   string
+	mainPID       string
 	queryFails    bool
 	disableFails  bool
 	loadState     string
@@ -29,16 +30,24 @@ type uninstallCase struct {
 
 func uninstallCases() []uninstallCase {
 	return []uninstallCase{
-		{name: "running unit"},
-		{name: "already stopped", stopFails: true, activeState: "inactive"},
-		{name: "absent unit", absent: true, stopFails: true, activeState: "inactive", disableFails: true, loadState: "not-found"},
+		{name: "running unit", activeState: "inactive", mainPID: "0"},
+		{name: "already stopped", stopFails: true, activeState: "inactive", mainPID: "0"},
+		{name: "absent unit", absent: true, stopFails: true, activeState: "inactive", mainPID: "0", disableFails: true, loadState: "not-found"},
 		{name: "refused stop", stopFails: true, activeState: "active", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
 		{name: "unfinished stop", stopFails: true, activeState: "deactivating", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
 		{name: "failed stop", stopFails: true, activeState: "failed", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
 		{name: "unavailable manager", stopFails: true, queryFails: true, wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
 		{name: "unknown state", stopFails: true, wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
-		{name: "disable failure", disableFails: true, loadState: "loaded", wantErr: true, wantUnit: true, wantEnabled: true},
-		{name: "reload failure", reloadFails: true, wantErr: true},
+		{name: "disable failure", activeState: "inactive", mainPID: "0", disableFails: true, loadState: "loaded", wantErr: true, wantUnit: true, wantEnabled: true},
+		{name: "reload failure", activeState: "inactive", mainPID: "0", reloadFails: true, wantErr: true},
+		{name: "zero exit failed stop with live process", activeState: "failed", mainPID: "4321", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit failed stop without main process", activeState: "failed", mainPID: "0", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit active stop", activeState: "active", mainPID: "4321", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit unfinished stop", activeState: "deactivating", mainPID: "0", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit inactive with live process", activeState: "inactive", mainPID: "4321", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit unavailable manager", queryFails: true, wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit unknown state", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
+		{name: "zero exit missing main PID", activeState: "inactive", wantErr: true, wantUnit: true, wantEnabled: true, wantStopError: true},
 	}
 }
 
@@ -66,11 +75,11 @@ func TestUninstallUserUnitPreservesAnUnstoppedService(t *testing.T) {
 					if test.stopFails {
 						return []byte("Unit refuses manual stop"), stopErr
 					}
-				case "show --property=ActiveState --value " + UnitName:
+				case "show --property=ActiveState --property=MainPID " + UnitName:
 					if test.queryFails {
 						return nil, errors.New("manager unavailable")
 					}
-					return []byte(test.activeState + "\n"), nil
+					return []byte("MainPID=" + test.mainPID + "\nActiveState=" + test.activeState + "\n"), nil
 				case "show --property=LoadState --value " + UnitName:
 					return []byte(test.loadState + "\n"), nil
 				case "disable --quiet " + UnitName:
@@ -97,7 +106,7 @@ func TestUninstallUserUnitPreservesAnUnstoppedService(t *testing.T) {
 			if (err != nil) != test.wantErr {
 				t.Errorf("uninstall error = %v, want error %v", err, test.wantErr)
 			}
-			if test.wantStopError && (!errors.Is(err, stopErr) || !strings.Contains(err.Error(), "Stop it manually") || !strings.Contains(err.Error(), "owngit service uninstall")) {
+			if test.wantStopError && (err == nil || test.stopFails && !errors.Is(err, stopErr) || !strings.Contains(err.Error(), "Stop it manually") || !strings.Contains(err.Error(), "owngit service uninstall")) {
 				t.Errorf("stop failure must retain its cause and explain how to retry: %v", err)
 			}
 			content, readErr := os.ReadFile(path)
@@ -112,7 +121,7 @@ func TestUninstallUserUnitPreservesAnUnstoppedService(t *testing.T) {
 				t.Errorf("enabled = %v, want %v; commands = %q", enabled, test.wantEnabled, commands)
 			}
 			if test.wantStopError {
-				want := []string{"systemctl --user stop " + UnitName, "systemctl --user show --property=ActiveState --value " + UnitName}
+				want := []string{"systemctl --user stop " + UnitName, "systemctl --user show --property=ActiveState --property=MainPID " + UnitName}
 				if !reflect.DeepEqual(commands, want) {
 					t.Errorf("stop failure ran mutating follow-up commands: %q", commands)
 				}
@@ -140,9 +149,9 @@ printf '%s\n' "$*" >>"$COMMANDS"
 case "$*" in
   'stop owngit.service')
     if [ "$STOP_FAILS" = true ]; then echo 'Unit refuses manual stop' >&2; exit 4; fi ;;
-  'show --property=ActiveState --value owngit.service')
+  'show --property=ActiveState --property=MainPID owngit.service')
     [ "$QUERY_FAILS" = false ] || exit 1
-    printf '%s\n' "$ACTIVE_STATE" ;;
+    printf 'ActiveState=%s\nMainPID=%s\n' "$ACTIVE_STATE" "$MAIN_PID" ;;
   'show --property=LoadState --value owngit.service') printf '%s\n' "$LOAD_STATE" ;;
   'disable --quiet owngit.service')
     if [ "$DISABLE_FAILS" = true ]; then echo 'disable refused' >&2; exit 1; fi
@@ -168,7 +177,7 @@ esac
 			command := exec.CommandContext(ctx, "/bin/sh", "-s")
 			command.Stdin = strings.NewReader(script)
 			command.Env = append(os.Environ(), "PATH="+root+":/usr/bin:/bin", "COMMANDS="+filepath.Join(root, "commands"), "ENABLED="+enabledPath,
-				"STOP_FAILS="+boolString(test.stopFails), "ACTIVE_STATE="+test.activeState, "QUERY_FAILS="+boolString(test.queryFails),
+				"STOP_FAILS="+boolString(test.stopFails), "ACTIVE_STATE="+test.activeState, "MAIN_PID="+test.mainPID, "QUERY_FAILS="+boolString(test.queryFails),
 				"DISABLE_FAILS="+boolString(test.disableFails), "LOAD_STATE="+test.loadState, "RELOAD_FAILS="+boolString(test.reloadFails))
 			output, err := command.CombinedOutput()
 			if (err != nil) != test.wantErr {
@@ -192,7 +201,7 @@ esac
 			if test.wantStopError {
 				commands, err := os.ReadFile(filepath.Join(root, "commands"))
 				noErr(t, err)
-				if string(commands) != "stop owngit.service\nshow --property=ActiveState --value owngit.service\n" {
+				if string(commands) != "stop owngit.service\nshow --property=ActiveState --property=MainPID owngit.service\n" {
 					t.Errorf("stop failure ran mutating follow-up commands: %s", commands)
 				}
 			}
