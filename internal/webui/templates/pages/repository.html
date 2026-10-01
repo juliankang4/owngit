@@ -227,7 +227,7 @@
     {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
     {{with $f}}
     <div class="codebar__tools">
-      {{if not .Binary}}<span class="codebar__fact">{{if .Continuation.Total}}{{biCount $lang "line" .Continuation.Total}}{{else}}{{biCount $lang "line" (len .Lines)}}{{end}}</span>{{end}}
+      {{if not .Binary}}<span class="codebar__fact">{{$lines := .Continuation.Total}}{{if not $lines}}{{$lines = len .Lines}}{{end}}{{if .Truncated}}{{biN $lang "code.loaded_lines" $lines}}{{else}}{{biCount $lang "line" $lines}}{{end}}</span>{{end}}
       {{if and .Image .ImageWidth}}<span class="codebar__fact">{{.ImageWidth}} &times; {{.ImageHeight}} px</span>{{end}}
       <span class="codebar__fact">{{bytes .Size}}</span>
       {{/* The source view renders nothing, so it offers the switch unless the
@@ -241,7 +241,7 @@
       {{if and (not .Binary) (or (not .Document) .ShowSource (not .Rendered))}}
       <button type="button" class="seg__btn seg__btn--solo" data-wrap-toggle aria-pressed="false" hidden>{{icon "wrap"}}<span>{{bi $lang "code.wrap"}}</span></button>
       {{end}}
-      {{if not .RawTooLarge}}{{with .RawURL}}<a class="codebar__link" href="{{.}}">{{bi $lang "code.raw_link"}}</a>{{end}}{{end}}
+      {{if not .RawTooLarge}}{{with .RawURL}}<a class="codebar__link" href="{{.}}">{{if $f.RawCurrentRef}}{{bi $lang "code.raw_current_ref"}}{{else}}{{bi $lang "code.raw_link"}}{{end}}</a>{{end}}{{end}}
       {{with .RestoreURL}}<a class="codebar__link" href="{{.}}">{{bi $lang "restore.open_file"}}</a>{{end}}
     </div>
     {{end}}
@@ -420,7 +420,7 @@
 {{define "pageContinuation"}}
 {{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
 <nav class="pager" data-page-continuation>
-  <p>{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}</p>
+  <p>{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
   {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
   {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
 </nav>

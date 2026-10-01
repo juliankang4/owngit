@@ -1021,15 +1021,17 @@ type RefLine struct {
 	RestoreURL string
 }
 
-// CodeView is the file browser panel.
 // PageContinuation describes one bounded page, not an accumulated prefix.
 type PageContinuation struct {
 	First, Last, Total int
 	MoreURL, FirstURL  string
+	// Incomplete means Total counts only the prefix read within a byte limit.
+	Incomplete bool
 }
 
 func (p PageContinuation) Shown() int { return max(0, p.Last-p.First+1) }
 
+// CodeView is the file browser panel.
 type CodeView struct {
 	Continuation PageContinuation
 	// Path is the current repository-relative path. Empty at the root.
@@ -1089,6 +1091,8 @@ type FileView struct {
 	Truncated bool
 	// RawURL downloads the file. Empty when the backend does not offer it.
 	RawURL string
+	// RawCurrentRef distinguishes a moving-ref download from a pinned page.
+	RawCurrentRef bool
 	// RawTooLarge is true when the file is above the download limit; the
 	// page then says so instead of offering RawURL.
 	RawTooLarge bool

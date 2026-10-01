@@ -90,18 +90,21 @@ func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testi
 	}
 }
 
-func TestPageTransferVerySlowProgressCompletes(t *testing.T) {
-	content := bytes.Repeat([]byte("s"), 64<<10)
-	// A tiny TCP receive window can delay a window-update probe on Linux.
-	// Keep that transport scheduling interval below the scaled idle bound.
-	server, results := pageTransferServer(t, 3*time.Second, content, 1024)
+// These real-time socket checks are skipped with -short. Scaling TCP's
+// deadlines would change its zero-window and retransmission behavior.
+func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long socket transfer")
+	}
+	content := bytes.Repeat([]byte("p"), 64<<10)
+	server, results := pageTransferServer(t, 30*time.Second, content, 1024)
 	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
 	_ = connection.(*net.TCPConn).SetReadBuffer(1024)
-	_ = connection.SetDeadline(time.Now().Add(15 * time.Second))
+	_ = connection.SetDeadline(time.Now().Add(120 * time.Second))
 	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
 	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
 	if err != nil {
@@ -117,51 +120,9 @@ func TestPageTransferVerySlowProgressCompletes(t *testing.T) {
 			break
 		}
 		if err != nil {
-			t.Fatalf("very slow transfer stopped: %v", err)
-		}
-		time.Sleep(75 * time.Millisecond)
-	}
-	response.Body.Close()
-	if !bytes.Equal(received.Bytes(), content) || time.Since(started) <= 3*time.Second {
-		t.Fatal("slow transfer differs or did not outlast the work deadline")
-	}
-	if err := <-results; err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("slow transfer: %s, %d bytes with a 3-second idle deadline", time.Since(started), received.Len())
-}
-
-func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
-	if testing.Short() {
-		t.Skip("long socket transfer")
-	}
-	content := bytes.Repeat([]byte("p"), 14<<20)
-	server, results := pageTransferServer(t, 30*time.Second, content)
-	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer connection.Close()
-	_ = connection.(*net.TCPConn).SetReadBuffer(64 << 10)
-	_ = connection.SetDeadline(time.Now().Add(80 * time.Second))
-	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
-	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var received bytes.Buffer
-	chunk := make([]byte, 32<<10)
-	started := time.Now()
-	for {
-		n, err := response.Body.Read(chunk)
-		received.Write(chunk[:n])
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
 			t.Fatalf("long progressing body stopped: %v", err)
 		}
-		time.Sleep(70 * time.Millisecond)
+		time.Sleep(750 * time.Millisecond)
 	}
 	response.Body.Close()
 	elapsed := time.Since(started)
@@ -172,6 +133,30 @@ func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("progressing transfer: %s, %d byte-identical bytes", elapsed, received.Len())
+}
+
+// The default-deadline stalled-reader control is skipped with -short too.
+func TestPageTransferLongStallIsCut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real-time stalled socket")
+	}
+	server, results := pageTransferServer(t, 30*time.Second, bytes.Repeat([]byte("x"), 16<<20))
+	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
+	started := time.Now()
+	select {
+	case err := <-results:
+		if err == nil || time.Since(started) < 30*time.Second {
+			t.Fatalf("stalled reader ended early or passed: %v after %s", err, time.Since(started))
+		}
+	case <-time.After(40 * time.Second):
+		t.Fatal("default-deadline stalled reader did not stop")
+	}
+	t.Logf("stalled reader cut after %s", time.Since(started))
 }
 
 func TestPageTransferStallAndDisconnectAreNotCompleteReplies(t *testing.T) {

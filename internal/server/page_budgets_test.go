@@ -50,7 +50,7 @@ func TestFileAndSelectedDiffPagesKeepTheirOriginalContent(t *testing.T) {
 	app.Repositories.Locks.For("paged").Lock()
 	app.Repositories.Locks.For("paged").Unlock()
 	body, status = dashboardGET(t, client, server.URL+more)
-	if status != http.StatusOK || !strings.Contains(body, `id="L10001"`) || !strings.Contains(body, "original 10001") || strings.Contains(body, "after push") {
+	if status != http.StatusOK || !strings.Contains(body, `id="L10001"`) || !strings.Contains(body, "original 10001") || strings.Contains(body, "after push") || !strings.Contains(body, "Download the file at the current ref") {
 		t.Fatalf("second page did not retain its blob: status=%d", status)
 	}
 	body, status = dashboardGET(t, client, server.URL+nextPageAddress(t, body))
@@ -77,6 +77,27 @@ func TestFileAndSelectedDiffPagesKeepTheirOriginalContent(t *testing.T) {
 		if status != http.StatusBadRequest {
 			t.Fatalf("invalid page %q answered %d", suffix, status)
 		}
+	}
+	remote, _ := app.Repositories.Path("paged")
+	apiRunGit(t, remote, "update-ref", "-d", "refs/heads/main")
+	app.Repositories.Locks.For("paged").Lock()
+	app.Repositories.Locks.For("paged").Unlock()
+	body, status = dashboardGET(t, client, base+"/code?path=lines.txt&revision="+oid+"&line=12345")
+	if status != http.StatusOK || !strings.Contains(body, `id="L12345"`) || !strings.Contains(body, "original 12345") {
+		t.Fatalf("owner continuation lost its commit after branch deletion: status=%d", status)
+	}
+}
+
+func TestByteLimitedLinePagesDoNotClaimTheWholeFileCount(t *testing.T) {
+	app := newConfiguredApp(t)
+	seedRepository(t, app, "byte-limited", map[string]string{"lines.txt": strings.Repeat("a\n", 1100000)}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	server := serve(t, app.Handler())
+	body, status := dashboardGET(t, &http.Client{}, server.URL+"/repositories/byte-limited/code?path=lines.txt")
+	if status != http.StatusOK || !strings.Contains(body, "loaded lines") || !strings.Contains(body, "outside the display size limit") || !strings.Contains(body, "Only the beginning") || !strings.Contains(body, "Download this file") {
+		t.Fatalf("byte-limited count is not identified as a prefix: status=%d", status)
+	}
+	if strings.Contains(body, "of 1,100,000") {
+		t.Fatal("prefix page claimed a complete line count")
 	}
 }
 

@@ -1044,6 +1044,11 @@ func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPa
 			return "", repository.ErrNotFound
 		}
 	}
+	if page.Ref.Revision == "" {
+		page.Ref.Missing, page.Ref.Detached = false, true
+		page.Ref.Kind, page.Ref.Name = "revision", shortOID(pinned)
+	}
+	page.Repo.Empty = false
 	page.Ref.Revision, page.Ref.ShortRevision = pinned, shortOID(pinned)
 	return pinned, nil
 }
@@ -1055,13 +1060,14 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	if err != nil {
 		return err
 	}
-	if !resolved {
+	if !resolved && (request.URL.Query().Get("revision") == "" || page.Shared) {
 		if requested == "" && page.Ref.Missing {
 			page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgRepoDefaultGone})
 		}
 		return nil
 	}
 	// A continuation names the original commit, not the branch's new tip.
+	currentRevision := page.Ref.Revision
 	commitOID, err := app.codePageRevision(request, page)
 	if errors.Is(err, repository.ErrNotFound) {
 		page.Code.NotFound = true
@@ -1101,6 +1107,11 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			RawURL:     rawURL(page.Repo.URL, selectedRef, requestedPath),
 			RestoreURL: ownerRestoreURL(page, commitOID, target, requestedPath),
 		}
+		file.RawCurrentRef = commitOID != currentRevision
+		if !resolved {
+			// The existing raw endpoint needs a public branch or tag.
+			file.RawURL = ""
+		}
 		if lookup.File.Size >= 0 {
 			file.Size = lookup.File.Size
 		}
@@ -1124,6 +1135,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 			}
 			file.LineURL = pinnedPageURL(lineAddress, commitOID, blob.OID)
 			file.Continuation = lineContinuation(file.LineURL, first, len(file.Lines), file.Continuation.Total)
+			file.Continuation.Incomplete = blob.Truncated
 		}
 		if !binary && markdown.IsDocument(requestedPath) {
 			file.Document = true
@@ -1138,7 +1150,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 				file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.URL, selectedRef, parent, blob.Content)
 			}
 		}
-		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.URL, selectedRef, lookup.Entries)}
+		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.URL, selectedRef, commitOID, lookup.Entries)}
 		view.Continuation = directoryContinuation(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, listing)
 		// The drawer lists the file's folder, so "up" leaves that folder.
 		if parent != "" {
@@ -1147,7 +1159,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		file.RawTooLarge = file.Size > limits.RawBytes
 		// A picture loads through the raw endpoint, so it is shown only
 		// when that endpoint would serve it.
-		if binary && !file.RawTooLarge {
+		if binary && !file.RawTooLarge && !file.RawCurrentRef && file.RawURL != "" {
 			file.Image, file.ImageWidth, file.ImageHeight = inlineImage(requestedPath, blob.Content)
 		}
 		page.Code = view
@@ -1157,9 +1169,12 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	if requestedPath != "" {
 		view.UpURL = codeURL(page.Repo.URL, selectedRef, path.Dir(requestedPath))
 	}
-	view.Entries = treeViewEntries(page.Repo.URL, selectedRef, lookup.Entries)
+	view.Entries = treeViewEntries(page.Repo.URL, selectedRef, commitOID, lookup.Entries)
 	view.Continuation = directoryContinuation(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, listing)
 	view.Readme = app.folderReadme(request, page.Repo, selectedRef, requestedPath, listing.Readme)
+	if view.Readme != nil {
+		view.Readme.URL = pinnedPageURL(view.Readme.URL, commitOID, "")
+	}
 	page.Code = view
 	// The whole branch or tag downloads from its top folder, where no folder
 	// or file could be taken for what the archive holds.
@@ -1327,6 +1342,7 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 					return errPageAddress
 				}
 				view.Continuation = lineContinuation(fileURL(requestedPath), first, shown, total)
+				view.Continuation.Incomplete = truncated
 			}
 			view.Files = append(view.Files, item)
 		}
@@ -1365,7 +1381,8 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 // any of these reasons are listed and marked as not loaded, with a link to
 // their diff alone where the page has one. A commit leaves at most
 // maximumDeferredFiles large files out of its diff read by name, which
-// keeps the Git command line short.
+// keeps the Git command line short. The same line bound applies to one
+// source or selected-file diff page, with navigation to its remaining lines.
 const (
 	maximumCommitDiffLines = 10000
 	maximumDeferredFiles   = 100
@@ -1811,7 +1828,7 @@ func commitURL(base, ref, oid, filePath string) string {
 	return result
 }
 
-func treeViewEntries(base, ref string, entries []repository.TreeEntry) []webui.TreeEntry {
+func treeViewEntries(base, ref, revision string, entries []repository.TreeEntry) []webui.TreeEntry {
 	views := make([]webui.TreeEntry, 0, len(entries))
 	for _, entry := range entries {
 		kind := "file"
@@ -1823,7 +1840,7 @@ func treeViewEntries(base, ref string, entries []repository.TreeEntry) []webui.T
 		case entry.Mode == "120000":
 			kind = "symlink"
 		}
-		views = append(views, webui.TreeEntry{Name: entry.Name, Path: entry.Path, URL: codeURL(base, ref, entry.Path), Kind: kind, Size: entry.Size})
+		views = append(views, webui.TreeEntry{Name: entry.Name, Path: entry.Path, URL: pinnedPageURL(codeURL(base, ref, entry.Path), revision, ""), Kind: kind, Size: entry.Size})
 	}
 	sort.SliceStable(views, func(left, right int) bool {
 		leftDir := views[left].Kind == "dir"

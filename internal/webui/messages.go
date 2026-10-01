@@ -379,10 +379,13 @@ const (
 	MsgCodeBinary        MessageCode = "code.binary"
 	MsgCodeTruncated     MessageCode = "code.truncated"
 	MsgCodeShowing       MessageCode = "code.showing"
+	MsgCodeShowingLoaded MessageCode = "code.showing_loaded"
+	MsgCodeLoadedLines   MessageCode = "code.loaded_lines"
 	MsgCodeMore          MessageCode = "code.more"
 	MsgCodeFirstPage     MessageCode = "code.first_page"
 	MsgCodeReceivingPage MessageCode = "code.receiving_page"
 	MsgCodeRawLink       MessageCode = "code.raw_link"
+	MsgCodeRawCurrentRef MessageCode = "code.raw_current_ref"
 	MsgCodeSubmodule     MessageCode = "code.submodule"
 	MsgCodeSymlink       MessageCode = "code.symlink"
 
@@ -1517,6 +1520,11 @@ var catalog = map[MessageCode]message{
 		en: "Showing %s of %s (%s to %s).",
 		ko: "전체 %[2]s개 중 %[1]s개를 표시합니다 (%[3]s번부터 %[4]s번까지).",
 	},
+	MsgCodeShowingLoaded: {
+		en: "Showing %s of %s loaded lines (%s to %s). The rest is outside the display size limit.",
+		ko: "읽어온 %[2]s줄 중 %[1]s줄을 표시합니다 (%[3]s번부터 %[4]s번까지). 용량 제한 때문에 나머지는 표시하지 않았습니다.",
+	},
+	MsgCodeLoadedLines: {en: "%d loaded lines", ko: "읽어온 %d줄"},
 	MsgCodeReceivingPage: {
 		en: "Receiving the page. If this notice remains, the page has not arrived in full.",
 		ko: "페이지를 받는 중입니다. 이 안내가 계속 보이면 페이지가 끝까지 오지 않은 것입니다.",
@@ -1526,6 +1534,10 @@ var catalog = map[MessageCode]message{
 	MsgCodeTruncated: {
 		en: "Only the beginning of this file is shown.",
 		ko: "이 파일의 앞부분만 표시했습니다.",
+	},
+	MsgCodeRawCurrentRef: {
+		en: "Download the file at the current ref",
+		ko: "현재 브랜치나 태그의 파일 받기",
 	},
 	MsgCodeRawLink: {
 		en: "Download this file",
