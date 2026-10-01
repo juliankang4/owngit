@@ -72,13 +72,11 @@ func FormatTrustedProxy(prefix netip.Prefix) string {
 // trusts reports whether peer, a connection's remote address, is a trusted
 // proxy.
 func (resolver Resolver) trusts(peer string) bool {
-	if len(resolver.TrustedProxies) == 0 {
-		return false
-	}
 	address, ok := peerAddress(peer)
-	if !ok {
-		return false
-	}
+	return ok && resolver.trustsAddress(address)
+}
+
+func (resolver Resolver) trustsAddress(address netip.Addr) bool {
 	for _, prefix := range resolver.TrustedProxies {
 		if prefix.Contains(address) {
 			return true
@@ -115,18 +113,25 @@ func singleValue(header http.Header, name string) (string, bool) {
 	return value, true
 }
 
-// lastForwardedFor returns the rightmost X-Forwarded-For entry, which the
-// trusted proxy appended, when it is an IP address. Repeated header lines
-// form one list in order.
-func lastForwardedFor(header http.Header) (string, bool) {
+// forwardedClient walks all X-Forwarded-For lines from right to left. It
+// crosses only configured trusted proxies and stops at the first untrusted
+// address, which is the client boundary. A malformed hop or an all-trusted
+// list cannot establish an original address.
+func (resolver Resolver) forwardedClient(header http.Header) (string, bool) {
 	values := header.Values("X-Forwarded-For")
 	if len(values) == 0 {
 		return "", false
 	}
-	list := strings.Join(values, ",")
-	address, err := netip.ParseAddr(strings.TrimSpace(list[strings.LastIndex(list, ",")+1:]))
-	if err != nil {
-		return "", false
+	entries := strings.Split(strings.Join(values, ","), ",")
+	for index := len(entries) - 1; index >= 0; index-- {
+		address, err := netip.ParseAddr(strings.TrimSpace(entries[index]))
+		if err != nil {
+			return "", false
+		}
+		address = address.WithZone("").Unmap()
+		if !resolver.trustsAddress(address) {
+			return address.String(), true
+		}
 	}
-	return address.WithZone("").Unmap().String(), true
+	return "", false
 }

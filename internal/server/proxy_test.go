@@ -290,6 +290,49 @@ func TestClientsBehindATrustedProxyLockOutSeparately(t *testing.T) {
 	}
 }
 
+func TestClientsBehindATrustedProxyChainLockOutSeparately(t *testing.T) {
+	fixture := newProxiedOwnGit(t)
+	fixture.app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{
+			netip.MustParsePrefix("127.0.0.1/32"),
+			netip.MustParsePrefix("192.0.2.200/32"),
+		},
+		Hosts: fixture.app.Hosts,
+	})
+	client, _ := fixture.browser(t)
+	discovery := "/git/project.git/info/refs?service=git-upload-pack"
+	if _, err := fixture.app.Repositories.Create(context.Background(), "project", ""); err != nil {
+		t.Fatal(err)
+	}
+	gitStatus := func(password, address string, forged int) int {
+		request, err := http.NewRequest(http.MethodGet, fixture.proxy.URL+discovery, nil)
+		noErr(t, err)
+		request.SetBasicAuth("owngit", password)
+		request.Header.Set(testClientHeader, "192.0.2.200")
+		request.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d, %s", forged, address))
+		response, err := client.Do(request)
+		noErr(t, err)
+		response.Body.Close()
+		return response.StatusCode
+	}
+	for attempt := 1; attempt <= 4; attempt++ {
+		if status := gitStatus("wrong-password", "198.51.100.1", attempt); status != http.StatusUnauthorized {
+			t.Fatalf("wrong password %d status=%d", attempt, status)
+		}
+	}
+	if status := gitStatus("shared-password", "198.51.100.2", 99); status != http.StatusOK {
+		t.Fatalf("another client behind the proxy chain status=%d, want 200", status)
+	}
+	if _, err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", "198.51.100.1"); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("first client: %v, want the rate limit", err)
+	}
+	for _, address := range []string{"127.0.0.1", "192.0.2.200", "198.51.100.2", "203.0.113.1", "203.0.113.4"} {
+		if _, err := fixture.app.Auth.VerifyCredential(context.Background(), "general", "shared-password", address); err != nil {
+			t.Fatalf("address %s was charged: %v", address, err)
+		}
+	}
+}
+
 // Setup through a trusted HTTPS proxy needs no plain-HTTP acknowledgement,
 // and its cookies are Secure.
 func TestSetupThroughATrustedHTTPSProxy(t *testing.T) {

@@ -51,15 +51,15 @@ func (app *App) handleSetupGet(writer http.ResponseWriter, request *http.Request
 	}
 	if stage == webui.SetupWizard {
 		page.KeepHost, page.KeepHostSetupOnly = app.setupHostToKeep(request), unknownHost
-		// On a computer without a screen the owner sets up from another
-		// device and nearly always wants to keep using it, so the address
-		// stays unless the owner unticks it. Not from the public Internet,
-		// where the notice below advises against it.
-		public := publicPeer(request)
-		page.Form.KeepHost = page.KeepHost != "" && app.HeadlessListen != "" && !public
-		if public {
+		// On a computer without a screen the owner usually keeps the address
+		// used by a known private client. A public or unknown forwarded client
+		// gets the safer shared-password default and does not keep the Host by
+		// default.
+		notice, protect := setupAccessNotice(request)
+		page.Form.KeepHost = page.KeepHost != "" && app.HeadlessListen != "" && !protect
+		if protect {
 			page.Form.AccessMode = webui.AccessPassword
-			page.Chrome.Notices = append(page.Chrome.Notices, publicNetworkNotice())
+			page.Chrome.Notices = append(page.Chrome.Notices, notice)
 		}
 	}
 	if settings.Initialized {
@@ -196,9 +196,9 @@ func (app *App) renderSetupDoneElsewhere(writer http.ResponseWriter, request *ht
 	app.render(writer, request, http.StatusOK, webui.SetupPage{Chrome: chrome, Stage: webui.SetupUnavailable, Reason: webui.MsgSetupDoneHostNotKept, RecoveryHint: hint})
 }
 
-// publicPeer reports whether the request comes from a public Internet
+// publicPeer reports whether the request comes from a known public Internet
 // address: not loopback, not a private or tailnet range, not link-local.
-// Behind a trusted reverse proxy it is the client the proxy names.
+// Behind a trusted reverse proxy it is the established client boundary.
 func publicPeer(request *http.Request) bool {
 	host := requestctx.Of(request).ClientAddress
 	if split, _, err := net.SplitHostPort(host); err == nil {
@@ -220,6 +220,16 @@ func publicNetworkNotice() webui.Notice {
 	return webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgSetupPublicNetwork, Field: "access_mode"}
 }
 
+func setupAccessNotice(request *http.Request) (webui.Notice, bool) {
+	if requestctx.Of(request).ClientProvenance == requestctx.ClientForwardedUnknown {
+		return webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgForwardedClientUnknown, Field: "access_mode"}, true
+	}
+	if publicPeer(request) {
+		return publicNetworkNotice(), true
+	}
+	return webui.Notice{}, false
+}
+
 func (app *App) setupPrerequisites() []webui.Prerequisite {
 	return []webui.Prerequisite{
 		{Name: "git", Satisfied: app.GitVersion != "", Code: chooseMessage(app.GitVersion != "", webui.MsgPrereqGitFound, webui.MsgPrereqGitMissing), Detail: app.GitVersion},
@@ -235,8 +245,8 @@ func (app *App) renderSetupWizard(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	chrome.Notices = notices
-	if publicPeer(request) {
-		chrome.Notices = append(chrome.Notices, publicNetworkNotice())
+	if notice, protect := setupAccessNotice(request); protect {
+		chrome.Notices = append(chrome.Notices, notice)
 	}
 	app.render(writer, request, status, webui.SetupPage{
 		Chrome: chrome, Stage: webui.SetupWizard, SubmitURL: "/setup", RedeemURL: "/setup/redeem", Form: form,

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"owngit/internal/githttp"
 	"owngit/internal/pullrequest"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 )
 
@@ -217,6 +219,24 @@ func TestTrayEventsDropWhatThisComputerDid(t *testing.T) {
 	app.trayOrigins = trayOrigins{}
 	if got := feedRead(t, app, start.Cursor, others); len(got.Notifications) != 1 || got.Notifications[0].Title != "2 pushes" {
 		t.Fatalf("after a restart %+v", got.Notifications)
+	}
+}
+
+func TestUnknownForwardedPushCountsAsAnotherComputer(t *testing.T) {
+	origins := trayOrigins{}
+	direct := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/git/project.git/git-receive-pack", nil)
+	direct.RemoteAddr = "127.0.0.1:50000"
+	origins.note(direct, "direct")
+	if !origins.fromThisComputer("direct") {
+		t.Fatal("a direct loopback push was not recorded as this computer")
+	}
+
+	resolver := requestctx.Resolver{TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}}
+	resolver.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+		origins.note(request, "unknown-forwarded")
+	})).ServeHTTP(httptest.NewRecorder(), direct)
+	if origins.fromThisComputer("unknown-forwarded") {
+		t.Fatal("a push with unknown forwarded provenance was recorded as this computer")
 	}
 }
 

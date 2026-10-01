@@ -32,9 +32,12 @@ import (
 // Only pages move (dashboardPage), and only for GET and HEAD without an
 // Authorization header, so a form or a password is never sent elsewhere.
 // Git, the API, health, assets, setup and downloads are answered where they
-// are asked. A request that arrived over HTTPS or from a trusted proxy never
-// moves: the proxy decides about its own scheme. A request that came through
-// the HTTPS address by a proxy OwnGit does not trust carries that address's
+// are asked. A request that arrived over HTTPS or has a forwarded client
+// address never moves: the proxy decides about its own scheme. A trusted peer
+// with no client-address header may also be a direct local browser when its
+// address is configured as a proxy; moving that request grants no local
+// authority. A request that came through the HTTPS address by a proxy OwnGit
+// does not trust carries that address's
 // own Host, which names no other port, so it does not move either, and a
 // move never leads back to itself. The target comes only from OwnGit's own
 // settings, never from the request. The redirect is temporary and not
@@ -54,8 +57,10 @@ const httpsRedirectWait = 2 * time.Second
 func (app *App) redirectToHTTPS(writer http.ResponseWriter, request *http.Request) bool {
 	info := requestctx.Of(request)
 	_, password := request.Header["Authorization"]
+	forwardedClient := info.ClientProvenance != requestctx.ClientDirect &&
+		(len(request.Header.Values("X-Forwarded-For")) != 0 || request.Header.Get("Forwarded") != "")
 	if request.Method != http.MethodGet && request.Method != http.MethodHead || !dashboardPage(request.URL.Path) ||
-		info.Secure() || info.FromProxy || password {
+		info.Secure() || forwardedClient || password {
 		return false
 	}
 	page := localNext(request.URL.RequestURI(), "")

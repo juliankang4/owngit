@@ -19,6 +19,21 @@ import (
 	"net/netip"
 )
 
+// ClientProvenance says how OwnGit established ClientAddress.
+type ClientProvenance uint8
+
+const (
+	// ClientDirect means ClientAddress came from the connection peer.
+	ClientDirect ClientProvenance = iota
+	// ClientForwardedKnown means a trusted proxy chain established the first
+	// untrusted address as the client boundary.
+	ClientForwardedKnown
+	// ClientForwardedUnknown means the connection peer is trusted as a proxy,
+	// but the original address could not be established. ClientAddress remains
+	// the nearest proxy so password limiting always has a key.
+	ClientForwardedUnknown
+)
+
 // Info is the effective origin of one request.
 type Info struct {
 	// Scheme is "https" when the request arrived over TLS or, through a
@@ -28,8 +43,9 @@ type Info struct {
 	// Host is the Host the client addressed, including any port.
 	Host string
 	// ClientAddress identifies the client for password lockouts and setup
-	// approval warnings: the host part of Peer, or Peer itself when it has
-	// no port, or the client address a trusted proxy forwarded.
+	// approval warnings: the connection peer for a direct request, the first
+	// untrusted address across a trusted proxy chain, or the nearest proxy
+	// when the original address is unknown.
 	ClientAddress string
 	// Peer is the raw network address of the connection's other end, which
 	// is the proxy's address for a proxied request.
@@ -38,8 +54,10 @@ type Info struct {
 	// X-Forwarded-Proto rather than from the connection.
 	Proxied bool
 	// FromProxy is true when Peer is a trusted proxy, whatever headers it
-	// sent: the request then came from a client the server cannot see.
-	FromProxy bool
+	// sent. ClientProvenance distinguishes a known client boundary from an
+	// unknown original address.
+	FromProxy        bool
+	ClientProvenance ClientProvenance
 }
 
 // Secure reports whether the client reached the server over HTTPS.
@@ -67,29 +85,33 @@ type Resolver struct {
 //
 //   - X-Forwarded-Proto sets Scheme when it is exactly one value, "http" or
 //     "https".
-//   - X-Forwarded-For sets ClientAddress to its rightmost entry, the one the
-//     proxy appended, when that entry is an IP address. Entries to its left
-//     came from the client and are never used.
+//   - X-Forwarded-For is walked from right to left. Trusted proxy addresses
+//     are crossed, and the first untrusted address becomes ClientAddress. A
+//     malformed hop stops the walk instead of allowing an earlier claimed
+//     address to take its place.
 //   - X-Forwarded-Host sets Host when it is exactly one value and HostAllowed
 //     accepts both it and the request's own Host. It can only choose among
 //     Hosts that already pass the Host check, never widen that check: a
 //     proxy may pass a client's own X-Forwarded-Host through, and a DNS
 //     rebinding page can send one.
 //
-// A missing, repeated, listed or malformed value leaves the value derived
-// from the connection. The RFC 7239 Forwarded header is ignored, and Peer is
-// always the raw connection address.
+// When no original address can be established, ClientAddress stays keyed to
+// the nearest proxy and ClientProvenance is ClientForwardedUnknown. The RFC
+// 7239 Forwarded header is ignored, and Peer is always the raw connection
+// address.
 func (resolver Resolver) Resolve(request *http.Request) Info {
 	info := direct(request)
 	if !resolver.trusts(info.Peer) {
 		return info
 	}
 	info.FromProxy = true
+	info.ClientProvenance = ClientForwardedUnknown
 	if proto, ok := singleValue(request.Header, "X-Forwarded-Proto"); ok && (proto == "http" || proto == "https") {
 		info.Scheme, info.Proxied = proto, true
 	}
-	if client, ok := lastForwardedFor(request.Header); ok {
+	if client, ok := resolver.forwardedClient(request.Header); ok {
 		info.ClientAddress = client
+		info.ClientProvenance = ClientForwardedKnown
 	}
 	if host, ok := singleValue(request.Header, "X-Forwarded-Host"); ok && resolver.HostAllowed != nil && resolver.HostAllowed(info.Host, info.Peer) && resolver.HostAllowed(host, info.Peer) {
 		info.Host = host

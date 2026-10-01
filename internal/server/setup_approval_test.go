@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 	"owngit/internal/webui"
 )
 
@@ -241,16 +243,16 @@ func TestApprovalRequestsAreRateLimitedPerAddress(t *testing.T) {
 	approvals := NewSetupApprovals()
 	approvals.Open()
 	for i := 0; i < approvalLimit; i++ {
-		if _, refusal := approvals.request("192.0.2.10", [32]byte{byte(i)}); refusal != nil {
+		if _, refusal := approvals.request("192.0.2.10", requestctx.ClientDirect, [32]byte{byte(i)}); refusal != nil {
 			t.Fatalf("request %d refused: %+v", i, refusal)
 		}
 		approvals.Shut()
 		approvals.Open()
 	}
-	if _, refusal := approvals.request("192.0.2.10", [32]byte{99}); refusal == nil || refusal.status != http.StatusTooManyRequests {
+	if _, refusal := approvals.request("192.0.2.10", requestctx.ClientDirect, [32]byte{99}); refusal == nil || refusal.status != http.StatusTooManyRequests {
 		t.Fatalf("request over the limit: %+v", refusal)
 	}
-	if _, refusal := approvals.request("192.0.2.11", [32]byte{100}); refusal != nil {
+	if _, refusal := approvals.request("192.0.2.11", requestctx.ClientDirect, [32]byte{100}); refusal != nil {
 		t.Fatalf("another address was limited: %+v", refusal)
 	}
 }
@@ -268,6 +270,21 @@ func TestApprovalRequestNeedsCSRFAndOrigin(t *testing.T) {
 	}
 	if _, ok := app.Approvals.Pending(); ok {
 		t.Fatal("a refused request is pending")
+	}
+}
+
+func TestApprovalWithUnknownForwardedClientIsNotLocal(t *testing.T) {
+	app, server, _ := approvalApp(t)
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+	})
+	browser := newSetupBrowser(t, server)
+	if status, _ := browser.ask(); status != http.StatusSeeOther {
+		t.Fatalf("approval request status=%d", status)
+	}
+	request, ok := app.Approvals.Pending()
+	if !ok || request.Loopback || !request.ForwardedUnknown {
+		t.Fatalf("unknown forwarded client request=%+v ok=%v", request, ok)
 	}
 }
 

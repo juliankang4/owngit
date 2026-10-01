@@ -710,11 +710,15 @@ func (f *flow) waitForBrowser() (bool, error) {
 // replaces says that another browser was approved before, whose setup
 // session approving this one ends.
 func (f *flow) approvalCard(request server.ApprovalRequest, replaces bool) (bool, error) {
-	from := displayValue(request.Address) + " (" + f.say("web_this") + ")"
+	address := displayValue(request.Address)
+	if request.ForwardedUnknown {
+		address = f.text(webui.MsgForwardedClientUnknown)
+	}
+	from := address + " (" + f.say("web_this") + ")"
 	style := cardStyle{}
 	var items []item
 	if !request.Loopback {
-		from = displayValue(request.Address) + " (" + f.say("web_other_dev") + ")"
+		from = address + " (" + f.say("web_other_dev") + ")"
 		style = cardStyle{titleRole: roleWarn, marker: "[!]", markerRole: roleWarn}
 		items = append(items, textItem(f.say("web_remote"), roleWarn), blankItem())
 	}

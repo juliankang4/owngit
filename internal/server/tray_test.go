@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -137,11 +138,15 @@ func TestTrayStatusListsPushesThroughTheServer(t *testing.T) {
 	}
 }
 
-// Only a program on this computer with the token reads the status or the
-// event feed, and the liveness check stays empty.
-func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
+// Only a program with the private tray token reads status or events. The
+// token remains authoritative when loopback is also configured as a trusted
+// proxy, and the liveness check stays empty.
+func TestTrayStatusRequiresThePrivateToken(t *testing.T) {
 	app := newConfiguredApp(t)
 	noErr(t, app.Hosts.Add("owngit.example"))
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+	})
 	handler := app.Handler()
 	for _, path := range []string{TrayStatusPath, TrayEventsPath} {
 		app.TrayToken, app.TrayProof = "", ""
@@ -159,12 +164,12 @@ func TestTrayStatusRefusesWithoutTheTokenOrFromElsewhere(t *testing.T) {
 			"wrong token": {"another-token", nil, http.StatusUnauthorized, "unauthorized"},
 			"basic auth": {"", func(request *http.Request) { request.SetBasicAuth("owngit", trayTestToken) },
 				http.StatusUnauthorized, "unauthorized"},
-			"another device": {trayTestToken, func(request *http.Request) {
+			"token from another address": {trayTestToken, func(request *http.Request) {
 				request.Host, request.RemoteAddr = "owngit.example:7654", "192.0.2.10:50000"
-			}, http.StatusForbidden, "not_local"},
-			"forwarded by a proxy here": {trayTestToken, func(request *http.Request) {
+			}, http.StatusOK, ""},
+			"token through a proxy": {trayTestToken, func(request *http.Request) {
 				request.Header.Set("X-Forwarded-For", "192.0.2.10")
-			}, http.StatusForbidden, "not_local"},
+			}, http.StatusOK, ""},
 			"post":        {trayTestToken, func(request *http.Request) { request.Method = http.MethodPost }, http.StatusMethodNotAllowed, "method_not_allowed"},
 			"no nonce":    {trayTestToken, func(request *http.Request) { request.Header.Del(state.TrayNonceHeader) }, http.StatusBadRequest, "invalid_nonce"},
 			"short nonce": {trayTestToken, func(request *http.Request) { request.Header.Set(state.TrayNonceHeader, "AAAA") }, http.StatusBadRequest, "invalid_nonce"},

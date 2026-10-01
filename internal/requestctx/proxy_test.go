@@ -119,37 +119,71 @@ func TestForwardedHeadersFromTrustedProxies(t *testing.T) {
 	}{
 		{"all three headers", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "203.0.113.9"}, {"X-Forwarded-Proto", "https"}, {"X-Forwarded-Host", "gitbox.test"}},
-			Info{"https", "gitbox.test", "203.0.113.9", "192.0.2.10:5000", true, true}},
+			Info{"https", "gitbox.test", "203.0.113.9", "192.0.2.10:5000", true, true, ClientForwardedKnown}},
 		{"proxy in a trusted range", "10.1.200.3:5000",
 			[][2]string{{"X-Forwarded-For", "198.51.100.4"}, {"X-Forwarded-Proto", "https"}},
-			Info{"https", "127.0.0.1:7654", "198.51.100.4", "10.1.200.3:5000", true, true}},
+			Info{"https", "127.0.0.1:7654", "198.51.100.4", "10.1.200.3:5000", true, true, ClientForwardedKnown}},
 		{"IPv6 proxy with a zone", "[fd00::10%en0]:5000",
 			[][2]string{{"X-Forwarded-For", "2001:db8::7"}, {"X-Forwarded-Proto", "http"}},
-			Info{"http", "127.0.0.1:7654", "2001:db8::7", "[fd00::10%en0]:5000", true, true}},
+			Info{"http", "127.0.0.1:7654", "2001:db8::7", "[fd00::10%en0]:5000", true, true, ClientForwardedKnown}},
 		{"IPv4-mapped peer", "[::ffff:192.0.2.10]:5000",
 			[][2]string{{"X-Forwarded-For", "203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "[::ffff:192.0.2.10]:5000", false, true}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "[::ffff:192.0.2.10]:5000", false, true, ClientForwardedKnown}},
 		{"peer without a port", "192.0.2.10",
 			[][2]string{{"X-Forwarded-Proto", "https"}},
-			Info{"https", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10", true, true}},
+			Info{"https", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10", true, true, ClientForwardedUnknown}},
 		{"client-supplied entries left of the proxy's are ignored", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "127.0.0.1, 10.0.0.1, 203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true, ClientForwardedKnown}},
 		{"repeated header lines form one list", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "127.0.0.1"}, {"X-Forwarded-For", "203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true, ClientForwardedKnown}},
 		{"forwarded address in IPv4-mapped form", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-For", "::ffff:203.0.113.9"}},
-			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true}},
+			Info{"http", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", false, true, ClientForwardedKnown}},
 		{"Host with a port", "192.0.2.10:5000",
 			[][2]string{{"X-Forwarded-Host", "gitbox.test:8443"}, {"X-Forwarded-Proto", "https"}},
-			Info{"https", "gitbox.test:8443", "192.0.2.10", "192.0.2.10:5000", true, true}},
+			Info{"https", "gitbox.test:8443", "192.0.2.10", "192.0.2.10:5000", true, true, ClientForwardedUnknown}},
 		{"no forwarded headers", "192.0.2.10:5000", nil,
-			Info{"http", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10:5000", false, true}},
+			Info{"http", "127.0.0.1:7654", "192.0.2.10", "192.0.2.10:5000", false, true, ClientForwardedUnknown}},
 	} {
 		if got := resolver.Resolve(proxyRequest(test.peer, test.headers)); got != test.want {
 			t.Errorf("%s: %#v, want %#v", test.name, got, test.want)
 		}
+	}
+}
+
+func TestForwardedClientWalksTheTrustedProxyChain(t *testing.T) {
+	const peer = "192.0.2.10:5000"
+	for _, test := range []struct {
+		name       string
+		proxies    []string
+		headers    [][2]string
+		want       string
+		provenance ClientProvenance
+	}{
+		{"two hops", []string{"192.0.2.10", "10.1.0.0/16"},
+			[][2]string{{"X-Forwarded-For", "198.51.100.7, 10.1.8.9"}}, "198.51.100.7", ClientForwardedKnown},
+		{"three hops in repeated headers", []string{"192.0.2.10", "10.0.0.0/8"},
+			[][2]string{{"X-Forwarded-For", "198.51.100.7"}, {"X-Forwarded-For", "10.2.0.4, 10.1.8.9"}}, "198.51.100.7", ClientForwardedKnown},
+		{"IPv4-mapped client", []string{"192.0.2.10", "10.1.0.0/16"},
+			[][2]string{{"X-Forwarded-For", "::ffff:198.51.100.7, 10.1.8.9"}}, "198.51.100.7", ClientForwardedKnown},
+		{"forged prefix stops at the real client", []string{"192.0.2.10", "10.1.0.0/16"},
+			[][2]string{{"X-Forwarded-For", "127.0.0.1, 198.51.100.7, 10.1.8.9"}}, "198.51.100.7", ClientForwardedKnown},
+		{"untrusted middle stops the walk", []string{"192.0.2.10"},
+			[][2]string{{"X-Forwarded-For", "198.51.100.7, 10.1.8.9"}}, "10.1.8.9", ClientForwardedKnown},
+		{"all hops trusted leave the nearest proxy", []string{"192.0.2.10", "10.1.0.0/16", "198.51.100.0/24"},
+			[][2]string{{"X-Forwarded-For", "198.51.100.7, 10.1.8.9"}}, "192.0.2.10", ClientForwardedUnknown},
+		{"malformed hop stops the walk", []string{"192.0.2.10", "10.1.0.0/16"},
+			[][2]string{{"X-Forwarded-For", "198.51.100.7, unknown, 10.1.8.9"}}, "192.0.2.10", ClientForwardedUnknown},
+		{"missing address leaves the nearest proxy", []string{"192.0.2.10"}, nil, "192.0.2.10", ClientForwardedUnknown},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			info := trustingResolver(t, test.proxies...).Resolve(proxyRequest(peer, test.headers))
+			if info.ClientAddress != test.want || info.ClientProvenance != test.provenance {
+				t.Fatalf("client address %q provenance %v, want %q provenance %v", info.ClientAddress, info.ClientProvenance, test.want, test.provenance)
+			}
+		})
 	}
 }
 
@@ -179,8 +213,8 @@ func TestMalformedForwardedHeadersFallBackToTheConnection(t *testing.T) {
 			headers = append(headers, [2]string{"X-Forwarded-For", value})
 		}
 		info := resolver.Resolve(proxyRequest(peer, headers))
-		if info.ClientAddress != "192.0.2.10" || info.Scheme != "https" {
-			t.Errorf("X-Forwarded-For %q: client=%q scheme=%q, want the proxy's own address and https", forwardedFor, info.ClientAddress, info.Scheme)
+		if info.ClientAddress != "192.0.2.10" || info.ClientProvenance != ClientForwardedUnknown || info.Scheme != "https" {
+			t.Errorf("X-Forwarded-For %q: client=%q provenance=%v scheme=%q, want the proxy's own address, unknown provenance, and https", forwardedFor, info.ClientAddress, info.ClientProvenance, info.Scheme)
 		}
 	}
 	for _, forwardedHost := range [][]string{
@@ -213,6 +247,7 @@ func TestMalformedForwardedHeadersFallBackToTheConnection(t *testing.T) {
 	forwarded := proxyRequest(peer, [][2]string{{"Forwarded", `for=203.0.113.9;proto=https;host=gitbox.test`}})
 	want := direct(forwarded)
 	want.FromProxy = true
+	want.ClientProvenance = ClientForwardedUnknown
 	if got := resolver.Resolve(forwarded); got != want {
 		t.Errorf("Forwarded header applied: %#v, want %#v", got, want)
 	}
@@ -225,7 +260,7 @@ func TestMiddlewareAttachesTheProxyView(t *testing.T) {
 	resolver.Middleware(http.HandlerFunc(func(_ http.ResponseWriter, inner *http.Request) {
 		attached = Of(inner)
 	})).ServeHTTP(httptest.NewRecorder(), request)
-	if want := (Info{"https", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", true, true}); attached != want {
+	if want := (Info{"https", "127.0.0.1:7654", "203.0.113.9", "192.0.2.10:5000", true, true, ClientForwardedKnown}); attached != want {
 		t.Fatalf("attached %#v, want %#v", attached, want)
 	}
 	// A request that skipped the middleware never trusts forwarded headers.

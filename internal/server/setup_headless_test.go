@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"net/url"
 	"strings"
 	"testing"
@@ -139,6 +140,22 @@ func TestSetupFromAPublicAddressSelectsTheSharedPassword(t *testing.T) {
 		if password != public || strings.Contains(page, note) != public {
 			t.Errorf("peer %s: password selected=%v, note shown=%v, want %v", peer, password, strings.Contains(page, note), public)
 		}
+	}
+}
+
+func TestSetupWithUnknownForwardedClientSelectsTheSharedPassword(t *testing.T) {
+	app, store, _ := newTestApp(t)
+	app.Network = NewLiveNetwork(LiveNetworkConfig{
+		Proxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.1/32")}, Hosts: app.Hosts,
+	})
+	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+	page := browserFrom(t, app, "127.0.0.1:40000").redeem("synthetic-owner-token")
+	if !strings.Contains(page, `name="access_mode" value="password" checked`) ||
+		!strings.Contains(page, "Forwarded request, original address unknown") {
+		t.Fatalf("unknown forwarded client did not get the safe default and warning:\n%s", page)
+	}
+	if got := webui.Text(webui.LangKO, webui.MsgForwardedClientUnknown); got != "프록시를 거쳐 온 접속, 원래 주소 확인 불가" {
+		t.Fatalf("Korean unknown-client warning %q", got)
 	}
 }
 

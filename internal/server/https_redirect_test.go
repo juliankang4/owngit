@@ -305,6 +305,12 @@ func TestBrowserPagesMoveToTheBaseURLOnceItsProxyServedIt(t *testing.T) {
 	if location := direct(opened); location != base+"/activity?days=7" {
 		t.Fatalf("moved to %q", location)
 	}
+	// A browser on the server computer can use the same loopback address as
+	// the trusted proxy. With no forwarding address, moving it grants no
+	// local authority and gets it onto the proven HTTPS address.
+	if location := movedTo(sendDirect(app, http.MethodGet, "/activity?days=7", opened, "127.0.0.1:50123")); location != base+"/activity?days=7" {
+		t.Fatalf("same-computer browser moved to %q", location)
+	}
 	// The proxy decides about plain HTTP it passes on, on any port.
 	fromProxy("git.example.internal:8080", "http")
 	for _, host := range []string{"git.example.internal", "git.example.internal:443", "192.168.1.5:7654"} {

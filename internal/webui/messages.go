@@ -197,6 +197,9 @@ const (
 	// MsgSetupPublicNetwork explains why shared-password access is selected
 	// for setup opened from a public Internet address.
 	MsgSetupPublicNetwork MessageCode = "setup.access.public_network"
+	// MsgForwardedClientUnknown says a trusted proxy did not establish the
+	// request's original address.
+	MsgForwardedClientUnknown MessageCode = "request.forwarded_client_unknown"
 
 	MsgSetupSubmit    MessageCode = "setup.submit"
 	MsgSetupFailed    MessageCode = "setup.failed"
@@ -752,6 +755,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupPublicNetwork: {
 		en: "You opened setup from a public Internet address, so \"Anyone on this network\" would mean anyone on the Internet. OwnGit selected the shared password instead.",
 		ko: "공인 인터넷 주소에서 설정 화면을 열었으므로 \"이 네트워크의 모든 사람\"은 인터넷의 모든 사람이 됩니다. 그래서 OwnGit이 공용 비밀번호를 대신 선택해 두었습니다.",
+	},
+	MsgForwardedClientUnknown: {
+		en: "Forwarded request, original address unknown",
+		ko: "프록시를 거쳐 온 접속, 원래 주소 확인 불가",
 	},
 	MsgSetupKeepHostLabel: {
 		en: "Keep accepting this address after a restart:",

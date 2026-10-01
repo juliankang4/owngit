@@ -56,15 +56,15 @@ func TestInfoMatchesDirectConnectionDerivation(t *testing.T) {
 		tls    bool
 		want   Info
 	}{
-		{"IPv4 plain", "127.0.0.1:7654", "192.0.2.4:51234", false, Info{"http", "127.0.0.1:7654", "192.0.2.4", "192.0.2.4:51234", false, false}},
-		{"IPv4 TLS", "git.example:443", "192.0.2.4:51234", true, Info{"https", "git.example:443", "192.0.2.4", "192.0.2.4:51234", false, false}},
-		{"IPv6 plain", "[::1]:7654", "[::1]:40000", false, Info{"http", "[::1]:7654", "::1", "[::1]:40000", false, false}},
-		{"IPv6 zone TLS", "git.example", "[fe80::1%en0]:40000", true, Info{"https", "git.example", "fe80::1%en0", "[fe80::1%en0]:40000", false, false}},
-		{"Host without port", "localhost", "198.51.100.7:1", false, Info{"http", "localhost", "198.51.100.7", "198.51.100.7:1", false, false}},
-		{"peer without port", "localhost:7654", "192.0.2.4", false, Info{"http", "localhost:7654", "192.0.2.4", "192.0.2.4", false, false}},
-		{"bracketed peer without port", "localhost:7654", "[::1]", false, Info{"http", "localhost:7654", "[::1]", "[::1]", false, false}},
-		{"malformed peer", "localhost:7654", "not an address", false, Info{"http", "localhost:7654", "not an address", "not an address", false, false}},
-		{"empty peer", "localhost:7654", "", false, Info{"http", "localhost:7654", "", "", false, false}},
+		{"IPv4 plain", "127.0.0.1:7654", "192.0.2.4:51234", false, Info{"http", "127.0.0.1:7654", "192.0.2.4", "192.0.2.4:51234", false, false, ClientDirect}},
+		{"IPv4 TLS", "git.example:443", "192.0.2.4:51234", true, Info{"https", "git.example:443", "192.0.2.4", "192.0.2.4:51234", false, false, ClientDirect}},
+		{"IPv6 plain", "[::1]:7654", "[::1]:40000", false, Info{"http", "[::1]:7654", "::1", "[::1]:40000", false, false, ClientDirect}},
+		{"IPv6 zone TLS", "git.example", "[fe80::1%en0]:40000", true, Info{"https", "git.example", "fe80::1%en0", "[fe80::1%en0]:40000", false, false, ClientDirect}},
+		{"Host without port", "localhost", "198.51.100.7:1", false, Info{"http", "localhost", "198.51.100.7", "198.51.100.7:1", false, false, ClientDirect}},
+		{"peer without port", "localhost:7654", "192.0.2.4", false, Info{"http", "localhost:7654", "192.0.2.4", "192.0.2.4", false, false, ClientDirect}},
+		{"bracketed peer without port", "localhost:7654", "[::1]", false, Info{"http", "localhost:7654", "[::1]", "[::1]", false, false, ClientDirect}},
+		{"malformed peer", "localhost:7654", "not an address", false, Info{"http", "localhost:7654", "not an address", "not an address", false, false, ClientDirect}},
+		{"empty peer", "localhost:7654", "", false, Info{"http", "localhost:7654", "", "", false, false, ClientDirect}},
 	}
 	for _, test := range cases {
 		for _, forwarded := range []bool{false, true} {

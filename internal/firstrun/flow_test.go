@@ -500,6 +500,30 @@ func TestANewRequestIsShownAfterAnEarlierApproval(t *testing.T) {
 	}
 }
 
+func TestApprovalCardNamesAnUnknownForwardedClient(t *testing.T) {
+	h := newHarness(t, "127.0.0.1:7654", Tailscale{})
+	h.send("n\r")
+	approved, err := h.flow.approvalCard(server.ApprovalRequest{
+		Code: "K7Q-4MP", Address: "127.0.0.1", ForwardedUnknown: true,
+	}, false)
+	if err != nil || approved {
+		t.Fatalf("approved=%v err=%v", approved, err)
+	}
+	out := h.out.String()
+	for _, want := range []string{
+		"Forwarded request, original address unknown",
+		"another device",
+		"This request comes from another device.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("approval card lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "127.0.0.1") || strings.Contains(out, "this computer") {
+		t.Fatalf("approval card claims a local address:\n%s", out)
+	}
+}
+
 func TestNetworkReach(t *testing.T) {
 	for _, c := range []struct {
 		listen, origin string

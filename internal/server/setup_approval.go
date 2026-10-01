@@ -48,10 +48,15 @@ type ApprovalRequest struct {
 	ID string
 	// Code is the comparison code, for example "K7Q-4MP".
 	Code string
-	// Address is the IP address the request came from.
+	// Address is the established client address, or the nearest proxy address
+	// when the original address is unknown.
 	Address string
-	// Loopback is true when the request came from this computer.
+	// Loopback is true only when the direct connection proves the request came
+	// from this computer.
 	Loopback bool
+	// ForwardedUnknown is true when a trusted proxy forwarded the request but
+	// did not establish the original address.
+	ForwardedUnknown bool
 }
 
 // ErrApprovalGone means the request was no longer waiting: it expired, was
@@ -220,7 +225,7 @@ type approvalRefusal struct {
 
 // request records a new request from address for the browser whose cookie
 // hashes to cookie. The same browser asking again gets its current request.
-func (approvals *SetupApprovals) request(address string, cookie [32]byte) (ApprovalRequest, *approvalRefusal) {
+func (approvals *SetupApprovals) request(address string, provenance requestctx.ClientProvenance, cookie [32]byte) (ApprovalRequest, *approvalRefusal) {
 	approvals.mu.Lock()
 	defer approvals.mu.Unlock()
 	now := approvals.now()
@@ -241,8 +246,12 @@ func (approvals *SetupApprovals) request(address string, cookie [32]byte) (Appro
 	id, code := auth.RandomToken(16), approvalCode()
 	ip := net.ParseIP(address)
 	approvals.current = &approvalRequest{
-		ApprovalRequest: ApprovalRequest{ID: id, Code: code, Address: address, Loopback: ip != nil && ip.IsLoopback()},
-		cookie:          cookie, status: approvalPending, deadline: now.Add(approvalLifetime),
+		ApprovalRequest: ApprovalRequest{
+			ID: id, Code: code, Address: address,
+			Loopback:         provenance == requestctx.ClientDirect && ip != nil && ip.IsLoopback(),
+			ForwardedUnknown: provenance == requestctx.ClientForwardedUnknown,
+		},
+		cookie: cookie, status: approvalPending, deadline: now.Add(approvalLifetime),
 	}
 	approvals.recent[address] = append(approvals.recent[address], now)
 	approvals.signal()
@@ -325,12 +334,13 @@ func approvalCode() string {
 	return string(code)
 }
 
-func requestAddress(request *http.Request) string {
-	address := requestctx.Of(request).ClientAddress
+func requestClient(request *http.Request) (string, requestctx.ClientProvenance) {
+	info := requestctx.Of(request)
+	address := info.ClientAddress
 	if ip := net.ParseIP(address); ip != nil {
-		return ip.String()
+		address = ip.String()
 	}
-	return address
+	return address, info.ClientProvenance
 }
 
 func (app *App) approvalCookieHash(request *http.Request) ([32]byte, bool) {
@@ -447,7 +457,8 @@ func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *
 		}
 	}
 	token := auth.RandomToken(32)
-	_, refusal := app.Approvals.request(requestAddress(request), sha256.Sum256([]byte(token)))
+	address, provenance := requestClient(request)
+	_, refusal := app.Approvals.request(address, provenance, sha256.Sum256([]byte(token)))
 	if refusal != nil {
 		app.renderApprovalRefusal(writer, request, *refusal)
 		return

@@ -20,11 +20,10 @@ import (
 	"owngit/internal/webui"
 )
 
-// TrayStatusPath is the status the tray icon of this computer reads. It
-// answers only a request that comes straight from this computer, not through
-// a proxy, and that carries the token of state.TrayAccessFile, which only
-// the account that runs OwnGit can read. So neither another device nor
-// another account on this computer learns the recent pushes it lists.
+// TrayStatusPath is the status the tray icon reads. It answers only a
+// request carrying the token of state.TrayAccessFile, which only the account
+// that runs OwnGit can read. The token proves the icon independently of how a
+// trusted proxy setting classifies the connection.
 // Every answer carries the proof of the request's nonce (state.TrayProof),
 // so the icon knows it came from this server. HealthPath stays without
 // data.
@@ -129,8 +128,8 @@ func (app *App) handleTrayStatus(writer http.ResponseWriter, request *http.Reque
 }
 
 // trayRequest answers a request for the tray that this server does not
-// answer, and otherwise returns its nonce. Only a GET straight from this
-// computer with the token of the tray access file is answered.
+// answer, and otherwise returns its nonce. Only a GET with the token of the
+// tray access file is answered.
 func (app *App) trayRequest(writer http.ResponseWriter, request *http.Request) (string, bool) {
 	if app.TrayToken == "" || app.TrayProof == "" {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "Not found.", nil)
@@ -139,10 +138,6 @@ func (app *App) trayRequest(writer http.ResponseWriter, request *http.Request) (
 	if request.Method != http.MethodGet {
 		writer.Header().Set("Allow", "GET")
 		writeAPIError(writer, http.StatusMethodNotAllowed, "method_not_allowed", "Use GET.", nil)
-		return "", false
-	}
-	if !fromThisComputer(request) {
-		writeAPIError(writer, http.StatusForbidden, "not_local", "The tray icon's reads answer only programs on the computer that runs OwnGit.", nil)
 		return "", false
 	}
 	token, found := strings.CutPrefix(request.Header.Get("Authorization"), "Bearer ")
@@ -173,7 +168,7 @@ func (app *App) writeTrayAnswer(writer http.ResponseWriter, nonce string, value 
 // reached, and not through a proxy, which would forward others' requests.
 func fromThisComputer(request *http.Request) bool {
 	info := requestctx.Of(request)
-	if info.FromProxy || request.Header.Get("X-Forwarded-For") != "" || request.Header.Get("Forwarded") != "" {
+	if info.ClientProvenance != requestctx.ClientDirect || request.Header.Get("X-Forwarded-For") != "" || request.Header.Get("Forwarded") != "" {
 		return false
 	}
 	if loopbackPeer(info.Peer) {
