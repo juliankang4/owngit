@@ -174,8 +174,9 @@ func restoreImportRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoverySta
 
 // settleImportAuthority settles import authority that belonged to a running
 // process: an active run becomes interrupted and a planning, applied or
-// invalidated publication intent becomes invalidated without HEAD
-// ownership. Neither can continue in a restored copy. A backup applies it to
+// invalidated publication intent becomes invalidated. Every unfinished intent
+// loses HEAD ownership in the copy, including unresolved publications.
+// Neither can continue in a restored copy. A backup applies it to
 // its copy, never to the state, so a running import carries on; a restore
 // applies it again, for backups made before backups settled it.
 func settleImportAuthority(snapshot *RecoveryState) {
@@ -198,9 +199,11 @@ func settleImportAuthority(snapshot *RecoveryState) {
 	snapshot.ImportRuns = runs
 	intents := make([]ImportIntent, len(snapshot.ImportIntents))
 	for index, intent := range snapshot.ImportIntents {
+		if intent.Status != ImportIntentComplete {
+			intent.HeadOwned = false
+		}
 		if intent.Status == ImportIntentPlanning || intent.Status == ImportIntentApplied || intent.Status == ImportIntentInvalidated {
 			intent.Status = ImportIntentInvalidated
-			intent.HeadOwned = false
 			if intent.Reason == "" {
 				intent.Reason = "unfinished publication authority invalidated by restore"
 			}

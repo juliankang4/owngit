@@ -8,6 +8,48 @@ import (
 	"testing"
 )
 
+func TestUnresolvedHEADOwnershipIsNotExportedOrRestored(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+	noErr(t, store.AddRepository(ctx, Repository{ID: "project", Name: "Project", CreatedAt: testImportNow()}))
+	configureTestImportSource(t, store, "project")
+	run := beginTestImportRun(t, store, strings.Repeat("b", 32), "project", ImportKindRefresh, ImportRunPublishing)
+	head := "symbolic refs/heads/main " + strings.Repeat("a", 40)
+	intent := ImportIntent{ID: strings.Repeat("c", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
+		Status: ImportIntentPlanning, Expected: map[string]string{ImportHeadRef: head}, Desired: map[string]string{ImportHeadRef: head},
+		Observed: map[string]string{ImportHeadRef: head}, Retained: map[string]string{}, CreatedAt: testImportNow()}
+	noErr(t, store.CreateImportIntent(ctx, intent))
+	noErr(t, store.UpdateImportIntentHEADOwnership(ctx, intent.ID, ImportIntentApplied, "", testImportNow()))
+	noErr(t, store.UpdateImportIntent(ctx, intent.ID, ImportIntentUnresolved, "", "", "inspection unavailable", testImportNow()))
+	run.Status, run.FinishedAt = ImportRunUnresolved, testImportNow()
+	noErr(t, store.FinishImportRun(ctx, run))
+	local, exists, err := store.ImportIntent(ctx, intent.ID)
+	noErr(t, err)
+	if !exists || !local.HeadOwned {
+		t.Fatal("local historical write proof was lost")
+	}
+	snapshot, err := store.RecoverySnapshot(ctx)
+	noErr(t, err)
+	if len(snapshot.ImportIntents) != 1 || snapshot.ImportIntents[0].HeadOwned {
+		t.Error("unfinished HEAD ownership was exported")
+	}
+	// Restore must also settle snapshots made without the exporter guard.
+	snapshot.ImportIntents[0].HeadOwned = true
+	restored := openTestStore(t)
+	noErr(t, restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
+	copy, exists, err := restored.ImportIntent(ctx, intent.ID)
+	noErr(t, err)
+	if !exists || copy.HeadOwned || copy.Status != ImportIntentUnresolved {
+		t.Errorf("unfinished ownership restored: %+v", copy)
+	}
+	local, exists, err = store.ImportIntent(ctx, intent.ID)
+	noErr(t, err)
+	if !exists || !local.HeadOwned {
+		t.Fatal("portable settlement altered the serving copy")
+	}
+}
+
 func TestImportRefLockEvidenceSerializationIsBounded(t *testing.T) {
 	store := openTestStore(t)
 	proof := ImportRefLock{ID: strings.Repeat("a", 32), RepositoryID: "project", RunID: strings.Repeat("b", 32),
