@@ -492,7 +492,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 	switch {
 	case len(tab) == 0:
 		page.Tab = webui.RepoTabOverview
-		err = app.fillRepositoryOverview(request, &page, summary, snapshot.ActivityKey, requestedRef)
+		err = app.fillRepositoryOverview(request, &page, snapshot, requestedRef)
 		if requestedRef != "" && page.Ref.Missing {
 			status = http.StatusNotFound
 		}
@@ -723,10 +723,22 @@ const (
 // side panel (languages, activity, open pull requests, the default branch
 // check, ref tips and kept history) is read on its own, and one that cannot
 // be read says so on the page. It is never shown as empty, zero or absent.
-func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, activityKey, requested string) error {
+func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) error {
+	summary := snapshot.Summary
 	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
 	if err != nil {
 		return err
+	}
+	// A writer may have advanced refs during selection. Keep this overview's
+	// head and README on its original listing; other selections keep their rule.
+	if resolved {
+		oid, err := app.Repositories.RefCommitAt(request.Context(), page.Repo.ID, snapshot, selectedRef)
+		if err != nil {
+			return err
+		}
+		if oid != "" {
+			page.Ref.Revision, page.Ref.ShortRevision = oid, shortOID(oid)
+		}
 	}
 	if page.Ref.Missing {
 		code := webui.MsgRepoRefMissing
@@ -792,12 +804,12 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	}
 
 	showAll := request.URL.Query().Get(overviewAllRefsQuery) == overviewAllRefsValue
-	branchTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Branches)
+	branchTips, err := app.Repositories.RefTipsAt(request.Context(), page.Repo.ID, snapshot, false)
 	page.Overview.BranchTipsKnown = err == nil
 	if err != nil {
 		logFailure(request, "branch tip read", err)
 	}
-	tagTips, err := app.Repositories.RefTips(request.Context(), page.Repo.ID, summary.Tags)
+	tagTips, err := app.Repositories.RefTipsAt(request.Context(), page.Repo.ID, snapshot, true)
 	page.Overview.TagTipsKnown = err == nil
 	if err != nil {
 		logFailure(request, "tag tip read", err)
@@ -823,7 +835,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	}
 	var retained []repository.RetainedRef
 	if !page.Shared {
-		retained, err = app.Repositories.RetainedRefs(request.Context(), page.Repo.ID)
+		retained, err = app.Repositories.RetainedRefsAt(request.Context(), page.Repo.ID, snapshot)
 		page.Overview.RetainedKnown = err == nil
 		if err != nil {
 			logFailure(request, "kept history read", err)
@@ -863,7 +875,7 @@ func (app *App) fillRepositoryOverview(request *http.Request, page *webui.Reposi
 	}
 
 	if !page.Shared {
-		page.Overview.Activity = app.repositoryActivityGraph(request, page, activityKey)
+		page.Overview.Activity = app.repositoryActivityGraph(request, page, snapshot.ActivityKey)
 	}
 	return nil
 }

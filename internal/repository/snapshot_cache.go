@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -18,8 +19,12 @@ import (
 // found every ref unchanged, releases the lock without advancing it. Refs
 // written to the storage folder without OwnGit are not seen until OwnGit next
 // changes a ref in that repository or restarts.
+// snapshotCapacity bounds retained snapshots and all their derived reads.
+const snapshotCapacity = 64
+
 type snapshotCache struct {
-	mu sync.Mutex
+	mu    sync.Mutex
+	clock uint64
 	// root is the storage folder the entries were read from. Entries of an
 	// earlier root are dropped when a snapshot of another root is stored.
 	root    string
@@ -31,6 +36,7 @@ type snapshotEntry struct {
 	path       string
 	generation uint64
 	snapshot   RefSnapshot
+	used       uint64
 }
 
 // RefSnapshot returns the repository's ref snapshot. It reads the refs with
@@ -100,6 +106,10 @@ func (m *Manager) lockedRefSnapshot(ctx context.Context, id, repositoryPath stri
 		}
 		return RefSnapshot{}, err
 	}
+	snapshot.reads = &snapshotReads{
+		path: repositoryPath, lock: lock, gate: make(chan struct{}, 1),
+		branchRefs: slices.Clone(snapshot.Summary.Branches), tagRefs: slices.Clone(snapshot.Summary.Tags), refs: slices.Clone(snapshot.refs),
+	}
 	// A snapshot missing a field because a follow-up read failed is returned
 	// once, like an error, and read again next time.
 	if complete {
@@ -138,6 +148,9 @@ func (cache *snapshotCache) lookup(id, path string, lock *gitexec.RepositoryLock
 	if !ok || entry.lock != lock || entry.path != path || entry.generation != lock.Generation() {
 		return RefSnapshot{}, false
 	}
+	cache.clock++
+	entry.used = cache.clock
+	cache.entries[id] = entry
 	return entry.snapshot.clone(), true
 }
 
@@ -164,7 +177,17 @@ func (cache *snapshotCache) store(id, path string, lock *gitexec.RepositoryLock,
 	if entry, ok := cache.entries[id]; ok && entry.lock == lock && entry.path == path && entry.generation >= generation {
 		return
 	}
-	cache.entries[id] = snapshotEntry{lock: lock, path: path, generation: generation, snapshot: snapshot.clone()}
+	cache.clock++
+	cache.entries[id] = snapshotEntry{lock: lock, path: path, generation: generation, snapshot: snapshot.clone(), used: cache.clock}
+	for len(cache.entries) > snapshotCapacity {
+		oldest, used := "", cache.clock
+		for candidate, entry := range cache.entries {
+			if candidate != id && entry.used <= used {
+				oldest, used = candidate, entry.used
+			}
+		}
+		delete(cache.entries, oldest)
+	}
 }
 
 func (cache *snapshotCache) drop(id string) {
@@ -194,5 +217,176 @@ func (snapshot RefSnapshot) clone() RefSnapshot {
 	snapshot.Summary.Tags = slices.Clone(snapshot.Summary.Tags)
 	snapshot.Head.Parents = slices.Clone(snapshot.Head.Parents)
 	snapshot.activityRefs = slices.Clone(snapshot.activityRefs)
+	snapshot.refs = slices.Clone(snapshot.refs)
 	return snapshot
+}
+
+// snapshotReads belongs to one immutable ref snapshot, not to a request or
+// an authorization decision. Its gate coalesces readers and lets waiters cancel.
+// Failures are never stored. Commit and peeled-tag data is keyed by object ID.
+type snapshotReads struct {
+	path          string
+	lock          *gitexec.RepositoryLock
+	gate          chan struct{}
+	branchRefs    []Ref
+	tagRefs       []Ref
+	refs          []Ref
+	metadata      map[string]Commit
+	peeled        map[string]peeledRetainedObject
+	branches      map[string]Commit
+	tags          map[string]Commit
+	retained      []RetainedRef
+	retainedKnown bool
+}
+
+func (m *Manager) snapshotRead(ctx context.Context, id string, snapshot RefSnapshot) (*snapshotReads, func(), error) {
+	if snapshot.Stale {
+		return nil, nil, ErrRepositoryInUse
+	}
+	path, _, exists, err := m.ExistingPath(ctx, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !exists {
+		return nil, nil, ErrRepositoryNotFound
+	}
+	reads := snapshot.reads
+	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) {
+		return nil, nil, errors.New("ref snapshot belongs to another repository")
+	}
+	if err := readLock(ctx, reads.lock); err != nil {
+		return nil, nil, err
+	}
+	select {
+	case reads.gate <- struct{}{}:
+		return reads, func() { <-reads.gate; reads.lock.RUnlock() }, nil
+	case <-ctx.Done():
+		reads.lock.RUnlock()
+		return nil, nil, ctx.Err()
+	}
+}
+
+// RefTipsAt returns branch or tag tips from exactly snapshot's refs, even if
+// a writer has since advanced them. Only immutable object IDs reach Git.
+func (m *Manager) RefTipsAt(ctx context.Context, id string, snapshot RefSnapshot, tags bool) (map[string]Commit, error) {
+	reads, release, err := m.snapshotRead(ctx, id, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	cached, refs := &reads.branches, reads.branchRefs
+	if tags {
+		cached, refs = &reads.tags, reads.tagRefs
+	}
+	if *cached == nil {
+		tips, err := refTipsWithReads(ctx, m.Git, reads.path, refs, reads)
+		if err != nil {
+			return nil, err
+		}
+		*cached = tips
+	}
+	tips := make(map[string]Commit, len(*cached))
+	for name, commit := range *cached {
+		commit.Parents = slices.Clone(commit.Parents)
+		tips[name] = commit
+	}
+	return tips, nil
+}
+
+// RefCommitAt pins an already selected full ref to snapshot. An absent ref
+// returns no OID, so callers can keep their existing handling of other refs.
+func (m *Manager) RefCommitAt(ctx context.Context, id string, snapshot RefSnapshot, full string) (string, error) {
+	reads, release, err := m.snapshotRead(ctx, id, snapshot)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	for _, ref := range reads.refs {
+		if ref.Name != full {
+			continue
+		}
+		if ref.Type == "commit" {
+			return ref.OID, nil
+		}
+		if ref.Type == "tag" {
+			peeled, err := readPeeledTags(ctx, m.Git, reads.path, []string{ref.OID}, reads)
+			if err != nil {
+				return "", err
+			}
+			if object := peeled[ref.OID]; object.objectType == "commit" {
+				return object.oid, nil
+			}
+		}
+		return "", ErrNotFound
+	}
+	return "", nil
+}
+
+// RetainedRefsAt keeps history and its provenance tied to snapshot's refs.
+func (m *Manager) RetainedRefsAt(ctx context.Context, id string, snapshot RefSnapshot) ([]RetainedRef, error) {
+	reads, release, err := m.snapshotRead(ctx, id, snapshot)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	if !reads.retainedKnown {
+		retained, err := retainedRefsFromSnapshot(ctx, m.Git, reads.path, reads.refs, reads)
+		if err != nil {
+			return nil, err
+		}
+		reads.retained, reads.retainedKnown = retained, true
+	}
+	retained := slices.Clone(reads.retained)
+	for index := range retained {
+		retained[index].Commit.Parents = slices.Clone(retained[index].Commit.Parents)
+	}
+	return retained, nil
+}
+
+func readCommitMetadata(ctx context.Context, runner retainedRunner, path string, oids []string, reads *snapshotReads) (map[string]Commit, error) {
+	if reads == nil {
+		return commitMetadataByOID(ctx, runner, path, oids)
+	}
+	if reads.metadata == nil {
+		reads.metadata = make(map[string]Commit)
+	}
+	var missing []string
+	for _, oid := range oids {
+		if _, ok := reads.metadata[oid]; !ok {
+			missing = append(missing, oid)
+		}
+	}
+	metadata, err := commitMetadataByOID(ctx, runner, path, missing)
+	if err != nil {
+		return nil, err
+	}
+	for oid, commit := range metadata {
+		reads.metadata[oid] = commit
+	}
+	return reads.metadata, nil
+}
+
+func readPeeledTags(ctx context.Context, runner retainedRunner, path string, oids []string, reads *snapshotReads) (map[string]peeledRetainedObject, error) {
+	if reads == nil {
+		return batchPeelRetainedTags(ctx, runner, path, oids)
+	}
+	if reads.peeled == nil {
+		reads.peeled = make(map[string]peeledRetainedObject)
+	}
+	var missing []string
+	for _, oid := range oids {
+		if _, ok := reads.peeled[oid]; !ok {
+			missing = append(missing, oid)
+		}
+	}
+	if len(missing) > 0 {
+		peeled, err := batchPeelRetainedTags(ctx, runner, path, missing)
+		if err != nil {
+			return nil, err
+		}
+		for oid, object := range peeled {
+			reads.peeled[oid] = object
+		}
+	}
+	return reads.peeled, nil
 }

@@ -168,6 +168,14 @@ func (m *Manager) RefTips(ctx context.Context, id string, refs []Ref) (map[strin
 		return nil, err
 	}
 	defer lock.RUnlock()
+	return refTips(ctx, m.Git, repositoryPath, refs)
+}
+
+func refTips(ctx context.Context, runner retainedRunner, repositoryPath string, refs []Ref) (map[string]Commit, error) {
+	return refTipsWithReads(ctx, runner, repositoryPath, refs, nil)
+}
+
+func refTipsWithReads(ctx context.Context, runner retainedRunner, repositoryPath string, refs []Ref, reads *snapshotReads) (map[string]Commit, error) {
 	commitOIDs := make(map[string]string, len(refs))
 	var annotated []string
 	for _, ref := range refs {
@@ -179,7 +187,7 @@ func (m *Manager) RefTips(ctx context.Context, id string, refs []Ref) (map[strin
 		}
 	}
 	if len(annotated) != 0 {
-		peeled, err := batchPeelRetainedTags(ctx, m.Git, repositoryPath, annotated)
+		peeled, err := readPeeledTags(ctx, runner, repositoryPath, annotated, reads)
 		if err != nil {
 			return nil, err
 		}
@@ -196,7 +204,7 @@ func (m *Manager) RefTips(ctx context.Context, id string, refs []Ref) (map[strin
 	for _, oid := range commitOIDs {
 		oids = append(oids, oid)
 	}
-	metadata, err := commitMetadataByOID(ctx, m.Git, repositoryPath, oids)
+	metadata, err := readCommitMetadata(ctx, runner, repositoryPath, oids, reads)
 	if err != nil {
 		return nil, err
 	}

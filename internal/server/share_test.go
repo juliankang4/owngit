@@ -93,6 +93,14 @@ func TestShareLinkShowsOnlyItsRepositoryCode(t *testing.T) {
 	goneOID := apiGitOutput(t, clone, "rev-parse", "HEAD")
 	apiRunGit(t, clone, "push", "-q", "origin", ":gone")
 
+	// Warm the owner's retained reads before opening the same snapshot as a share.
+	owner, ownerJar := newBrowserClient(t)
+	if status := signInGeneral(t, server.URL, owner, ownerJar); status != http.StatusSeeOther {
+		t.Fatalf("owner sign in status=%d", status)
+	}
+	if page := browserGET(t, owner, server.URL+"/repositories/project"); page.status != http.StatusOK || !strings.Contains(page.body, "only in kept history") {
+		t.Fatal("the owner did not warm the retained history")
+	}
 	created := createShare(t, server.URL, "project", map[string]any{"label": "Recruiter"})
 	if created.CloneURL != "" || len(created.Warnings) != 1 {
 		t.Fatalf("a browse link with an expiry answered clone=%q warnings=%v", created.CloneURL, created.Warnings)

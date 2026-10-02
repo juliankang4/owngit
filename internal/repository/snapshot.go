@@ -33,6 +33,9 @@ type RefSnapshot struct {
 	// current branches, retained branch history and its provenance. Activity
 	// walks history from them instead of listing the refs again.
 	activityRefs []activityKeyRef
+	// refs also holds tags and retained provenance for snapshot-pinned reads.
+	refs  []Ref
+	reads *snapshotReads
 	// Stale is set when RefSnapshotWithin returned the last snapshot read
 	// because another Git operation held the repository. It is never cached.
 	Stale bool
@@ -56,7 +59,7 @@ const snapshotFormat = "--format=%(refname)%00%(objectname)%00%(objecttype)%00%(
 // makes the result incomplete.
 func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (snapshot RefSnapshot, complete bool, err error) {
 	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", snapshotFormat,
-		"refs/heads", "refs/tags", "refs/owngit/retained", "refs/owngit/provenance/heads")
+		"refs/heads", "refs/tags", "refs/owngit/retained", "refs/owngit/provenance")
 	if err != nil {
 		return RefSnapshot{}, false, err
 	}
@@ -73,6 +76,7 @@ func (m *Manager) readRefSnapshot(ctx context.Context, repositoryPath string) (s
 			return RefSnapshot{}, false, errors.New("Git returned a malformed ref record")
 		}
 		name, oid, objectType := string(parts[0]), string(parts[1]), string(parts[2])
+		snapshot.refs = append(snapshot.refs, Ref{Name: name, OID: oid, Type: objectType})
 		if activityKeyRefName(name) {
 			keyed = append(keyed, activityKeyRef{name: name, oid: oid})
 		}

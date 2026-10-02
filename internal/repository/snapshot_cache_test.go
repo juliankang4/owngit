@@ -207,7 +207,10 @@ func TestRefSnapshotCacheReportsErrorsWithoutCachingThem(t *testing.T) {
 	}
 	noErr(t, os.Remove(failPath))
 	before := count()
-	if recovered := mustSnapshot(t, manager); !reflect.DeepEqual(recovered, cached) || count() == before {
+	recovered := mustSnapshot(t, manager)
+	// Derived reads belong to the new successful observation, not the failed one.
+	recovered.reads = cached.reads
+	if !reflect.DeepEqual(recovered, cached) || count() == before {
 		t.Fatalf("read after a failure=%+v with %d new Git processes; a failure must not be cached", recovered.Summary, count()-before)
 	}
 }
@@ -282,6 +285,7 @@ func TestRefSnapshotFollowsRepositoryWrites(t *testing.T) {
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/other")
 	wroteRefs(manager, "sample")
 	target := mustSnapshot(t, manager).Summary.DefaultOID
+	snapshotDerived(t, manager, mustSnapshot(t, manager))
 
 	preview, err := manager.PreviewRestore(ctx, "sample", RestoreRequest{Source: source, Target: "main", Mode: RestoreAll})
 	noErr(t, err)
@@ -294,11 +298,16 @@ func TestRefSnapshotFollowsRepositoryWrites(t *testing.T) {
 		t.Fatalf("snapshot after restore=%+v head=%+v, want main at %s", got.Summary, got.Head, restored.CommitOID)
 	}
 
+	snapshotDerived(t, manager, mustSnapshot(t, manager))
 	noErr(t, manager.SetDefaultBranch(ctx, "sample", "other"))
 	if got := mustSnapshot(t, manager); got.Summary.DefaultBranch != "other" || got.Head.OID != gitOutput(t, "", "--git-dir", remote, "rev-parse", "other") {
 		t.Fatalf("snapshot after default-branch change=%+v", got.Summary)
 	}
 
+	snapshotDerived(t, manager, mustSnapshot(t, manager))
+	_, err = manager.Rename(ctx, "sample", "renamed", time.Now())
+	noErr(t, err)
+	snapshotDerived(t, manager, mustSnapshot(t, manager))
 	_, err = manager.Delete(ctx, "sample", DeleteFiles)
 	noErr(t, err)
 	if _, ok := manager.snapshots.entries["sample"]; ok {
@@ -312,6 +321,7 @@ func TestRefSnapshotFollowsRepositoryWrites(t *testing.T) {
 	if got := mustSnapshot(t, manager); !got.Summary.Empty || got.HeadFound || len(got.Summary.Branches) != 0 {
 		t.Fatalf("re-created repository snapshot=%+v, want empty", got.Summary)
 	}
+	snapshotDerived(t, manager, mustSnapshot(t, manager))
 }
 
 // TestRefSnapshotCacheSkipsSnapshotsWithAFailedFollowUpRead proves that a

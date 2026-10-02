@@ -24,6 +24,8 @@ const (
 	// repositoryListWait is how long a page that lists repositories waits for
 	// one that a Git operation holds before it uses the last listing.
 	repositoryListWait = time.Second
+	// A post-write recount has its own deadline, independent of page waits.
+	activityRecountTimeout = 2 * time.Minute
 )
 
 // errRefsUnlisted reports a repository whose refs could not be listed, so its
@@ -53,6 +55,8 @@ type activityCache struct {
 	// paused counts, per repository, the pauses in effect. No count starts
 	// for a paused repository; see pause.
 	paused map[string]int
+	// recounts coalesces writes while a count is running or paused.
+	recounts map[string]activityRecount
 	// records counts cached records. The least recently used observations are
 	// dropped above capacity, twice the page-wide activity limit, so memory
 	// stays bounded by the budget that bounds one page.
@@ -61,6 +65,11 @@ type activityCache struct {
 	clock    uint64
 	// wait overrides activityWait in tests.
 	wait time.Duration
+}
+
+type activityRecount struct {
+	manager *repository.Manager
+	limit   int
 }
 
 type activityEntry struct {
@@ -92,6 +101,7 @@ func (cache *activityCache) initLocked() {
 	if cache.entries == nil {
 		cache.entries = make(map[string]*activityEntry)
 		cache.paused = make(map[string]int)
+		cache.recounts = make(map[string]activityRecount)
 		cache.slots = make(chan struct{}, activityConcurrency)
 	}
 	if cache.root == nil {
@@ -115,6 +125,7 @@ func (cache *activityCache) stop() {
 	cache.mu.Lock()
 	cancel := cache.cancel
 	cache.stopped = true
+	clear(cache.recounts)
 	cache.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -147,6 +158,10 @@ func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key 
 	}
 	done := make(chan struct{})
 	ctx, cancel := context.WithCancel(cache.root)
+	if key == "" {
+		cancel()
+		ctx, cancel = context.WithTimeout(cache.root, activityRecountTimeout)
+	}
 	entry.running, entry.cancel = done, cancel
 	slots := cache.slots
 	cache.runs.Add(1)
@@ -157,7 +172,23 @@ func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key 
 		var err error
 		select {
 		case slots <- struct{}{}:
-			activity, err = manager.Activity(ctx, id, limit)
+			if key == "" {
+				var snapshot repository.RefSnapshot
+				snapshot, err = manager.RefSnapshot(ctx, id)
+				key = snapshot.ActivityKey
+			}
+			if err == nil {
+				cache.mu.Lock()
+				current := entry.computed && entry.activity.Key == key && (entry.limit >= limit || !entry.activity.Incomplete)
+				if current {
+					activity = entry.activity
+					limit = entry.limit
+				}
+				cache.mu.Unlock()
+				if !current {
+					activity, err = manager.Activity(ctx, id, limit)
+				}
+			}
 			<-slots
 		case <-ctx.Done():
 			err = ctx.Err()
@@ -166,6 +197,7 @@ func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key 
 		defer cache.mu.Unlock()
 		entry.running, entry.cancel = nil, nil
 		defer close(done)
+		defer cache.startRecountLocked(id)
 		if cache.entries[id] != entry {
 			// Dropped while running; the result belongs to no repository.
 			return
@@ -346,6 +378,7 @@ func (cache *activityCache) pause(id string, keepFinished bool) (resume func()) 
 			defer cache.mu.Unlock()
 			if cache.paused[id]--; cache.paused[id] <= 0 {
 				delete(cache.paused, id)
+				cache.startRecountLocked(id)
 			}
 		})
 	}
@@ -373,14 +406,45 @@ func (cache *activityCache) forget(present []state.Repository) {
 	for _, stored := range present {
 		keep[stored.ID] = true
 	}
-	for id, entry := range cache.entries {
-		if !keep[id] && entry.running == nil {
-			if entry.computed {
-				cache.records -= len(entry.activity.Records)
-			}
-			delete(cache.entries, id)
+	for id := range cache.entries {
+		if !keep[id] {
+			cache.dropLocked(id)
 		}
 	}
+	for id := range cache.recounts {
+		if !keep[id] {
+			delete(cache.recounts, id)
+		}
+	}
+}
+
+// NoteRepositoryChange queues activity under the serving lifetime. One count
+// may run and one further recount may be pending for each repository; writes
+// arriving before that recount starts share it. Authorization is not involved.
+func (app *App) NoteRepositoryChange(id string) {
+	cache := &app.activity
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.initLocked()
+	if cache.stopped {
+		return
+	}
+	limit := app.activityLimit()
+	cache.capacity = max(cache.capacity, 2*limit)
+	cache.recounts[id] = activityRecount{manager: app.Repositories, limit: limit}
+	cache.startRecountLocked(id)
+}
+
+func (cache *activityCache) startRecountLocked(id string) {
+	recount, ok := cache.recounts[id]
+	if !ok || cache.stopped || cache.paused[id] > 0 {
+		return
+	}
+	if entry := cache.entries[id]; entry != nil && entry.running != nil {
+		return
+	}
+	delete(cache.recounts, id)
+	cache.scheduleLocked(recount.manager, id, "", recount.limit)
 }
 
 // StartBackground begins counting activity for every repository under ctx,

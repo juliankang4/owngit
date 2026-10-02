@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -42,6 +43,7 @@ type RetainedRef struct {
 type retainedRunner interface {
 	Run(context.Context, string, io.Reader, ...string) (gitexec.Result, error)
 	RunWithOutputLimit(context.Context, string, io.Reader, int64, ...string) (gitexec.Result, error)
+	StreamGit(context.Context, string, func(io.Reader) error, ...string) ([]byte, error)
 }
 
 type ActivityRecord struct {
@@ -189,23 +191,6 @@ func activityRevisionInput(roots, excluded []string) string {
 	return input.String()
 }
 
-func retainedProvenance(ctx context.Context, runner retainedRunner, repositoryPath, kind string) (map[string]string, error) {
-	if kind != "heads" && kind != "tags" {
-		return nil, errors.New("invalid retained ref kind")
-	}
-	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(objectname)%00%(refname)", "refs/owngit/provenance/"+kind)
-	if err != nil {
-		return nil, err
-	}
-	var refs []activityKeyRef
-	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
-		if oid, name, ok := bytes.Cut(line, []byte{0}); ok {
-			refs = append(refs, activityKeyRef{name: string(name), oid: string(oid)})
-		}
-	}
-	return parseRetainedProvenance(refs, kind), nil
-}
-
 // parseRetainedProvenance maps retained object IDs to the branch or tag they
 // were retained from. Refs outside the kind's provenance namespace are
 // ignored. An object retained from more than one source maps to "" because
@@ -237,60 +222,49 @@ func parseRetainedProvenance(refs []activityKeyRef, kind string) map[string]stri
 }
 
 func (m *Manager) RetainedRefs(ctx context.Context, id string) ([]RetainedRef, error) {
-	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
+	snapshot, err := m.RefSnapshot(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
-		return nil, ErrRepositoryNotFound
-	}
-	lock := m.Locks.For(id)
-	if err := readLock(ctx, lock); err != nil {
-		return nil, err
-	}
-	defer lock.RUnlock()
-	return retainedRefs(ctx, m.Git, repositoryPath)
+	return m.RetainedRefsAt(ctx, id, snapshot)
 }
 
 func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath string) ([]RetainedRef, error) {
-	format := "%(refname)%00%(objectname)%00%(objecttype)%00%(*objectname)%00%(*objecttype)"
-	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format="+format, "refs/owngit/retained")
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained", "refs/owngit/provenance")
 	if err != nil {
 		return nil, err
 	}
-	currentResult, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/tags")
-	if err != nil {
-		return nil, err
-	}
-	current := make(map[string]string)
-	for _, line := range bytes.Split(bytes.TrimSpace(currentResult.Stdout), []byte{'\n'}) {
-		parts := bytes.SplitN(line, []byte{0}, 2)
-		if len(parts) == 2 {
-			current[string(parts[0])] = string(parts[1])
+	var refs []Ref
+	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
 		}
+		parts := bytes.SplitN(line, []byte{0}, 3)
+		if len(parts) != 3 {
+			return nil, errors.New("Git returned malformed retained ref data")
+		}
+		refs = append(refs, Ref{Name: string(parts[0]), OID: string(parts[1]), Type: string(parts[2])})
 	}
-	headSources, err := retainedProvenance(ctx, runner, repositoryPath, "heads")
-	if err != nil {
-		return nil, err
+	return retainedRefsFromSnapshot(ctx, runner, repositoryPath, refs, nil)
+}
+
+func retainedRefsFromSnapshot(ctx context.Context, runner retainedRunner, repositoryPath string, refs []Ref, reads *snapshotReads) ([]RetainedRef, error) {
+	current := make(map[string]string)
+	var provenance []activityKeyRef
+	for _, ref := range refs {
+		if strings.HasPrefix(ref.Name, "refs/heads/") || strings.HasPrefix(ref.Name, "refs/tags/") {
+			current[ref.Name] = ref.OID
+		}
+		provenance = append(provenance, activityKeyRef{name: ref.Name, oid: ref.OID})
 	}
-	tagSources, err := retainedProvenance(ctx, runner, repositoryPath, "tags")
-	if err != nil {
-		return nil, err
-	}
+	headSources := parseRetainedProvenance(provenance, "heads")
+	tagSources := parseRetainedProvenance(provenance, "tags")
 	type candidate struct {
 		kind, source, oid, objectType, peeledOID, peeledType string
 	}
 	var candidates []candidate
-	currentBranchOIDs := make(map[string]bool)
-	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
-		parts := bytes.SplitN(line, []byte{0}, 5)
-		if len(parts) != 5 {
-			if len(bytes.TrimSpace(line)) == 0 {
-				continue
-			}
-			return nil, errors.New("Git returned malformed retained ref data")
-		}
-		name, oid := string(parts[0]), string(parts[1])
+	for _, ref := range refs {
+		name, oid := ref.Name, ref.OID
 		kind, source := "", ""
 		switch {
 		case strings.HasPrefix(name, "refs/owngit/retained/heads/"):
@@ -302,11 +276,8 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 			continue
 		}
 		candidates = append(candidates, candidate{
-			kind: kind, source: source, oid: oid, objectType: string(parts[2]), peeledOID: string(parts[3]), peeledType: string(parts[4]),
+			kind: kind, source: source, oid: oid, objectType: ref.Type,
 		})
-		if kind == "branch" && current[source] != "" {
-			currentBranchOIDs[current[source]] = true
-		}
 	}
 	var annotatedTagOIDs []string
 	for _, candidate := range candidates {
@@ -315,7 +286,7 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 		}
 	}
 	if len(annotatedTagOIDs) != 0 {
-		terminal, err := batchPeelRetainedTags(ctx, runner, repositoryPath, annotatedTagOIDs)
+		terminal, err := readPeeledTags(ctx, runner, repositoryPath, annotatedTagOIDs, reads)
 		if err != nil {
 			return nil, err
 		}
@@ -327,22 +298,42 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 		}
 	}
 
-	unmerged := make(map[string]map[string]bool, len(currentBranchOIDs))
-	for currentOID := range currentBranchOIDs {
-		unmergedResult, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--no-merged="+currentOID, "--format=%(objectname)", "refs/owngit/retained/heads")
+	// Walk each current branch tip once. Keep only candidate OIDs, so even
+	// a long history has bounded output memory and no per-retained-ref process.
+	ancestors := make(map[string]map[string]bool)
+	for _, candidate := range candidates {
+		currentOID := current[candidate.source]
+		if candidate.kind != "branch" || currentOID == "" {
+			continue
+		}
+		if ancestors[currentOID] == nil {
+			ancestors[currentOID] = make(map[string]bool)
+		}
+		ancestors[currentOID][candidate.oid] = false
+	}
+	for currentOID, found := range ancestors {
+		_, err := runner.StreamGit(ctx, repositoryPath, func(output io.Reader) error {
+			scanner := bufio.NewScanner(output)
+			scanner.Buffer(make([]byte, 128), 128)
+			for scanner.Scan() {
+				oid := scanner.Text()
+				if !isOID(oid) {
+					return errors.New("Git returned malformed ancestry data")
+				}
+				if _, candidate := found[oid]; candidate {
+					found[oid] = true
+				}
+			}
+			return scanner.Err()
+		}, "--git-dir", ".", "rev-list", currentOID, "--")
 		if err != nil {
 			return nil, err
 		}
-		unmerged[currentOID] = make(map[string]bool)
-		for _, oid := range strings.Fields(string(unmergedResult.Stdout)) {
-			unmerged[currentOID][oid] = true
-		}
 	}
-
 	var retained []RetainedRef
 	var commitOIDs []string
 	for _, candidate := range candidates {
-		if currentOID := current[candidate.source]; candidate.kind == "branch" && currentOID != "" && !unmerged[currentOID][candidate.oid] {
+		if candidate.kind == "branch" && ancestors[current[candidate.source]][candidate.oid] {
 			continue
 		}
 		commitOID, err := retainedCommitFromRef(candidate.oid, candidate.objectType, candidate.peeledOID, candidate.peeledType)
@@ -354,7 +345,7 @@ func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath str
 			commitOIDs = append(commitOIDs, commitOID)
 		}
 	}
-	metadata, err := commitMetadataByOID(ctx, runner, repositoryPath, commitOIDs)
+	metadata, err := readCommitMetadata(ctx, runner, repositoryPath, commitOIDs, reads)
 	if err != nil {
 		return nil, err
 	}

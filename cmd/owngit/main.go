@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -473,11 +474,14 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// reconciliation, so the hook is set before preparation starts. Wake does
 	// nothing until the coordinator starts.
 	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
-	// Every OwnGit write wakes check reconciliation and schedules repository
-	// maintenance for when the repository is idle.
+	var changeApp atomic.Pointer[server.App]
+	// Every OwnGit write wakes reconciliation, idle maintenance and activity.
 	noteChange := func(id string) {
 		checkCoordinator.Wake(id)
 		repositories.NoteRepositoryWrite(id)
+		if app := changeApp.Load(); app != nil {
+			app.NoteRepositoryChange(id)
+		}
 	}
 	repositories.OnChange = noteChange
 	if settings.Initialized {
@@ -723,6 +727,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)
 	defer application.StopBackground()
+	changeApp.Store(application)
 	if releases != nil {
 		releaseContext, cancelReleases := context.WithCancel(ctx)
 		releaseDone := make(chan struct{})

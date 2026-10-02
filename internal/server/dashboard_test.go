@@ -410,10 +410,9 @@ func TestRepositoryPageBatchesRefTipMetadata(t *testing.T) {
 	}
 	trace, err := os.ReadFile(tracePath)
 	noErr(t, err)
-	// One batched metadata read for branches and one for tags replaces two
-	// Git processes per ref.
-	if count := bytes.Count(trace, []byte("\x00--no-walk\x00")); count != 2 {
-		t.Fatalf("repository page used %d batched tip reads, want 2", count)
+	// Branches and tags at the same commit share immutable metadata.
+	if count := bytes.Count(trace, []byte("\x00--no-walk\x00")); count != 1 {
+		t.Fatalf("repository page used %d batched tip reads, want 1", count)
 	}
 }
 
