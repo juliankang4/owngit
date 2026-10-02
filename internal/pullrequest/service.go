@@ -1209,9 +1209,10 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 	return path, nil
 }
 
-func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, value string, exact bool) (string, error) {
+// ValidateBranchInput checks the caller's branch operand syntax and limits,
+// returning its branch-name suffix without checking repository membership.
+func (service *Service) ValidateBranchInput(ctx context.Context, value string, exact bool) (string, error) {
 	const legacyInputBytes = 255
-	input := value
 	if value != strings.TrimSpace(value) || value == "" || (!exact && len(value) > legacyInputBytes) || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
@@ -1229,10 +1230,23 @@ func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, val
 	if _, err := service.Repositories.Git.Run(ctx, "", nil, "check-ref-format", "refs/heads/"+value); err != nil {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
-	full, err := service.Repositories.SelectBranchRef(ctx, repositoryPath, input, exact)
+	return value, nil
+}
+
+func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, input string, exact bool) (string, error) {
+	value, err := service.ValidateBranchInput(ctx, input, exact)
+	if err != nil {
+		return "", err
+	}
+	full, err := service.Repositories.SelectBranchRefWithEligibility(ctx, repositoryPath, input, exact, func(operand string) (bool, error) {
+		_, err := service.ValidateBranchInput(ctx, operand, false)
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		return err == nil, nil
+	})
 	var ambiguous *repository.AmbiguousBranchError
 	if errors.As(err, &ambiguous) {
-		ambiguous.LimitInputBytes(legacyInputBytes)
 		return "", &Problem{Code: "ambiguous_branch", Message: ambiguous.Error(), Cause: ambiguous}
 	}
 	if errors.Is(err, repository.ErrNotFound) {

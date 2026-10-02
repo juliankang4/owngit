@@ -74,6 +74,12 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 // SelectBranchRef resolves a branch while the caller holds the repository lock.
 // It reads live refs, so a write never selects from a stale browse snapshot.
 func (m *Manager) SelectBranchRef(ctx context.Context, repositoryPath, value string, exact bool) (string, error) {
+	return m.SelectBranchRefWithEligibility(ctx, repositoryPath, value, exact, nil)
+}
+
+// SelectBranchRefWithEligibility offers only advice the caller can accept.
+// Eligibility filters suggested operands, never existing candidate identities.
+func (m *Manager) SelectBranchRefWithEligibility(ctx context.Context, repositoryPath, value string, exact bool, eligible func(string) (bool, error)) (string, error) {
 	return selectRefName(value, exact, false, func(full string) (bool, error) {
 		if _, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "show-ref", "--verify", "--quiet", full); err != nil {
 			if gitAnsweredNo(ctx, err) {
@@ -82,7 +88,7 @@ func (m *Manager) SelectBranchRef(ctx context.Context, repositoryPath, value str
 			return false, fmt.Errorf("check branch: %w", err)
 		}
 		return true, nil
-	})
+	}, eligible)
 }
 
 // gitAnsweredNo reports whether Git ran to completion and answered no with

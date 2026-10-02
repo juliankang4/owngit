@@ -99,7 +99,7 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		var err error
 		commitOID, err = m.peelToCommit(ctx, id, ref.OID)
 		return commitOID != "", err
-	})
+	}, nil)
 	if err != nil {
 		return "", "", err
 	}
@@ -115,7 +115,7 @@ func BrowseRefName(summary Summary, requested string) (string, error) {
 	return selectRefName(requested, strings.HasPrefix(requested, "refs/"), true, func(full string) (bool, error) {
 		_, found := snapshotRef(summary, full)
 		return found, nil
-	})
+	}, nil)
 }
 
 // AmbiguousBranchError describes distinct existing interpretations of a legacy
@@ -138,22 +138,13 @@ func (err *AmbiguousBranchError) Detail() string {
 	return strings.Join(details, "; ")
 }
 
-// LimitInputBytes keeps advice within the caller's existing input allowance.
-func (err *AmbiguousBranchError) LimitInputBytes(maximum int) {
-	for index, value := range err.Values {
-		if len(value) > maximum {
-			err.Values[index] = ""
-		}
-	}
-}
-
 func (err *AmbiguousBranchError) Error() string {
 	return "That name matches two branches. Enter the value beside the full ref you want. If no value is shown, choose that branch in the browser: " + err.Detail()
 }
 
 // selectRefName owns exact identity, legacy branch ambiguity and browse
 // precedence. Lookup failures are returned without trying another identity.
-func selectRefName(value string, exact, browse bool, exists func(string) (bool, error)) (string, error) {
+func selectRefName(value string, exact, browse bool, exists func(string) (bool, error), eligible func(string) (bool, error)) (string, error) {
 	candidates := refCandidates(value, exact, browse)
 	var found []string
 	for _, full := range candidates {
@@ -178,6 +169,15 @@ func selectRefName(value string, exact, browse bool, exists func(string) (bool, 
 	for _, full := range found {
 		choice := ""
 		for _, operand := range []string{strings.TrimPrefix(full, "refs/heads/"), full} {
+			if eligible != nil {
+				accepted, err := eligible(operand)
+				if err != nil {
+					return "", err
+				}
+				if !accepted {
+					continue
+				}
+			}
 			matches := 0
 			for _, candidate := range refCandidates(operand, false, false) {
 				present, err := exists(candidate)
@@ -234,9 +234,15 @@ func (m *Manager) ResolveRevision(ctx context.Context, id, requested string) (st
 }
 
 func snapshotRef(summary Summary, full string) (Ref, bool) {
-	refs, name := summary.Branches, strings.TrimPrefix(full, "refs/heads/")
-	if strings.HasPrefix(full, "refs/tags/") {
+	var refs []Ref
+	var name string
+	switch {
+	case strings.HasPrefix(full, "refs/heads/"):
+		refs, name = summary.Branches, strings.TrimPrefix(full, "refs/heads/")
+	case strings.HasPrefix(full, "refs/tags/"):
 		refs, name = summary.Tags, strings.TrimPrefix(full, "refs/tags/")
+	default:
+		return Ref{}, false
 	}
 	for _, ref := range refs {
 		if ref.Name == name {

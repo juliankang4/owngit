@@ -203,6 +203,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	incomplete := func(err error) (DeleteResult, error) {
 		return DeleteResult{}, fmt.Errorf("%w: %w", ErrDeleteIncomplete, err)
 	}
+	m.Locks.For(deletion.RepositoryID).AdvanceIncarnation()
 	m.snapshots.drop(deletion.RepositoryID)
 	m.objects.drop(deletion.RepositoryID)
 	if deletion.Root != root {

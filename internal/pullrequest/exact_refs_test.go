@@ -9,6 +9,56 @@ import (
 	"owngit/internal/repository"
 )
 
+func TestAmbiguousBranchAdviceRespectsCallerEligibility(t *testing.T) {
+	for _, field := range []string{"source", "target"} {
+		t.Run(field, func(t *testing.T) {
+			fixture := newServiceFixture(t)
+			fixture.commitFile("file.txt", "base\n", "base")
+			fixture.push("HEAD:refs/heads/main")
+			fixture.push("HEAD:refs/heads/refs/owngit/topic")
+			fixture.commitFile("file.txt", "feature\n", "feature")
+			fixture.push("HEAD:refs/heads/refs/heads/refs/owngit/topic")
+			input := CreateInput{Repository: fixture.repositoryID, Title: "Eligible advice", SourceBranch: "refs/heads/refs/owngit/topic", TargetBranch: "main"}
+			if field == "target" {
+				input.SourceBranch, input.TargetBranch = input.TargetBranch, input.SourceBranch
+			}
+			_, err := fixture.service.Create(fixture.ctx, input)
+			var ambiguous *repository.AmbiguousBranchError
+			if problemCode(err) != "ambiguous_branch" || !errors.As(err, &ambiguous) || ambiguous.Values[0] != "" || ambiguous.Values[1] == "" {
+				t.Fatalf("advice did not preserve caller eligibility: %v", err)
+			}
+			for index, value := range ambiguous.Values {
+				if value == "" {
+					continue
+				}
+				choice := input
+				if field == "source" {
+					choice.SourceBranch = value
+				} else {
+					choice.TargetBranch = value
+				}
+				view, err := fixture.service.Create(fixture.ctx, choice)
+				noErr(t, err)
+				branch := view.Source.Branch
+				if field == "target" {
+					branch = view.Target.Branch
+				}
+				if "refs/heads/"+branch != ambiguous.Refs[index] {
+					t.Fatal("eligible advice selected a different branch")
+				}
+				_, err = fixture.service.Close(fixture.ctx, fixture.repositoryID, view.Number)
+				noErr(t, err)
+			}
+			input.SourceBranch, input.TargetBranch = "refs/heads/refs/owngit/topic", "refs/heads/main"
+			if field == "target" {
+				input.SourceBranch, input.TargetBranch = input.TargetBranch, input.SourceBranch
+			}
+			_, err = fixture.service.CreateExact(fixture.ctx, input)
+			noErr(t, err)
+		})
+	}
+}
+
 func TestAmbiguousBranchAdviceRespectsLegacyInputLimit(t *testing.T) {
 	for _, size := range []int{233, 234, 244} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {

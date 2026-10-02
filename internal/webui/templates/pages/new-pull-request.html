@@ -31,6 +31,7 @@
           <label for="pr-source">{{bi $lang "pr.new.source"}}</label>
           <select id="pr-source" name="source_ref"
                   {{template "fieldInvalid" dict "Notices" $n "Field" "source_branch"}}>
+            {{if and $p.Observed (not $p.Source.Resolved)}}<option value="" selected disabled>{{bi $lang "repoadmin.default_branch.choose"}}</option>{{end}}
             {{range $p.Branches}}
               <option value="refs/heads/{{.Name}}"{{if eq .Name $p.Source.Branch}} selected{{end}}>{{.Name}}</option>
             {{end}}
@@ -44,6 +45,7 @@
           <label for="pr-target">{{bi $lang "pr.new.target"}}</label>
           <select id="pr-target" name="target_ref"
                   {{template "fieldInvalid" dict "Notices" $n "Field" "target_branch"}}>
+            {{if and $p.Observed (not $p.Target.Resolved)}}<option value="" selected disabled>{{bi $lang "repoadmin.default_branch.choose"}}</option>{{end}}
             {{range $p.Branches}}
               <option value="refs/heads/{{.Name}}"{{if eq .Name $p.Target.Branch}} selected{{end}}>{{.Name}}</option>
             {{end}}

@@ -14,6 +14,25 @@ import (
 // TestRepositoryLockGenerationCountsWriteReleases proves that every release
 // of the write lock through the returned value advances the generation, and
 // that readers do not.
+func TestRepositoryIncarnationIsIndependentOfRefWrites(t *testing.T) {
+	locks := NewLocks()
+	lock := locks.For("project")
+	lock.Lock()
+	lock.Unlock()
+	if lock.Generation() != 1 || lock.Incarnation() != 0 {
+		t.Fatal("ordinary write changed repository lifetime")
+	}
+	lock.Lock()
+	lock.AdvanceIncarnation()
+	if lock.Incarnation() != 1 || lock.Generation() != 1 {
+		t.Fatal("incarnation advance also changed write generation")
+	}
+	lock.UnlockWithoutRefChanges()
+	if locks.For("project") != lock || lock.Incarnation() != 1 || lock.Generation() != 1 || locks.For("other").Incarnation() != 0 {
+		t.Fatal("repository identity was not retained by its per-ID lock")
+	}
+}
+
 func TestRepositoryLockGenerationCountsWriteReleases(t *testing.T) {
 	locks := NewLocks()
 	lock := locks.For("project")

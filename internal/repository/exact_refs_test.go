@@ -141,7 +141,7 @@ func TestRefSelectionLookupFailureIsNotAbsence(t *testing.T) {
 	_, err := selectRefName("refs/heads/x", false, false, func(string) (bool, error) {
 		calls++
 		return false, failure
-	})
+	}, nil)
 	if !errors.Is(err, failure) || calls != 1 {
 		t.Fatalf("lookup failure=%v calls=%d", err, calls)
 	}

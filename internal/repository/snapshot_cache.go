@@ -123,7 +123,7 @@ func (m *Manager) lockedRefSnapshot(ctx context.Context, id, repositoryPath stri
 	// RefSnapshot exposes a tip summary, not a full commit message.
 	snapshot.Head.Body = ""
 	snapshot.reads = &snapshotReads{
-		path: repositoryPath, lock: lock, gate: make(chan struct{}, 1),
+		path: repositoryPath, lock: lock, incarnation: lock.Incarnation(), gate: make(chan struct{}, 1),
 		branchRefs: slices.Clone(snapshot.Summary.Branches), tagRefs: slices.Clone(snapshot.Summary.Tags), refs: snapshot.refs,
 	}
 	// A snapshot missing a field because a follow-up read failed is returned
@@ -326,6 +326,7 @@ func (snapshot RefSnapshot) clone() RefSnapshot {
 type snapshotReads struct {
 	path          string
 	lock          *gitexec.RepositoryLock
+	incarnation   uint64
 	gate          chan struct{}
 	branchRefs    []Ref
 	tagRefs       []Ref
@@ -350,11 +351,15 @@ func (m *Manager) snapshotRead(ctx context.Context, id string, snapshot RefSnaps
 		return nil, nil, ErrRepositoryNotFound
 	}
 	reads := snapshot.reads
-	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) {
+	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) || reads.incarnation != reads.lock.Incarnation() {
 		return nil, nil, errors.New("ref snapshot belongs to another repository")
 	}
 	if err := readLock(ctx, reads.lock); err != nil {
 		return nil, nil, err
+	}
+	if reads.incarnation != reads.lock.Incarnation() {
+		reads.lock.RUnlock()
+		return nil, nil, errors.New("ref snapshot belongs to another repository")
 	}
 	select {
 	case reads.gate <- struct{}{}:
@@ -410,7 +415,7 @@ func (m *Manager) RefCommitAt(ctx context.Context, id string, snapshot RefSnapsh
 		return "", ErrRepositoryNotFound
 	}
 	reads := snapshot.reads
-	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) {
+	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) || reads.incarnation != reads.lock.Incarnation() {
 		return "", errors.New("ref snapshot belongs to another repository")
 	}
 	for _, ref := range reads.refs {
@@ -429,6 +434,10 @@ func (m *Manager) RefCommitAt(ctx context.Context, id string, snapshot RefSnapsh
 		case reads.gate <- struct{}{}:
 		case <-ctx.Done():
 			return "", ctx.Err()
+		}
+		if reads.incarnation != reads.lock.Incarnation() {
+			<-reads.gate
+			return "", errors.New("ref snapshot belongs to another repository")
 		}
 		object, cached := reads.peeled[ref.OID]
 		<-reads.gate

@@ -72,17 +72,32 @@ func (app *App) pullRequestRow(address string, view *pullrequest.View) webui.Pul
 func (app *App) handleNewPullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	query := request.URL.Query()
 	source, target := query.Get("source"), query.Get("target")
-	if query.Has("source_ref") || query.Has("target_ref") {
-		source, target = "", ""
-		if strings.HasPrefix(query.Get("source_ref"), "refs/heads/") {
-			source = strings.TrimPrefix(query.Get("source_ref"), "refs/heads/")
+	var notices []webui.Notice
+	status := http.StatusOK
+	selected := query.Has("source") || query.Has("target") || query.Has("source_ref") || query.Has("target_ref")
+	for _, choice := range []struct {
+		key, field string
+		branch     *string
+	}{
+		{"source_ref", "source_branch", &source},
+		{"target_ref", "target_branch", &target},
+	} {
+		if query.Has(choice.key) {
+			name, err := app.PullRequests.ValidateBranchInput(request.Context(), query.Get(choice.key), true)
+			*choice.branch = name
+			if err != nil {
+				notices = append(notices, webui.Error(choice.field, webui.MsgPRInvalidBranch).WithDetail(query.Get(choice.key)))
+				status = http.StatusUnprocessableEntity
+				continue
+			}
 		}
-		if strings.HasPrefix(query.Get("target_ref"), "refs/heads/") {
-			target = strings.TrimPrefix(query.Get("target_ref"), "refs/heads/")
+		if selected && *choice.branch == "" {
+			notices = append(notices, webui.Error(choice.field, webui.MsgPRInvalidBranch))
+			status = http.StatusUnprocessableEntity
 		}
 	}
 	app.renderNewPullRequest(writer, request, stored, summary, chrome,
-		source, target, pullrequest.CreateInput{}, nil, http.StatusOK)
+		source, target, pullrequest.CreateInput{}, notices, status)
 }
 
 // renderNewPullRequest shows the creation screen for a branch pair, with the
@@ -110,7 +125,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 			page.Branches = append(page.Branches, webui.RefOption{Name: branch.Name})
 		}
 	}
-	if sourceBranch == "" && targetBranch == "" {
+	if sourceBranch == "" && targetBranch == "" && len(notices) == 0 {
 		page.Source.Branch, page.Target.Branch = defaultPullRequestBranches(summary)
 		app.render(writer, request, status, page)
 		return

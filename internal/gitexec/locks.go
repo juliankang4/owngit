@@ -23,7 +23,8 @@ type Locks struct {
 // that decision.
 type RepositoryLock struct {
 	sync.RWMutex
-	generation atomic.Uint64
+	generation  atomic.Uint64
+	incarnation atomic.Uint64
 	// waiters counts callers blocked in Lock, RLock or a context wait.
 	waiters atomic.Int32
 }
@@ -135,6 +136,17 @@ func lockContext(ctx context.Context, try func() bool, lock, release func()) err
 // stable while the caller holds the read lock.
 func (l *RepositoryLock) Generation() uint64 {
 	return l.generation.Load()
+}
+
+// Incarnation identifies a repository lifetime independently of ref writes.
+func (l *RepositoryLock) Incarnation() uint64 {
+	return l.incarnation.Load()
+}
+
+// AdvanceIncarnation invalidates request-local snapshots before a repository
+// is removed. The caller holds the write lock; ordinary writes do not call it.
+func (l *RepositoryLock) AdvanceIncarnation() {
+	l.incarnation.Add(1)
 }
 
 func NewLocks() *Locks {

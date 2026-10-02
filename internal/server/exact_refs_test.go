@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -12,8 +13,86 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/repository"
 	"owngit/internal/webui"
 )
+
+func TestUnsupportedExactNamespaceDoesNotAliasBranch(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":refs/heads/refs/notes/topic")
+	server, client, _ := openBrowser(t, fixture)
+	if _, _, err := fixture.app.Repositories.ResolveRef(t.Context(), "project", "refs/notes/topic"); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("unsupported exact namespace resolved: %v", err)
+	}
+	for _, ref := range []string{"refs/notes/topic", "refs/heads/refs/notes/topic"} {
+		want := http.StatusNotFound
+		if ref == "refs/heads/refs/notes/topic" {
+			want = http.StatusOK
+		}
+		for _, endpoint := range []string{"/code", "/raw", "/archive", "/commits"} {
+			query := url.Values{"ref": {ref}}
+			if endpoint == "/raw" {
+				query.Set("path", "feature.txt")
+			}
+			if endpoint == "/archive" {
+				query.Set("format", "zip")
+			}
+			page := browserGET(t, client, server.URL+"/repositories/project"+endpoint+"?"+query.Encode())
+			if page.status != want {
+				t.Fatalf("%s ref=%s status=%d, want %d", endpoint, ref, page.status, want)
+			}
+		}
+	}
+}
+
+func TestInvalidExactCompareQueriesKeepTheOppositeChoice(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, _ := openBrowser(t, fixture)
+	for _, lang := range []string{"en", "ko"} {
+		for _, field := range []string{"source", "target"} {
+			for _, value := range []string{"", "not-a-full-ref", "refs/tags/main", "refs/heads/../main", "refs/heads/" + strings.Repeat("a", 256)} {
+				query := url.Values{"source_ref": {"refs/heads/feature"}, "target_ref": {"refs/heads/main"}, "lang": {lang}}
+				query.Set(field+"_ref", value)
+				page := browserGET(t, client, server.URL+"/repositories/project/pull-requests/new?"+query.Encode())
+				if page.status != http.StatusUnprocessableEntity {
+					t.Fatalf("%s invalid %s=%q status=%d", lang, field, value, page.status)
+				}
+				selectField := func(id string) string {
+					start := strings.Index(page.body, `<select id="pr-`+id+`"`)
+					if start < 0 {
+						t.Fatalf("missing %s select", id)
+					}
+					body := page.body[start:]
+					return body[:strings.Index(body, "</select>")]
+				}
+				invalid := selectField(field)
+				if !strings.Contains(invalid, `aria-invalid="true"`) || !strings.Contains(invalid, `<option value="" selected disabled>`) {
+					t.Fatalf("invalid %s chose an existing branch", field)
+				}
+				opposite, ref := "target", "refs/heads/main"
+				if field == "target" {
+					opposite, ref = "source", "refs/heads/feature"
+				}
+				valid := selectField(opposite)
+				if strings.Contains(valid, `aria-invalid="true"`) || !strings.Contains(valid, `<option value="`+ref+`" selected>`) {
+					t.Fatal("valid opposite choice was lost")
+				}
+				if strings.Contains(page.body, `name="source_oid"`) {
+					t.Fatal("invalid comparison offered a create form")
+				}
+			}
+		}
+	}
+	for _, query := range []url.Values{
+		{"source_ref": {"not-full"}, "target_ref": {"refs/tags/main"}},
+		{"source": {""}, "target": {""}},
+	} {
+		page := browserGET(t, client, server.URL+"/repositories/project/pull-requests/new?"+query.Encode())
+		if page.status != http.StatusUnprocessableEntity || strings.Count(page.body, `<option value="" selected disabled>`) != 2 {
+			t.Fatal("supplied invalid or empty pair fell back to defaults")
+		}
+	}
+}
 
 func TestDefaultBranchRefCollision(t *testing.T) {
 	fixture := newAPIFixture(t, false)
