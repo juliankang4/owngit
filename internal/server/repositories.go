@@ -484,7 +484,6 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 // the page before it is filled: a dashboard page (baseRepositoryPage) or a
 // share link's (sharedRepositoryPage).
 func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request, base webui.RepositoryPage, snapshot repository.RefSnapshot, tab []string, address pageAddress) {
-	summary := snapshot.Summary
 	page := base
 	requestedRef := address.Ref
 	status := http.StatusOK
@@ -498,7 +497,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		}
 	case len(tab) == 1 && tab[0] == "code":
 		page.Tab = webui.RepoTabCode
-		err = app.fillCode(request, &page, summary, address)
+		err = app.fillCode(request, &page, snapshot, address)
 		// A path or a requested branch or tag that does not exist is not
 		// found. The page keeps the repository and links back to it. A
 		// default branch that has gone is the repository's state, not a bad
@@ -508,7 +507,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		}
 	case len(tab) == 1 && tab[0] == "commits":
 		page.Tab = webui.RepoTabCommits
-		err = app.fillCommits(request, &page, summary, address, "")
+		err = app.fillCommits(request, &page, snapshot, address, "")
 		if page.Commits.NotFound || (requestedRef != "" && page.Ref.Missing) {
 			status = http.StatusNotFound
 		}
@@ -518,7 +517,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		// another repository has, is not found. A commit that exists opens
 		// even when the address names a missing branch: the page then shows
 		// it as a bare revision.
-		err = app.fillCommits(request, &page, summary, address, tab[1])
+		err = app.fillCommits(request, &page, snapshot, address, tab[1])
 		if page.Commits.NotFound {
 			status = http.StatusNotFound
 		}
@@ -638,7 +637,8 @@ func ownerArchiveLinks(page *webui.RepositoryPage, ref string) []webui.ArchiveLi
 // and fills its ref picker. It reports whether the ref resolved; one that
 // does not exist is marked Missing. A lookup that failed is returned as an
 // error, since it tells nothing about the ref.
-func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested string) (string, bool, error) {
+func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) (string, bool, error) {
+	summary := snapshot.Summary
 	selected := requested
 	if selected == "" && summary.DefaultBranch != "" {
 		selected = "refs/heads/" + summary.DefaultBranch
@@ -646,11 +646,18 @@ func (app *App) selectRef(request *http.Request, page *webui.RepositoryPage, sum
 	canonical, oid, resolved := "", "", false
 	if selected != "" {
 		var err error
-		canonical, oid, err = app.Repositories.ResolveRef(request.Context(), page.Repo.ID, selected)
+		canonical, err = repository.BrowseRefName(summary, selected)
+		if err == nil {
+			oid, err = app.Repositories.RefCommitAt(request.Context(), page.Repo.ID, snapshot, canonical)
+		} else if errors.Is(err, repository.ErrNotFound) {
+			// A present snapshot identity remains selectable after a write.
+			// Absent requests retain live validation and missing-ref behavior.
+			canonical, oid, err = app.Repositories.ResolveRef(request.Context(), page.Repo.ID, selected)
+		}
 		if err != nil && !errors.Is(err, repository.ErrNotFound) {
 			return "", false, err
 		}
-		resolved = err == nil
+		resolved = err == nil && oid != ""
 	}
 	if resolved {
 		selected = canonical
@@ -717,64 +724,6 @@ const (
 	overviewRefsFragment  = "#refs"
 )
 
-// selectOverviewRef uses the supplied snapshot for both existence and identity.
-// Absent requests keep the shared selector's validation and lookup behavior.
-// This overview-only selection will join the common exact-ref selector later.
-func (app *App) selectOverviewRef(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) (string, bool, error) {
-	summary := snapshot.Summary
-	selected := requested
-	if selected == "" && summary.DefaultBranch != "" {
-		selected = "refs/heads/" + summary.DefaultBranch
-	}
-	candidates := []string{selected}
-	if selected != "" && !strings.HasPrefix(selected, "refs/heads/") && !strings.HasPrefix(selected, "refs/tags/") {
-		candidates = []string{"refs/heads/" + selected, "refs/tags/" + selected}
-	}
-	canonical := ""
-	for _, candidate := range candidates {
-		for _, branch := range summary.Branches {
-			if candidate == "refs/heads/"+branch.Name {
-				canonical = candidate
-			}
-		}
-		for _, tag := range summary.Tags {
-			if candidate == "refs/tags/"+tag.Name {
-				canonical = candidate
-			}
-		}
-		if canonical != "" {
-			break
-		}
-	}
-	if canonical == "" {
-		return app.selectRef(request, page, summary, requested)
-	}
-	oid, err := app.Repositories.RefCommitAt(request.Context(), page.Repo.ID, snapshot, canonical)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
-		return "", false, err
-	}
-	resolved := err == nil && oid != ""
-	page.Ref.Name, page.Ref.Kind = displayRef(canonical), refKind(canonical)
-	page.Ref.IsDefault = canonical == "refs/heads/"+summary.DefaultBranch
-	for _, branch := range summary.Branches {
-		full := "refs/heads/" + branch.Name
-		page.Ref.Branches = append(page.Ref.Branches, webui.RefOption{Name: branch.Name, URL: withRef(request.URL.Path, full), Selected: canonical == full, IsDefault: branch.Name == summary.DefaultBranch})
-	}
-	for _, tag := range summary.Tags {
-		full := "refs/tags/" + tag.Name
-		page.Ref.Tags = append(page.Ref.Tags, webui.RefOption{Name: tag.Name, URL: withRef(request.URL.Path, full), Selected: canonical == full})
-	}
-	if !resolved {
-		page.Ref.Missing = true
-		return "", false, nil
-	}
-	page.OverviewURL = withRef(page.OverviewURL, canonical)
-	page.CodeURL = withRef(page.CodeURL, canonical)
-	page.CommitsURL = withRef(page.CommitsURL, canonical)
-	page.Ref.Revision, page.Ref.ShortRevision = oid, shortOID(oid)
-	return canonical, true, nil
-}
-
 // fillRepositoryOverview fills the overview. Its body, the recent commits
 // and the top folder of the selected ref, is required: a failed read of it
 // is returned, and the page then says the repository cannot be read. Each
@@ -783,7 +732,7 @@ func (app *App) selectOverviewRef(request *http.Request, page *webui.RepositoryP
 // be read says so on the page. It is never shown as empty, zero or absent.
 func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) error {
 	summary := snapshot.Summary
-	selectedRef, resolved, err := app.selectOverviewRef(request, page, snapshot, requested)
+	selectedRef, resolved, err := app.selectRef(request, page, snapshot, requested)
 	if err != nil {
 		return err
 	}
@@ -1196,9 +1145,10 @@ func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPa
 
 // fillCode fills the Code tab. A ref or path that does not exist is marked
 // on the page; a read that failed is returned.
-func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, address pageAddress) error {
+func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, address pageAddress) error {
+	summary := snapshot.Summary
 	pagination, requested, requestedPath := address.Lines, address.Ref, address.Path
-	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	selectedRef, resolved, err := app.selectRef(request, page, snapshot, requested)
 	if err != nil {
 		return err
 	}
@@ -1354,12 +1304,13 @@ func (app *App) noteUnreadableCommits(request *http.Request, page *webui.Reposit
 // fillCommits fills the Commits tab: the list, or the commit openedOID. A
 // ref, commit or path that does not exist is marked on the page, and so is a
 // commit that could not be read; any other read that failed is returned.
-func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, address pageAddress, openedOID string) error {
+func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, address pageAddress, openedOID string) error {
+	summary := snapshot.Summary
 	pagination, requested, requestedPath := address.Lines, address.Ref, address.Path
 	if (pagination.Line != 0 || pagination.From != 0) && (openedOID == "" || requestedPath == "") {
 		return errPageAddress
 	}
-	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	selectedRef, resolved, err := app.selectRef(request, page, snapshot, requested)
 	if err != nil {
 		return err
 	}

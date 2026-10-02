@@ -489,7 +489,7 @@ func TestSetDefaultBranchAcceptsOnlyExistingBranches(t *testing.T) {
 	if settings.status != http.StatusOK {
 		t.Fatalf("settings status=%d", settings.status)
 	}
-	for _, want := range []string{`<option value="main" selected>main</option>`, `<option value="feature">feature</option>`,
+	for _, want := range []string{`<option value="refs/heads/main" selected>main</option>`, `<option value="refs/heads/feature">feature</option>`,
 		`href="/repositories/project/configured-checks"`, `href="/repositories/project/runner-tokens"`,
 		`href="/repositories/project/helper-credentials"`, `href="/repositories/project/import"`, `href="/repositories/project/delete"`} {
 		if !strings.Contains(settings.body, want) {

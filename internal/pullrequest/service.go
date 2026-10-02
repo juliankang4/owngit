@@ -34,6 +34,16 @@ type Service struct {
 }
 
 func (service *Service) Create(ctx context.Context, input CreateInput) (*View, error) {
+	return service.create(ctx, input, false)
+}
+
+// CreateExact accepts full source and target refs from the browser's pickers.
+// The JSON API continues to use Create and its legacy operand rule.
+func (service *Service) CreateExact(ctx context.Context, input CreateInput) (*View, error) {
+	return service.create(ctx, input, true)
+}
+
+func (service *Service) create(ctx context.Context, input CreateInput, exact bool) (*View, error) {
 	if service.OnChange != nil {
 		defer service.OnChange(input.Repository)
 	}
@@ -43,17 +53,6 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 	input, err := input.CheckText()
 	if err != nil {
 		return nil, err
-	}
-	source, err := service.normalizeBranch(ctx, input.SourceBranch)
-	if err != nil {
-		return nil, err
-	}
-	target, err := service.normalizeBranch(ctx, input.TargetBranch)
-	if err != nil {
-		return nil, err
-	}
-	if source == target {
-		return nil, NewProblem("same_branch", "The source and target branches must be different.")
 	}
 	var reviewStatus string
 	switch input.ReviewChoice {
@@ -77,6 +76,17 @@ func (service *Service) Create(ctx context.Context, input CreateInput) (*View, e
 		return nil, err
 	}
 	defer lock.Unlock()
+	source, err := service.normalizeBranch(ctx, repositoryPath, input.SourceBranch, exact)
+	if err != nil {
+		return nil, err
+	}
+	target, err := service.normalizeBranch(ctx, repositoryPath, input.TargetBranch, exact)
+	if err != nil {
+		return nil, err
+	}
+	if source == target {
+		return nil, NewProblem("same_branch", "The source and target branches must be different.")
+	}
 	sourceHead, err := service.resolveBranch(ctx, repositoryPath, source)
 	if err != nil {
 		return nil, err
@@ -1199,7 +1209,8 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 	return path, nil
 }
 
-func (service *Service) normalizeBranch(ctx context.Context, value string) (string, error) {
+func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, value string, exact bool) (string, error) {
+	input := value
 	if value != strings.TrimSpace(value) || value == "" || len(value) > 255 || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
@@ -1208,7 +1219,7 @@ func (service *Service) normalizeBranch(ctx context.Context, value string) (stri
 	}
 	if strings.HasPrefix(value, "refs/heads/") {
 		value = strings.TrimPrefix(value, "refs/heads/")
-	} else if strings.HasPrefix(value, "refs/") {
+	} else if exact {
 		return "", NewProblem("invalid_branch", "Pull requests require branch refs under refs/heads.")
 	}
 	if value == "HEAD" || value == "" {
@@ -1217,7 +1228,19 @@ func (service *Service) normalizeBranch(ctx context.Context, value string) (stri
 	if _, err := service.Repositories.Git.Run(ctx, "", nil, "check-ref-format", "refs/heads/"+value); err != nil {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
-	return value, nil
+	full, err := service.Repositories.SelectBranchRef(ctx, repositoryPath, input, exact)
+	var ambiguous *repository.AmbiguousBranchError
+	if errors.As(err, &ambiguous) {
+		return "", &Problem{Code: "ambiguous_branch", Message: ambiguous.Error(), Cause: ambiguous}
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		// Keep missing-source and missing-target status classification below.
+		return value, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimPrefix(full, "refs/heads/"), nil
 }
 
 func requireCommitHead(name string, head branchHead) error {

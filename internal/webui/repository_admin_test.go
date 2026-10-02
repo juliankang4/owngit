@@ -126,7 +126,7 @@ func TestSettingsPageOffersOnlyExistingBranches(t *testing.T) {
 	page := repositorySettingsPage(fullChrome(LangEN))
 	page.DefaultBranch, page.DefaultBranchMissing, page.Branches, page.Selected = "main", true, []string{"master"}, ""
 	out := render(t, r, page)
-	if !strings.Contains(out, `<option value="master">master</option>`) || strings.Contains(out, `<option value="main"`) {
+	if !strings.Contains(out, `<option value="refs/heads/master">master</option>`) || strings.Contains(out, `<option value="refs/heads/main"`) {
 		t.Error("the selector offers a branch that does not exist")
 	}
 	if !strings.Contains(out, Text(LangEN, MsgRepoDefaultBranchMissing)) {
@@ -136,7 +136,7 @@ func TestSettingsPageOffersOnlyExistingBranches(t *testing.T) {
 		t.Error("with the default missing, the selector preselects a branch the administrator did not choose")
 	}
 	page.DefaultBranchMissing, page.Selected = false, "master"
-	if out := render(t, r, page); strings.Contains(out, `<option value="" selected disabled>`) || !strings.Contains(out, `<option value="master" selected>`) {
+	if out := render(t, r, page); strings.Contains(out, `<option value="" selected disabled>`) || !strings.Contains(out, `<option value="refs/heads/master" selected>`) {
 		t.Error("an existing default branch is not the preselected choice")
 	}
 	page.DefaultBranchMissing, page.Selected = true, ""
@@ -147,7 +147,7 @@ func TestSettingsPageOffersOnlyExistingBranches(t *testing.T) {
 	}
 	page.Branches = nil
 	out = render(t, r, page)
-	if strings.Contains(out, `name="branch"`) || !strings.Contains(out, Text(LangEN, MsgRepoDefaultBranchNone)) {
+	if strings.Contains(out, `name="branch_ref"`) || !strings.Contains(out, Text(LangEN, MsgRepoDefaultBranchNone)) {
 		t.Error("a repository without branches still shows the selector")
 	}
 }

@@ -95,34 +95,44 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		return
 	}
 	branch := postValue(request, "branch")
+	_, exact := request.PostForm["branch_ref"]
+	draft := branch
+	if exact {
+		branch = postValue(request, "branch_ref")
+		draft = strings.TrimPrefix(branch, "refs/heads/")
+	}
 	if _, err := app.confirmAdmin(writer, request, &chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		chrome.Notices = append(chrome.Notices, notice)
-		app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, status)
+		app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, status)
 		return
 	}
 	// Only an existing branch is offered, and only an existing branch is
 	// accepted. The backend checks again under its own lock.
-	if !hasBranch(summary, branch) {
+	if !hasBranch(summary, branch, exact) {
 		chrome.Notices = append(chrome.Notices, webui.Error("branch", webui.MsgRepoDefaultBranchUnknown))
-		app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusUnprocessableEntity)
+		app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, http.StatusUnprocessableEntity)
 		return
 	}
-	if err := app.setDefaultBranch(request.Context(), stored.ID, branch); err != nil {
+	if _, err := app.setDefaultBranch(request.Context(), stored.ID, branch, exact); err != nil {
+		var ambiguous *repository.AmbiguousBranchError
 		switch {
+		case errors.As(err, &ambiguous):
+			chrome.Notices = append(chrome.Notices, webui.Error("branch", webui.MsgBranchAmbiguous).WithDetail(ambiguous.Detail()))
+			app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, http.StatusUnprocessableEntity)
 		case errors.Is(err, repository.ErrBranchNotFound):
 			chrome.Notices = append(chrome.Notices, webui.Error("branch", webui.MsgRepoDefaultBranchUnknown))
-			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusUnprocessableEntity)
+			app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, http.StatusUnprocessableEntity)
 		case errors.Is(err, repository.ErrRepositoryBusy):
 			code, _ := busyNotice(err)
 			chrome.Notices = append(chrome.Notices, webui.Error("", code))
-			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, http.StatusConflict)
+			app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, http.StatusConflict)
 		case errors.Is(err, repository.ErrRepositoryNotFound):
 			app.renderError(writer, request, http.StatusNotFound, webui.MsgRepoNotFound, stored.ID)
 		default:
 			// The cause can name host paths, so it goes to the server log.
 			chrome.Notices = append(chrome.Notices, webui.Error("", webui.MsgRepoDefaultBranchFailed))
-			app.renderRepositorySettings(writer, request, stored, summary, chrome, branch, unavailable(request, "default branch change", err))
+			app.renderRepositorySettings(writer, request, stored, summary, chrome, draft, unavailable(request, "default branch change", err))
 		}
 		return
 	}
@@ -131,7 +141,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 
 // setDefaultBranch makes branch, an existing branch, the default branch of
 // repository id, for Settings and the owner API alike.
-func (app *App) setDefaultBranch(ctx context.Context, id, branch string) error {
+func (app *App) setDefaultBranch(ctx context.Context, id, branch string, exact bool) (string, error) {
 	// The change waits only briefly for the write lock, and a background
 	// activity count may hold the read lock far longer. The count does not
 	// depend on the default branch and is redone on a later page, so counting
@@ -139,15 +149,15 @@ func (app *App) setDefaultBranch(ctx context.Context, id, branch string) error {
 	// operation.
 	// The pause ends in a deferred call, so a panic cannot leave it behind.
 	defer app.activity.pause(id, true)()
-	return app.Repositories.SetDefaultBranch(ctx, id, branch)
+	return app.Repositories.SetDefaultBranchInput(ctx, id, branch, exact)
 }
 
-func hasBranch(summary repository.Summary, name string) bool {
+func hasBranch(summary repository.Summary, name string, exact bool) bool {
 	if name == "" {
 		return false
 	}
 	for _, branch := range summary.Branches {
-		if branch.Name == name {
+		if (!exact && branch.Name == name) || (exact && "refs/heads/"+branch.Name == name) {
 			return true
 		}
 	}
@@ -256,7 +266,7 @@ func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request
 		// A refused submission keeps the administrator's choice when it is
 		// still offered. Anything else keeps the default, or no choice.
 		if branch.Name == selected {
-			page.Selected = selected
+			page.Selected = branch.Name
 		}
 	}
 	app.render(writer, request, status, page)

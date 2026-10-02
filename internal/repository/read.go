@@ -82,37 +82,120 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		}
 		requested = "refs/heads/" + snapshot.Summary.DefaultBranch
 	}
-	candidates := []string{requested}
-	if strings.HasPrefix(requested, "refs/heads/") || strings.HasPrefix(requested, "refs/tags/") {
-		if err := validateShortRef(strings.TrimPrefix(strings.TrimPrefix(requested, "refs/heads/"), "refs/tags/")); err != nil {
-			return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
-		}
-	} else {
-		if err := validateShortRef(requested); err != nil {
-			return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
-		}
-		// Keep accepting historical short URLs, with the documented
-		// branch-first precedence. Newly generated URLs always carry the full
-		// ref identity.
-		candidates = []string{"refs/heads/" + requested, "refs/tags/" + requested}
+	short := strings.TrimPrefix(strings.TrimPrefix(requested, "refs/heads/"), "refs/tags/")
+	if err := validateShortRef(short); err != nil {
+		return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
 	}
-	for _, full := range candidates {
+	commitOID := ""
+	full, err := selectRefName(requested, strings.HasPrefix(requested, "refs/"), true, func(full string) (bool, error) {
 		ref, found := snapshotRef(snapshot.Summary, full)
 		if !found {
-			continue
+			return false, nil
 		}
 		if ref.Type == "commit" && isOID(ref.OID) {
-			return full, ref.OID, nil
+			commitOID = ref.OID
+			return true, nil
 		}
-		commitOID, err := m.peelToCommit(ctx, id, ref.OID)
+		var err error
+		commitOID, err = m.peelToCommit(ctx, id, ref.OID)
+		return commitOID != "", err
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return full, commitOID, nil
+}
+
+// BrowseRefName selects a snapshot identity. Full refs are exact; historical
+// short addresses keep branch-first precedence over tags.
+func BrowseRefName(summary Summary, requested string) (string, error) {
+	if requested == "" {
+		requested = "refs/heads/" + summary.DefaultBranch
+	}
+	return selectRefName(requested, strings.HasPrefix(requested, "refs/"), true, func(full string) (bool, error) {
+		_, found := snapshotRef(summary, full)
+		return found, nil
+	})
+}
+
+// AmbiguousBranchError describes distinct existing interpretations of a legacy
+// branch operand. Choices maps each full ref to an unambiguous legacy operand.
+type AmbiguousBranchError struct {
+	Input   string
+	Refs    []string
+	Choices []string
+}
+
+func (err *AmbiguousBranchError) Detail() string {
+	return strings.Join(err.Choices, "; ")
+}
+
+func (err *AmbiguousBranchError) Error() string {
+	return "That name matches two branches. Choose a full ref and enter its corresponding value: " + err.Detail()
+}
+
+// selectRefName owns exact identity, legacy branch ambiguity and browse
+// precedence. Lookup failures are returned without trying another identity.
+func selectRefName(value string, exact, browse bool, exists func(string) (bool, error)) (string, error) {
+	candidates := refCandidates(value, exact, browse)
+	var found []string
+	for _, full := range candidates {
+		present, err := exists(full)
 		if err != nil {
-			return "", "", err
+			return "", err
 		}
-		if commitOID != "" {
-			return full, commitOID, nil
+		if present {
+			found = append(found, full)
+			if browse || exact {
+				return full, nil
+			}
 		}
 	}
-	return "", "", errRefNotFound
+	if len(found) == 0 {
+		return "", errRefNotFound
+	}
+	if len(found) == 1 {
+		return found[0], nil
+	}
+	problem := &AmbiguousBranchError{Input: value, Refs: found}
+	for _, full := range found {
+		choice := ""
+		for _, operand := range []string{strings.TrimPrefix(full, "refs/heads/"), full} {
+			matches := 0
+			for _, candidate := range refCandidates(operand, false, false) {
+				present, err := exists(candidate)
+				if err != nil {
+					return "", err
+				}
+				if present {
+					matches++
+				}
+			}
+			if matches == 1 {
+				choice = operand
+				break
+			}
+		}
+		if choice == "" {
+			problem.Choices = append(problem.Choices, full+" (Settings)")
+		} else {
+			problem.Choices = append(problem.Choices, full+": "+choice)
+		}
+	}
+	return "", problem
+}
+
+func refCandidates(value string, exact, browse bool) []string {
+	if exact {
+		return []string{value}
+	}
+	if browse {
+		return []string{"refs/heads/" + value, "refs/tags/" + value}
+	}
+	if strings.HasPrefix(value, "refs/heads/") {
+		return []string{value, "refs/heads/" + value}
+	}
+	return []string{"refs/heads/" + value}
 }
 
 // ResolveRevision is ResolveRef that also accepts a full commit ID, which

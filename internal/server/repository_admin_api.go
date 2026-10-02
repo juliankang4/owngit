@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/webui"
 )
@@ -102,14 +103,18 @@ func (app *App) defaultBranchAPI(writer http.ResponseWriter, request *http.Reque
 	if !decodeAPIJSON(writer, request, &input) {
 		return
 	}
-	err := app.setDefaultBranch(request.Context(), id, input.Branch)
+	full, err := app.setDefaultBranch(request.Context(), id, input.Branch, false)
+	var ambiguous *repository.AmbiguousBranchError
 	switch {
 	case err == nil:
 		writeAPIJSON(writer, http.StatusOK, struct {
 			OK            bool   `json:"ok"`
 			Repository    string `json:"repository"`
 			DefaultBranch string `json:"default_branch"`
-		}{true, id, strings.TrimPrefix(input.Branch, "refs/heads/")})
+		}{true, id, strings.TrimPrefix(full, "refs/heads/")})
+	case errors.As(err, &ambiguous):
+		problem := pullrequest.NewProblem("ambiguous_branch", ambiguous.Error())
+		writeAPIError(writer, apiStatus(request, "default branch change", problem), problem.Code, problem.Message, nil)
 	case errors.Is(err, repository.ErrBranchNotFound):
 		writeAPIError(writer, http.StatusUnprocessableEntity, "branch_not_found", "That branch does not exist in this repository. Nothing was changed.", nil)
 	case errors.Is(err, repository.ErrRepositoryBusy):

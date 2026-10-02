@@ -61,13 +61,13 @@
     <input type="hidden" name="lang" value="{{$lang}}">
     <div class="f">
       <label for="rset-branch">{{bi $lang "repoadmin.default_branch.label"}}</label>
-      <select id="rset-branch" name="branch" required
+      <select id="rset-branch" name="branch_ref" required
               {{template "fieldInvalid" dict "Notices" $n "Field" "branch"}}>
         {{/* With no valid preselection (the default names a missing branch),
              the administrator must pick one; the first name is not a choice. */}}
         {{if not $p.Selected}}<option value="" selected disabled>{{bi $lang "repoadmin.default_branch.choose"}}</option>{{end}}
         {{range $p.Branches}}
-          <option value="{{.}}"{{if eq . $p.Selected}} selected{{end}}>{{.}}</option>
+          <option value="refs/heads/{{.}}"{{if eq . $p.Selected}} selected{{end}}>{{.}}</option>
         {{end}}
       </select>
       {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "branch"}}

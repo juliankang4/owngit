@@ -500,7 +500,7 @@ func writeEncodedAPIJSON(writer http.ResponseWriter, status int, encoded []byte)
 // answered as unavailable. Both are logged as step of request.
 func apiStatus(request *http.Request, step string, err error) int {
 	switch pullrequest.AsProblem(err).Code {
-	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_body", "invalid_note", "invalid_edit", "invalid_edit_revision", "invalid_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
+	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_body", "invalid_note", "invalid_edit", "invalid_edit_revision", "invalid_branch", "ambiguous_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
 		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_job_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id", "revision_not_recorded":
 		return http.StatusUnprocessableEntity
 	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":

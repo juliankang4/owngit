@@ -169,8 +169,8 @@ func TestCreateSubmitsTheCommitsObservedForTheSelectedBranches(t *testing.T) {
 
 	form := formNamed(t, out, page.SubmitURL)
 	for _, want := range []string{
-		`name="source_branch" value="` + page.Source.Branch + `"`,
-		`name="target_branch" value="` + page.Target.Branch + `"`,
+		`name="source_ref" value="refs/heads/` + page.Source.Branch + `"`,
+		`name="target_ref" value="refs/heads/` + page.Target.Branch + `"`,
 		`name="source_oid" value="` + page.Source.OID + `"`,
 		`name="target_oid" value="` + page.Target.OID + `"`,
 	} {

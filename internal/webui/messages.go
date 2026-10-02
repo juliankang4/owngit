@@ -370,6 +370,7 @@ const (
 	MsgRepoDefaultGoneShort MessageCode = "repo.default_branch_missing.short"
 	MsgRepoEmptyShort       MessageCode = "repo.empty.short"
 	MsgRepoRefMissing       MessageCode = "repo.ref_missing"
+	MsgBranchAmbiguous      MessageCode = "repo.branch_ambiguous"
 	MsgRepoRefRetained      MessageCode = "repo.ref_retained"
 	MsgRepoDetached         MessageCode = "repo.detached"
 	MsgRepoRetainTitle      MessageCode = "repo.retained.title"
@@ -1505,6 +1506,10 @@ var catalog = map[MessageCode]message{
 	MsgRepoEmptyShort: {
 		en: "No commits yet",
 		ko: "아직 커밋 없음",
+	},
+	MsgBranchAmbiguous: {
+		en: "That name matches two branches. Choose a full ref and enter its corresponding value:",
+		ko: "이 이름에 해당하는 브랜치가 두 개 있습니다. 원하는 전체 ref를 확인하고 옆에 표시된 값을 입력하세요:",
 	},
 	MsgRepoRefMissing: {
 		en: "That branch or tag does not exist in this repository.",

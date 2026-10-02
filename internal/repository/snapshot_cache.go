@@ -399,26 +399,53 @@ func (m *Manager) RefTipsAt(ctx context.Context, id string, snapshot RefSnapshot
 // RefCommitAt pins an already selected full ref to snapshot. An absent ref
 // returns no OID, so callers can keep their existing handling of other refs.
 func (m *Manager) RefCommitAt(ctx context.Context, id string, snapshot RefSnapshot, full string) (string, error) {
-	reads, release, err := m.snapshotRead(ctx, id, snapshot)
+	if snapshot.Stale {
+		return "", ErrRepositoryInUse
+	}
+	path, _, exists, err := m.ExistingPath(ctx, id)
 	if err != nil {
 		return "", err
 	}
-	defer release()
+	if !exists {
+		return "", ErrRepositoryNotFound
+	}
+	reads := snapshot.reads
+	if reads == nil || reads.path != path || reads.lock != m.Locks.For(id) {
+		return "", errors.New("ref snapshot belongs to another repository")
+	}
 	for _, ref := range reads.refs {
 		if ref.Name != full {
 			continue
 		}
+		// Immutable snapshot data needs no repository lock, even while a
+		// writer runs. Only a missing object read must wait for that writer.
 		if ref.Type == "commit" {
 			return ref.OID, nil
 		}
-		if ref.Type == "tag" {
-			peeled, err := readPeeledTags(ctx, m.Git, reads.path, []string{ref.OID}, reads)
+		if ref.Type != "tag" {
+			return "", ErrNotFound
+		}
+		select {
+		case reads.gate <- struct{}{}:
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+		object, cached := reads.peeled[ref.OID]
+		<-reads.gate
+		if !cached {
+			locked, release, err := m.snapshotRead(ctx, id, snapshot)
 			if err != nil {
 				return "", err
 			}
-			if object := peeled[ref.OID]; object.objectType == "commit" {
-				return object.oid, nil
+			defer release()
+			peeled, err := readPeeledTags(ctx, m.Git, locked.path, []string{ref.OID}, locked)
+			if err != nil {
+				return "", err
 			}
+			object = peeled[ref.OID]
+		}
+		if object.objectType == "commit" {
+			return object.oid, nil
 		}
 		return "", ErrNotFound
 	}

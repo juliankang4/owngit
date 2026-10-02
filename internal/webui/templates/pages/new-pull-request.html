@@ -29,10 +29,10 @@
       <div class="restore__from">
         <div class="f">
           <label for="pr-source">{{bi $lang "pr.new.source"}}</label>
-          <select id="pr-source" name="source"
+          <select id="pr-source" name="source_ref"
                   {{template "fieldInvalid" dict "Notices" $n "Field" "source_branch"}}>
             {{range $p.Branches}}
-              <option value="{{.Name}}"{{if eq .Name $p.Source.Branch}} selected{{end}}>{{.Name}}</option>
+              <option value="refs/heads/{{.Name}}"{{if eq .Name $p.Source.Branch}} selected{{end}}>{{.Name}}</option>
             {{end}}
           </select>
           {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "source_branch"}}
@@ -42,10 +42,10 @@
       <div class="restore__to">
         <div class="f">
           <label for="pr-target">{{bi $lang "pr.new.target"}}</label>
-          <select id="pr-target" name="target"
+          <select id="pr-target" name="target_ref"
                   {{template "fieldInvalid" dict "Notices" $n "Field" "target_branch"}}>
             {{range $p.Branches}}
-              <option value="{{.Name}}"{{if eq .Name $p.Target.Branch}} selected{{end}}>{{.Name}}</option>
+              <option value="refs/heads/{{.Name}}"{{if eq .Name $p.Target.Branch}} selected{{end}}>{{.Name}}</option>
             {{end}}
           </select>
           {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "target_branch"}}
@@ -82,8 +82,8 @@
       {{/* The branch names and the ids travel together, exactly as read. The
            backend revalidates the pair inside its repository lock, so a tip
            that moved fails rather than being merged into silently. */}}
-      <input type="hidden" name="source_branch" value="{{$p.Source.Branch}}">
-      <input type="hidden" name="target_branch" value="{{$p.Target.Branch}}">
+      <input type="hidden" name="source_ref" value="refs/heads/{{$p.Source.Branch}}">
+      <input type="hidden" name="target_ref" value="refs/heads/{{$p.Target.Branch}}">
       <input type="hidden" name="source_oid" value="{{$p.Source.OID}}">
       <input type="hidden" name="target_oid" value="{{$p.Target.OID}}">
 

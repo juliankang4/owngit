@@ -70,8 +70,19 @@ func (app *App) pullRequestRow(address string, view *pullrequest.View) webui.Pul
 }
 
 func (app *App) handleNewPullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
+	query := request.URL.Query()
+	source, target := query.Get("source"), query.Get("target")
+	if query.Has("source_ref") || query.Has("target_ref") {
+		source, target = "", ""
+		if strings.HasPrefix(query.Get("source_ref"), "refs/heads/") {
+			source = strings.TrimPrefix(query.Get("source_ref"), "refs/heads/")
+		}
+		if strings.HasPrefix(query.Get("target_ref"), "refs/heads/") {
+			target = strings.TrimPrefix(query.Get("target_ref"), "refs/heads/")
+		}
+	}
 	app.renderNewPullRequest(writer, request, stored, summary, chrome,
-		request.URL.Query().Get("source"), request.URL.Query().Get("target"), pullrequest.CreateInput{}, nil, http.StatusOK)
+		source, target, pullrequest.CreateInput{}, nil, http.StatusOK)
 }
 
 // renderNewPullRequest shows the creation screen for a branch pair, with the
@@ -163,18 +174,29 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 		TargetOID:    postValue(request, "target_oid"),
 		Actor:        generalAccessActor,
 	}
+	create := app.PullRequests.Create
+	_, exactSource := request.PostForm["source_ref"]
+	_, exactTarget := request.PostForm["target_ref"]
+	if exactSource || exactTarget {
+		input.SourceBranch, input.TargetBranch = postValue(request, "source_ref"), postValue(request, "target_ref")
+		create = app.PullRequests.CreateExact
+	}
+	source, target := input.SourceBranch, input.TargetBranch
+	if exactSource || exactTarget {
+		source, target = strings.TrimPrefix(source, "refs/heads/"), strings.TrimPrefix(target, "refs/heads/")
+	}
 	if !validOID(input.SourceOID) || !validOID(input.TargetOID) {
-		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input,
+		app.renderNewPullRequest(writer, request, stored, summary, chrome, source, target, input,
 			[]webui.Notice{webui.Error("", webui.MsgPRStale)}, http.StatusUnprocessableEntity)
 		return
 	}
-	created, err := app.PullRequests.Create(request.Context(), input)
+	created, err := create(request.Context(), input)
 	if err != nil {
 		notice, status := browserPullRequestProblem(request, "pull request creation", err, "")
 		if existing, ok := pullrequest.AsProblem(err).Details.(pullrequest.ExistingPullRequest); ok {
 			notice = notice.WithLink("#"+strconv.FormatInt(existing.Number, 10), pullRequestURL(stored.Address, existing.Number))
 		}
-		app.renderNewPullRequest(writer, request, stored, summary, chrome, input.SourceBranch, input.TargetBranch, input,
+		app.renderNewPullRequest(writer, request, stored, summary, chrome, source, target, input,
 			[]webui.Notice{notice}, status)
 		return
 	}
@@ -619,6 +641,10 @@ func browserMergeProblemBlockers(err error) []webui.MergeBlocker {
 
 func browserPullRequestProblem(request *http.Request, step string, err error, action string) (webui.Notice, int) {
 	problem := pullrequest.AsProblem(err)
+	var ambiguous *repository.AmbiguousBranchError
+	if errors.As(err, &ambiguous) {
+		return webui.Error("", webui.MsgBranchAmbiguous).WithDetail(ambiguous.Detail()), apiStatus(request, step, err)
+	}
 	field := ""
 	code := webui.MsgPRFailed
 	switch problem.Code {
