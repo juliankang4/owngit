@@ -422,7 +422,12 @@ in lowercase, which is its ID until it is renamed. `repo show` adds
 `push_ref_namespaces`, the ref namespaces a push may change
 ([Other ref namespaces](OPERATIONS.md#other-ref-namespaces)), and `aliases`,
 the earlier addresses that still lead to the repository, each with the time it
-stops (`until`). `repo list` returns at most 1000 repositories, with
+stops (`until`). When the branches could not be read, `default_branch_error`
+takes the place of `default_branch`: `The repository folder is missing or
+unusable; see the server log.` when the repository folder is missing or
+unusable, and `OwnGit could not read the branches; see the server log.` for
+any other read failure. A repository that is busy or still being prepared, or
+whose last read may be out of date, has neither field. `repo list` returns at most 1000 repositories, with
 `truncated` true when there are more. `repo create` applies the browser form's
 rules and fails with `repository_exists`, `invalid_repository_name`,
 `reserved_repository_name`, `invalid_repository_description` (over 500
