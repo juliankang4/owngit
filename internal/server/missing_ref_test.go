@@ -54,8 +54,8 @@ func TestMissingRefOrCommitAnswersNotFound(t *testing.T) {
 				[]string{webui.Text(lang, webui.MsgCommitNotFound), back}},
 			{"a commit of another repository", "/repositories/hist/commits/" + foreign, http.StatusNotFound,
 				[]string{webui.Text(lang, webui.MsgCommitNotFound), back}},
-			{"a commit that is not an ID", "/repositories/hist/commits/not-a-commit", http.StatusNotFound,
-				[]string{webui.Text(lang, webui.MsgCommitNotFound)}},
+			{"a commit that is not an ID", "/repositories/hist/commits/not-a-commit", http.StatusBadRequest,
+				[]string{`class="errpage"`, webui.Text(lang, webui.MsgErrNotFound)}},
 			{"a missing commit on a missing branch", "/repositories/hist/commits/" + missing + "?ref=nope", http.StatusNotFound, nil},
 			{"an empty repository", "/repositories/blank", http.StatusOK, nil},
 			{"the commits of an empty repository", "/repositories/blank/commits", http.StatusOK, nil},
@@ -70,7 +70,7 @@ func TestMissingRefOrCommitAnswersNotFound(t *testing.T) {
 			if page.status != test.status {
 				t.Errorf("%s %s: status %d, want %d", lang, test.name, page.status, test.status)
 			}
-			if !strings.Contains(page.body, `class="sb__repo"`) {
+			if test.status != http.StatusBadRequest && !strings.Contains(page.body, `class="sb__repo"`) {
 				t.Errorf("%s %s: the repository sidebar is missing", lang, test.name)
 			}
 			for _, want := range test.want {

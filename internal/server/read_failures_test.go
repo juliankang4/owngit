@@ -79,13 +79,16 @@ func TestRepositoryReadsTellMissingFromUnreadable(t *testing.T) {
 
 	for _, path := range []string{
 		"/code?ref=missing", "/code?ref=refs/heads/bad..name", "/code?path=nope", "/code?path=../escape",
-		"/commits?ref=missing", "/commits/" + missing, "/commits/" + tag, "/commits/not-a-commit",
+		"/commits?ref=missing", "/commits/" + missing, "/commits/" + tag,
 		"/raw?ref=refs/heads/main&path=nope", "/raw?ref=missing&path=README.md",
 		"/archive?format=zip&ref=missing", "/archive?format=zip&ref=" + missing, "/archive?format=zip&ref=" + tag,
 	} {
 		if body, status := dashboardGET(t, client, base+path); status != http.StatusNotFound || strings.Contains(body, unreadablePage) {
 			t.Errorf("GET %s status=%d unreadable=%v, want 404", path, status, strings.Contains(body, unreadablePage))
 		}
+	}
+	if body, status := dashboardGET(t, client, base+"/commits/not-a-commit"); status != http.StatusBadRequest || !strings.Contains(body, `class="errpage"`) || strings.Contains(body, unreadablePage) {
+		t.Errorf("malformed commit address status=%d, want 400 error layout", status)
 	}
 	if body, status := dashboardGET(t, client, base+"/restore?source="+missing+"&target=main"); status != http.StatusUnprocessableEntity || !strings.Contains(body, "That selection cannot be restored") {
 		t.Errorf("restore of a missing commit status=%d, want 422 with the invalid selection", status)
