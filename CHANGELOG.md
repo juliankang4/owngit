@@ -6,6 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-10-04
+
+This release fixes security problems rated Medium and Low, and bugs that could make every later backup fail. Upgrading is recommended.
+
+**Upgrading:** on macOS, OwnGit makes its server log private whenever it opens it, and if it cannot, it does not start and names the `chmod -N` command that fixes the file. An existing LaunchAgent picks up the new service settings after you run `owngit service install` again, and a Homebrew service after you upgrade and run `brew services restart owngit`; [Log files on macOS](docs/OPERATIONS.md#log-files-on-macos) covers the output file Homebrew writes. 1.1.3 restores backups made by 1.1.4, except a backup that holds a branch or tag name with a Unicode space character, a record left by a refused or stopped merge that differs from the pull request's later merge, or check records in a time order 1.1.3 refuses; such a backup needs 1.1.4 or later ([Backup versions](docs/OPERATIONS.md#backup-versions)).
+
+**Changes for scripts:** a query string with a broken percent escape or a stray semicolon gets 400 `invalid_request`. Repository details from the API, `owngit repo show` and MCP add `default_branch_error` when the branches could not be read, and changing the default branch or creating a pull request with a name that matches two branches fails with 422 `ambiguous_branch`. Creating a repository can fail with the new `repository_storage_in_use` or `repository_create_kept`. When an import's first run cannot create its folder for a reason other than an existing name, it fails with 503 `repository_create_failed` instead of 409 `repository_taken`. `owngit backup --output --json` adds `warnings` when the backup found alias branches.
+
+### Changed
+
+- Long files, single-file diffs and folders are shown in pages of at most 10,000 lines or 1,000 entries, with page links above and below that stay on the same commit. A line address beyond the end of a file says so and links to the first page.
+- A slow page keeps arriving for up to 10 minutes while data moves, and a page that did not arrive in full keeps showing "Receiving the page".
+- Opening an unchanged repository again reuses what OwnGit already read while it is still in memory, and the dashboard counts a repository's activity in the background after a push.
+- Backup results name alias branches, which a backup stores as ordinary branches, with the command that reconnects each after a restore.
+- `owngit doctor` and the Checkup in Settings report repository folders that other local accounts can reach and change, with a repair command, and a repository whose managed hooks are a link or belong to another account. Setup continues with a warning when other accounts can reach and change the repository folder you chose.
+- When OwnGit cannot tell where a request through a trusted proxy came from, setup warns and, by default, selects the shared password for general access and does not keep the address you used.
+- On macOS, the OwnGit service runs with interactive priority, so macOS does not slow it down as background work.
+- On macOS, the menu bar panel uses the standard macOS text size. Its settings offer Large and Larger sizes, also with ⌘+ and ⌘- while the panel is open, and a panel taller than the screen scrolls.
+- OwnGit no longer refreshes a repository's managed hooks through a linked `hooks` folder or hook file. Such a repository stays unavailable until you move the link out of its folder.
+
+### Fixed
+
+- A pull request merge that was refused or stopped, or a computer clock set back while checks ran, no longer makes every later backup fail. Existing installations back up again without any repair.
+- Backups restore branch and tag names that contain Unicode space characters, such as a no-break space, exactly.
+- After OwnGit stopped while an import was setting the default branch, pushes to that branch are no longer blocked when OwnGit can prove the import stopped and the repository's folders are private to the OwnGit account; otherwise the manual steps are shown. The import keeps following the source's default branch when OwnGit can prove it set that branch; otherwise it leaves the branch as it is and reports a difference once the source's default branch moves.
+- On macOS, file and branch names stored with decomposed Unicode, such as Korean file names created on Linux, keep their exact bytes, so their pages, diffs and backups work.
+- Choosing a branch in Settings or on the New pull request page uses exactly the branch you picked, even when another branch is named after its full name, such as `x` and `refs/heads/x`. A name that could mean two branches is refused with advice on how to choose one.
+- Two installations or two requests can no longer create a repository in the same folder, and a client that disconnects after the folder is created no longer stops OwnGit from recording the new repository. When recording still fails, OwnGit keeps the folder instead of deleting it; check it before you try that name again.
+- The command shown to bring back a deleted repository that had been renamed uses its current name.
+- `owngit health` succeeds only when this installation's OwnGit is running and answers.
+- On Linux, uninstalling no longer reports success and removes the service when systemd could not stop it.
+- A partial settings save changes only the fields it names and no longer undoes another save made at the same time.
+- Restoring selected files from an older commit never deletes files that were not selected.
+- Markdown Preview and Source stay on the commit you are viewing.
+- On macOS, Tab moves through the menu bar panel's controls every time the panel opens, also after the panel changed while it was open.
+- When this computer's loopback address, such as `127.0.0.1`, is a trusted proxy, the OwnGit icon works, and a push that connects directly over loopback, not forwarded for another client, is no longer announced as coming from another computer. A browser that opens a dashboard page directly over plain HTTP, using the name of a confirmed working HTTPS address, moves to that address even when its connection address is a trusted proxy.
+- On Windows, the command OwnGit prints to make a password, token or repository folder private also fixes its owner, works in Windows PowerShell 5.1 and PowerShell 7, and names any item it leaves unchanged or cannot repair.
+
+### Security
+
+- Medium: on macOS and Windows, new repository folders could inherit access, including the right to change them, from a repository folder that other local accounts can access. Affects 1.1.3 and earlier; new folders are now private to the OwnGit account, and `owngit doctor` names existing folders to fix.
+- Low: on macOS, other local accounts could read OwnGit's password, token and import secret files or its logs when access lists allowed it. Affects 1.1.3 and earlier; OwnGit now refuses such secret files with the command that fixes them and keeps its server log private.
+- Low: behind two or more trusted proxies, one visitor's failed sign-ins could lock out others, and behind any trusted proxy that did not say where a request came from, that request could be treated as coming from this computer. Affects 1.1.3 and earlier.
+
 ## [1.1.3] - 2026-10-01
 
 This release fixes security problems rated Medium and Low. Upgrading is recommended.
