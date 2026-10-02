@@ -85,7 +85,7 @@ func TestRepositoryHomePinsListTipsHeadAndReadme(t *testing.T) {
 		if page.Ref.Revision != snapshot.Summary.DefaultOID || page.Overview.Head.Subject != wantSubject || page.Overview.Readme == nil || !strings.Contains(string(page.Overview.Readme.Rendered), wantReadme) {
 			t.Fatalf("revision=%s head=%s README=%+v", page.Ref.Revision, page.Overview.Head.Subject, page.Overview.Readme)
 		}
-		if len(page.Overview.Branches) != 1 || page.Overview.Branches[0].Tip.OID != snapshot.Summary.DefaultOID {
+		if len(page.Overview.Branches) != len(snapshot.Summary.Branches) || page.Overview.Branches[0].Tip.OID != snapshot.Summary.DefaultOID {
 			t.Fatal("branch list and tip are not from the same snapshot")
 		}
 	}
@@ -95,11 +95,23 @@ func TestRepositoryHomePinsListTipsHeadAndReadme(t *testing.T) {
 	apiRunGit(t, work, "commit", "-m", "new home")
 	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
 	fill("old home", "old readme")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/new")
 	// Simulate an OwnGit writer completing between listing and selection.
 	lock := app.Repositories.Locks.For("pinned")
 	lock.Lock()
 	lock.Unlock()
 	fill("old home", "old readme")
+	for _, selection := range []string{"refs/heads/new", "refs/heads/missing"} {
+		request := httptest.NewRequest(http.MethodGet, "/repositories/pinned", nil)
+		page := app.baseRepositoryPage(request, webui.Chrome{}, stored, snapshot.Summary)
+		noErr(t, app.fillRepositoryOverview(request, &page, snapshot, selection))
+		if selection == "refs/heads/new" && (page.Ref.Missing || page.Overview.Head.Subject != "new home") {
+			t.Fatal("a requested ref outside the snapshot changed its selection rule")
+		}
+		if selection == "refs/heads/missing" && (!page.Ref.Missing || page.Ref.IsDefault) {
+			t.Fatal("a missing requested ref silently fell back to the default branch")
+		}
+	}
 	snapshot, err = app.Repositories.RefSnapshot(ctx, "pinned")
 	noErr(t, err)
 	fill("new home", "new readme")

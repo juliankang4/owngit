@@ -94,6 +94,27 @@ func TestSnapshotDerivedReadsReuseImmutableData(t *testing.T) {
 	}
 }
 
+func TestSnapshotDerivedRetainedTagFollowsWrites(t *testing.T) {
+	manager, _, work := newTestRepository(t)
+	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
+	runGit(t, work, "tag", "-a", "release", "-m", "release")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "refs/tags/release")
+	before := mustSnapshot(t, manager)
+	snapshotDerived(t, manager, before)
+	runGit(t, work, "push", "origin", ":refs/tags/release")
+	wroteRefs(manager, "sample")
+	after := mustSnapshot(t, manager)
+	snapshotDerived(t, manager, after)
+	retained, err := manager.RetainedRefsAt(context.Background(), "sample", after)
+	noErr(t, err)
+	if len(before.Summary.Tags) != 1 || len(after.Summary.Tags) != 0 || len(retained) != 1 || retained[0].Kind != "tag" || retained[0].Commit.OID != before.Summary.DefaultOID {
+		t.Fatal("tag deletion did not refresh the listing, retained ref and peeled commit together")
+	}
+	if after.ActivityKey != before.ActivityKey {
+		t.Fatal("a tag-only write unexpectedly changed the branch activity key")
+	}
+}
+
 func TestSnapshotDerivedReadsCoalesceAndStayPinnedAcrossWrites(t *testing.T) {
 	if os.PathSeparator != '/' {
 		t.Skip("the command-counting wrapper is a POSIX-shell fixture")
