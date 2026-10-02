@@ -1211,7 +1211,7 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 
 func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, value string, exact bool) (string, error) {
 	input := value
-	if value != strings.TrimSpace(value) || value == "" || len(value) > 255 || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
+	if value != strings.TrimSpace(value) || value == "" || (!exact && len(value) > 255) || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
 	if strings.HasPrefix(value, "refs/owngit/") {
@@ -1222,7 +1222,7 @@ func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, val
 	} else if exact {
 		return "", NewProblem("invalid_branch", "Pull requests require branch refs under refs/heads.")
 	}
-	if value == "HEAD" || value == "" {
+	if value == "HEAD" || value == "" || len(value) > 255 {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
 	if _, err := service.Repositories.Git.Run(ctx, "", nil, "check-ref-format", "refs/heads/"+value); err != nil {
