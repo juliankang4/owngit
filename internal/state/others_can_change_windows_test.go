@@ -7,8 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"owngit/internal/testfixture"
@@ -209,72 +209,67 @@ func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 	current, _, err := processIdentity()
 	noErr(t, err)
-	other, token, asOther := otherAccountWithToken(t)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	system, err := windows.CreateWellKnownSid(windows.WinLocalSystemSid)
+	noErr(t, err)
 	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
-		parent, _ := sharedParent(t)
-		root := filepath.Join(parent, "foreign")
+		root := filepath.Join(t.TempDir(), "shared")
 		healthy := filepath.Join(root, "a-healthy")
 		blocked := filepath.Join(root, "z-blocked")
-		var fixtureErr error
-		asOther(func() { fixtureErr = os.Mkdir(root, 0o700) })
-		noErr(t, fixtureErr)
-		t.Cleanup(func() {
-			var cleanupErr error
-			asOther(func() { cleanupErr = os.RemoveAll(root) })
-			if cleanupErr != nil && !os.IsNotExist(cleanupErr) {
-				t.Errorf("remove standard-account fixture: %v", cleanupErr)
-			}
-		})
-		inherited := func(sid *windows.SID) windows.EXPLICIT_ACCESS {
-			entry := testEntry(sid, windows.GRANT_ACCESS, fileAllAccess)
-			entry.Inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
-			return entry
-		}
-		rootACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{inherited(other), inherited(current)}, nil)
-		noErr(t, err)
-		noErr(t, windows.SetNamedSecurityInfo(root, windows.SE_FILE_OBJECT,
-			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, rootACL, nil))
-		asOther(func() { fixtureErr = os.WriteFile(healthy, []byte("healthy"), 0o600) })
-		noErr(t, fixtureErr)
+		noErr(t, os.Mkdir(root, 0o700))
+		noErr(t, os.WriteFile(healthy, []byte("healthy"), 0o600))
 		noErr(t, os.WriteFile(blocked, []byte("blocked"), 0o600))
 		setRawDACL(t, healthy, true, []windows.EXPLICIT_ACCESS{
-			testEntry(other, windows.GRANT_ACCESS, fileAllAccess),
-			testEntry(current, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
-		}, false)
-		setRawDACL(t, blocked, true, []windows.EXPLICIT_ACCESS{
-			testEntry(other, windows.DENY_ACCESS, windows.WRITE_DAC|windows.WRITE_OWNER),
-			testEntry(other, windows.GRANT_ACCESS, windows.GENERIC_READ|windows.DELETE),
 			testEntry(current, windows.GRANT_ACCESS, fileAllAccess),
+			testEntry(everyone, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
 		}, false)
-
-		for _, access := range []windows.ACCESS_MASK{windows.WRITE_DAC, windows.WRITE_OWNER} {
-			var probeErr error
-			asOther(func() {
-				name, err := windows.UTF16PtrFromString(blocked)
-				if err != nil {
-					probeErr = err
-					return
-				}
-				handle, err := windows.CreateFile(name, uint32(access),
-					windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
-				probeErr = err
-				if err == nil {
-					windows.CloseHandle(handle)
-				}
+		blockedACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
+			testEntry(everyone, windows.DENY_ACCESS, windows.READ_CONTROL|windows.WRITE_DAC|windows.WRITE_OWNER),
+		}, nil)
+		noErr(t, err)
+		noErr(t, windows.SetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, blockedACL, nil))
+		withWindowsPrivilege(t, "SeRestorePrivilege", func() {
+			noErr(t, windows.SetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
+				windows.OWNER_SECURITY_INFORMATION, system, nil, nil, nil))
+		})
+		privateACL, err := ownerOnlyACL(current, false)
+		noErr(t, err)
+		t.Cleanup(func() {
+			var restoreErr error
+			withWindowsPrivilege(t, "SeRestorePrivilege", func() {
+				restoreErr = windows.SetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
+					windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION,
+					current, nil, privateACL, nil)
 			})
+			if restoreErr != nil {
+				t.Errorf("restore blocked fixture: %v", restoreErr)
+			}
+		})
+
+		name, err := windows.UTF16PtrFromString(blocked)
+		noErr(t, err)
+		for _, access := range []uint32{windows.READ_CONTROL, windows.WRITE_DAC} {
+			handle, probeErr := windows.CreateFile(name, access,
+				windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
 			if probeErr == nil {
-				t.Fatalf("invalid failure fixture: standard account obtained access %#x to blocked item", access)
+				windows.CloseHandle(handle)
+				t.Fatalf("invalid failure fixture: repair process obtained access %#x to blocked item", access)
 			}
 		}
 		healthyProtection := captureProtectionFingerprints(t, healthy)
-		fix := privatePathRepairCommand(root, other, true, true)
+		fix, err := PrivateDirectoryFix(root, true)
+		noErr(t, err)
 		if !strings.Contains(fix, "$ErrorActionPreference = 'Stop'") {
 			t.Fatalf("repair lacks a terminating-error scope: %q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
 		command.Dir = root
-		command.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(token)}
 		output, runErr := command.CombinedOutput()
+		if len(strings.TrimSpace(string(output))) == 0 {
+			t.Fatalf("command did not run: %v", runErr)
+		}
 		if runErr == nil {
 			t.Fatalf("repair reported success after an intermediate ACL failure:\n%s", output)
 		}
@@ -283,6 +278,28 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 		}
 		assertProtectionFingerprints(t, healthyProtection)
 	})
+}
+
+func withWindowsPrivilege(t *testing.T, name string, action func()) {
+	t.Helper()
+	var token windows.Token
+	noErr(t, windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token))
+	defer token.Close()
+	encoded, err := windows.UTF16PtrFromString(name)
+	noErr(t, err)
+	var luid windows.LUID
+	noErr(t, windows.LookupPrivilegeValue(nil, encoded, &luid))
+	enabled := windows.Tokenprivileges{PrivilegeCount: 1}
+	enabled.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+	var previous windows.Tokenprivileges
+	var returned uint32
+	noErr(t, windows.AdjustTokenPrivileges(token, false, &enabled, uint32(unsafe.Sizeof(previous)), &previous, &returned))
+	defer func() {
+		if err := windows.AdjustTokenPrivileges(token, false, &previous, 0, nil, nil); err != nil {
+			t.Errorf("restore %s: %v", name, err)
+		}
+	}()
+	action()
 }
 
 func TestWindowsOthersCanChangeReportsUnreadableDACL(t *testing.T) {

@@ -216,13 +216,6 @@ var otherAccountCredentials = sync.OnceValues(func() (string, string) {
 // OWNGIT_TEST_OTHER_PASSWORD, and returns its SID and a function that runs
 // f on a thread that acts as that account.
 func otherAccount(t *testing.T) (*windows.SID, func(f func())) {
-	sid, _, as := otherAccountWithToken(t)
-	return sid, as
-}
-
-// otherAccountWithToken also returns the primary logon token for a test that
-// must start the product's printed command as the standard account itself.
-func otherAccountWithToken(t *testing.T) (*windows.SID, windows.Token, func(f func())) {
 	name, password := otherAccountCredentials()
 	if name == "" || password == "" {
 		t.Skip("needs a second local account: OWNGIT_TEST_OTHER_ACCOUNT and OWNGIT_TEST_OTHER_PASSWORD")
@@ -250,13 +243,8 @@ func otherAccountWithToken(t *testing.T) (*windows.SID, windows.Token, func(f fu
 	if logonErr != nil {
 		t.Fatalf("log on %s: %v", name, logonErr)
 	}
-	var primary windows.Token
-	noErr(t, windows.DuplicateTokenEx(token, windows.MAXIMUM_ALLOWED, nil, windows.SecurityImpersonation, windows.TokenPrimary, &primary))
-	t.Cleanup(func() {
-		primary.Close()
-		token.Close()
-	})
-	return sid, primary, func(f func()) {
+	t.Cleanup(func() { token.Close() })
+	return sid, func(f func()) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
