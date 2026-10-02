@@ -1160,11 +1160,12 @@ func readMissingBranchAliases(ctx context.Context, runner commandRunner, reposit
 			if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
 				return nil, fmt.Errorf("read alias target %q: %w", current, err)
 			}
-			_, err = repositoryRoot.Lstat(filepath.FromSlash(current))
+			info, err := repositoryRoot.Lstat(filepath.FromSlash(current))
 			if err != nil && !os.IsNotExist(err) {
 				return nil, err
 			}
-			missing = os.IsNotExist(err)
+			// Listed refs include packed entries; a directory alone is not a ref.
+			missing = os.IsNotExist(err) || (err == nil && info.IsDir())
 			break
 		}
 		aliases[index].MissingTarget = missing
