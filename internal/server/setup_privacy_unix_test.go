@@ -63,6 +63,32 @@ func TestSetupDoesNotWarnForSharedFolderBelowPrivateParent(t *testing.T) {
 	}
 }
 
+func TestSetupDoesNotWarnBelowSearchOnlyPrivateParent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory read permission does not restrict root")
+	}
+	app, store, root := newTestApp(t)
+	noErr(t, os.Mkdir(root, 0o777))
+	noErr(t, os.Chmod(root, 0o777))
+	parent := filepath.Dir(root)
+	noErr(t, os.Chmod(parent, 0o100))
+	t.Cleanup(func() { noErr(t, os.Chmod(parent, 0o700)) })
+
+	checked := app.CheckRepositoryFolder(root)
+	if len(checked.Problems) != 0 || len(checked.Warnings) != 0 {
+		t.Fatalf("folder below search-only private parent check=%+v", checked)
+	}
+	feedback, err := app.CompleteSetup(context.Background(), setupAnswers(root), true)
+	if err != nil || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 {
+		t.Fatalf("setup feedback=%+v err=%v", feedback, err)
+	}
+	settings, err := store.Settings(context.Background())
+	noErr(t, err)
+	if !settings.Initialized {
+		t.Fatal("setup below a search-only private parent did not finish")
+	}
+}
+
 func TestSetupPrivateRepositoryFolderHasNoWarning(t *testing.T) {
 	app, _, root := newTestApp(t)
 	noErr(t, os.Mkdir(root, 0o700))

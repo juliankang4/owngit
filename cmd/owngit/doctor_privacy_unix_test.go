@@ -81,6 +81,26 @@ func TestDoctorDoesNotReportFoldersBelowPrivateParent(t *testing.T) {
 	}
 }
 
+func TestDoctorDoesNotReportFoldersBelowSearchOnlyPrivateParent(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("directory read permission does not restrict root")
+	}
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repositories")
+	exposed := filepath.Join(root, "exposed.git")
+	noErr(t, os.Mkdir(root, 0o777))
+	noErr(t, os.Mkdir(exposed, 0o777))
+	noErr(t, os.Chmod(root, 0o777))
+	noErr(t, os.Chmod(exposed, 0o777))
+	noErr(t, os.Chmod(parent, 0o100))
+	t.Cleanup(func() { noErr(t, os.Chmod(parent, 0o700)) })
+
+	findings := repositoryPrivacyFindings(doctorSubject{repositories: root, repositoryIDs: []string{"exposed"}})
+	if len(findings) != 0 {
+		t.Fatalf("folders below search-only private parent findings=%+v", findings)
+	}
+}
+
 func TestDoctorReportsRepositoryRootInspectionFailure(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-a-folder")
 	noErr(t, os.WriteFile(path, []byte("unchanged"), 0o600))

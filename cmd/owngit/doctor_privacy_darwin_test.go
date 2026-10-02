@@ -49,7 +49,7 @@ func TestDoctorReportsRepositoryBelowSharedGroupSearch(t *testing.T) {
 	parent := t.TempDir()
 	makeDoctorFixtureReachable(t, parent)
 	noErr(t, os.Chown(parent, -1, os.Getegid()))
-	noErr(t, os.Chmod(parent, 0o750))
+	noErr(t, os.Chmod(parent, 0o710))
 	root := filepath.Join(parent, "repositories")
 	noErr(t, os.Mkdir(root, 0o777))
 	noErr(t, os.Chmod(root, 0o777))

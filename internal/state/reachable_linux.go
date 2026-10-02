@@ -5,8 +5,10 @@ package state
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -18,25 +20,23 @@ const (
 	posixACLSearch  = 0x01
 )
 
+func openReachableDirectoryAt(dirfd int, name, path string) (*os.File, error) {
+	return openDirectoryAt(dirfd, name, path)
+}
+
 func groupOrAccessListAllowsOtherSearch(file *os.File, info os.FileInfo) (bool, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return false, errors.New("owning group is unavailable")
 	}
-	descriptor, err := unix.Openat(int(file.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
-	runtime.KeepAlive(file)
-	if err != nil {
-		return false, err
-	}
-	readable := os.NewFile(uintptr(descriptor), file.Name())
-	defer readable.Close()
+	heldPath := "/proc/self/fd/" + strconv.FormatUint(uint64(file.Fd()), 10)
 	entries, err := readPosixACL(func(buffer []byte) (int, error) {
-		size, err := unix.Fgetxattr(descriptor, "system.posix_acl_access", buffer)
-		runtime.KeepAlive(readable)
+		size, err := unix.Getxattr(heldPath, "system.posix_acl_access", buffer)
+		runtime.KeepAlive(file)
 		return size, err
 	})
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("read access list through held directory %s: %w", heldPath, err)
 	}
 	if len(entries) == 0 {
 		return info.Mode().Perm()&0o010 != 0 && !OwnPrivateGroup(stat.Gid) && !rootEquivalentGroup(stat.Gid), nil

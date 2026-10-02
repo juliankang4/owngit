@@ -41,11 +41,15 @@ const MaximumLinks = 40
 // what path leads to, which is that directory unless path leads to another
 // kind of file.
 func walkWay(path string, check func(wayEntry) error, mayCreate func(wayEntry) error) (dir *os.File, resolved, missing string, err error) {
-	root, err := openDirectoryAt(unix.AT_FDCWD, "/", "/")
+	return walkWayWithOpen(path, check, mayCreate, openDirectoryAt)
+}
+
+func walkWayWithOpen(path string, check func(wayEntry) error, mayCreate func(wayEntry) error, opener func(int, string, string) (*os.File, error)) (dir *os.File, resolved, missing string, err error) {
+	root, err := opener(unix.AT_FDCWD, "/", "/")
 	if err != nil {
 		return nil, "", "", err
 	}
-	walk := &wayWalk{check: check, mayCreate: mayCreate}
+	walk := &wayWalk{check: check, mayCreate: mayCreate, openDirectory: opener}
 	if err := walk.push(root); err != nil {
 		return nil, "", "", err
 	}
@@ -88,10 +92,11 @@ type wayEntry struct {
 // wayWalk is the state of walkWay: the directories from "/" to the current
 // one, all open.
 type wayWalk struct {
-	check     func(wayEntry) error
-	mayCreate func(wayEntry) error
-	way       []wayDirectory
-	links     int
+	check         func(wayEntry) error
+	mayCreate     func(wayEntry) error
+	openDirectory func(int, string, string) (*os.File, error)
+	way           []wayDirectory
+	links         int
 	// file and fileInfo name a final entry that is not a directory.
 	file     string
 	fileInfo os.FileInfo
@@ -156,7 +161,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 			current.checked = true
 		}
 		parent, next := int(current.file.Fd()), filepath.Join(current.file.Name(), name)
-		dir, err := openDirectoryAt(parent, name, next)
+		dir, err := walk.openDirectory(parent, name, next)
 		if errors.Is(err, fs.ErrNotExist) {
 			if !outermost {
 				return "", fmt.Errorf("a link on the way to %s leads to missing %s", relative, next)
@@ -170,7 +175,7 @@ func (walk *wayWalk) walk(relative string, outermost bool) (missing string, err 
 			if err := unix.Mkdirat(parent, name, 0o700); err != nil && !errors.Is(err, unix.EEXIST) {
 				return "", &os.PathError{Op: "create", Path: next, Err: err}
 			}
-			dir, err = openDirectoryAt(parent, name, next)
+			dir, err = walk.openDirectory(parent, name, next)
 		}
 		runtime.KeepAlive(current.file)
 		if err == nil {

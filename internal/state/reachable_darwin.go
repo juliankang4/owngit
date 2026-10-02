@@ -8,9 +8,24 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"golang.org/x/sys/unix"
 )
 
-const kauthSearchRights = 1 << 3
+const (
+	kauthSearchRights = 1 << 3
+	// The macOS SDK defines O_SEARCH as O_EXEC | O_DIRECTORY. x/sys does
+	// not expose either O_SEARCH or O_EXEC on macOS.
+	darwinOpenSearch = 0x40000000 | unix.O_DIRECTORY
+)
+
+func openReachableDirectoryAt(dirfd int, name, path string) (*os.File, error) {
+	descriptor, err := unix.Openat(dirfd, name, darwinOpenSearch|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	return os.NewFile(uintptr(descriptor), path), nil
+}
 
 func groupOrAccessListAllowsOtherSearch(file *os.File, info os.FileInfo) (bool, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)

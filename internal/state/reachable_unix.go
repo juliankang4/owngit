@@ -25,7 +25,7 @@ func ExposedToOtherAccounts(path string, file *os.File, info os.FileInfo) (bool,
 		return false, err
 	}
 	blocked := false
-	walked, _, missing, err := walkWay(absolute, func(entry wayEntry) error {
+	walked, _, missing, err := walkWayWithOpen(absolute, func(entry wayEntry) error {
 		if entry.last || entry.dir == nil {
 			return nil
 		}
@@ -47,7 +47,7 @@ func ExposedToOtherAccounts(path string, file *os.File, info os.FileInfo) (bool,
 			blocked = true
 		}
 		return nil
-	}, nil)
+	}, nil, openReachableDirectoryAt)
 	if err != nil {
 		return false, err
 	}
