@@ -131,9 +131,20 @@ func (app *App) backupRun(run *backups.RunView, settings state.Settings) *webui.
 		ID: run.ID, Kind: run.Kind, Status: run.Status, Verification: run.Verification, Name: run.BackupName, Path: run.Path,
 		Message: run.Message, StartedAt: run.StartedAt, HoldRepository: run.LongestHoldRepository,
 	}
-	if strings.Contains(info.Message, recovery.AliasBranchNotice) {
+	tail := info.Message[strings.LastIndexByte(info.Message, '\n')+1:]
+	countText, _, _ := strings.Cut(tail, " ")
+	omitted, parseErr := strconv.Atoi(countText)
+	hasOmitted := parseErr == nil && omitted > 0 && tail == strings.Replace(recovery.OmittedAliasNotice, "%d", countText, 1)
+	if strings.Contains(info.Message, recovery.AliasBranchNotice) || strings.Contains(info.Message, recovery.MissingAliasBranchNotice) || strings.Contains(info.Message, recovery.UnresolvedAliasBranchNotice) || hasOmitted {
 		info.MessageEN = info.Message
-		info.MessageKO = strings.Replace(info.Message, recovery.AliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupAliasBranches), 1)
+		info.MessageKO = strings.NewReplacer(
+			recovery.AliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupAliasBranches),
+			recovery.MissingAliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupMissingAliasBranches),
+			recovery.UnresolvedAliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupUnresolvedAliasBranches),
+		).Replace(info.Message)
+		if hasOmitted {
+			info.MessageKO = strings.TrimSuffix(info.MessageKO, tail) + strings.Replace(webui.Text(webui.LangKO, webui.MsgBackupOmittedAliases), "%d", countText, 1)
+		}
 	}
 	if run.FinishedAt != nil {
 		info.FinishedAt = *run.FinishedAt

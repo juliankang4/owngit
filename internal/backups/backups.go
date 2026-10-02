@@ -328,7 +328,9 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		}
 	}
 	if run.BackupName != "" {
-		run.Message = joinSentences(run.Message, report.AliasNotice())
+		if run.Status == state.BackupSucceeded {
+			s.noteAliases(&run, report)
+		}
 		s.noteRestoreLimit(run.Destination)
 	}
 	run.FinishedAt = s.now()
@@ -346,6 +348,34 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		line += ": " + run.Message
 	}
 	s.logf("%s", line)
+}
+
+// noteAliases keeps complete guidance within the run record's remaining space.
+// Log the full notice before recording, even if recording later fails.
+func (s *Service) noteAliases(run *state.BackupRun, report recovery.CaptureReport) {
+	if len(report.AliasBranches) == 0 {
+		return
+	}
+	budget := state.MaxBackupRunMessage - len(run.Message)
+	if run.Message != "" {
+		budget-- // Keep existing warnings first, separated by a newline.
+	}
+	var summary string
+	if budget > 0 {
+		summary = report.AliasNoticeWithin(budget)
+	}
+	output := filepath.Join(run.Destination, run.BackupName)
+	if summary == "" {
+		s.logf("backup %s alias notice did not fit in the backup run record; the full list follows", output)
+	} else {
+		if run.Message != "" {
+			run.Message += "\n"
+		}
+		run.Message += summary
+	}
+	for _, entry := range strings.Split(report.AliasNotice(), "\n") {
+		s.logf("backup %s alias notice: %s", output, entry)
+	}
 }
 
 // published says whether the folder of run holds the backup it wrote, and

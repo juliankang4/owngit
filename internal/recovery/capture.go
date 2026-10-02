@@ -76,13 +76,21 @@ type CaptureReport struct {
 
 // AliasBranch names a branch and its immediate symbolic target at capture time.
 type AliasBranch struct {
-	Repository string `json:"repository"`
-	Name       string `json:"name"`
-	Target     string `json:"target"`
+	Repository       string `json:"repository"`
+	Name             string `json:"name"`
+	Target           string `json:"target"`
+	MissingTarget    bool   `json:"missing_target,omitempty"`
+	UnresolvedTarget bool   `json:"unresolved_target,omitempty"`
 }
 
 // AliasBranchNotice explains the entries in CaptureReport.AliasNotice.
 const AliasBranchNotice = "Alias branches are backed up as ordinary branches at the same commit, so they no longer follow their targets after restoring. Each entry below names the repository, alias -> target, and the command to reconnect in that restored repository using a POSIX shell."
+
+// MissingAliasBranchNotice explains aliases omitted without a resolved object.
+const MissingAliasBranchNotice = "These alias branches were not included because a target did not exist. Each entry names the repository, alias -> immediate target, and the command to recreate it in the restored repository using a POSIX shell. The target may still be missing after recreation."
+
+// UnresolvedAliasBranchNotice covers cycles and Git's resolution limits.
+const UnresolvedAliasBranchNotice = "These alias branches were not included because their targets could not be resolved. Each entry names the repository and alias -> immediate target. Choose a target branch, then reconnect the alias in the restored repository rather than recreating the unresolved chain."
 
 // ReconnectCommand quotes both refs as POSIX shell arguments, including names
 // containing quotes or shell metacharacters. It is displayed, never executed.
@@ -93,15 +101,75 @@ func (alias AliasBranch) ReconnectCommand() string {
 
 // AliasNotice is empty for a capture without alias branches.
 func (report CaptureReport) AliasNotice() string {
-	if len(report.AliasBranches) == 0 {
+	return report.AliasNoticeWithin(0)
+}
+
+// OmittedAliasNotice points from a bounded run record to the full server log.
+const OmittedAliasNotice = "%d additional aliases: the full list is in the server log."
+
+// AliasNoticeWithin limits serving results at entry boundaries; zero is unlimited.
+// If even the omission marker cannot fit, it returns no notice.
+func (report CaptureReport) AliasNoticeWithin(limit int) string {
+	if len(report.AliasBranches) == 0 || limit < 0 {
 		return ""
 	}
-	entries := make([]string, 0, len(report.AliasBranches)+1)
-	entries = append(entries, AliasBranchNotice)
+	headings := [...]string{AliasBranchNotice, MissingAliasBranchNotice, UnresolvedAliasBranchNotice}
+	var groups [len(headings)][]string
+	fullLength := -1 // The first line has no leading newline.
 	for _, alias := range report.AliasBranches {
-		entries = append(entries, fmt.Sprintf("%s: %s -> %s. %s", alias.Repository, alias.Name, alias.Target, alias.ReconnectCommand()))
+		kind := 0
+		if alias.MissingTarget {
+			kind = 1
+		} else if alias.UnresolvedTarget {
+			kind = 2
+		}
+		entry := fmt.Sprintf("%s: %s -> %s.", alias.Repository, alias.Name, alias.Target)
+		if !alias.UnresolvedTarget {
+			entry += " " + alias.ReconnectCommand()
+		}
+		if len(groups[kind]) == 0 {
+			fullLength += len(headings[kind]) + 1
+		}
+		groups[kind] = append(groups[kind], entry)
+		fullLength += len(entry) + 1
 	}
-	return strings.Join(entries, "\n")
+	bounded := limit > 0 && fullLength > limit
+	if bounded && len(fmt.Sprintf(OmittedAliasNotice, len(report.AliasBranches))) > limit {
+		return ""
+	}
+	var lines []string
+	length, displayed := 0, 0
+	for kind, entries := range groups {
+		headed := false
+		for _, entry := range entries {
+			addition := len(entry) + 1
+			if !headed {
+				addition += len(headings[kind]) + 1
+			}
+			if len(lines) == 0 {
+				addition--
+			}
+			omitted := len(report.AliasBranches) - displayed - 1
+			markerLength := 0
+			if omitted > 0 {
+				markerLength = 1 + len(fmt.Sprintf(OmittedAliasNotice, omitted))
+			}
+			if bounded && length+addition+markerLength > limit {
+				continue
+			}
+			if !headed {
+				lines = append(lines, headings[kind])
+				headed = true
+			}
+			lines = append(lines, entry)
+			length += addition
+			displayed++
+		}
+	}
+	if omitted := len(report.AliasBranches) - displayed; omitted > 0 {
+		lines = append(lines, fmt.Sprintf(OmittedAliasNotice, omitted))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // capturedRepository is one repository as the backup describes it: its

@@ -482,7 +482,12 @@ const (
 )
 
 // Capture-time backup notices.
-const MsgBackupAliasBranches MessageCode = "backup.alias_branches"
+const (
+	MsgBackupAliasBranches           MessageCode = "backup.alias_branches"
+	MsgBackupMissingAliasBranches    MessageCode = "backup.missing_alias_branches"
+	MsgBackupUnresolvedAliasBranches MessageCode = "backup.unresolved_alias_branches"
+	MsgBackupOmittedAliases          MessageCode = "backup.omitted_aliases"
+)
 
 // message is one catalog entry.
 type message struct {
@@ -493,6 +498,18 @@ type message struct {
 // catalog holds every localized sentence. Korean uses the established Git
 // vocabulary: 브랜치, 커밋, 태그, 저장소.
 var catalog = map[MessageCode]message{
+	MsgBackupOmittedAliases: {
+		en: "%d additional aliases: the full list is in the server log.",
+		ko: "외 %d개 별칭: 전체 목록은 서버 로그에 있습니다.",
+	},
+	MsgBackupUnresolvedAliasBranches: {
+		en: "These alias branches were not included because their targets could not be resolved. Each entry names the repository and alias -> immediate target. Choose a target branch, then reconnect the alias in the restored repository rather than recreating the unresolved chain.",
+		ko: "대상을 해석할 수 없어 백업에 포함하지 않은 별칭 브랜치입니다. 각 항목에는 저장소, 별칭 -> 직접 대상이 나옵니다. 해석되지 않는 연결을 그대로 다시 만들지 말고, 대상 브랜치를 정한 뒤 복원한 저장소에서 별칭을 다시 연결하세요.",
+	},
+	MsgBackupMissingAliasBranches: {
+		en: "These alias branches were not included because a target did not exist. Each entry names the repository, alias -> immediate target, and the command to recreate it in the restored repository using a POSIX shell. The target may still be missing after recreation.",
+		ko: "참조 대상이 없어 백업에 포함하지 않은 별칭 브랜치입니다. 각 항목에는 저장소, 별칭 -> 직접 대상, 복원한 저장소에서 별칭을 다시 만드는 명령이 나옵니다. POSIX 셸(예: sh, bash, zsh, Git Bash)로 명령을 실행하세요. 별칭을 다시 만들어도 대상이 없을 수 있습니다.",
+	},
 	MsgBackupAliasBranches: {
 		en: "Alias branches are backed up as ordinary branches at the same commit, so they no longer follow their targets after restoring. Each entry below names the repository, alias -> target, and the command to reconnect in that restored repository using a POSIX shell.",
 		ko: "다른 브랜치를 가리키는 별칭 브랜치는 같은 커밋의 보통 브랜치로 백업됩니다. 복원한 뒤에는 대상 브랜치가 바뀌어도 따라가지 않습니다. 아래에는 저장소, 별칭 -> 대상, 다시 연결하는 명령이 나옵니다. 복원한 해당 저장소에서 POSIX 셸(예: sh, bash, zsh, Git Bash)로 명령을 실행하세요.",

@@ -880,6 +880,15 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 	if err != nil {
 		return RepositoryManifest{}, nil, err
 	}
+	if refStorage == refStorageFiles {
+		missing, err := readMissingBranchAliases(ctx, runner, repositoryPath, refs)
+		if err != nil {
+			return RepositoryManifest{}, nil, err
+		}
+		aliases = append(aliases, missing...)
+	}
+	// Reftable currently reports resolved aliases only; unresolved discovery needs backend support.
+	slices.SortFunc(aliases, func(left, right AliasBranch) int { return strings.Compare(left.Name, right.Name) })
 	for index := range aliases {
 		aliases[index].Repository = stored.ID
 	}
@@ -891,7 +900,7 @@ func inspectRepository(ctx context.Context, runner commandRunner, repositoryPath
 	// its path, or a folder of other branches such as main/topic. Anything
 	// else there that Git did not list, such as a link Git skips without a
 	// warning, is a ref Git could not read.
-	if item.Head.Symbolic != "" && refStorage == refStorageFiles && !slices.ContainsFunc(refs, func(ref Ref) bool { return ref.Name == item.Head.Symbolic }) {
+	if item.Head.Symbolic != "" && refStorage == refStorageFiles && !slices.ContainsFunc(refs, func(ref Ref) bool { return ref.Name == item.Head.Symbolic }) && !slices.ContainsFunc(aliases, func(alias AliasBranch) bool { return alias.Name == item.Head.Symbolic }) {
 		info, err := os.Lstat(filepath.Join(repositoryPath, filepath.FromSlash(item.Head.Symbolic)))
 		if !errors.Is(err, os.ErrNotExist) && (err != nil || !info.IsDir()) {
 			return RepositoryManifest{}, nil, fmt.Errorf("HEAD names %s, which exists but cannot be read", item.Head.Symbolic)
@@ -985,19 +994,183 @@ func readRefsAndAliases(ctx context.Context, runner commandRunner, repositoryPat
 		if parts[2] != "" && strings.HasPrefix(parts[0], "refs/heads/") {
 			// for-each-ref resolves a symbolic chain to its final target.
 			// The reconnect command needs the branch's immediate target.
-			symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--no-recurse", parts[0])
+			target, err := readAliasTarget(ctx, runner, repositoryPath, parts[0])
 			if err != nil {
-				return nil, nil, fmt.Errorf("read alias branch %q: %w", parts[0], err)
-			}
-			target := strings.TrimRight(string(symbolic.Stdout), "\r\n")
-			// A symbolic target can also be a one-level ref such as HEAD.
-			if !validRefName("refs/" + target) {
-				return nil, nil, fmt.Errorf("Git returned an invalid target for alias branch %q", parts[0])
+				return nil, nil, err
 			}
 			aliases = append(aliases, AliasBranch{Name: parts[0], Target: target})
 		}
 	}
 	return refs, aliases, nil
+}
+
+func readAliasTarget(ctx context.Context, runner commandRunner, repositoryPath, name string) (string, error) {
+	symbolic, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--no-recurse", name)
+	if err != nil {
+		return "", fmt.Errorf("read alias branch %q: %w", name, err)
+	}
+	target := strings.TrimRight(string(symbolic.Stdout), "\r\n")
+	// A symbolic target can also be a one-level ref such as HEAD.
+	if !validRefName("refs/" + target) {
+		return "", fmt.Errorf("Git returned an invalid target for alias branch %q", name)
+	}
+	return target, nil
+}
+
+// Git omits unresolved aliases from for-each-ref; symbolic refs are never packed.
+func readMissingBranchAliases(ctx context.Context, runner commandRunner, repositoryPath string, refs []Ref) ([]AliasBranch, error) {
+	const maximumEntries = 1000000
+	const maximumRefBytes = 4096
+	root, err := os.OpenRoot(repositoryPath)
+	if err != nil {
+		return nil, err
+	}
+	for _, component := range []string{"refs", "heads"} {
+		info, err := root.Lstat(component)
+		if os.IsNotExist(err) {
+			root.Close()
+			return nil, nil
+		}
+		if err != nil || !info.IsDir() {
+			root.Close()
+			if err == nil {
+				err = fmt.Errorf("%s is not a directory", component)
+			}
+			return nil, fmt.Errorf("inspect loose branches: %w", err)
+		}
+		next, err := root.OpenRoot(component)
+		root.Close()
+		if err != nil {
+			return nil, err
+		}
+		root = next
+	}
+	defer root.Close()
+	listed := make(map[string]bool, len(refs))
+	for _, ref := range refs {
+		listed[ref.Name] = true
+	}
+	var aliases []AliasBranch
+	entries := 0
+	var scan func(*os.Root, string) error
+	scan = func(directory *os.Root, prefix string) error {
+		file, err := directory.Open(".")
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		for {
+			batch, readErr := file.ReadDir(128)
+			for _, entry := range batch {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				entries++
+				if entries > maximumEntries {
+					return fmt.Errorf("loose branch scan exceeds %d entries", maximumEntries)
+				}
+				name := prefix + "/" + entry.Name()
+				info, err := directory.Lstat(entry.Name())
+				if err != nil {
+					return err
+				}
+				if info.IsDir() {
+					child, err := directory.OpenRoot(entry.Name())
+					if err != nil {
+						return err
+					}
+					err = scan(child, name)
+					child.Close()
+					if err != nil {
+						return err
+					}
+					continue
+				}
+				if !info.Mode().IsRegular() {
+					return fmt.Errorf("loose branch %q is not a regular file", name)
+				}
+				if listed[name] || !validRefName(name) {
+					continue
+				}
+				ref, err := directory.Open(entry.Name())
+				if err != nil {
+					return err
+				}
+				content, readErr := io.ReadAll(io.LimitReader(ref, maximumRefBytes+1))
+				err = errors.Join(readErr, ref.Close())
+				if err != nil {
+					return err
+				}
+				if len(content) > maximumRefBytes {
+					return fmt.Errorf("loose branch %q exceeds %d bytes", name, maximumRefBytes)
+				}
+				if !bytes.HasPrefix(content, []byte("ref: ")) {
+					return fmt.Errorf("Git did not list loose branch %q", name)
+				}
+				target, err := readAliasTarget(ctx, runner, repositoryPath, name)
+				if err != nil {
+					return err
+				}
+				aliases = append(aliases, AliasBranch{Name: name, Target: target, MissingTarget: true})
+			}
+			if readErr == io.EOF {
+				return nil
+			}
+			if readErr != nil {
+				return readErr
+			}
+		}
+	}
+	if err := scan(root, "refs/heads"); err != nil {
+		return nil, fmt.Errorf("inspect loose branches: %w", err)
+	}
+	repositoryRoot, err := os.OpenRoot(repositoryPath)
+	if err != nil {
+		return nil, err
+	}
+	defer repositoryRoot.Close()
+	targets := make(map[string]string, len(aliases))
+	for _, alias := range aliases {
+		targets[alias.Name] = alias.Target
+	}
+	for index := range aliases {
+		// Follow each unresolved chain without inventing an object or looping.
+		visited := make(map[string]bool)
+		current := aliases[index].Name
+		missing := false
+		for range 128 {
+			if listed[current] || visited[current] {
+				break
+			}
+			visited[current] = true
+			if target, known := targets[current]; known {
+				current = target
+				continue
+			}
+			result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "--quiet", "--no-recurse", "--", current)
+			if err == nil {
+				target := strings.TrimRight(string(result.Stdout), "\r\n")
+				if !validRefName("refs/" + target) {
+					return nil, fmt.Errorf("Git returned an invalid target for alias branch %q", current)
+				}
+				targets[current] = target
+				current = target
+				continue
+			}
+			if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
+				return nil, fmt.Errorf("read alias target %q: %w", current, err)
+			}
+			_, err = repositoryRoot.Lstat(filepath.FromSlash(current))
+			if err != nil && !os.IsNotExist(err) {
+				return nil, err
+			}
+			missing = os.IsNotExist(err)
+			break
+		}
+		aliases[index].MissingTarget = missing
+		aliases[index].UnresolvedTarget = !missing
+	}
+	return aliases, nil
 }
 
 // repositoryFailure names the repository whose restore check failed.
