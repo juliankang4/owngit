@@ -345,8 +345,14 @@ func setRawDACL(t *testing.T, path string, protected bool, entries []windows.EXP
 	noErr(t, descriptor.SetControl(windows.SE_DACL_PROTECTED|windows.SE_DACL_AUTO_INHERITED, control))
 	name, err := windows.UTF16PtrFromString(path)
 	noErr(t, err)
+	info, err := os.Stat(path)
+	noErr(t, err)
+	var flags uint32
+	if info.IsDir() {
+		flags = windows.FILE_FLAG_BACKUP_SEMANTICS
+	}
 	handle, err := windows.CreateFile(name, windows.WRITE_DAC|windows.READ_CONTROL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, flags, 0)
 	noErr(t, err)
 	defer windows.CloseHandle(handle)
 	noErr(t, windows.SetKernelObjectSecurity(handle, windows.DACL_SECURITY_INFORMATION, descriptor))
