@@ -174,7 +174,7 @@ func (cache *activityCache) scheduleLocked(manager *repository.Manager, id, key 
 		case slots <- struct{}{}:
 			if key == "" {
 				var snapshot repository.RefSnapshot
-				snapshot, err = manager.RefSnapshot(ctx, id)
+				snapshot, err = manager.RefSnapshotAfterWrites(ctx, id)
 				key = snapshot.ActivityKey
 			}
 			if err == nil {

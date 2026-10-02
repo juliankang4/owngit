@@ -152,6 +152,44 @@ func TestRepositoryWriteRecountsWithoutPageRequests(t *testing.T) {
 	}
 }
 
+func TestRepositoryRecountWaitsForWriteGeneration(t *testing.T) {
+	app, remote, work := newActivityFixture(t, "ordered", 1)
+	app.StartBackground(context.Background())
+	waitUntil(t, func() bool {
+		app.activity.mu.Lock()
+		defer app.activity.mu.Unlock()
+		entry := app.activity.entries["ordered"]
+		return entry != nil && entry.computed && entry.running == nil
+	})
+	noErr(t, os.WriteFile(filepath.Join(work, "fresh.txt"), []byte("fresh\n"), 0o600))
+	apiRunGit(t, work, "add", ".")
+	apiRunGit(t, work, "commit", "-m", "count after unlock")
+	lock := app.Repositories.Locks.For("ordered")
+	lock.Lock()
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	// Receive callbacks run before the handler releases its write lock.
+	app.NoteRepositoryChange("ordered")
+	app.activity.mu.Lock()
+	done := app.activity.entries["ordered"].running
+	app.activity.mu.Unlock()
+	finishedBeforeUnlock := false
+	select {
+	case <-done:
+		finishedBeforeUnlock = true
+	case <-time.After(50 * time.Millisecond):
+	}
+	lock.Unlock()
+	if finishedBeforeUnlock {
+		t.Fatal("recount reused the old key before the write generation advanced")
+	}
+	waitUntil(t, func() bool {
+		app.activity.mu.Lock()
+		defer app.activity.mu.Unlock()
+		entry := app.activity.entries["ordered"]
+		return entry.running == nil && entry.activity.Commits == 2
+	})
+}
+
 func TestRepositoryRecountsCoalesceWhilePausedAndCancelAtShutdown(t *testing.T) {
 	app, _, _ := newActivityFixture(t, "pending", 1)
 	app.activity.bind(context.Background())

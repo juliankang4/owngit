@@ -45,7 +45,7 @@ type snapshotEntry struct {
 // missing or unreadable repository still reports an error. Errors and
 // snapshots incomplete after a failed follow-up read are never cached.
 func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, error) {
-	return m.refSnapshot(ctx, id, 0)
+	return m.refSnapshot(ctx, id, 0, false)
 }
 
 // RefSnapshotWithin is RefSnapshot for a page that lists many repositories.
@@ -56,10 +56,16 @@ func (m *Manager) RefSnapshot(ctx context.Context, id string) (RefSnapshot, erro
 // page. A read that failed since drops the last snapshot, so a repository
 // that could not be read is never shown from an older listing.
 func (m *Manager) RefSnapshotWithin(ctx context.Context, id string, wait time.Duration) (RefSnapshot, error) {
-	return m.refSnapshot(ctx, id, wait)
+	return m.refSnapshot(ctx, id, wait, false)
 }
 
-func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration) (RefSnapshot, error) {
+// RefSnapshotAfterWrites waits for an active writer before checking the
+// generation. Background callbacks can arrive before that writer unlocks.
+func (m *Manager) RefSnapshotAfterWrites(ctx context.Context, id string) (RefSnapshot, error) {
+	return m.refSnapshot(ctx, id, 0, true)
+}
+
+func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration, afterWrites bool) (RefSnapshot, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
 	if err != nil {
 		return RefSnapshot{}, err
@@ -71,8 +77,10 @@ func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration
 	// Without the lock, a writer may be in progress. The cached snapshot then
 	// shows the refs before that write, which is the state the write has not
 	// yet replaced.
-	if snapshot, ok := m.snapshots.lookup(id, repositoryPath, lock); ok {
-		return snapshot, nil
+	if !afterWrites {
+		if snapshot, ok := m.snapshots.lookup(id, repositoryPath, lock); ok {
+			return snapshot, nil
+		}
 	}
 	lockContext := ctx
 	if wait > 0 {
