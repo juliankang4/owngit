@@ -234,17 +234,14 @@ func TestSnapshotRetainedDataSize(t *testing.T) {
 		activityRefs[index] = activityKeyRef{name: ref.Name, oid: ref.OID}
 	}
 	lock := gitexec.NewLocks().For("large")
-	var baseline, current snapshotCache
-	runtime.ReadMemStats(&before)
-	baseline.store("large", "root/large.git", lock, 0, RefSnapshot{activityRefs: activityRefs})
-	runtime.ReadMemStats(&after)
-	baselineBytes := after.TotalAlloc - before.TotalAlloc
-	runtime.ReadMemStats(&before)
-	reads := &snapshotReads{path: "root/large.git", lock: lock, gate: make(chan struct{}, 1), refs: append([]Ref(nil), refs...)}
-	current.store("large", "root/large.git", lock, 0, RefSnapshot{activityRefs: activityRefs, refs: refs, reads: reads})
-	runtime.ReadMemStats(&after)
-	currentBytes := after.TotalAlloc - before.TotalAlloc
-	t.Logf("cached_snapshot_baseline_bytes=%d cached_snapshot_current_bytes=%d added_cached_snapshot_bytes=%d (shared strings, no derived commit metadata)", baselineBytes, currentBytes, currentBytes-baselineBytes)
-	runtime.KeepAlive(&baseline)
-	runtime.KeepAlive(&current)
+	var cache snapshotCache
+	reads := &snapshotReads{path: "root/large.git", lock: lock, gate: make(chan struct{}, 1), refs: refs}
+	snapshot := RefSnapshot{activityRefs: activityRefs, refs: refs, reads: reads}
+	weight := snapshotWeight(snapshot)
+	cache.store("large", "root/large.git", lock, 0, snapshot)
+	t.Logf("estimated_snapshot_weight=%d total_budget=%d entry_cap=%d cached_entries=%d (shared internal slices, no derived commit metadata)", weight, snapshotByteBudget, snapshotByteBudget/4, len(cache.entries))
+	if weight <= snapshotByteBudget/4 || len(cache.entries) != 0 || cache.bytes != 0 {
+		t.Fatal("large retained-ref snapshot exceeded the entry cap but was retained")
+	}
+	runtime.KeepAlive(&cache)
 }

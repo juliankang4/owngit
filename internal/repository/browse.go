@@ -44,6 +44,10 @@ type Blob struct {
 
 const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b"
 
+// Overview and kept-history consumers use only the OID, author, dates and
+// subject. Empty unused fields retain the common parser and date validation.
+const tipLogFormat = "%H%x00%x00%an%x00%x00%ad%x00%x00%x00%cd%x00%s%x00"
+
 var errTreeEntryNotFound = errors.New("tree entry not found")
 
 type Commit struct {
@@ -218,6 +222,10 @@ func refTipsWithReads(ctx context.Context, runner retainedRunner, repositoryPath
 }
 
 func commitMetadataByOID(ctx context.Context, runner retainedRunner, repositoryPath string, oids []string) (map[string]Commit, error) {
+	return commitMetadataWithFormat(ctx, runner, repositoryPath, oids, commitLogFormat)
+}
+
+func commitMetadataWithFormat(ctx context.Context, runner retainedRunner, repositoryPath string, oids []string, format string) (map[string]Commit, error) {
 	metadata := make(map[string]Commit)
 	if len(oids) == 0 {
 		return metadata, nil
@@ -233,7 +241,7 @@ func commitMetadataByOID(ctx context.Context, runner retainedRunner, repositoryP
 		}
 	}
 	result, err := runner.RunWithOutputLimit(ctx, repositoryPath, strings.NewReader(strings.Join(unique, "\n")+"\n"), 64<<20,
-		"--git-dir", ".", "log", "--no-walk", "--stdin", "-z", "--no-decorate", GitDateOption, "--format="+commitLogFormat)
+		"--git-dir", ".", "log", "--no-walk", "--stdin", "-z", "--no-decorate", GitDateOption, "--format="+format)
 	if err != nil {
 		return nil, err
 	}

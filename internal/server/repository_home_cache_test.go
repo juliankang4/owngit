@@ -117,6 +117,58 @@ func TestRepositoryHomePinsListTipsHeadAndReadme(t *testing.T) {
 	fill("new home", "new readme")
 }
 
+func TestRepositoryOverviewKeepsDeletedSnapshotSelections(t *testing.T) {
+	for _, kind := range []string{"branch", "tag"} {
+		t.Run(kind, func(t *testing.T) {
+			app, remote, work := newActivityFixture(t, "delete-selected", 1)
+			noErr(t, os.WriteFile(filepath.Join(work, "README.md"), []byte("snapshot readme\n"), 0o600))
+			apiRunGit(t, work, "add", ".")
+			apiRunGit(t, work, "commit", "-m", "snapshot selection")
+			full, short := "refs/heads/topic", "topic"
+			if kind == "tag" {
+				full, short = "refs/tags/release", "release"
+				apiRunGit(t, work, "tag", "-a", short, "-m", short)
+				apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main", full)
+			} else {
+				apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main", "HEAD:"+full)
+			}
+			snapshot, err := app.Repositories.RefSnapshot(context.Background(), "delete-selected")
+			noErr(t, err)
+			stored, _, err := app.Store.Repository(context.Background(), "delete-selected")
+			noErr(t, err)
+			server := serve(t, app.Handler())
+			apiRunGit(t, work, "push", server.URL+"/git/delete-selected.git", ":"+full)
+			fresh, err := app.Repositories.RefSnapshot(context.Background(), "delete-selected")
+			noErr(t, err)
+			for _, selected := range []string{full, short} {
+				request := httptest.NewRequest(http.MethodGet, "/repositories/delete-selected", nil)
+				page := app.baseRepositoryPage(request, webui.Chrome{}, stored, snapshot.Summary)
+				noErr(t, app.fillRepositoryOverview(request, &page, snapshot, selected))
+				if page.Ref.Missing || page.Ref.Revision != snapshot.Summary.DefaultOID || page.Overview.Head.OID != snapshot.Summary.DefaultOID || page.Overview.Readme == nil || !strings.Contains(string(page.Overview.Readme.Rendered), "snapshot readme") {
+					t.Fatalf("deleted %s selection mixed states: ref=%+v head=%+v README=%+v", kind, page.Ref, page.Overview.Head, page.Overview.Readme)
+				}
+				page = app.baseRepositoryPage(request, webui.Chrome{}, stored, snapshot.Summary)
+				writer := httptest.NewRecorder()
+				app.serveCodePage(writer, request, page, snapshot, nil, pageAddress{Ref: selected})
+				if writer.Code != http.StatusOK {
+					t.Fatalf("in-flight overview status=%d, want 200", writer.Code)
+				}
+				page = app.baseRepositoryPage(request, webui.Chrome{}, stored, fresh.Summary)
+				noErr(t, app.fillRepositoryOverview(request, &page, fresh, selected))
+				if !page.Ref.Missing || page.Ref.Revision != "" {
+					t.Fatal("fresh post-delete page reused the deleted ref")
+				}
+				writer = httptest.NewRecorder()
+				page = app.baseRepositoryPage(request, webui.Chrome{}, stored, fresh.Summary)
+				app.serveCodePage(writer, request, page, fresh, nil, pageAddress{Ref: selected})
+				if writer.Code != http.StatusNotFound {
+					t.Fatalf("fresh missing-ref overview status=%d, want 404", writer.Code)
+				}
+			}
+		})
+	}
+}
+
 func TestRepositoryWriteRecountsWithoutPageRequests(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the activity trace wrapper is a POSIX-shell fixture")

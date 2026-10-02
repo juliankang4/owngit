@@ -19,12 +19,17 @@ import (
 // found every ref unchanged, releases the lock without advancing it. Refs
 // written to the storage folder without OwnGit are not seen until OwnGit next
 // changes a ref in that repository or restarts.
-// snapshotCapacity bounds retained snapshots and all their derived reads.
-const snapshotCapacity = 64
+// Ref data gets half the object-backed page cache's 64 MiB budget. A single
+// repository may use at most one quarter, leaving space for other repositories.
+const (
+	snapshotCapacity   = 64
+	snapshotByteBudget = 32 << 20
+)
 
 type snapshotCache struct {
 	mu    sync.Mutex
 	clock uint64
+	bytes int64
 	// root is the storage folder the entries were read from. Entries of an
 	// earlier root are dropped when a snapshot of another root is stored.
 	root    string
@@ -37,6 +42,7 @@ type snapshotEntry struct {
 	generation uint64
 	snapshot   RefSnapshot
 	used       uint64
+	weight     int64
 }
 
 // RefSnapshot returns the repository's ref snapshot. It reads the refs with
@@ -114,9 +120,11 @@ func (m *Manager) lockedRefSnapshot(ctx context.Context, id, repositoryPath stri
 		}
 		return RefSnapshot{}, err
 	}
+	// RefSnapshot exposes a tip summary, not a full commit message.
+	snapshot.Head.Body = ""
 	snapshot.reads = &snapshotReads{
 		path: repositoryPath, lock: lock, gate: make(chan struct{}, 1),
-		branchRefs: slices.Clone(snapshot.Summary.Branches), tagRefs: slices.Clone(snapshot.Summary.Tags), refs: slices.Clone(snapshot.refs),
+		branchRefs: slices.Clone(snapshot.Summary.Branches), tagRefs: slices.Clone(snapshot.Summary.Tags), refs: snapshot.refs,
 	}
 	// A snapshot missing a field because a follow-up read failed is returned
 	// once, like an error, and read again next time.
@@ -180,28 +188,38 @@ func (cache *snapshotCache) store(id, path string, lock *gitexec.RepositoryLock,
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
 	if root := filepath.Dir(path); cache.entries == nil || cache.root != root {
-		cache.root, cache.entries = root, make(map[string]snapshotEntry)
+		cache.root, cache.entries, cache.bytes = root, make(map[string]snapshotEntry), 0
 	}
 	if entry, ok := cache.entries[id]; ok && entry.lock == lock && entry.path == path && entry.generation >= generation {
 		return
 	}
+	cache.removeLocked(id)
+	weight := snapshotWeight(snapshot)
+	if weight > snapshotByteBudget/4 {
+		return
+	}
 	cache.clock++
-	cache.entries[id] = snapshotEntry{lock: lock, path: path, generation: generation, snapshot: snapshot.clone(), used: cache.clock}
-	for len(cache.entries) > snapshotCapacity {
+	cache.entries[id] = snapshotEntry{lock: lock, path: path, generation: generation, snapshot: snapshot.clone(), used: cache.clock, weight: weight}
+	cache.bytes += weight
+	cache.evictLocked()
+}
+
+func (cache *snapshotCache) evictLocked() {
+	for len(cache.entries) > snapshotCapacity || cache.bytes > snapshotByteBudget {
 		oldest, used := "", cache.clock
 		for candidate, entry := range cache.entries {
-			if candidate != id && entry.used <= used {
+			if entry.used <= used {
 				oldest, used = candidate, entry.used
 			}
 		}
-		delete(cache.entries, oldest)
+		cache.removeLocked(oldest)
 	}
 }
 
 func (cache *snapshotCache) drop(id string) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
-	delete(cache.entries, id)
+	cache.removeLocked(id)
 }
 
 func (cache *snapshotCache) forget(present []string) {
@@ -213,19 +231,92 @@ func (cache *snapshotCache) forget(present []string) {
 	defer cache.mu.Unlock()
 	for id := range cache.entries {
 		if !keep[id] {
-			delete(cache.entries, id)
+			cache.removeLocked(id)
 		}
 	}
 }
 
-// clone copies the slices, so neither a caller nor the cache can change the
-// other's snapshot.
+func (cache *snapshotCache) removeLocked(id string) {
+	if entry, ok := cache.entries[id]; ok {
+		cache.bytes -= entry.weight
+		delete(cache.entries, id)
+	}
+}
+
+// reweigh runs with the derived-read gate held. Results belonging to an
+// evicted, replaced or oversized snapshot remain request-local, not cached.
+func (cache *snapshotCache) reweigh(id string, reads *snapshotReads) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	entry, ok := cache.entries[id]
+	if !ok || entry.snapshot.reads != reads {
+		return
+	}
+	weight := snapshotWeight(entry.snapshot)
+	if weight > snapshotByteBudget/4 {
+		cache.removeLocked(id)
+		return
+	}
+	cache.bytes += weight - entry.weight
+	entry.weight = weight
+	cache.entries[id] = entry
+	cache.evictLocked()
+}
+
+// Weights intentionally count strings at every stored reference, even when
+// backing data is shared. Fixed overheads include records, allocation slack,
+// map buckets and dates. They are conservative estimates, not measured RSS.
+func snapshotWeight(snapshot RefSnapshot) int64 {
+	weight := int64(1024 + len(snapshot.Summary.DefaultBranch) + len(snapshot.Summary.DefaultOID) + len(snapshot.ActivityKey))
+	weight += refWeight(snapshot.Summary.Branches) + refWeight(snapshot.Summary.Tags) + refWeight(snapshot.refs)
+	weight += int64(cap(snapshot.activityRefs)) * 64
+	for _, ref := range snapshot.activityRefs {
+		weight += int64(len(ref.name) + len(ref.oid))
+	}
+	weight += commitWeight(snapshot.Head)
+	if reads := snapshot.reads; reads != nil {
+		weight += int64(512 + len(reads.path))
+		weight += refWeight(reads.branchRefs) + refWeight(reads.tagRefs)
+		// reads.refs shares snapshot.refs, so its backing array is counted once.
+		for _, commits := range []map[string]Commit{reads.metadata, reads.branches, reads.tags} {
+			for key, commit := range commits {
+				weight += int64(96+len(key)) + commitWeight(commit)
+			}
+		}
+		for key, object := range reads.peeled {
+			weight += int64(128 + len(key) + len(object.oid) + len(object.objectType))
+		}
+		weight += int64(cap(reads.retained)) * 192
+		for _, ref := range reads.retained {
+			weight += int64(len(ref.Kind)+len(ref.Source)+len(ref.OID)+len(ref.CommitOID)) + commitWeight(ref.Commit)
+		}
+	}
+	return weight
+}
+
+func refWeight(refs []Ref) int64 {
+	weight := int64(cap(refs)) * 96
+	for _, ref := range refs {
+		weight += int64(len(ref.Name) + len(ref.OID) + len(ref.Type))
+	}
+	return weight
+}
+
+func commitWeight(commit Commit) int64 {
+	weight := int64(1024 + len(commit.OID) + len(commit.AuthorName) + len(commit.AuthorEmail) + len(commit.CommitterName) + len(commit.CommitterEmail) + len(commit.Subject) + len(commit.Body))
+	weight += int64(cap(commit.Parents)) * 32
+	for _, parent := range commit.Parents {
+		weight += int64(len(parent))
+	}
+	return weight
+}
+
+// clone copies public mutable data. Package-private ref slices are immutable
+// after construction and shared, including with readers of retained history.
 func (snapshot RefSnapshot) clone() RefSnapshot {
 	snapshot.Summary.Branches = slices.Clone(snapshot.Summary.Branches)
 	snapshot.Summary.Tags = slices.Clone(snapshot.Summary.Tags)
 	snapshot.Head.Parents = slices.Clone(snapshot.Head.Parents)
-	snapshot.activityRefs = slices.Clone(snapshot.activityRefs)
-	snapshot.refs = slices.Clone(snapshot.refs)
 	return snapshot
 }
 
@@ -267,7 +358,11 @@ func (m *Manager) snapshotRead(ctx context.Context, id string, snapshot RefSnaps
 	}
 	select {
 	case reads.gate <- struct{}{}:
-		return reads, func() { <-reads.gate; reads.lock.RUnlock() }, nil
+		return reads, func() {
+			m.snapshots.reweigh(id, reads)
+			<-reads.gate
+			reads.lock.RUnlock()
+		}, nil
 	case <-ctx.Done():
 		reads.lock.RUnlock()
 		return nil, nil, ctx.Err()
@@ -364,7 +459,7 @@ func readCommitMetadata(ctx context.Context, runner retainedRunner, path string,
 			missing = append(missing, oid)
 		}
 	}
-	metadata, err := commitMetadataByOID(ctx, runner, path, missing)
+	metadata, err := commitMetadataWithFormat(ctx, runner, path, missing, tipLogFormat)
 	if err != nil {
 		return nil, err
 	}

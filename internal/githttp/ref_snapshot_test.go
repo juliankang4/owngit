@@ -105,7 +105,7 @@ func countSnapshotReads(t *testing.T, manager *repository.Manager) func() int {
 	directory := t.TempDir()
 	trace := filepath.Join(directory, "trace")
 	wrapper := filepath.Join(directory, "git")
-	script := "#!/bin/sh\ncase \"$*\" in *for-each-ref*refs/owngit/provenance/heads*) echo read >> '" + trace + "';; esac\nexec '" + gitPath + "' \"$@\"\n"
+	script := "#!/bin/sh\ncase \"$*\" in *for-each-ref*refs/owngit/provenance*) echo read >> '" + trace + "';; esac\nexec '" + gitPath + "' \"$@\"\n"
 	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
 	counting, err := gitexec.New(wrapper, filepath.Join(directory, "runtime"))
 	noErr(t, err)

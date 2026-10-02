@@ -717,6 +717,64 @@ const (
 	overviewRefsFragment  = "#refs"
 )
 
+// selectOverviewRef uses the supplied snapshot for both existence and identity.
+// Absent requests keep the shared selector's validation and lookup behavior.
+// This overview-only selection will join the common exact-ref selector later.
+func (app *App) selectOverviewRef(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) (string, bool, error) {
+	summary := snapshot.Summary
+	selected := requested
+	if selected == "" && summary.DefaultBranch != "" {
+		selected = "refs/heads/" + summary.DefaultBranch
+	}
+	candidates := []string{selected}
+	if selected != "" && !strings.HasPrefix(selected, "refs/heads/") && !strings.HasPrefix(selected, "refs/tags/") {
+		candidates = []string{"refs/heads/" + selected, "refs/tags/" + selected}
+	}
+	canonical := ""
+	for _, candidate := range candidates {
+		for _, branch := range summary.Branches {
+			if candidate == "refs/heads/"+branch.Name {
+				canonical = candidate
+			}
+		}
+		for _, tag := range summary.Tags {
+			if candidate == "refs/tags/"+tag.Name {
+				canonical = candidate
+			}
+		}
+		if canonical != "" {
+			break
+		}
+	}
+	if canonical == "" {
+		return app.selectRef(request, page, summary, requested)
+	}
+	oid, err := app.Repositories.RefCommitAt(request.Context(), page.Repo.ID, snapshot, canonical)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return "", false, err
+	}
+	resolved := err == nil && oid != ""
+	page.Ref.Name, page.Ref.Kind = displayRef(canonical), refKind(canonical)
+	page.Ref.IsDefault = canonical == "refs/heads/"+summary.DefaultBranch
+	for _, branch := range summary.Branches {
+		full := "refs/heads/" + branch.Name
+		page.Ref.Branches = append(page.Ref.Branches, webui.RefOption{Name: branch.Name, URL: withRef(request.URL.Path, full), Selected: canonical == full, IsDefault: branch.Name == summary.DefaultBranch})
+	}
+	for _, tag := range summary.Tags {
+		full := "refs/tags/" + tag.Name
+		page.Ref.Tags = append(page.Ref.Tags, webui.RefOption{Name: tag.Name, URL: withRef(request.URL.Path, full), Selected: canonical == full})
+	}
+	if !resolved {
+		page.Ref.Missing = true
+		return "", false, nil
+	}
+	page.OverviewURL = withRef(page.OverviewURL, canonical)
+	page.CodeURL = withRef(page.CodeURL, canonical)
+	page.CommitsURL = withRef(page.CommitsURL, canonical)
+	page.Ref.Revision, page.Ref.ShortRevision = oid, shortOID(oid)
+	return canonical, true, nil
+}
+
 // fillRepositoryOverview fills the overview. Its body, the recent commits
 // and the top folder of the selected ref, is required: a failed read of it
 // is returned, and the page then says the repository cannot be read. Each
@@ -725,20 +783,9 @@ const (
 // be read says so on the page. It is never shown as empty, zero or absent.
 func (app *App) fillRepositoryOverview(request *http.Request, page *webui.RepositoryPage, snapshot repository.RefSnapshot, requested string) error {
 	summary := snapshot.Summary
-	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
+	selectedRef, resolved, err := app.selectOverviewRef(request, page, snapshot, requested)
 	if err != nil {
 		return err
-	}
-	// A writer may have advanced refs during selection. Keep this overview's
-	// head and README on its original listing; other selections keep their rule.
-	if resolved {
-		oid, err := app.Repositories.RefCommitAt(request.Context(), page.Repo.ID, snapshot, selectedRef)
-		if err != nil {
-			return err
-		}
-		if oid != "" {
-			page.Ref.Revision, page.Ref.ShortRevision = oid, shortOID(oid)
-		}
 	}
 	if page.Ref.Missing {
 		code := webui.MsgRepoRefMissing
