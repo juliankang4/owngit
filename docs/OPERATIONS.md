@@ -1907,7 +1907,7 @@ Browsing limits cap how much one page reads to show a file, a diff or a pull req
 
 Within these limits, one page shows at most 10,000 lines of a file or of one file's diff, and at most 1,000 entries of a folder. Longer ones show "Showing N of M (first to last)." with More and First page links. These links stay on the same commit, so the pages fit together even when the branch moves meanwhile, and a link to a line beyond the first page (`line=`) opens the page that holds it. A malformed page address gets an error page, and a line past the end of the file shows "This line is not in the file." with a First page link. In a Markdown file, Preview and Source stay on the same commit. When the file view limit cut a file short, the line count reads "N loaded lines". Raw file addresses still follow the current branch or tag, so on a page of an earlier commit the download link reads "Download the file at the current ref".
 
-A page that arrives slowly keeps being sent as long as data moves, instead of stopping at the 30-second page time limit. If a page takes a while to arrive, a notice at the bottom of the screen says "Receiving the page. If this notice remains, the page has not arrived in full." If the notice stays, reload the page.
+A page that arrives slowly keeps being sent as long as data moves, instead of stopping at the 30-second page time limit. Sending one page still stops after 10 minutes in total, even while data moves, and that page then stays incomplete. If a page takes a while to arrive, a notice at the bottom of the screen says "Receiving the page. If this notice remains, the page has not arrived in full." If the notice stays, reload the page.
 
 ## Check ceilings
 
