@@ -78,6 +78,10 @@ func TestWindowsPrivateDirectoryFixReplacesExplicitAndInheritedGrants(t *testing
 			t.Fatalf("fix=%q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
+		command.Dir = t.TempDir()
+		if filepath.Clean(command.Dir) == filepath.Clean(root) {
+			t.Fatal("repair command working directory unexpectedly equals its target")
+		}
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}
@@ -121,6 +125,10 @@ func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 			t.Fatalf("foreign-owner fix=%q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
+		command.Dir = t.TempDir()
+		if filepath.Clean(command.Dir) == filepath.Clean(root) {
+			t.Fatal("repair command working directory unexpectedly equals its target")
+		}
 		if output, err := command.CombinedOutput(); err != nil {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}

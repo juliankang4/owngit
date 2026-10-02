@@ -994,10 +994,10 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 //
 // The line writes only the access section, so the owner and any audit entries
 // stay; Set-Acl would write the whole security descriptor and, run elevated,
-// drop the audit entries. The .NET methods that do this are [IO.File] in
-// Windows PowerShell 5.1 and [IO.FileSystemAclExtensions] in PowerShell 7, so
-// the line picks one and works unchanged in both. Get-Item resolves the path
-// the PowerShell way and stops the line with a clear error if it is missing.
+// drop the audit entries. Windows PowerShell 5.1 uses the path overloads on
+// [IO.File] or [IO.Directory]; PowerShell 7 uses the matching FileInfo or
+// DirectoryInfo overloads on [IO.FileSystemAclExtensions]. Get-Item resolves
+// the literal path and stops the line with a clear error if it is missing.
 func userOnlyACLCommand(path string, user *windows.SID) string {
 	return userOnlyACLCommandFor(path, user, false)
 }
@@ -1012,20 +1012,32 @@ func userOnlyACLCommandFor(path string, user *windows.SID, directory bool) strin
 		inheritance = "OICI"
 	}
 	return "$f = Get-Item -LiteralPath " + powerShellQuote(path) + " -ErrorAction Stop; " +
-		"$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; " +
-		"$acl = $io::GetAccessControl($f, 'Access'); " +
+		powerShellGetAccessControl("$f") +
 		"$acl.SetSecurityDescriptorSddlForm('D:P(A;" + inheritance + ";FA;;;" + user.String() + ")', 'Access'); " +
-		"$io::SetAccessControl($f, $acl)"
+		powerShellSetAccessControl("$f")
 }
 
 func userOnlyDirectoryTreeACLCommand(path string, user *windows.SID) string {
 	return "$f = Get-Item -LiteralPath " + powerShellQuote(path) + " -ErrorAction Stop; " +
-		"$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; " +
 		"$items = @($f) + @(Get-ChildItem -LiteralPath $f.FullName -Force -Recurse -ErrorAction Stop); " +
-		"foreach ($item in $items) { $acl = $io::GetAccessControl($item, 'Access'); " +
+		"foreach ($item in $items) { " + powerShellGetAccessControl("$item") +
 		"$inheritance = if ($item.PSIsContainer) { 'OICI' } else { '' }; " +
 		"$acl.SetSecurityDescriptorSddlForm(('D:P(A;' + $inheritance + ';FA;;;" + user.String() + ")'), 'Access'); " +
-		"$io::SetAccessControl($item, $acl) }"
+		powerShellSetAccessControl("$item") + " }"
+}
+
+func powerShellGetAccessControl(item string) string {
+	return "$acl = if ($PSVersionTable.PSEdition -eq 'Core') { " +
+		"[IO.FileSystemAclExtensions]::GetAccessControl(" + item + ", 'Access') " +
+		"} elseif (" + item + ".PSIsContainer) { [IO.Directory]::GetAccessControl(" + item + ".FullName, 'Access') " +
+		"} else { [IO.File]::GetAccessControl(" + item + ".FullName, 'Access') }; "
+}
+
+func powerShellSetAccessControl(item string) string {
+	return "if ($PSVersionTable.PSEdition -eq 'Core') { " +
+		"[IO.FileSystemAclExtensions]::SetAccessControl(" + item + ", $acl) " +
+		"} elseif (" + item + ".PSIsContainer) { [IO.Directory]::SetAccessControl(" + item + ".FullName, $acl) " +
+		"} else { [IO.File]::SetAccessControl(" + item + ".FullName, $acl) }"
 }
 
 func windowsSetOwnerCommand(path string, user *windows.SID) string {

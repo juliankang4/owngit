@@ -5,6 +5,7 @@ package state
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"os"
 	"runtime"
 	"unsafe"
@@ -17,8 +18,10 @@ const kauthACLNoInherit = 1 << 17
 // MkdirPrivate creates an owner-only directory without first exposing an ACL
 // inherited from its parent. XNU's KAUTH_ACL_NO_INHERIT flag tells the atomic
 // mkdir_extended operation not to replace this empty ACL through inheritance.
-// Filesystems without ACL support use ordinary mode-0700 creation, whose mode
-// is the established protection there.
+// Filesystems without ACL support use ordinary mode-0700 creation. Because
+// EINVAL can also mean a malformed filesec, that fallback is accepted only
+// after a held no-follow ACL query proves the empty directory inherited no
+// permit entry.
 func MkdirPrivate(path string) error {
 	name, err := unix.BytePtrFromString(path)
 	if err != nil {
@@ -38,9 +41,30 @@ func MkdirPrivate(path string) error {
 		return nil
 	}
 	if errors.Is(errno, unix.EINVAL) || errors.Is(errno, unix.ENOTSUP) || errors.Is(errno, unix.EOPNOTSUPP) {
-		return os.Mkdir(path, 0o700)
+		return mkdirPrivateWithoutExtendedACL(path)
 	}
 	return &os.PathError{Op: "mkdir", Path: path, Err: errno}
+}
+
+func mkdirPrivateWithoutExtendedACL(path string) error {
+	if err := os.Mkdir(path, 0o700); err != nil {
+		return err
+	}
+	folder, err := openDirectoryAt(unix.AT_FDCWD, path, path)
+	if err != nil {
+		return errors.Join(err, os.Remove(path))
+	}
+	filesec, inspectErr := extendedSecurity(path, folder, 0)
+	permit, permitErr := permitEntry(filesec, ^uint32(0))
+	closeErr := folder.Close()
+	if inspectErr != nil || permitErr != nil || closeErr != nil {
+		return errors.Join(fmt.Errorf("inspect newly created private directory: %w", errors.Join(inspectErr, permitErr, closeErr)), os.Remove(path))
+	}
+	if !permit {
+		return nil
+	}
+	problem := fmt.Errorf("OwnGit could not create %s privately because the storage gives new folders inherited access; remove inheritable entries from the repository root (for example, chmod -N), or run owngit doctor", path)
+	return errors.Join(problem, os.Remove(path))
 }
 
 var mkdirExtended = func(path uintptr, mode os.FileMode, filesec uintptr) unix.Errno {
