@@ -23,9 +23,16 @@ func groupOrAccessListAllowsOtherSearch(file *os.File, info os.FileInfo) (bool, 
 	if !ok {
 		return false, errors.New("owning group is unavailable")
 	}
+	descriptor, err := unix.Openat(int(file.Fd()), ".", unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	runtime.KeepAlive(file)
+	if err != nil {
+		return false, err
+	}
+	readable := os.NewFile(uintptr(descriptor), file.Name())
+	defer readable.Close()
 	entries, err := readPosixACL(func(buffer []byte) (int, error) {
-		size, err := unix.Fgetxattr(int(file.Fd()), "system.posix_acl_access", buffer)
-		runtime.KeepAlive(file)
+		size, err := unix.Fgetxattr(descriptor, "system.posix_acl_access", buffer)
+		runtime.KeepAlive(readable)
 		return size, err
 	})
 	if err != nil {
