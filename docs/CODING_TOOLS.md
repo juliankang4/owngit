@@ -448,7 +448,9 @@ These `repo` commands are owner actions and need the administrator password in
   [kept history and default branch protection](OPERATIONS.md#kept-history)
   and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
 - `owngit repo default-branch --branch BRANCH` makes an existing branch the
-  [default branch](OPERATIONS.md#changing-the-default-branch).
+  [default branch](OPERATIONS.md#changing-the-default-branch). A name that
+  matches two branches fails with `ambiguous_branch` (HTTP 422); the message
+  names both full refs and the value to send for each.
 - `owngit repo rename NAME NEW-NAME` gives a repository a new name and prints
   it as JSON ([Renaming a repository](OPERATIONS.md#renaming-a-repository)).
   It fails with `repository_name_taken`, `repository_busy`,
@@ -756,6 +758,13 @@ JSON; `-32600` for an invalid request, a message over 1 MiB, or a request whose
 id belongs to a call still in progress; `-32601` for an unknown method;
 `-32602` for an unknown tool; and `-32000` when 16 tool calls are already in
 progress. Calls other than `check_run` stop after 2 minutes.
+
+Branch fields keep their names and take branch names as before. When a name in
+`source_branch` or `target_branch` matches two branches, the call fails with
+`ambiguous_branch`. Its message starts with "That name matches two branches."
+and lists each full ref with the value to send for it, for example
+`refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`. A full
+ref without a value has to be chosen in the browser.
 
 ### Running checks
 

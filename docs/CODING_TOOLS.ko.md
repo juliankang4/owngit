@@ -207,7 +207,7 @@ owngit repo create --server https://owngit.example.test --name example-project \
 `repo` 명령 가운데 다음 명령은 소유자 작업이라 `--password-file`에 공용 비밀번호 대신 관리자 비밀번호를 넣어야 합니다.
 
 - `owngit repo settings show`와 `owngit repo settings set`은 저장소 하나의 [보관된 기록과 기본 브랜치 보호](OPERATIONS.ko.md#보관된-기록), [다른 ref 이름공간](OPERATIONS.ko.md#다른-ref-이름공간) 설정을 읽고 바꿉니다.
-- `owngit repo default-branch --branch BRANCH`는 기존 브랜치를 [기본 브랜치](OPERATIONS.ko.md#기본-브랜치-바꾸기)로 정합니다.
+- `owngit repo default-branch --branch BRANCH`는 기존 브랜치를 [기본 브랜치](OPERATIONS.ko.md#기본-브랜치-바꾸기)로 정합니다. 이름이 두 브랜치에 해당하면 `ambiguous_branch`(HTTP 422)로 실패하며 메시지에 두 전체 ref와 각각 보낼 값이 나옵니다.
 - `owngit repo rename NAME NEW-NAME`은 저장소 이름을 바꾸고 바뀐 저장소를 JSON으로 출력합니다([저장소 이름 바꾸기](OPERATIONS.ko.md#저장소-이름-바꾸기) 참고). 실패하면 `repository_name_taken`, `repository_busy`, `invalid_repository_name`, `reserved_repository_name` 중 하나가 나옵니다.
 - `owngit repo delete --repository NAME --files keep|delete`는 저장소를 삭제합니다([명령줄에서 삭제하기](OPERATIONS.ko.md#명령줄에서-삭제하기) 참고).
 - `owngit repo share list`, `create`, `revoke`는 저장소의 읽기 전용 [공유 링크](OPERATIONS.ko.md#공유-링크)를 관리합니다. `create`는 링크의 비밀값을 한 번만 출력하고 `list`는 비밀값을 출력하지 않습니다.
@@ -372,6 +372,8 @@ tool_timeout_sec = 1800
 한도를 넘는 결과는 잘라 내고 그 사실을 알립니다. `pull_request_diff`는 API가 응답을 자르는 방식을 따릅니다. 패치는 파일 단위로 남기고, 그다음 파일 목록은 들어가는 만큼만 남기며, `truncated`, 목록에서 빠진 항목이 있으면 `incomplete`, 그리고 이유 `response_limit`를 설정합니다. 다른 결과는 가장 긴 글부터 줄이고, 그래도 넘치면 가장 긴 목록의 끝에서 항목을 뺀 뒤, 원래 크기(`bytes`), 한도(`limit`), 잘라 낸 필드(`cut`)를 담은 `result_truncated` 객체를 붙입니다.
 
 프로토콜 오류에는 JSON-RPC 코드를 씁니다. JSON이 아닌 메시지는 `-32700`, 잘못된 요청이나 1 MiB를 넘는 메시지, 아직 진행 중인 호출과 id가 같은 요청은 `-32600`, 알 수 없는 메서드는 `-32601`, 알 수 없는 도구는 `-32602`, 이미 도구 호출 16개가 진행 중이면 `-32000`입니다. `check_run`을 뺀 나머지 호출은 2분이 지나면 멈춥니다.
+
+브랜치 필드는 이름이 그대로이며 지금처럼 브랜치 이름을 받습니다. `source_branch`나 `target_branch`의 이름이 두 브랜치에 해당하면 호출은 `ambiguous_branch`로 실패합니다. 메시지는 "That name matches two branches."로 시작하고 `refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`처럼 전체 ref마다 보낼 값을 적습니다. 값이 없는 전체 ref는 브라우저에서 골라야 합니다.
 
 ### 체크 실행
 

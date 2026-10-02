@@ -1181,6 +1181,8 @@ owngit repo restore apply --repository NAME --source OID --target main --expecte
 
 기본 브랜치는 OwnGit과 `git clone`이 처음 여는 브랜치(저장소의 `HEAD`)입니다. 관리자는 저장소의 설정 탭에서 기존 브랜치 중 하나를 고르거나, 관리자 비밀번호가 든 `--password-file`을 붙여 `owngit repo default-branch --repository NAME --branch BRANCH`를 실행합니다. 그 저장소의 clone 안에서는 `--server`와 `--repository`를 `origin` 원격에서 가져옵니다. 브랜치가 `master` 하나뿐인 가져온 저장소는 직접 고르기 전까지 기본 브랜치가 없다고 표시됩니다. 기본 브랜치를 바꿔도 브랜치가 새로 생기지 않으며 모든 ref와 보관된 기록은 그대로입니다.
 
+설정 탭에서 브랜치를 고르면 언제나 고른 그 브랜치가 저장됩니다. 명령줄의 `--branch`와 API의 `branch`는 지금처럼 브랜치 이름을 받습니다. `x`와 이름이 `refs/heads/x`인 브랜치가 함께 있을 때처럼, 한 브랜치의 이름이 다른 브랜치의 전체 이름과 같으면 이름 하나가 두 브랜치를 가리킬 수 있습니다. 이때 OwnGit은 아무것도 바꾸지 않고 `ambiguous_branch`(HTTP 422)로 실패합니다. 메시지 "That name matches two branches. Enter the value beside the full ref you want. If no value is shown, choose that branch in the browser:" 뒤에는 두 전체 ref와 각각에 입력할 값이 나옵니다. 이 예에서는 `refs/heads/x`를 원하면 `x`를, 이름이 `refs/heads/x`인 브랜치를 원하면 `refs/heads/refs/heads/x`를 입력합니다. 아주 길거나 `refs/heads/`가 겹친 이름처럼 드문 경우에는 값이 나오지 않습니다. 그럴 때는 브라우저에서 그 브랜치를 고르세요.
+
 기본 브랜치를 다시 쓰거나 지우지 못하게 하려면 저장소 설정 탭에서 기본 브랜치 보호를 켜거나 `owngit repo settings set --repository NAME --protect-default-branch on`을 실행하세요. 기본값은 꺼짐입니다. 켜 두면 기본 브랜치에 대한 fast-forward가 아닌 푸시와 기본 브랜치를 지우는 푸시를 거부하고 Git에는 `remote: OwnGit protects the default branch main and refused ...`와 `! [remote rejected]`가 나옵니다. 커밋을 더하는 푸시, 다른 브랜치와 태그, 풀 리퀘스트 병합, 파일 되돌리기, 저장소 삭제는 전과 같이 동작합니다. 가져오기는 기본 브랜치의 fast-forward는 그대로 따라갑니다. 원본이 기본 브랜치를 다시 썼거나 [원본과 달라진 브랜치 덮어쓰기](#원본과-달라진-브랜치-덮어쓰기)가 여기서 바뀐 기본 브랜치를 덮어쓰게 되면 새로고침은 `protected_default_branch`로 실패하고 아무것도 바꾸지 않습니다. 원본을 따르려면 보호를 끄고 다시 새로고침하세요. 보호 대상은 HEAD가 가리키는 브랜치입니다. HEAD가 다른 심볼릭 ref를 거쳐 가리켜도 마찬가지입니다. 기본 브랜치를 바꾸면 보호도 새 기본 브랜치로 옮겨 갑니다.
 
 새 저장소는 `main` 브랜치로 시작합니다. `trunk`처럼 다른 브랜치로 시작하게 하려면 설정 화면 저장소 탭의 새 저장소에서 첫 브랜치를 바꾸거나 `owngit settings set --initial-branch trunk`를 실행하세요. 이름은 Git이 받아들이는 이름이어야 하며 영문자, 숫자, `-`, `_`, `.`, `/`로 100자까지 씁니다. 바꾼 뒤 대시보드, 명령줄, API로 만드는 저장소에 적용되고 이미 있는 저장소의 브랜치는 그대로입니다. 가져온 저장소는 원본의 기본 브랜치를 씁니다. 빈 저장소 페이지에는 그 저장소의 브랜치로 푸시하는 `git push` 명령이 나옵니다.
@@ -1822,6 +1824,7 @@ owngit pr reopen --number 1
 
 ### 풀 리퀘스트 규칙
 
+- 새 풀 리퀘스트 양식에서 원본과 대상을 고르면 언제나 고른 그 브랜치를 씁니다. `--source`와 `--target`, API와 MCP의 `source_branch`와 `target_branch`는 지금처럼 브랜치 이름을 받습니다. 이름이 두 브랜치에 해당하면 `ambiguous_branch`로 거부합니다. 이때도 [기본 브랜치 바꾸기](#기본-브랜치-바꾸기)에서 설명한 것처럼 두 전체 ref와 각각 보낼 값을 알려 줍니다.
 - 원본 브랜치와 대상 브랜치 한 쌍에는 풀 리퀘스트를 하나만 열어 둘 수 있습니다. 두 번째는 `pull_request_exists`로 거부되고 `error.details.number`가 열려 있는 번호를 알려 줍니다.
 - 닫기(`pr close` 또는 페이지의 풀 리퀘스트 닫기)는 브랜치를 바꾸지 않고 기록을 남기며 그 쌍을 비웁니다. `pr reopen`은 같은 쌍으로 열린 다른 풀 리퀘스트가 없으면 다시 엽니다. 병합된 풀 리퀘스트는 닫거나 다시 열 수 없습니다(`pull_request_merged`). 닫기와 다시 열기에는 병합과 같은 접근 권한이 필요합니다.
 - 설명과 리뷰 메모는 최대 64KiB의 마크다운이며 페이지에서는 HTML과 이미지 없이 보여 줍니다. `pr show`에는 설명(`body`)과 최근 리뷰 메모 다섯 개가 들어 있고 `pr list`에는 둘 다 없습니다.
