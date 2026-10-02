@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"golang.org/x/sys/windows"
@@ -208,41 +209,71 @@ func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 	current, _, err := processIdentity()
 	noErr(t, err)
-	other, _ := otherAccount(t)
-	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
-	noErr(t, err)
+	other, token, asOther := otherAccountWithToken(t)
 	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
-		root, asOther := sharedParent(t)
+		parent, _ := sharedParent(t)
+		root := filepath.Join(parent, "foreign")
 		healthy := filepath.Join(root, "a-healthy")
 		blocked := filepath.Join(root, "z-blocked")
-		noErr(t, os.WriteFile(healthy, []byte("healthy"), 0o600))
-		setRawDACL(t, healthy, true, []windows.EXPLICIT_ACCESS{
-			testEntry(current, windows.GRANT_ACCESS, fileAllAccess),
-			testEntry(everyone, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
-		}, false)
-		var createErr error
-		asOther(func() { createErr = os.WriteFile(blocked, []byte("blocked"), 0o600) })
-		noErr(t, createErr)
-		acl, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{
-			testEntry(current, windows.DENY_ACCESS, windows.WRITE_DAC|windows.WRITE_OWNER),
-			testEntry(current, windows.GRANT_ACCESS, windows.GENERIC_READ|windows.DELETE),
-			testEntry(other, windows.GRANT_ACCESS, fileAllAccess),
-		}, nil)
-		noErr(t, err)
-		var protectErr error
-		asOther(func() {
-			protectErr = windows.SetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
-				windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, acl, nil)
+		var fixtureErr error
+		asOther(func() { fixtureErr = os.Mkdir(root, 0o700) })
+		noErr(t, fixtureErr)
+		t.Cleanup(func() {
+			var cleanupErr error
+			asOther(func() { cleanupErr = os.RemoveAll(root) })
+			if cleanupErr != nil && !os.IsNotExist(cleanupErr) {
+				t.Errorf("remove standard-account fixture: %v", cleanupErr)
+			}
 		})
-		noErr(t, protectErr)
-
-		fix, err := PrivateDirectoryFix(root, true)
+		inherited := func(sid *windows.SID) windows.EXPLICIT_ACCESS {
+			entry := testEntry(sid, windows.GRANT_ACCESS, fileAllAccess)
+			entry.Inheritance = windows.SUB_CONTAINERS_AND_OBJECTS_INHERIT
+			return entry
+		}
+		rootACL, err := windows.ACLFromEntries([]windows.EXPLICIT_ACCESS{inherited(other), inherited(current)}, nil)
 		noErr(t, err)
+		noErr(t, windows.SetNamedSecurityInfo(root, windows.SE_FILE_OBJECT,
+			windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, rootACL, nil))
+		asOther(func() { fixtureErr = os.WriteFile(healthy, []byte("healthy"), 0o600) })
+		noErr(t, fixtureErr)
+		noErr(t, os.WriteFile(blocked, []byte("blocked"), 0o600))
+		setRawDACL(t, healthy, true, []windows.EXPLICIT_ACCESS{
+			testEntry(other, windows.GRANT_ACCESS, fileAllAccess),
+			testEntry(current, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
+		}, false)
+		setRawDACL(t, blocked, true, []windows.EXPLICIT_ACCESS{
+			testEntry(other, windows.DENY_ACCESS, windows.WRITE_DAC|windows.WRITE_OWNER),
+			testEntry(other, windows.GRANT_ACCESS, windows.GENERIC_READ|windows.DELETE),
+			testEntry(current, windows.GRANT_ACCESS, fileAllAccess),
+		}, false)
+
+		for _, access := range []windows.ACCESS_MASK{windows.WRITE_DAC, windows.WRITE_OWNER} {
+			var probeErr error
+			asOther(func() {
+				name, err := windows.UTF16PtrFromString(blocked)
+				if err != nil {
+					probeErr = err
+					return
+				}
+				handle, err := windows.CreateFile(name, uint32(access),
+					windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
+				probeErr = err
+				if err == nil {
+					windows.CloseHandle(handle)
+				}
+			})
+			if probeErr == nil {
+				t.Fatalf("invalid failure fixture: standard account obtained access %#x to blocked item", access)
+			}
+		}
+		healthyProtection := captureProtectionFingerprints(t, healthy)
+		fix := privatePathRepairCommand(root, other, true, true)
 		if !strings.Contains(fix, "$ErrorActionPreference = 'Stop'") {
 			t.Fatalf("repair lacks a terminating-error scope: %q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
-		command.Dir = t.TempDir()
+		command.Dir = root
+		command.SysProcAttr = &syscall.SysProcAttr{Token: syscall.Token(token)}
 		output, runErr := command.CombinedOutput()
 		if runErr == nil {
 			t.Fatalf("repair reported success after an intermediate ACL failure:\n%s", output)
@@ -250,12 +281,7 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 		if !strings.Contains(string(output), blocked) || !strings.Contains(string(output), "OwnGit could not repair") {
 			t.Fatalf("repair did not report the failed item:\n%s", output)
 		}
-		healthyInfo, err := os.Stat(healthy)
-		noErr(t, err)
-		if changeable, _, err := OthersCanChange(healthy, healthyInfo); err != nil || !changeable {
-			t.Fatalf("later healthy item was unexpectedly repaired: changeable=%v err=%v", changeable, err)
-		}
-		noErr(t, os.Remove(blocked))
+		assertProtectionFingerprints(t, healthyProtection)
 	})
 }
 
