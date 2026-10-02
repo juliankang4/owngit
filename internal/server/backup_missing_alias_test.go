@@ -5,6 +5,7 @@ import (
 	"html"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,6 +20,9 @@ func TestMissingBackupAliasesAreLocalizedWithoutClaimingConversion(t *testing.T)
 	remote, err := fixture.app.Repositories.Path("project")
 	noErr(t, err)
 	alias := "refs/heads/<missing>'&"
+	if runtime.GOOS == "windows" {
+		alias = "refs/heads/missing'&한글"
+	}
 	apiRunGit(t, remote, "--git-dir", ".", "symbolic-ref", alias, "refs/heads/future")
 	apiRunGit(t, remote, "--git-dir", ".", "symbolic-ref", "refs/heads/chained-missing", alias)
 	apiRunGit(t, remote, "--git-dir", ".", "symbolic-ref", "refs/heads/cycle-a", "refs/heads/cycle-b")
@@ -83,7 +87,7 @@ func TestMissingBackupAliasesAreLocalizedWithoutClaimingConversion(t *testing.T)
 		if !strings.Contains(page.body, "\n"+html.EscapeString(marker)+"</span>") {
 			t.Fatalf("%s page lacks the selected omission count and log pointer", lang)
 		}
-		if strings.Contains(page.body, "<missing>") || strings.Contains(page.body, recovery.AliasBranchNotice) {
+		if strings.Contains(page.body, alias) || strings.Contains(page.body, "<missing>") || strings.Contains(page.body, recovery.AliasBranchNotice) {
 			t.Fatalf("%s page misstates or fails to escape an unresolved alias", lang)
 		}
 	}

@@ -4,6 +4,7 @@ import (
 	"html"
 	"net/http"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -17,6 +18,9 @@ func TestBackupAliasNoticeIsLocalizedAndEscaped(t *testing.T) {
 	remote, err := fixture.app.Repositories.Path("project")
 	noErr(t, err)
 	alias := "refs/heads/<script>notice</script>'&"
+	if runtime.GOOS == "windows" {
+		alias = "refs/heads/notice'&한글"
+	}
 	apiRunGit(t, remote, "--git-dir", ".", "symbolic-ref", alias, "refs/heads/main")
 	server, client, jar := openBrowser(t, fixture)
 	browserAdminSessionFor(t, fixture, server.URL, jar, "alias-backup")
@@ -41,7 +45,7 @@ func TestBackupAliasNoticeIsLocalizedAndEscaped(t *testing.T) {
 				t.Fatalf("%s page lacks %q", lang, want)
 			}
 		}
-		if strings.Contains(page.body, "<script>notice</script>") {
+		if strings.Contains(page.body, alias) || strings.Contains(page.body, "<script>notice</script>") {
 			t.Fatal("alias was rendered as HTML instead of text")
 		}
 		if !strings.Contains(page.body, `">`+html.EscapeString(webui.Text(lang, webui.MsgBackupAliasBranches))) {
