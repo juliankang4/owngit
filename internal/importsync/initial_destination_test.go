@@ -15,6 +15,17 @@ import (
 	"owngit/internal/state"
 )
 
+func TestInitialDirectoryCreationProblemOnlyTreatsExistenceAsCollision(t *testing.T) {
+	collisionIssue, collision := initialDirectoryCreationProblem(os.ErrExist)
+	if collision.Code != CodeRepositoryTaken || collisionIssue != "directory name was already present" {
+		t.Fatalf("collision issue=%q problem=%+v", collisionIssue, collision)
+	}
+	failureIssue, failure := initialDirectoryCreationProblem(errors.New("permission inspection failed"))
+	if failure.Code != CodeRepositoryCreateFailed || failureIssue != initialDestinationCreateIssue {
+		t.Fatalf("private creation issue=%q problem=%+v", failureIssue, failure)
+	}
+}
+
 func TestInitialImportRefusesExistingDestination(t *testing.T) {
 	f := newFixture(t)
 	first := f.commit("first snapshot", "first bytes\n")

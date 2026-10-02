@@ -221,7 +221,8 @@ func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
 	var failure pullrequest.ErrorEnvelope
 	noErr(t, json.NewDecoder(response.Body).Decode(&failure))
 	response.Body.Close()
-	if response.StatusCode != http.StatusServiceUnavailable || failure.Error.Code != "repository_create_failed" || failure.Error.Message != "The repository could not be created." {
+	wantFailure := webui.Text(webui.LangEN, webui.MsgRepoCreateFail)
+	if response.StatusCode != http.StatusServiceUnavailable || failure.Error.Code != "repository_create_failed" || failure.Error.Message != wantFailure || !strings.Contains(failure.Error.Message, "owngit doctor") || !strings.Contains(failure.Error.Message, "server log") {
 		t.Fatalf("failed create status=%d error=%+v", response.StatusCode, failure.Error)
 	}
 	noErr(t, fixture.store.Exec(ctx, `DROP TRIGGER refuse_creation`))

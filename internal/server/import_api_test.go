@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -16,7 +17,20 @@ import (
 	"owngit/internal/importsync"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
+
+func TestImportPrivateCreationFailureUsesSafeSharedMessage(t *testing.T) {
+	const privatePath = `/private/repositories/.owngit-import-secret`
+	request := httptest.NewRequest(http.MethodPost, "http://example.test/api/v1/repositories/project/import/run", nil)
+	status, code, message, _ := importProblemHTTP(request, "initial repository creation", &importsync.Problem{
+		Code: importsync.CodeRepositoryCreateFailed, Message: "private repository directory could not be created", Cause: errors.New(privatePath),
+	})
+	want := webui.Text(webui.LangEN, webui.MsgRepoCreateFail)
+	if status != http.StatusServiceUnavailable || code != importsync.CodeRepositoryCreateFailed || message != want || strings.Contains(message, privatePath) || !strings.Contains(message, "owngit doctor") || !strings.Contains(message, "server log") {
+		t.Fatalf("private creation response status=%d code=%s message=%q", status, code, message)
+	}
+}
 
 func TestImportAPIRequiresTheAdministratorPassword(t *testing.T) {
 	fixture := newAPIFixture(t, false)

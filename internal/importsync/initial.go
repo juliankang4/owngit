@@ -139,6 +139,15 @@ func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bo
 	return false, nil
 }
 
+const initialDestinationCreateIssue = "repository folder could not be created privately; run owngit doctor and check the server log"
+
+func initialDirectoryCreationProblem(err error) (string, *Problem) {
+	if errors.Is(err, os.ErrExist) {
+		return "directory name was already present", newProblem(CodeRepositoryTaken, "unpublished destination path already exists and was not changed", err)
+	}
+	return initialDestinationCreateIssue, newProblem(CodeRepositoryCreateFailed, initialDestinationCreateIssue, err)
+}
+
 func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) (string, error) {
 	if err := s.runtimeCurrentForRun(run); err != nil {
 		return "", err
@@ -184,11 +193,16 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 	if filepath.Dir(path) != storageRoot {
 		return "", newProblem(CodeRepositoryMissing, "unpublished destination path escapes the repository root", nil)
 	}
-	if err := state.MkdirPrivate(path); err != nil {
+	mkdirPrivate := state.MkdirPrivate
+	if s.mkdirInitialDirectory != nil {
+		mkdirPrivate = s.mkdirInitialDirectory
+	}
+	if err := mkdirPrivate(path); err != nil {
+		issue, problem := initialDirectoryCreationProblem(err)
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
-		_ = s.setInitialDestinationState(cleanupCtx, name, state.ImportInitialUnknown, "directory name was already present", now)
-		return "", newProblem(CodeRepositoryTaken, "unpublished destination path already exists and was not changed", err)
+		_ = s.setInitialDestinationState(cleanupCtx, name, state.ImportInitialUnknown, issue, now)
+		return "", problem
 	}
 	dest := &initialDestination{
 		storageRoot: storageRoot, rootID: root.rootID, generation: run.runtimeGeneration,

@@ -1002,11 +1002,11 @@ func userOnlyACLCommand(path string, user *windows.SID) string {
 // repository root and complete repository trees in PowerShell 5.1 and 7.
 func privatePathRepairCommand(path string, user *windows.SID, setOwner, recursive bool) string {
 	item := "$item"
-	command := "$root = Get-Item -LiteralPath " + powerShellQuote(path) + " -Force -ErrorAction Stop; " +
+	command := "& { $ErrorActionPreference = 'Stop'; $root = Get-Item -LiteralPath " + powerShellQuote(path) + " -Force -ErrorAction Stop; " +
 		"$pending = New-Object 'System.Collections.Stack'; $pending.Push($root.FullName); " +
 		"while ($pending.Count -gt 0) { $item = Get-Item -LiteralPath ($pending.Pop()) -Force -ErrorAction Stop; " +
 		"if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { " +
-		"Write-Output ('OwnGit left linked entry unchanged: ' + $item.FullName); continue }; " +
+		"Write-Output ('OwnGit left linked entry unchanged: ' + $item.FullName); continue }; try { " +
 		powerShellGetAccessControl(item)
 	if setOwner {
 		command += "$acl.SetOwner([Security.Principal.SecurityIdentifier]::new('" + user.String() + "')); " +
@@ -1016,10 +1016,11 @@ func privatePathRepairCommand(path string, user *windows.SID, setOwner, recursiv
 		"$acl.SetSecurityDescriptorSddlForm(('D:P(A;' + $inheritance + ';FA;;;" + user.String() + ")'), 'Access'); " +
 		powerShellSetAccessControl(item) + "; "
 	if recursive {
-		command += "if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction Stop)) { " +
+		command += "if ($item.PSIsContainer) { foreach ($child in @(Get-ChildItem -LiteralPath $item.FullName -Force -ErrorAction Stop | Sort-Object -Property FullName)) { " +
 			"$pending.Push($child.FullName) } }; "
 	}
-	return command + "}"
+	command += "} catch { throw ('OwnGit could not repair ' + $item.FullName + ': ' + $_.Exception.Message) }; "
+	return command + "} }"
 }
 
 func powerShellGetAccessControl(item string) string {

@@ -10,6 +10,7 @@ import (
 	"owngit/internal/importsync"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 func importHistoryQueryAllowed(request *http.Request, repositoryRoute bool, resource, remainder string) bool {
@@ -591,6 +592,7 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 		return unavailable(request, step, err), importsync.CodeUnclassified, "import failed", nil
 	}
 	status := http.StatusBadGateway
+	message := problem.Message
 	var details any
 	switch problem.Code {
 	case importsync.CodeRepositoryTaken, importsync.CodeBusy, importsync.CodeSuperseded, importsync.CodeLFSRequired, importsync.CodeUnresolved, importsync.CodeDestinationChanged,
@@ -602,6 +604,9 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 		status = http.StatusNotFound
 	case importsync.CodeRuntimeUnavailable, importsync.CodeStateUnavailable, importsync.CodeRuntimeUnsafe:
 		status = unavailable(request, step, err)
+	case importsync.CodeRepositoryCreateFailed:
+		status = unavailable(request, step, err)
+		message = webui.Text(webui.LangEN, webui.MsgRepoCreateFail)
 	case importsync.CodeInvalidSource, importsync.CodeInvalidSchedule, importsync.CodeUnsupportedFormat, importsync.CodeUnsupportedRefs, importsync.CodeUnsupported:
 		status = http.StatusUnprocessableEntity
 	case importsync.CodeTooLarge, importsync.CodeTooManyRefs:
@@ -612,7 +617,7 @@ func importProblemHTTP(request *http.Request, step string, err error) (int, stri
 	if problem.Code == importsync.CodeLFSRequired {
 		details = map[string]any{"git_only_consent_required": true}
 	}
-	return status, problem.Code, problem.Message, details
+	return status, problem.Code, message, details
 }
 
 // MaximumImportCredentialRequest bounds a JSON request that may carry a

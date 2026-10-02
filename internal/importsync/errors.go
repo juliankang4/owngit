@@ -15,14 +15,15 @@ import (
 // Stable problem codes. A later HTTP or CLI binding maps them to user-facing
 // responses without parsing messages.
 const (
-	CodeInvalidSource     = "invalid_source"
-	CodeNotConfigured     = "not_configured"
-	CodeBusy              = "busy"
-	CodeRepositoryMissing = "repository_missing"
-	CodeRepositoryTaken   = "repository_taken"
-	CodeUnsupportedFormat = "unsupported_object_format"
-	CodeUnsupportedRefs   = "unsupported_refs"
-	CodeNetwork           = "network"
+	CodeInvalidSource          = "invalid_source"
+	CodeNotConfigured          = "not_configured"
+	CodeBusy                   = "busy"
+	CodeRepositoryMissing      = "repository_missing"
+	CodeRepositoryTaken        = "repository_taken"
+	CodeRepositoryCreateFailed = "repository_create_failed"
+	CodeUnsupportedFormat      = "unsupported_object_format"
+	CodeUnsupportedRefs        = "unsupported_refs"
+	CodeNetwork                = "network"
 	// The address and redirect refusal codes report a deliberate refusal by
 	// this source's settings, each naming the setting that would allow it.
 	// CodeAddressRefused is an address no setting allows.

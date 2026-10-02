@@ -225,7 +225,7 @@ func (app *App) createRepositoryAPI(writer http.ResponseWriter, request *http.Re
 		case errors.As(err, new(*state.PolicyError)):
 			writeSettingUnreadable(writer, request, "repository creation", err)
 		default:
-			writeAPIError(writer, unavailable(request, "repository creation", err), "repository_create_failed", "The repository could not be created.", nil)
+			writeAPIError(writer, unavailable(request, "repository creation", err), "repository_create_failed", webui.Text(webui.LangEN, webui.MsgRepoCreateFail), nil)
 		}
 		return
 	}

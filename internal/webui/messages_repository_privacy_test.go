@@ -16,6 +16,13 @@ func TestRepositoryPrivacyGuidanceIsActionableInBothLanguages(t *testing.T) {
 		if !strings.Contains(detail, "owngit doctor") {
 			t.Errorf("%s preparing detail does not point to doctor: %q", lang, detail)
 		}
+		creation := Text(lang, MsgRepoCreateFail)
+		if !strings.Contains(creation, "owngit doctor") || lang == LangEN && !strings.Contains(creation, "server log") || lang == LangKO && !strings.Contains(creation, "서버 로그") {
+			t.Errorf("%s repository creation failure is not actionable: %q", lang, creation)
+		}
+	}
+	if code := ImportErrorCode("repository_create_failed"); code != MsgRepoCreateFail {
+		t.Errorf("private import creation maps to %s", code)
 	}
 	if text := Text(LangEN, MsgDoctorRepositoryHooksUnsafe); !strings.Contains(text, "Move it out") || !strings.Contains(text, "next retry") {
 		t.Errorf("English linked-hook guidance is not actionable: %q", text)

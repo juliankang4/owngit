@@ -519,6 +519,8 @@ func ImportErrorCode(class string) MessageCode {
 		return MsgImportErrorRepoMissing
 	case "repository_taken":
 		return MsgImportErrorRepoTaken
+	case "repository_create_failed":
+		return MsgRepoCreateFail
 	case "unsupported_object_format":
 		return MsgImportErrorObjectFormat
 	case "unsupported_refs":

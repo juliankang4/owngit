@@ -107,6 +107,8 @@ type Service struct {
 	// beforeInitialDestinationCheck runs after fetch and before the new
 	// destination collision check. It is outside the repository lock.
 	beforeInitialDestinationCheck func() error
+	// mkdirInitialDirectory optionally replaces state.MkdirPrivate in tests.
+	mkdirInitialDirectory func(string) error
 	// afterInitialDirectoryCreated runs right after the unpublished initial
 	// directory was created, before its marker and repository are written.
 	afterInitialDirectoryCreated func()

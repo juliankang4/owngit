@@ -1422,8 +1422,8 @@ var catalog = map[MessageCode]message{
 		ko: "이름이 너무 깁니다.",
 	},
 	MsgRepoCreateFail: {
-		en: "The repository could not be created. Nothing was stored.",
-		ko: "저장소를 만들지 못했습니다. 저장된 내용은 없습니다.",
+		en: "The repository could not be created. Run owngit doctor on the server computer and check the server log.",
+		ko: "저장소를 만들지 못했습니다. 서버 컴퓨터에서 owngit doctor를 실행하고 서버 로그를 확인하세요.",
 	},
 	MsgRepoCreationKept: {
 		en: "The repository could not be recorded, and its folder remains. Check its contents and move it aside before trying that name again.",
