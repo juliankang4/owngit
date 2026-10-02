@@ -336,7 +336,7 @@ The folder repair commands depend on the platform:
 
 - On Linux, `chmod go-w` for the repository folder and `chmod -R go-rwx` for each repository's own folder. When a folder belongs to another account, the command starts with `sudo chown` (`sudo chown -R` for a repository's own folder).
 - On macOS, the same, with `chmod -N` (`chmod -RN` for a repository's own folder) before it to remove access lists.
-- On Windows, a PowerShell command. It first makes your account the owner with `icacls /setowner`: for the repository folder only when another account owns it, and for a repository's own folder always, including everything inside it. Then it replaces the whole access list with a single entry that gives your account full control.
+- On Windows, one PowerShell command that works in Windows PowerShell 5.1 and PowerShell 7. For the repository folder it changes only that folder. For a repository's own folder it walks the folder one level at a time and handles every entry inside it. Each folder or file it reaches gets your account as owner where needed (the repository folder only when another account owns it, everything in a repository's own folder always), and then its whole access list is replaced with a single entry that gives your account full control. It neither follows nor changes a linked entry, such as a junction or a symbolic link, and prints `OwnGit left linked entry unchanged: PATH` for each one so you can look at it.
 
 The General tab of Settings shows the same checkup, only to a confirmed administrator, because it shows this computer's paths.
 
