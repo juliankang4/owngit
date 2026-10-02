@@ -26,11 +26,11 @@ func TestWindowsDoctorUsesCompleteDACLReplacement(t *testing.T) {
 		t.Fatalf("findings=%+v", findings)
 	}
 	for _, finding := range findings {
-		if !strings.Contains(finding.Repair, "SetSecurityDescriptorSddlForm") || strings.Contains(finding.Repair, "/grant:r") {
-			t.Errorf("repair does not replace the complete DACL: %q", finding.Repair)
+		if !strings.Contains(finding.Repair, "SetSecurityDescriptorSddlForm") || strings.Contains(finding.Repair, "icacls") || strings.Contains(finding.Repair, "-Recurse") {
+			t.Errorf("repair does not use the complete no-reparse rule: %q", finding.Repair)
 		}
 	}
-	if !strings.Contains(findings[1].Repair, "Get-ChildItem") || !strings.Contains(findings[1].Repair, "/setowner") {
+	if !strings.Contains(findings[1].Repair, "Get-ChildItem") || !strings.Contains(findings[1].Repair, "SetOwner") || !strings.Contains(findings[1].Repair, "ReparsePoint") {
 		t.Fatalf("repository repair is not recursively owner-only: %q", findings[1].Repair)
 	}
 }

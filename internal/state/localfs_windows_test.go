@@ -271,7 +271,7 @@ func testEntry(sid *windows.SID, mode windows.ACCESS_MODE, mask windows.ACCESS_M
 
 // A refused secret file is explained: the owner, inherited entries, the other
 // accounts that can access it, or a missing or partial grant to the current
-// user, with the icacls command that fixes it.
+// user, with the PowerShell command that fixes it.
 func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	user, _, err := processIdentity()
 	noErr(t, err)
@@ -280,9 +280,8 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
 	const path = `C:\secrets\it's.txt`
-	setOwner := `icacls 'C:\secrets\it''s.txt' /setowner '*` + user.String() + `'`
-	replace := `$f = Get-Item -LiteralPath 'C:\secrets\it''s.txt' -ErrorAction Stop; $io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; ` +
-		`$acl = $io::GetAccessControl($f, 'Access'); $acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;` + user.String() + `)', 'Access'); $io::SetAccessControl($f, $acl)`
+	setOwner := privatePathRepairCommand(path, user, true, false)
+	replace := userOnlyACLCommand(path, user)
 	for _, test := range []struct {
 		name       string
 		descriptor *windows.SECURITY_DESCRIPTOR
@@ -297,7 +296,7 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 			accountName(everyone) + " can also access it", replace},
 		{"two other accounts and a foreign owner", testDescriptor(t, users, true, user, everyone, users),
 			"its owner is " + accountName(users) + ", not your account or Administrators; " + accountName(everyone) + ", " + accountName(users) + " can also access it",
-			setOwner + "; " + replace},
+			setOwner},
 		{"read only", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, windows.GENERIC_READ)}),
 			"your account does not have full control of it", replace},
 		{"denied", testDescriptorWith(t, user, []windows.EXPLICIT_ACCESS{testEntry(user, windows.DENY_ACCESS, windows.FILE_WRITE_DATA), testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}),

@@ -74,7 +74,7 @@ func TestWindowsPrivateDirectoryFixReplacesExplicitAndInheritedGrants(t *testing
 
 		fix, err := PrivateDirectoryFix(root, true)
 		noErr(t, err)
-		if strings.Contains(fix, "/grant:r") || !strings.Contains(fix, "SetSecurityDescriptorSddlForm") {
+		if strings.Contains(fix, "icacls") || strings.Contains(fix, "-Recurse") || !strings.Contains(fix, "SetSecurityDescriptorSddlForm") {
 			t.Fatalf("fix=%q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
@@ -100,6 +100,67 @@ func TestWindowsPrivateDirectoryFixReplacesExplicitAndInheritedGrants(t *testing
 	})
 }
 
+func TestWindowsPrivateDirectoryFixDoesNotFollowJunctions(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+		root := filepath.Join(t.TempDir(), "shared")
+		child := filepath.Join(root, "child")
+		file := filepath.Join(child, "file")
+		noErr(t, os.MkdirAll(child, 0o700))
+		noErr(t, os.WriteFile(file, []byte("inside"), 0o600))
+		for _, path := range []string{root, child, file} {
+			setRawDACL(t, path, true, []windows.EXPLICIT_ACCESS{
+				testEntry(user, windows.GRANT_ACCESS, fileAllAccess),
+				testEntry(everyone, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
+			}, false)
+		}
+
+		outside := t.TempDir()
+		outsideFile := filepath.Join(outside, "outside.txt")
+		noErr(t, os.WriteFile(outsideFile, []byte("outside"), 0o600))
+		outsideProtection := captureProtectionFingerprints(t, outside, outsideFile)
+		junction := filepath.Join(root, "objects-junction")
+		linkTestFolder(t, outside, junction)
+
+		fix, err := PrivateDirectoryFix(root, true)
+		noErr(t, err)
+		if strings.Contains(fix, "icacls") || strings.Contains(fix, "-Recurse") || !strings.Contains(fix, "ReparsePoint") {
+			t.Fatalf("junction-safe fix=%q", fix)
+		}
+		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
+		command.Dir = t.TempDir()
+		output, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fix failed: %v\n%s", err, output)
+		}
+		if !strings.Contains(string(output), "left linked entry unchanged") || !strings.Contains(string(output), junction) {
+			t.Fatalf("fix did not report the unchanged junction:\n%s", output)
+		}
+		assertProtectionFingerprints(t, outsideProtection)
+		content, err := os.ReadFile(outsideFile)
+		noErr(t, err)
+		if string(content) != "outside" {
+			t.Fatalf("junction target content=%q", content)
+		}
+		junctionName, err := windows.UTF16PtrFromString(junction)
+		noErr(t, err)
+		attributes, err := windows.GetFileAttributes(junctionName)
+		if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+			t.Fatalf("junction changed: attributes=%#x err=%v", attributes, err)
+		}
+		for _, path := range []string{root, child, file} {
+			info, err := os.Stat(path)
+			noErr(t, err)
+			if changeable, _, err := OthersCanChange(path, info); err != nil || changeable {
+				t.Errorf("%s changeable=%v err=%v", path, changeable, err)
+			}
+		}
+	})
+}
+
 func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 	current, _, err := processIdentity()
 	noErr(t, err)
@@ -121,7 +182,7 @@ func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 		noErr(t, createErr)
 		fix, err := PrivateDirectoryFix(root, true)
 		noErr(t, err)
-		if !strings.Contains(fix, "/setowner") || !strings.Contains(fix, "/T") {
+		if strings.Contains(fix, "icacls") || strings.Contains(fix, "-Recurse") || !strings.Contains(fix, "SetOwner") {
 			t.Fatalf("foreign-owner fix=%q", fix)
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
