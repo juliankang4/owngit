@@ -113,7 +113,10 @@ const (
 	MsgDoctorUncheckedServer               MessageCode = "doctor.unchecked_server"
 	MsgDoctorUncheckedFirewall             MessageCode = "doctor.unchecked_firewall"
 	MsgDoctorUncheckedOwner                MessageCode = "doctor.unchecked_owner"
+	MsgDoctorRepositoryRootShared          MessageCode = "doctor.repository_root_shared"
+	MsgDoctorRepositoryRootUnchecked       MessageCode = "doctor.repository_root_unchecked"
 	MsgDoctorRepositoriesShared            MessageCode = "doctor.repositories_shared"
+	MsgDoctorRepositoryHooksUnsafe         MessageCode = "doctor.repository_hooks_unsafe"
 )
 
 // Setup and bootstrap.
@@ -1294,10 +1297,25 @@ var catalog = map[MessageCode]message{
 		en: "OwnGit could not read who owns its folders: %s",
 		ko: "OwnGit 폴더의 소유자를 읽지 못했습니다: %s",
 	},
+	// One %s: the repository root.
+	MsgDoctorRepositoryRootShared: {
+		en: "Other accounts can change the repository root %s.",
+		ko: "다른 계정이 저장소 루트를 바꿀 수 있습니다. 위치: %s",
+	},
+	// Two %s: the repository root, then why it could not be checked.
+	MsgDoctorRepositoryRootUnchecked: {
+		en: "OwnGit could not check who can change the repository root %s: %s",
+		ko: "저장소 루트를 누가 바꿀 수 있는지 확인하지 못했습니다. 위치: %s. 원인: %s",
+	},
 	// Two %s: the exposed repository count, then the repository root.
 	MsgDoctorRepositoriesShared: {
 		en: "%s hosted repository folders under %s can be changed by other accounts.",
 		ko: "호스팅 저장소 폴더 %s개를 다른 계정이 바꿀 수 있습니다. 저장소 폴더: %s",
+	},
+	// Two %s: the repository ID, then the managed entry.
+	MsgDoctorRepositoryHooksUnsafe: {
+		en: "Repository %s has a managed %s entry that is a link, belongs to another account, or is not a plain folder or file. Move it out of the repository folder. OwnGit recreates it on the next retry.",
+		ko: "저장소 %s의 관리 대상 %s 항목이 링크이거나 다른 계정 소유이거나 일반 폴더 또는 파일이 아닙니다. 이 항목을 저장소 폴더 밖으로 옮기세요. 다음 재시도 때 OwnGit이 다시 만듭니다.",
 	},
 
 	// -- connection ----------------------------------------------------
@@ -1440,8 +1458,8 @@ var catalog = map[MessageCode]message{
 		ko: "이 저장소를 준비하는 중입니다.",
 	},
 	MsgRepoPreparingDetail: {
-		en: "OwnGit checks each repository's safety settings before serving it, after starting and whenever its folder could not be read. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong.",
-		ko: "OwnGit은 시작한 뒤, 그리고 저장소 폴더를 읽지 못했을 때마다 각 저장소의 안전 설정을 확인한 다음 저장소를 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다.",
+		en: "OwnGit checks each repository's safety settings before serving it, after starting and whenever its folder could not be read. This one is not ready yet, so pushes, clones, and changes are refused for now. OwnGit keeps retrying on its own. The server log explains what went wrong. Run owngit doctor on the server computer to find repositories whose managed hooks must be moved aside.",
+		ko: "OwnGit은 시작한 뒤, 그리고 저장소 폴더를 읽지 못했을 때마다 각 저장소의 안전 설정을 확인한 다음 저장소를 제공합니다. 이 저장소는 아직 준비되지 않아 지금은 푸시, 클론, 변경을 받지 않습니다. OwnGit이 알아서 계속 다시 시도합니다. 원인은 서버 로그에 있습니다. 관리 대상 훅을 옮겨야 하는 저장소는 서버 컴퓨터에서 owngit doctor를 실행해 확인하세요.",
 	},
 	MsgRepoPreparingShort: {
 		en: "Preparing",

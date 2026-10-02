@@ -795,7 +795,61 @@ func OthersCanChange(path string, _ os.FileInfo) (bool, string, error) {
 	if err != nil || !changeable {
 		return changeable, "", err
 	}
-	return true, userOnlyACLCommand(path, user), nil
+	fix, err := privateDirectoryFix(path, false, descriptor, user)
+	return true, fix, err
+}
+
+// OthersCanChangeFile classifies the DACL and owner of the exact held folder,
+// without resolving its pathname again.
+func OthersCanChangeFile(file *os.File, _ os.FileInfo) (bool, error) {
+	user, defaultOwner, err := processIdentity()
+	if err != nil {
+		return false, err
+	}
+	descriptor, err := windows.GetSecurityInfo(windows.Handle(file.Fd()), windows.SE_FILE_OBJECT,
+		windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, fmt.Errorf("read folder ACL: %w", err)
+	}
+	return descriptorAllowsOtherChanges(descriptor, user, defaultOwner)
+}
+
+// PrivateDirectoryFix returns, but never runs, the PowerShell command that
+// makes a directory private to the current Windows user. Recursive mode also
+// replaces every existing child's complete access list and owner.
+func PrivateDirectoryFix(path string, recursive bool) (string, error) {
+	user, _, err := processIdentity()
+	if err != nil {
+		return "", err
+	}
+	descriptor, err := pathDescriptor(path)
+	if err != nil {
+		return "", err
+	}
+	return privateDirectoryFix(path, recursive, descriptor, user)
+}
+
+func privateDirectoryFix(path string, recursive bool, descriptor *windows.SECURITY_DESCRIPTOR, user *windows.SID) (string, error) {
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return "", fmt.Errorf("read folder owner: %w", err)
+	}
+	var commands []string
+	// A recursive repair cannot trust descendant owners merely because the
+	// repository folder itself has the expected owner. Set every owner first.
+	if recursive || owner == nil || !owner.Equals(user) {
+		ownerCommand := windowsSetOwnerCommand(path, user)
+		if recursive {
+			ownerCommand += " /T"
+		}
+		commands = append(commands, ownerCommand, "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+	}
+	if recursive {
+		commands = append(commands, userOnlyDirectoryTreeACLCommand(path, user))
+	} else {
+		commands = append(commands, userOnlyDirectoryACLCommand(path, user))
+	}
+	return strings.Join(commands, "; "), nil
 }
 
 func descriptorAllowsOtherChanges(descriptor *windows.SECURITY_DESCRIPTOR, user, defaultOwner *windows.SID) (bool, error) {
@@ -919,7 +973,7 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 			name = accountName(owner)
 		}
 		problems = append(problems, "its owner is "+name+", not your account or Administrators")
-		fixes = append(fixes, "icacls "+powerShellQuote(path)+" /setowner "+powerShellQuote("*"+user.String()))
+		fixes = append(fixes, windowsSetOwnerCommand(path, user))
 	}
 	if validateUserOnlyDACL(descriptor, user, false) != nil {
 		problems = append(problems, describeACL(descriptor, user)...)
@@ -945,11 +999,37 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 // the line picks one and works unchanged in both. Get-Item resolves the path
 // the PowerShell way and stops the line with a clear error if it is missing.
 func userOnlyACLCommand(path string, user *windows.SID) string {
+	return userOnlyACLCommandFor(path, user, false)
+}
+
+func userOnlyDirectoryACLCommand(path string, user *windows.SID) string {
+	return userOnlyACLCommandFor(path, user, true)
+}
+
+func userOnlyACLCommandFor(path string, user *windows.SID, directory bool) string {
+	inheritance := ""
+	if directory {
+		inheritance = "OICI"
+	}
 	return "$f = Get-Item -LiteralPath " + powerShellQuote(path) + " -ErrorAction Stop; " +
 		"$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; " +
 		"$acl = $io::GetAccessControl($f, 'Access'); " +
-		"$acl.SetSecurityDescriptorSddlForm('D:P(A;;FA;;;" + user.String() + ")', 'Access'); " +
+		"$acl.SetSecurityDescriptorSddlForm('D:P(A;" + inheritance + ";FA;;;" + user.String() + ")', 'Access'); " +
 		"$io::SetAccessControl($f, $acl)"
+}
+
+func userOnlyDirectoryTreeACLCommand(path string, user *windows.SID) string {
+	return "$f = Get-Item -LiteralPath " + powerShellQuote(path) + " -ErrorAction Stop; " +
+		"$io = if ($PSVersionTable.PSEdition -eq 'Core') { [IO.FileSystemAclExtensions] } else { [IO.File] }; " +
+		"$items = @($f) + @(Get-ChildItem -LiteralPath $f.FullName -Force -Recurse -ErrorAction Stop); " +
+		"foreach ($item in $items) { $acl = $io::GetAccessControl($item, 'Access'); " +
+		"$inheritance = if ($item.PSIsContainer) { 'OICI' } else { '' }; " +
+		"$acl.SetSecurityDescriptorSddlForm(('D:P(A;' + $inheritance + ';FA;;;" + user.String() + ")'), 'Access'); " +
+		"$io::SetAccessControl($item, $acl) }"
+}
+
+func windowsSetOwnerCommand(path string, user *windows.SID) string {
+	return "icacls " + powerShellQuote(path) + " /setowner " + powerShellQuote("*"+user.String())
 }
 
 // powerShellQuote quotes s as a PowerShell single-quoted string, in which

@@ -34,8 +34,8 @@ func TestMacOSInheritedWriteACLDoesNotBlockNormalImport(t *testing.T) {
 	addInheritedRepositoryWriteACL(t, f.manager.RepositoryRoot())
 	f.commit("initial", "initial\n")
 	f.mustImport(ImportInput{})
-	if !strings.Contains(repositoryACLListing(t, f.destinationPath()), "inherited") {
-		t.Fatal("synthetic repository did not inherit its write ACL")
+	if listing := repositoryACLListing(t, f.destinationPath()); strings.Contains(listing, "inherited") {
+		t.Fatalf("private import inherited the parent's write ACL:\n%s", listing)
 	}
 	assertNormalHEADPublication(t, f)
 }

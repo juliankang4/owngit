@@ -184,7 +184,7 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 	if filepath.Dir(path) != storageRoot {
 		return "", newProblem(CodeRepositoryMissing, "unpublished destination path escapes the repository root", nil)
 	}
-	if err := os.Mkdir(path, 0o700); err != nil {
+	if err := state.MkdirPrivate(path); err != nil {
 		cleanupCtx, cancel := cleanupContext(ctx)
 		defer cancel()
 		_ = s.setInitialDestinationState(cleanupCtx, name, state.ImportInitialUnknown, "directory name was already present", now)
@@ -194,11 +194,11 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		storageRoot: storageRoot, rootID: root.rootID, generation: run.runtimeGeneration,
 		name: name, path: path, token: token, repositoryID: run.run.RepositoryID, runID: run.run.ID,
 	}
-	if err := state.ProtectPrivatePath(path, true); err != nil {
-		return "", s.discardInitialDestination(ctx, dest, now, fmt.Errorf("protect unpublished destination: %w", err))
-	}
 	if s.afterInitialDirectoryCreated != nil {
 		s.afterInitialDirectoryCreated()
+	}
+	if err := state.ProtectPrivatePath(path, true); err != nil {
+		return "", s.discardInitialDestination(ctx, dest, now, fmt.Errorf("protect unpublished destination: %w", err))
 	}
 	marker := initialMarker{
 		Version: initialMarkerVersion, Name: name, RootID: root.rootID, RunID: run.run.ID,

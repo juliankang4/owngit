@@ -283,6 +283,27 @@ func OthersCanChange(path string, info os.FileInfo) (bool, string, error) {
 	return othersCanChange(path, info, false, true)
 }
 
+// OthersCanChangeFile reports the same classification for the exact held
+// directory. It never resolves file.Name(), so a replaced path cannot redirect
+// owner, mode or access-list inspection to another object.
+func OthersCanChangeFile(file *os.File, info os.FileInfo) (bool, error) {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return false, errors.New("owner is unavailable")
+	}
+	if stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
+		return true, nil
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return false, nil
+	}
+	permissions := info.Mode().Perm()
+	if info.Mode()&os.ModeSticky == 0 && (permissions&0o002 != 0 || permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid)) {
+		return true, nil
+	}
+	return accessListChangeable(file, info)
+}
+
 // othersCanChange is OthersCanChange; with rootGroups it also accepts group
 // write for macOS groups whose members may act as root. allowSticky accepts a
 // writable sticky directory when only its existing entries need protection.

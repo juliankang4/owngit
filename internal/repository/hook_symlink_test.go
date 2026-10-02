@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRetentionHookRefusesHooksDirectorySymlink(t *testing.T) {
@@ -24,6 +25,22 @@ func TestRetentionHookRefusesHooksDirectorySymlink(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `prepare repository "sample"`) {
 		t.Fatalf("hook refresh error=%v, want the repository name", err)
 	}
+	if !strings.Contains(err.Error(), "move "+hooks+" out of the repository folder") || !strings.Contains(err.Error(), "next retry") {
+		t.Fatalf("hook refresh error is not actionable: %v", err)
+	}
+	probe := newPreparationProbe()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	manager.PreparationRetry = time.Hour
+	noErr(t, manager.StartPreparation(ctx, nil, time.Second, probe.logf))
+	t.Cleanup(func() {
+		stop, done := context.WithTimeout(context.Background(), time.Second)
+		defer done()
+		_ = manager.StopPreparation(stop)
+	})
+	waitFor(t, "actionable hook preparation log", func() bool {
+		return strings.Contains(strings.Join(probe.logged(), "\n"), "move "+hooks+" out of the repository folder")
+	})
 	if _, statErr := os.Lstat(filepath.Join(external, "update")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("hook refresh wrote outside the repository: %v", statErr)
 	}
@@ -47,6 +64,9 @@ func TestRetentionHookRefusesUpdateSymlink(t *testing.T) {
 	err = manager.PrepareExisting(context.Background())
 	if err == nil || !strings.Contains(err.Error(), `prepare repository "linked-hook"`) {
 		t.Fatalf("hook refresh error=%v, want the repository name", err)
+	}
+	if !strings.Contains(err.Error(), "move "+update+" out of the repository folder") || !strings.Contains(err.Error(), "next retry") {
+		t.Fatalf("hook refresh error is not actionable: %v", err)
 	}
 	content, readErr := os.ReadFile(external)
 	noErr(t, readErr)

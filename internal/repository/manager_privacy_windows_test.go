@@ -14,6 +14,16 @@ import (
 func TestWindowsCreatedRepositoryHasOwnerOnlyDACL(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
 	setInheritedWriteDACL(t, manager.RepositoryRoot())
+	inspectedStaging := false
+	manager.creationDirectoryHook = func(path string) {
+		inspectedStaging = true
+		info, err := os.Stat(path)
+		noErr(t, err)
+		changeable, _, err := state.OthersCanChange(path, info)
+		if err != nil || changeable {
+			t.Fatalf("creation staging changeable before verification=%v err=%v", changeable, err)
+		}
+	}
 	created, err := manager.Create(context.Background(), "private-created", "")
 	noErr(t, err)
 	path, err := manager.Path(created.ID)
@@ -23,6 +33,9 @@ func TestWindowsCreatedRepositoryHasOwnerOnlyDACL(t *testing.T) {
 	changeable, _, err := state.OthersCanChange(path, info)
 	if err != nil || changeable {
 		t.Fatalf("created repository changeable=%v err=%v", changeable, err)
+	}
+	if !inspectedStaging {
+		t.Fatal("creation staging was not inspected before verification")
 	}
 }
 

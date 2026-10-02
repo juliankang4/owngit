@@ -8,6 +8,36 @@ import (
 	"testing"
 )
 
+func TestOthersCanChangeFileInspectsHeldFolderAfterPathReplacement(t *testing.T) {
+	root := t.TempDir()
+	parent, err := os.Open(root)
+	noErr(t, err)
+	defer parent.Close()
+	path := filepath.Join(root, "child")
+	noErr(t, os.Mkdir(path, 0o700))
+	held, err := OpenOwnFolderIn(parent, "child")
+	noErr(t, err)
+	defer held.Close()
+	info, err := held.Stat()
+	noErr(t, err)
+
+	moved := filepath.Join(root, "held")
+	noErr(t, os.Rename(path, moved))
+	target := filepath.Join(t.TempDir(), "outside")
+	noErr(t, os.Mkdir(target, 0o700))
+	noErr(t, os.Chmod(target, 0o777))
+	noErr(t, os.Symlink(target, path))
+	changeable, err := OthersCanChangeFile(held, info)
+	if err != nil || changeable {
+		t.Fatalf("held private folder changeable=%v err=%v", changeable, err)
+	}
+	targetInfo, err := os.Stat(target)
+	noErr(t, err)
+	if targetChangeable, _, err := OthersCanChange(target, targetInfo); err != nil || !targetChangeable {
+		t.Fatalf("outside control changeable=%v err=%v", targetChangeable, err)
+	}
+}
+
 func TestOpenOwnFolderInDoesNotFollowLinksOrChangePermissions(t *testing.T) {
 	root := t.TempDir()
 	parent, err := os.Open(root)

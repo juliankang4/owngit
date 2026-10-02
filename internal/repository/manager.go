@@ -74,6 +74,9 @@ type Manager struct {
 	storageClaim storageClaimState
 	// failedCreationMu serializes the preservation count and move across names.
 	failedCreationMu sync.Mutex
+	// creationDirectoryHook, when set by tests, runs after atomic private
+	// creation and before the separate protection verification.
+	creationDirectoryHook func(string)
 	// PreparationRetry replaces the 30-second first wait after a failed
 	// preparation attempt. Tests shorten it; zero keeps the default.
 	PreparationRetry time.Duration
@@ -191,7 +194,7 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, err
 	}
 	temporaryPath := filepath.Join(root, ".owngit-create-"+hex.EncodeToString(suffix))
-	if err := os.Mkdir(temporaryPath, 0o700); err != nil {
+	if err := state.MkdirPrivate(temporaryPath); err != nil {
 		return state.Repository{}, fmt.Errorf("create temporary repository directory: %w", err)
 	}
 	created := false
@@ -200,6 +203,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 			_ = os.RemoveAll(temporaryPath)
 		}
 	}()
+	if m.creationDirectoryHook != nil {
+		m.creationDirectoryHook(temporaryPath)
+	}
 	if err := state.ProtectPrivatePath(temporaryPath, true); err != nil {
 		return state.Repository{}, fmt.Errorf("protect temporary repository directory: %w", err)
 	}
@@ -718,7 +724,7 @@ func writeRetentionHook(repositoryPath string, runner *gitexec.Runner) error {
 	// then make that exact directory private before opening any hook in it.
 	hooks, err := state.OpenOwnFolderIn(repositoryDir, "hooks")
 	if err != nil {
-		return fmt.Errorf("open hooks directory without following links: %w", err)
+		return hookEntryError(hooksPath, "hooks", true, err)
 	}
 	defer hooks.Close()
 	if err := state.ProtectPrivateHandle(hooks, true); err != nil {
@@ -845,7 +851,7 @@ fi
 func writeHookFile(hooks *os.File, name, content string) error {
 	file, err := state.OpenOwnFile(hooks, name, os.O_RDWR|os.O_CREATE)
 	if err != nil {
-		return fmt.Errorf("open Git hook %s without following links: %w", name, err)
+		return hookEntryError(filepath.Join(hooks.Name(), name), "hooks/"+name, false, err)
 	}
 	defer file.Close()
 	if err := state.ProtectPrivateHandle(file, false); err != nil {
@@ -872,6 +878,30 @@ func writeHookFile(hooks *os.File, name, content string) error {
 		return fmt.Errorf("make Git hook %s executable: %w", name, err)
 	}
 	return nil
+}
+
+func hookEntryError(path, label string, directory bool, cause error) error {
+	reason := ""
+	if info, err := os.Lstat(path); err == nil {
+		switch {
+		case info.Mode()&os.ModeSymlink != 0:
+			reason = "is a link"
+		case directory && !info.IsDir():
+			reason = "is not a plain folder"
+		case !directory && !info.Mode().IsRegular():
+			reason = "is not a plain file"
+		}
+	}
+	if strings.Contains(cause.Error(), "belongs to another account") {
+		reason = "is owned by another account"
+	}
+	if strings.Contains(cause.Error(), "has another name") {
+		reason = "has another filesystem name"
+	}
+	if reason == "" {
+		return fmt.Errorf("open managed Git %s without following links: %w", label, cause)
+	}
+	return fmt.Errorf("managed Git %s %s; move %s out of the repository folder so OwnGit can recreate it on the next retry: %w", label, reason, path, cause)
 }
 
 func shellQuote(value string) string {

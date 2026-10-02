@@ -273,60 +273,152 @@ func diagnose(ctx context.Context, subject doctorSubject) []webui.Finding {
 }
 
 func repositoryPrivacyFindings(subject doctorSubject) []webui.Finding {
-	if subject.repositories == "" || len(subject.repositoryIDs) == 0 {
+	if subject.repositories == "" {
 		return nil
 	}
 	var findings []webui.Finding
-	var exposed []string
-	for _, id := range subject.repositoryIDs {
-		path := filepath.Join(subject.repositories, id+".git")
-		info, err := os.Stat(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err == nil && !info.IsDir() {
-			err = fmt.Errorf("%s is not a folder", path)
-		}
-		changeable := false
+	rootInfo, err := os.Lstat(subject.repositories)
+	if err != nil || rootInfo.Mode()&os.ModeSymlink != 0 || !rootInfo.IsDir() {
 		if err == nil {
-			changeable, _, err = state.OthersCanChange(path, info)
+			err = fmt.Errorf("%s is not a plain folder", subject.repositories)
 		}
-		if err != nil {
-			findings = append(findings, webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{err.Error()}, Unchecked: true})
-			continue
+		return append(findings, repositoryRootUnchecked(subject.repositories, err))
+	}
+	root, err := os.Open(subject.repositories)
+	if err != nil {
+		return append(findings, repositoryRootUnchecked(subject.repositories, err))
+	}
+	defer root.Close()
+	heldRootInfo, err := root.Stat()
+	if err != nil || !os.SameFile(rootInfo, heldRootInfo) {
+		if err == nil {
+			err = errors.New("repository root changed while it was checked")
 		}
-		if changeable {
-			exposed = append(exposed, path)
+		return append(findings, repositoryRootUnchecked(subject.repositories, err))
+	}
+	changeable, inspectErr := state.OthersCanChangeFile(root, heldRootInfo)
+	if inspectErr != nil {
+		findings = append(findings, repositoryRootUnchecked(subject.repositories, inspectErr))
+	} else if changeable {
+		fix, fixErr := state.PrivateDirectoryFix(subject.repositories, false)
+		finding := webui.Finding{Code: webui.MsgDoctorRepositoryRootShared, Args: []string{subject.repositories}}
+		if fixErr != nil {
+			findings = append(findings, finding, repositoryRootUnchecked(subject.repositories, fixErr))
+		} else {
+			finding.Repair = fix
+			findings = append(findings, finding)
 		}
 	}
-	if len(exposed) != 0 {
+
+	var exposedRepairs []string
+	exposedCount := 0
+	for _, id := range subject.repositoryIDs {
+		name := id + ".git"
+		path := filepath.Join(subject.repositories, name)
+		repository, openErr := state.OpenOwnFolderIn(root, name)
+		if errors.Is(openErr, fs.ErrNotExist) {
+			continue
+		}
+		if openErr != nil {
+			findings = append(findings, uncheckedRepositoryEntry(id, openErr))
+			continue
+		}
+		info, statErr := repository.Stat()
+		if statErr != nil {
+			repository.Close()
+			findings = append(findings, uncheckedRepositoryEntry(id, statErr))
+			continue
+		}
+		changeable, inspectErr := state.OthersCanChangeFile(repository, info)
+		if inspectErr != nil {
+			findings = append(findings, uncheckedRepositoryEntry(id, inspectErr))
+		} else if changeable {
+			exposedCount++
+			if fix, fixErr := state.PrivateDirectoryFix(path, true); fixErr != nil {
+				findings = append(findings, uncheckedRepositoryEntry(id, fixErr))
+			} else {
+				exposedRepairs = append(exposedRepairs, fix)
+			}
+		}
+		findings = append(findings, repositoryHookFindings(repository, id)...)
+		repository.Close()
+	}
+	if exposedCount != 0 {
 		findings = append(findings, webui.Finding{
-			Code: webui.MsgDoctorRepositoriesShared, Args: []string{strconv.Itoa(len(exposed)), subject.repositories},
-			Repair: repositoryPrivacyRepair(exposed),
+			Code: webui.MsgDoctorRepositoriesShared, Args: []string{strconv.Itoa(exposedCount), subject.repositories},
+			Repair: repositoryPrivacyRepair(exposedRepairs),
 		})
 	}
 	return findings
 }
 
-func repositoryPrivacyRepair(paths []string) string {
-	quoted := make([]string, len(paths))
-	for index, path := range paths {
-		quoted[index] = shellWord(runtime.GOOS, path)
+func repositoryRootUnchecked(path string, err error) webui.Finding {
+	return webui.Finding{Code: webui.MsgDoctorRepositoryRootUnchecked, Args: []string{path, err.Error()}, Unchecked: true}
+}
+
+func uncheckedRepositoryEntry(id string, err error) webui.Finding {
+	return webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{fmt.Sprintf("repository %q: %v", id, err)}, Unchecked: true}
+}
+
+func repositoryPrivacyRepair(commands []string) string {
+	separator := " && "
+	if runtime.GOOS == "windows" {
+		separator = "; "
 	}
-	switch runtime.GOOS {
-	case "windows":
-		commands := []string{"$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value"}
-		for _, path := range quoted {
-			commands = append(commands, "icacls "+path+` /inheritance:r /grant:r "*${sid}:(OI)(CI)F" /T`,
-				"if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+	return strings.Join(commands, separator)
+}
+
+func repositoryHookFindings(repository *os.File, id string) []webui.Finding {
+	hooks, err := state.OpenOwnFolderIn(repository, "hooks")
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		path := filepath.Join(repository.Name(), "hooks")
+		if unsafeManagedHookEntry(path, true, err) {
+			return []webui.Finding{managedHookFinding(id, "hooks", path, repository.Name()+".hooks-moved")}
 		}
-		return strings.Join(commands, "; ")
-	case "darwin":
-		arguments := strings.Join(quoted, " ")
-		return "chmod -RN " + arguments + " && chmod -R go-rwx " + arguments
-	default:
-		return "chmod -R go-rwx " + strings.Join(quoted, " ")
+		return []webui.Finding{uncheckedRepositoryEntry(id, err)}
 	}
+	defer hooks.Close()
+	update, err := state.OpenOwnFile(hooks, "update", os.O_RDONLY)
+	if err == nil {
+		update.Close()
+		return nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	path := filepath.Join(hooks.Name(), "update")
+	if unsafeManagedHookEntry(path, false, err) {
+		return []webui.Finding{managedHookFinding(id, "hooks/update", path, repository.Name()+".update-hook-moved")}
+	}
+	return []webui.Finding{uncheckedRepositoryEntry(id, err)}
+}
+
+func unsafeManagedHookEntry(path string, directory bool, cause error) bool {
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || directory && !info.IsDir() || !directory && !info.Mode().IsRegular() {
+			return true
+		}
+	}
+	message := cause.Error()
+	return strings.Contains(message, "belongs to another account") || strings.Contains(message, "has another name")
+}
+
+func managedHookFinding(id, label, source, destination string) webui.Finding {
+	return webui.Finding{
+		Code: webui.MsgDoctorRepositoryHooksUnsafe, Args: []string{id, label},
+		Repair: moveAsideCommand(source, destination),
+	}
+}
+
+func moveAsideCommand(source, destination string) string {
+	from, to := shellWord(runtime.GOOS, source), shellWord(runtime.GOOS, destination)
+	if runtime.GOOS == "windows" {
+		return "if (Test-Path -LiteralPath " + to + ") { throw 'move-aside destination already exists' }; Move-Item -LiteralPath " + from + " -Destination " + to + " -ErrorAction Stop"
+	}
+	return "test ! -e " + to + " && test ! -L " + to + " && mv " + from + " " + to
 }
 
 // doctorToolTimeout and doctorOutputLimit bound each tool that the

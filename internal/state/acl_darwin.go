@@ -45,6 +45,14 @@ func accessListFix(path string, _ os.FileInfo) (string, error) {
 	return ChangeAccessListFix(path)
 }
 
+func accessListChangeable(file *os.File, _ os.FileInfo) (bool, error) {
+	filesec, err := extendedSecurity(file.Name(), file, 0)
+	if err != nil {
+		return false, err
+	}
+	return permitEntry(filesec, kauthChangeRights)
+}
+
 // ChangeAccessListFix returns "chmod -N PATH" when an access list entry lets
 // an account change path, which an owner-only mode leaves in place.
 func ChangeAccessListFix(path string) (string, error) {
