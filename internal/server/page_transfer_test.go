@@ -15,13 +15,22 @@ import (
 
 func pageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBuffer ...int) (*httptest.Server, <-chan error) {
 	t.Helper()
+	server, results, _ := timedPageTransferServer(t, idle, content, sendBuffer...)
+	return server, results
+}
+
+func timedPageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBuffer ...int) (*httptest.Server, <-chan error, <-chan time.Duration) {
+	t.Helper()
 	results := make(chan error, 8)
+	transfers := make(chan time.Duration, 8)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		request, deadlines, cancel := startDeadlines(writer, request, idle, idle/4, time.Hour, time.Second)
 		defer cancel()
 		defer deadlines.finish()
 		writer.Header().Set("Content-Length", fmt.Sprint(len(content)))
+		started := time.Now()
 		err := writePage(writer, request, http.StatusOK, content)
+		transfers <- time.Since(started)
 		results <- err
 		if err != nil {
 			panic(http.ErrAbortHandler)
@@ -36,7 +45,7 @@ func pageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBu
 	}
 	server.Start()
 	t.Cleanup(server.Close)
-	return server, results
+	return server, results, transfers
 }
 
 func TestPageTransferProgressOutlivesTheWorkDeadlineAndReusesConnection(t *testing.T) {
@@ -110,22 +119,29 @@ func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
 	if testing.Short() {
 		t.Skip("long socket transfer")
 	}
-	content := bytes.Repeat([]byte("p"), 64<<10)
-	server, results := pageTransferServer(t, 30*time.Second, content, 1024)
+	idle := 30 * time.Second
+	transferTime := 40 * time.Second
+	// Buffers smaller than one kernel page can stall a write even as queued
+	// bytes drain. Keep normal-sized buffers and pace enough data that the
+	// server, not just the client draining its buffer, outlasts idle.
+	content := bytes.Repeat([]byte("p"), 4<<20)
+	server, results, transfers := timedPageTransferServer(t, idle, content, 64<<10)
 	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	_ = connection.(*net.TCPConn).SetReadBuffer(1024)
-	_ = connection.SetDeadline(time.Now().Add(120 * time.Second))
+	if err := connection.(*net.TCPConn).SetReadBuffer(64 << 10); err != nil {
+		t.Fatal(err)
+	}
+	_ = connection.SetDeadline(time.Now().Add(60 * time.Second))
 	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
 	response, err := http.ReadResponse(bufio.NewReader(connection), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var received bytes.Buffer
-	chunk := make([]byte, 1024)
+	chunk := make([]byte, 64<<10)
 	started := time.Now()
 	for {
 		n, err := response.Body.Read(chunk)
@@ -136,17 +152,21 @@ func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
 		if err != nil {
 			t.Fatalf("long progressing body stopped: %v", err)
 		}
-		time.Sleep(750 * time.Millisecond)
+		time.Sleep(time.Duration(n) * transferTime / time.Duration(len(content)))
 	}
 	response.Body.Close()
 	elapsed := time.Since(started)
-	if elapsed <= 30*time.Second || !bytes.Equal(received.Bytes(), content) {
+	if elapsed <= idle || !bytes.Equal(received.Bytes(), content) {
 		t.Fatalf("long transfer took %s and delivered %d of %d bytes", elapsed, received.Len(), len(content))
 	}
 	if err := <-results; err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("progressing transfer: %s, %d byte-identical bytes", elapsed, received.Len())
+	serverElapsed := <-transfers
+	if serverElapsed <= idle {
+		t.Fatalf("server transfer ended after %s; buffered client reads do not prove renewed deadlines", serverElapsed)
+	}
+	t.Logf("progressing transfer: client %s, server %s, %d byte-identical bytes; idle %s", elapsed, serverElapsed, received.Len(), idle)
 }
 
 // The default-deadline stalled-reader control is skipped with -short too.
