@@ -13,6 +13,18 @@ import (
 	"owngit/internal/webui"
 )
 
+func makeDoctorFixtureReachable(t *testing.T, path string) {
+	t.Helper()
+	temporary := filepath.Clean(os.TempDir())
+	relative, err := filepath.Rel(temporary, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		t.Fatalf("%s is not below temporary folder %s", path, temporary)
+	}
+	for parent := filepath.Dir(path); parent != temporary; parent = filepath.Dir(parent) {
+		noErr(t, os.Chmod(parent, 0o755))
+	}
+}
+
 func TestDoctorReportsRepositoryRootSeparately(t *testing.T) {
 	private := t.TempDir()
 	if findings := repositoryPrivacyFindings(doctorSubject{repositories: private}); len(findings) != 0 {
@@ -20,7 +32,9 @@ func TestDoctorReportsRepositoryRootSeparately(t *testing.T) {
 	}
 	for _, withRepository := range []bool{false, true} {
 		t.Run(map[bool]string{false: "empty", true: "private child"}[withRepository], func(t *testing.T) {
+			t.Setenv("TMPDIR", "/tmp")
 			root := t.TempDir()
+			makeDoctorFixtureReachable(t, root)
 			noErr(t, os.Chmod(root, 0o777))
 			var ids []string
 			if withRepository {
@@ -41,6 +55,29 @@ func TestDoctorReportsRepositoryRootSeparately(t *testing.T) {
 				t.Fatalf("doctor changed root mode from %v to %v", before.Mode(), after.Mode())
 			}
 		})
+	}
+}
+
+func TestDoctorDoesNotReportFoldersBelowPrivateParent(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repositories")
+	exposed := filepath.Join(root, "exposed.git")
+	noErr(t, os.Mkdir(root, 0o777))
+	noErr(t, os.Mkdir(exposed, 0o777))
+	noErr(t, os.Chmod(parent, 0o700))
+	noErr(t, os.Chmod(root, 0o777))
+	noErr(t, os.Chmod(exposed, 0o777))
+
+	findings := repositoryPrivacyFindings(doctorSubject{repositories: root, repositoryIDs: []string{"exposed"}})
+	if len(findings) != 0 {
+		t.Fatalf("folders below private parent findings=%+v", findings)
+	}
+	for _, path := range []string{parent, root, exposed} {
+		info, err := os.Stat(path)
+		noErr(t, err)
+		if path == parent && info.Mode().Perm() != 0o700 || path != parent && info.Mode().Perm() != 0o777 {
+			t.Fatalf("doctor changed %s mode to %o", path, info.Mode().Perm())
+		}
 	}
 }
 
@@ -100,7 +137,10 @@ func TestDoctorGuidesLinkedHookRecovery(t *testing.T) {
 }
 
 func TestDoctorReportsExposedRepositoryFoldersWithoutChangingThem(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
 	root := t.TempDir()
+	makeDoctorFixtureReachable(t, root)
+	noErr(t, os.Chmod(root, 0o755))
 	private := filepath.Join(root, "private.git")
 	exposed := filepath.Join(root, "exposed.git")
 	noErr(t, os.Mkdir(private, 0o700))

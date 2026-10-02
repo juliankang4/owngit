@@ -15,8 +15,22 @@ import (
 	"owngit/internal/webui"
 )
 
+func makeSetupFixtureReachable(t *testing.T, path string) {
+	t.Helper()
+	temporary := filepath.Clean(os.TempDir())
+	relative, err := filepath.Rel(temporary, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+		t.Fatalf("%s is not below temporary folder %s", path, temporary)
+	}
+	for parent := filepath.Dir(path); parent != temporary; parent = filepath.Dir(parent) {
+		noErr(t, os.Chmod(parent, 0o755))
+	}
+}
+
 func TestSetupWarnsForSharedRepositoryFolderAndContinues(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
 	app, store, root := newTestApp(t)
+	makeSetupFixtureReachable(t, root)
 	noErr(t, os.Mkdir(root, 0o700))
 	noErr(t, os.Chmod(root, 0o777))
 
@@ -37,6 +51,18 @@ func TestSetupWarnsForSharedRepositoryFolderAndContinues(t *testing.T) {
 	}
 }
 
+func TestSetupDoesNotWarnForSharedFolderBelowPrivateParent(t *testing.T) {
+	app, _, root := newTestApp(t)
+	noErr(t, os.Mkdir(root, 0o777))
+	noErr(t, os.Chmod(filepath.Dir(root), 0o700))
+	noErr(t, os.Chmod(root, 0o777))
+
+	checked := app.CheckRepositoryFolder(root)
+	if len(checked.Problems) != 0 || len(checked.Warnings) != 0 {
+		t.Fatalf("folder below private parent check=%+v", checked)
+	}
+}
+
 func TestSetupPrivateRepositoryFolderHasNoWarning(t *testing.T) {
 	app, _, root := newTestApp(t)
 	noErr(t, os.Mkdir(root, 0o700))
@@ -48,7 +74,9 @@ func TestSetupPrivateRepositoryFolderHasNoWarning(t *testing.T) {
 }
 
 func TestBrowserSetupShowsSharedFolderWarningOnlyToItsBrowser(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
 	app, store, root := newTestApp(t)
+	makeSetupFixtureReachable(t, root)
 	noErr(t, os.Mkdir(root, 0o700))
 	noErr(t, os.Chmod(root, 0o777))
 	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))

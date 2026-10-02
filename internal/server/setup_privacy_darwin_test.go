@@ -11,7 +11,9 @@ import (
 )
 
 func TestMacOSSetupWarnsForWriteACL(t *testing.T) {
+	t.Setenv("TMPDIR", "/tmp")
 	app, _, root := newTestApp(t)
+	makeSetupFixtureReachable(t, root)
 	noErr(t, os.Mkdir(root, 0o700))
 	noErr(t, exec.Command("chmod", "+a", "everyone allow add_file,add_subdirectory,delete_child", root).Run())
 	feedback := app.CheckRepositoryFolder(root)

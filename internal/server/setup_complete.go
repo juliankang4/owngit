@@ -229,13 +229,18 @@ func (app *App) checkRepositoryFolder(value string, create bool) (string, SetupF
 	if err != nil {
 		return "", SetupFeedback{Problems: []webui.Notice{storageNotice(value, err)}}
 	}
-	info, err := os.Stat(canonical)
+	folder, err := os.Open(canonical)
 	if errors.Is(err, fs.ErrNotExist) {
 		return canonical, SetupFeedback{}
 	}
 	changeable := false
 	if err == nil {
-		changeable, _, err = state.OthersCanChange(canonical, info)
+		info, statErr := folder.Stat()
+		if statErr == nil {
+			changeable, statErr = state.ExposedToOtherAccounts(canonical, folder, info)
+		}
+		folder.Close()
+		err = statErr
 	}
 	if err != nil || changeable {
 		warning := webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgSetupStorageShared, Field: "storage_path", Detail: canonical}

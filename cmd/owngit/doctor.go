@@ -296,7 +296,7 @@ func repositoryPrivacyFindings(subject doctorSubject) []webui.Finding {
 		}
 		return append(findings, repositoryRootUnchecked(subject.repositories, err))
 	}
-	changeable, inspectErr := state.OthersCanChangeFile(root, heldRootInfo)
+	changeable, inspectErr := state.ExposedToOtherAccounts(subject.repositories, root, heldRootInfo)
 	if inspectErr != nil {
 		findings = append(findings, repositoryRootUnchecked(subject.repositories, inspectErr))
 	} else if changeable {
@@ -329,7 +329,7 @@ func repositoryPrivacyFindings(subject doctorSubject) []webui.Finding {
 			findings = append(findings, uncheckedRepositoryEntry(id, statErr))
 			continue
 		}
-		changeable, inspectErr := state.OthersCanChangeFile(repository, info)
+		changeable, inspectErr := state.ExposedToOtherAccounts(path, repository, info)
 		if inspectErr != nil {
 			findings = append(findings, uncheckedRepositoryEntry(id, inspectErr))
 		} else if changeable {
