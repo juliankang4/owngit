@@ -181,11 +181,13 @@ func writeUpgradeNote(backup, stateDir string, upgrade *state.Upgrade, restoreCo
 	_, err = fmt.Fprintf(file, "OwnGit %s made this backup before it upgraded the state in %s %s.\n\n"+
 		"To go back to the earlier OwnGit version, stop OwnGit, move %s aside, and run this with the earlier version:\n\n  %s\n\n"+
 		"If the earlier version refuses this backup, keep using this OwnGit version; otherwise, start the earlier version. The restored repositories are in the folder after --repository-root; another new folder in a place this account can create works as well.\n"+
-		"OwnGit removes this backup once it has made a newer one for this state directory before a later upgrade.\n\n"+
-		upgradeNoteStatePrefix+"%s\n",
-		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand, stateDir)
+		"OwnGit removes this backup once it has made a newer one for this state directory before a later upgrade.\n",
+		version.Version, stateDir, upgrade.Describe(), stateDir, restoreCommand)
 	if err == nil && aliasNotice != "" {
 		_, err = fmt.Fprintf(file, "\n%s\n", aliasNotice)
+	}
+	if err == nil {
+		_, err = fmt.Fprintf(file, "\n"+upgradeNoteStatePrefix+"%s\n", stateDir)
 	}
 	if err == nil {
 		err = file.Sync()
@@ -235,12 +237,26 @@ func upgradeBackupOf(folder *os.File, name, stateDir string) bool {
 		return false
 	}
 	defer note.Close()
-	content, err := io.ReadAll(io.LimitReader(note, 64<<10))
+	// Alias notices can be long; ownership is always the last complete line.
+	const footerWindow = 64 << 10
+	info, err := note.Stat()
 	if err != nil {
 		return false
 	}
-	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
-	return lines[len(lines)-1] == upgradeNoteStatePrefix+stateDir
+	offset, err := note.Seek(max(0, info.Size()-footerWindow), io.SeekStart)
+	if err != nil {
+		return false
+	}
+	content, err := io.ReadAll(io.LimitReader(note, footerWindow))
+	if err != nil {
+		return false
+	}
+	text := strings.TrimRight(string(content), "\n")
+	last := strings.LastIndexByte(text, '\n')
+	if last < 0 && offset != 0 {
+		return false
+	}
+	return text[last+1:] == upgradeNoteStatePrefix+stateDir
 }
 
 // quoteForShell quotes a path for the shell that the owner is likely to
