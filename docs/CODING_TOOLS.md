@@ -763,8 +763,10 @@ Branch fields keep their names and take branch names as before. When a name in
 `source_branch` or `target_branch` matches two branches, the call fails with
 `ambiguous_branch`. Its message starts with "That name matches two branches."
 and lists each full ref with the value to send for it, for example
-`refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`. A full
-ref without a value has to be chosen in the browser.
+`refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`. Only
+values the call accepts are shown. A full ref without a value has to be chosen
+in the browser; for pull requests this includes a value that would pass the
+255-byte limit of these fields.
 
 ### Running checks
 

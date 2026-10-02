@@ -373,7 +373,7 @@ tool_timeout_sec = 1800
 
 프로토콜 오류에는 JSON-RPC 코드를 씁니다. JSON이 아닌 메시지는 `-32700`, 잘못된 요청이나 1 MiB를 넘는 메시지, 아직 진행 중인 호출과 id가 같은 요청은 `-32600`, 알 수 없는 메서드는 `-32601`, 알 수 없는 도구는 `-32602`, 이미 도구 호출 16개가 진행 중이면 `-32000`입니다. `check_run`을 뺀 나머지 호출은 2분이 지나면 멈춥니다.
 
-브랜치 필드는 이름이 그대로이며 지금처럼 브랜치 이름을 받습니다. `source_branch`나 `target_branch`의 이름이 두 브랜치에 해당하면 호출은 `ambiguous_branch`로 실패합니다. 메시지는 "That name matches two branches."로 시작하고 `refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`처럼 전체 ref마다 보낼 값을 적습니다. 값이 없는 전체 ref는 브라우저에서 골라야 합니다.
+브랜치 필드는 이름이 그대로이며 지금처럼 브랜치 이름을 받습니다. `source_branch`나 `target_branch`의 이름이 두 브랜치에 해당하면 호출은 `ambiguous_branch`로 실패합니다. 메시지는 "That name matches two branches."로 시작하고 `refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`처럼 전체 ref마다 보낼 값을 적습니다. 값은 호출이 받아들이는 것만 나옵니다. 값이 없는 전체 ref는 브라우저에서 골라야 합니다. 풀 리퀘스트에서는 이 필드의 255바이트 한도를 넘는 값도 여기에 해당합니다.
 
 ### 체크 실행
 
