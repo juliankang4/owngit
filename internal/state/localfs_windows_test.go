@@ -11,8 +11,6 @@ import (
 	"testing"
 
 	"golang.org/x/sys/windows"
-
-	"owngit/internal/testfixture"
 )
 
 func TestWindowsNetworkPathRecognizesUNCAndFinalUNCForms(t *testing.T) {
@@ -370,7 +368,7 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 	noErr(t, err)
 	administrators, err := windows.CreateWellKnownSid(windows.WinBuiltinAdministratorsSid)
 	noErr(t, err)
-	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+	forEachPowerShellPrivilegeState(t, func(t *testing.T, shell string, ordinary bool) {
 		directory := t.TempDir()
 		workingDirectory := t.TempDir()
 		file := func(name string) string {
@@ -412,7 +410,7 @@ func TestWindowsNotPrivateFixWorks(t *testing.T) {
 			t.Logf("%s: %s; fix: %s", path, notPrivate.Problem, notPrivate.Fix)
 			command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
 			command.Dir = workingDirectory
-			output, err := command.CombinedOutput()
+			output, err := runPowerShellPrivilegeState(t, command, ordinary)
 			if err != nil {
 				listing, _ := exec.Command("icacls", path).CombinedOutput()
 				t.Fatalf("%s: the fix failed: %v\n%s\n%s", path, err, output, listing)
@@ -475,7 +473,7 @@ func TestWindowsNotPrivateFixKeepsAuditEntries(t *testing.T) {
 	if !enableSecurityPrivilege(t) {
 		t.Skip("audit entries can be set only with SeSecurityPrivilege, which this process does not hold (run elevated)")
 	}
-	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+	forEachPowerShellPrivilegeState(t, func(t *testing.T, shell string, ordinary bool) {
 		path := filepath.Join(t.TempDir(), "audited", "password")
 		noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
 		noErr(t, os.WriteFile(path, []byte("valid-password\n"), 0o600))
@@ -500,7 +498,7 @@ func TestWindowsNotPrivateFixKeepsAuditEntries(t *testing.T) {
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", notPrivate.Fix)
 		command.Dir = t.TempDir()
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := runPowerShellPrivilegeState(t, command, ordinary); err != nil {
 			t.Fatalf("the fix failed: %v\n%s", err, output)
 		}
 		noErr(t, ValidatePrivateInputFile(path))

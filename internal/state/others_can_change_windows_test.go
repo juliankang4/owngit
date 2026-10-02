@@ -3,6 +3,7 @@
 package state
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,12 +49,82 @@ func TestWindowsOthersCanChangeReadsWriteGrantsOnly(t *testing.T) {
 	}
 }
 
+func forEachPowerShellPrivilegeState(t *testing.T, test func(t *testing.T, shell string, ordinary bool)) {
+	t.Helper()
+	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+		for _, state := range []struct {
+			name     string
+			ordinary bool
+		}{{"session privileges", false}, {"ordinary elevated window", true}} {
+			t.Run(state.name, func(t *testing.T) { test(t, shell, state.ordinary) })
+		}
+	})
+}
+
+func runPowerShellPrivilegeState(t *testing.T, command *exec.Cmd, ordinary bool) (output []byte, err error) {
+	t.Helper()
+	if !ordinary {
+		return command.CombinedOutput()
+	}
+	withOrdinaryElevatedPrivileges(t, func() { output, err = command.CombinedOutput() })
+	return output, err
+}
+
+func withOrdinaryElevatedPrivileges(t *testing.T, action func()) {
+	t.Helper()
+	var token windows.Token
+	noErr(t, windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_ADJUST_PRIVILEGES|windows.TOKEN_QUERY, &token))
+	defer token.Close()
+	var size uint32
+	err := windows.GetTokenInformation(token, windows.TokenPrivileges, nil, 0, &size)
+	if !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) || size == 0 {
+		t.Fatalf("read token privilege size: size=%d err=%v", size, err)
+	}
+	currentBuffer := make([]byte, size)
+	noErr(t, windows.GetTokenInformation(token, windows.TokenPrivileges, &currentBuffer[0], size, &size))
+	current := (*windows.Tokenprivileges)(unsafe.Pointer(&currentBuffer[0]))
+	changeNotifyName, err := windows.UTF16PtrFromString("SeChangeNotifyPrivilege")
+	noErr(t, err)
+	var changeNotify windows.LUID
+	noErr(t, windows.LookupPrivilegeValue(nil, changeNotifyName, &changeNotify))
+	var disabled []windows.LUIDAndAttributes
+	for _, privilege := range current.AllPrivileges() {
+		if privilege.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 && privilege.Luid != changeNotify {
+			disabled = append(disabled, windows.LUIDAndAttributes{Luid: privilege.Luid})
+		}
+	}
+	if len(disabled) == 0 {
+		action()
+		return
+	}
+	newStateBuffer, newState := tokenPrivilegesBuffer(disabled)
+	previousBuffer := make([]byte, len(newStateBuffer))
+	previous := (*windows.Tokenprivileges)(unsafe.Pointer(&previousBuffer[0]))
+	var returned uint32
+	noErr(t, windows.AdjustTokenPrivileges(token, false, newState, uint32(len(previousBuffer)), previous, &returned))
+	defer func() {
+		if err := windows.AdjustTokenPrivileges(token, false, previous, 0, nil, nil); err != nil {
+			t.Errorf("restore process privileges: %v", err)
+		}
+	}()
+	action()
+}
+
+func tokenPrivilegesBuffer(privileges []windows.LUIDAndAttributes) ([]byte, *windows.Tokenprivileges) {
+	size := unsafe.Offsetof(windows.Tokenprivileges{}.Privileges) + uintptr(len(privileges))*unsafe.Sizeof(windows.LUIDAndAttributes{})
+	buffer := make([]byte, size)
+	state := (*windows.Tokenprivileges)(unsafe.Pointer(&buffer[0]))
+	state.PrivilegeCount = uint32(len(privileges))
+	copy(state.AllPrivileges(), privileges)
+	return buffer, state
+}
+
 func TestWindowsPrivateDirectoryFixReplacesExplicitAndInheritedGrants(t *testing.T) {
 	user, _, err := processIdentity()
 	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
-	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+	forEachPowerShellPrivilegeState(t, func(t *testing.T, shell string, ordinary bool) {
 		root := filepath.Join(t.TempDir(), "shared")
 		noErr(t, os.Mkdir(root, 0o700))
 		setRawDACL(t, root, true, []windows.EXPLICIT_ACCESS{
@@ -83,7 +154,7 @@ func TestWindowsPrivateDirectoryFixReplacesExplicitAndInheritedGrants(t *testing
 		if filepath.Clean(command.Dir) == filepath.Clean(root) {
 			t.Fatal("repair command working directory unexpectedly equals its target")
 		}
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := runPowerShellPrivilegeState(t, command, ordinary); err != nil {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}
 		for _, path := range []string{root, child, file} {
@@ -106,7 +177,7 @@ func TestWindowsPrivateDirectoryFixDoesNotFollowJunctions(t *testing.T) {
 	noErr(t, err)
 	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
 	noErr(t, err)
-	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+	forEachPowerShellPrivilegeState(t, func(t *testing.T, shell string, ordinary bool) {
 		root := filepath.Join(t.TempDir(), "shared")
 		child := filepath.Join(root, "child")
 		file := filepath.Join(child, "file")
@@ -133,7 +204,7 @@ func TestWindowsPrivateDirectoryFixDoesNotFollowJunctions(t *testing.T) {
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
 		command.Dir = t.TempDir()
-		output, err := command.CombinedOutput()
+		output, err := runPowerShellPrivilegeState(t, command, ordinary)
 		if err != nil {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}
@@ -165,7 +236,7 @@ func TestWindowsPrivateDirectoryFixDoesNotFollowJunctions(t *testing.T) {
 func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 	current, _, err := processIdentity()
 	noErr(t, err)
-	testfixture.ForEachPowerShell(t, func(t *testing.T, shell string) {
+	forEachPowerShellPrivilegeState(t, func(t *testing.T, shell string, ordinary bool) {
 		parent, asOther := sharedParent(t)
 		root := filepath.Join(parent, "foreign")
 		child := filepath.Join(root, "child")
@@ -191,7 +262,7 @@ func TestWindowsPrivateDirectoryFixChangesUntrustedOwners(t *testing.T) {
 		if filepath.Clean(command.Dir) == filepath.Clean(root) {
 			t.Fatal("repair command working directory unexpectedly equals its target")
 		}
-		if output, err := command.CombinedOutput(); err != nil {
+		if output, err := runPowerShellPrivilegeState(t, command, ordinary); err != nil {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}
 		for _, path := range []string{root, child, file} {
@@ -248,16 +319,10 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 			}
 		})
 
-		name, err := windows.UTF16PtrFromString(blocked)
+		blockedDescriptor, err := windows.GetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
+			windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
 		noErr(t, err)
-		for _, access := range []uint32{windows.READ_CONTROL, windows.WRITE_DAC} {
-			handle, probeErr := windows.CreateFile(name, access,
-				windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING, 0, 0)
-			if probeErr == nil {
-				windows.CloseHandle(handle)
-				t.Fatalf("invalid failure fixture: repair process obtained access %#x to blocked item", access)
-			}
-		}
+		blockedBefore := blockedDescriptor.String()
 		healthyProtection := captureProtectionFingerprints(t, healthy)
 		fix, err := PrivateDirectoryFix(root, true)
 		noErr(t, err)
@@ -266,12 +331,21 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
 		command.Dir = root
-		output, runErr := command.CombinedOutput()
-		if len(strings.TrimSpace(string(output))) == 0 {
-			t.Fatalf("command did not run: %v", runErr)
-		}
+		var output []byte
+		var runErr error
+		withOrdinaryElevatedPrivileges(t, func() {
+			if _, err := windows.GetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+				t.Fatalf("invalid failure fixture: DACL read err=%v, want access denied", err)
+			}
+			output, runErr = command.CombinedOutput()
+		})
 		if runErr == nil {
-			t.Fatalf("repair reported success after an intermediate ACL failure:\n%s", output)
+			after := blockedBefore
+			if descriptor, err := windows.GetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
+				windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION); err == nil {
+				after = descriptor.String()
+			}
+			t.Fatalf("fixture item was repaired; precondition invalid\nbefore=%s\nafter=%s\n%s", blockedBefore, after, output)
 		}
 		if !strings.Contains(string(output), blocked) || !strings.Contains(string(output), "OwnGit could not repair") {
 			t.Fatalf("repair did not report the failed item:\n%s", output)
