@@ -3,12 +3,14 @@
 package state
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -290,7 +292,7 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 		blocked := filepath.Join(root, "z-blocked")
 		noErr(t, os.Mkdir(root, 0o700))
 		noErr(t, os.WriteFile(healthy, []byte("healthy"), 0o600))
-		noErr(t, os.WriteFile(blocked, []byte("blocked"), 0o600))
+		noErr(t, os.Mkdir(blocked, 0o700))
 		setRawDACL(t, healthy, true, []windows.EXPLICIT_ACCESS{
 			testEntry(current, windows.GRANT_ACCESS, fileAllAccess),
 			testEntry(everyone, windows.GRANT_ACCESS, windows.FILE_WRITE_DATA),
@@ -305,7 +307,7 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 			noErr(t, windows.SetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
 				windows.OWNER_SECURITY_INFORMATION, system, nil, nil, nil))
 		})
-		privateACL, err := ownerOnlyACL(current, false)
+		privateACL, err := ownerOnlyACL(current, true)
 		noErr(t, err)
 		t.Cleanup(func() {
 			var restoreErr error
@@ -329,26 +331,61 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 		if !strings.Contains(fix, "$ErrorActionPreference = 'Stop'") {
 			t.Fatalf("repair lacks a terminating-error scope: %q", fix)
 		}
+		type commandResult struct {
+			err            error
+			exit           int
+			stdout, stderr string
+			elapsed        time.Duration
+		}
+		run := func(command *exec.Cmd) commandResult {
+			var stdout, stderr bytes.Buffer
+			command.Stdout, command.Stderr = &stdout, &stderr
+			started := time.Now()
+			err := command.Run()
+			exit := -1
+			if command.ProcessState != nil {
+				exit = command.ProcessState.ExitCode()
+			}
+			return commandResult{err: err, exit: exit, stdout: stdout.String(), stderr: stderr.String(), elapsed: time.Since(started)}
+		}
 		command := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", fix)
 		command.Dir = root
-		var output []byte
-		var runErr error
+		var result, directDiagnostic, fileDiagnostic commandResult
 		withOrdinaryElevatedPrivileges(t, func() {
 			if _, err := windows.GetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION); !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
 				t.Fatalf("invalid failure fixture: DACL read err=%v, want access denied", err)
 			}
-			output, runErr = command.CombinedOutput()
+			result = run(command)
+			if result.err != nil && strings.Contains(result.stdout+result.stderr, blocked) && strings.Contains(result.stdout+result.stderr, "OwnGit could not repair") {
+				return
+			}
+			direct := "& { $ErrorActionPreference = 'Stop'; try { [IO.Directory]::GetAccessControl(" + powerShellQuote(blocked) + ", 'Access') | Out-Null; 'get ok' } catch { throw ('diag: ' + $_.Exception.Message) } }"
+			directCommand := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", direct)
+			directCommand.Dir = root
+			directDiagnostic = run(directCommand)
+			script := filepath.Join(t.TempDir(), "repair.ps1")
+			noErr(t, os.WriteFile(script, []byte(fix), 0o600))
+			fileCommand := exec.Command(shell, "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script)
+			fileCommand.Dir = root
+			fileDiagnostic = run(fileCommand)
 		})
-		if runErr == nil {
+		if result.err == nil {
 			after := blockedBefore
 			if descriptor, err := windows.GetNamedSecurityInfo(blocked, windows.SE_FILE_OBJECT,
 				windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION); err == nil {
 				after = descriptor.String()
 			}
-			t.Fatalf("fixture item was repaired; precondition invalid\nbefore=%s\nafter=%s\n%s", blockedBefore, after, output)
+			t.Fatalf("fixture item was repaired; precondition invalid\nbefore=%s\nafter=%s\ncommand length=%d\nmain: err=%v exit=%d elapsed=%s stdout=%q stderr=%q\ndirect diagnostic: err=%v exit=%d elapsed=%s stdout=%q stderr=%q\nfile diagnostic: err=%v exit=%d elapsed=%s stdout=%q stderr=%q",
+				blockedBefore, after, len(fix), result.err, result.exit, result.elapsed, result.stdout, result.stderr,
+				directDiagnostic.err, directDiagnostic.exit, directDiagnostic.elapsed, directDiagnostic.stdout, directDiagnostic.stderr,
+				fileDiagnostic.err, fileDiagnostic.exit, fileDiagnostic.elapsed, fileDiagnostic.stdout, fileDiagnostic.stderr)
 		}
-		if !strings.Contains(string(output), blocked) || !strings.Contains(string(output), "OwnGit could not repair") {
-			t.Fatalf("repair did not report the failed item:\n%s", output)
+		output := result.stdout + result.stderr
+		if !strings.Contains(output, blocked) || !strings.Contains(output, "OwnGit could not repair") {
+			t.Fatalf("repair did not report the failed item\ncommand length=%d\nmain: err=%v exit=%d elapsed=%s stdout=%q stderr=%q\ndirect diagnostic: err=%v exit=%d elapsed=%s stdout=%q stderr=%q\nfile diagnostic: err=%v exit=%d elapsed=%s stdout=%q stderr=%q",
+				len(fix), result.err, result.exit, result.elapsed, result.stdout, result.stderr,
+				directDiagnostic.err, directDiagnostic.exit, directDiagnostic.elapsed, directDiagnostic.stdout, directDiagnostic.stderr,
+				fileDiagnostic.err, fileDiagnostic.exit, fileDiagnostic.elapsed, fileDiagnostic.stdout, fileDiagnostic.stderr)
 		}
 		assertProtectionFingerprints(t, healthyProtection)
 	})
