@@ -279,7 +279,8 @@
     {{else}}
       {{if and .Document (not .Rendered) (not .ShowSource) .NotRendered}}<p class="hm__note">{{bi $lang .NotRendered}}</p>{{end}}
       {{/* Repository content is rendered as text through the template's
-           escaping. It is never inserted as markup. */}}
+           escaping. It is never inserted as markup. A long file's page
+           links sit above and below it. */}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{$first := .FirstLine}}{{if not $first}}{{$first = 1}}{{end}}
       <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}"{{if .LineURL}} data-line-page="{{.LineURL}}" data-line-first="{{$first}}" data-line-last="{{.Continuation.Last}}" data-line-total="{{.Continuation.Total}}"{{end}}>
@@ -291,12 +292,13 @@
           </tbody>
         </table>
       </div>
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
     {{end}}
     {{if .RawTooLarge}}<p class="hm__note">{{bi $lang "code.raw_too_large"}}</p>{{end}}
     {{end}}
   {{else}}
-    {{/* A folder: its listing, then its README. */}}
+    {{/* A folder: its listing between its page links, then its README. */}}
     {{template "pageContinuation" dict "Lang" $lang "C" $c.Continuation}}
     <nav class="flist" {{biAttr $lang "aria-label" "app.files_label"}}>
       <ul>
@@ -307,6 +309,7 @@
       </ul>
       {{if not $c.Entries}}<p class="empty">{{bi $lang "code.empty_directory"}}</p>{{end}}
     </nav>
+    {{template "pageContinuation" dict "Lang" $lang "C" $c.Continuation}}
     {{template "readme" dict "Lang" $lang "R" $c.Readme}}
   {{end}}
 
@@ -364,6 +367,7 @@
       {{with .AllFilesURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{template "diffFiles" dict "Lang" $lang "Files" .Files "Title" "app.changed_files"}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
     {{end}}
     {{end}}
@@ -421,12 +425,17 @@
 </nav>
 {{end}}
 
+{{/* One bounded page's place and its links. A long file, diff or folder
+     renders it above and below its content, so it carries no id and both
+     copies are identical; the file drawer renders it once above its list. */}}
 {{define "pageContinuation"}}
 {{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
-<nav class="pager" data-page-continuation>
-  <p>{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
-  {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
-  {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
+<nav class="pager pager--pages" data-page-continuation {{biAttr $lang "aria-label" "code.pages"}}>
+  <p class="pager__at">{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
+  <span class="pager__links">
+    {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
+    {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
+  </span>
 </nav>
 {{end}}{{end}}
 {{end}}

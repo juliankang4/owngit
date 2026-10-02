@@ -389,6 +389,7 @@ const (
 	MsgCodeLoadedLines   MessageCode = "code.loaded_lines"
 	MsgCodeMore          MessageCode = "code.more"
 	MsgCodeFirstPage     MessageCode = "code.first_page"
+	MsgCodePages         MessageCode = "code.pages"
 	MsgCodeReceivingPage MessageCode = "code.receiving_page"
 	MsgCodeRawLink       MessageCode = "code.raw_link"
 	MsgCodeRawCurrentRef MessageCode = "code.raw_current_ref"
@@ -1552,19 +1553,20 @@ var catalog = map[MessageCode]message{
 	},
 	MsgCodeShowing: {
 		en: "Showing %s of %s (%s to %s).",
-		ko: "전체 %[2]s개 중 %[1]s개를 표시합니다 (%[3]s번부터 %[4]s번까지).",
+		ko: "전체 %[2]s개 중 %[3]s번째부터 %[4]s번째까지 %[1]s개를 표시합니다.",
 	},
 	MsgCodeShowingLoaded: {
-		en: "Showing %s of %s loaded lines (%s to %s). The rest is outside the display size limit.",
-		ko: "읽어온 %[2]s줄 중 %[1]s줄을 표시합니다 (%[3]s번부터 %[4]s번까지). 용량 제한 때문에 나머지는 표시하지 않았습니다.",
+		en: "Showing %s of %s loaded lines (%s to %s). Lines outside the display size limit were not loaded.",
+		ko: "읽어온 %[2]s줄 중 %[3]s번째부터 %[4]s번째까지 %[1]s줄을 표시합니다. 보기 한도를 넘는 줄은 읽지 않았습니다.",
 	},
 	MsgCodeLoadedLines: {en: "%d loaded lines", ko: "읽어온 %d줄"},
 	MsgCodeReceivingPage: {
 		en: "Receiving the page. If this notice remains, the page has not arrived in full.",
 		ko: "페이지를 받는 중입니다. 이 안내가 계속 보이면 페이지가 끝까지 오지 않은 것입니다.",
 	},
-	MsgCodeMore:      {en: "More", ko: "더 보기"},
+	MsgCodeMore:      {en: "Next page", ko: "다음 페이지"},
 	MsgCodeFirstPage: {en: "First page", ko: "첫 페이지"},
+	MsgCodePages:     {en: "Pages", ko: "페이지 이동"},
 	MsgCodeTruncated: {
 		en: "Only the beginning of this file is shown.",
 		ko: "이 파일의 앞부분만 표시했습니다.",

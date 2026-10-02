@@ -1486,6 +1486,23 @@ span.hm__cell { cursor: default; }
 
 .pager { display: flex; gap: 8px; margin-top: 14px; }
 
+/* The place of one page of a long file, diff or folder, with its links.
+   The text and the links read as one group: on a narrow column the links
+   move below the text together, and a label never breaks inside itself. */
+.pager--pages { flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 12px 0; }
+.pager__at {
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+.pager__links { display: flex; flex: none; gap: 8px; }
+.pager__links .btn { white-space: nowrap; }
+/* In the file drawer the group is a band between the folder and its list. */
+.tree .pager--pages { margin: 0; padding: 8px 11px; border-bottom: 1px solid var(--sep); }
+
 /* ---------- setup and auth ---------- */
 
 .card {
