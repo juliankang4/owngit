@@ -448,6 +448,8 @@ func TestFailedAtomicDestructivePushPreservesObjectWithoutClaimingRewrite(t *tes
 	}
 
 	runGit(t, work, "push", "--force", "origin", "HEAD:refs/heads/main")
+	// This fixture pushes by path; complete the OwnGit write generation.
+	wroteRefs(manager, "sample")
 	assertRef(t, remote, "refs/owngit/retained/heads/"+old, old)
 	retained, err = manager.RetainedRefs(context.Background(), "sample")
 	noErr(t, err)
