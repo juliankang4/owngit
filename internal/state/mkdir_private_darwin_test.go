@@ -49,6 +49,33 @@ func TestMkdirPrivateFallbackRefusesInheritedPermit(t *testing.T) {
 	}
 }
 
+func TestMkdirPrivateCleanupFailureIsNotCreationCollision(t *testing.T) {
+	originalMkdir, originalCleanup := mkdirExtended, beforePrivateDirectoryCleanup
+	t.Cleanup(func() {
+		mkdirExtended = originalMkdir
+		beforePrivateDirectoryCleanup = originalCleanup
+	})
+	mkdirExtended = func(uintptr, os.FileMode, uintptr) unix.Errno { return unix.EINVAL }
+	parent := filepath.Join(t.TempDir(), "shared")
+	noErr(t, os.Mkdir(parent, 0o700))
+	noErr(t, exec.Command("chmod", "+a", "everyone allow list,add_file,search,add_subdirectory,delete_child,file_inherit,directory_inherit", parent).Run())
+	path := filepath.Join(parent, "staging")
+	blocker := filepath.Join(path, "appeared-before-cleanup")
+	beforePrivateDirectoryCleanup = func(string) { noErr(t, os.WriteFile(blocker, []byte("kept"), 0o600)) }
+	err := MkdirPrivate(path)
+	if err == nil || errors.Is(err, ErrPrivateDirectoryExists) || errors.Is(err, os.ErrExist) {
+		t.Fatalf("cleanup failure classification=%v", err)
+	}
+	if !strings.Contains(err.Error(), "storage gives new folders inherited access") || !strings.Contains(err.Error(), "directory not empty") {
+		t.Fatalf("cleanup failure lost a cause: %v", err)
+	}
+	if content, readErr := os.ReadFile(blocker); readErr != nil || string(content) != "kept" {
+		t.Fatalf("remaining blocker=%q err=%v", content, readErr)
+	}
+	noErr(t, os.Remove(blocker))
+	noErr(t, os.Remove(path))
+}
+
 func TestMkdirPrivateFallbackContinuesWhenACLQueryIsUnsupported(t *testing.T) {
 	originalMkdir, originalGetattr := mkdirExtended, getattrlistErr
 	t.Cleanup(func() {

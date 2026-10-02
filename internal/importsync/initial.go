@@ -142,7 +142,7 @@ func (s *Service) destinationTaken(ctx context.Context, repositoryID string) (bo
 const initialDestinationCreateIssue = "repository folder could not be created privately; run owngit doctor and check the server log"
 
 func initialDirectoryCreationProblem(err error) (string, *Problem) {
-	if errors.Is(err, os.ErrExist) {
+	if errors.Is(err, state.ErrPrivateDirectoryExists) {
 		return "directory name was already present", newProblem(CodeRepositoryTaken, "unpublished destination path already exists and was not changed", err)
 	}
 	return initialDestinationCreateIssue, newProblem(CodeRepositoryCreateFailed, initialDestinationCreateIssue, err)

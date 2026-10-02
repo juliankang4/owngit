@@ -195,7 +195,10 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	}
 	temporaryPath := filepath.Join(root, ".owngit-create-"+hex.EncodeToString(suffix))
 	if err := state.MkdirPrivate(temporaryPath); err != nil {
-		return state.Repository{}, fmt.Errorf("create temporary repository directory: %w", err)
+		if errors.Is(err, state.ErrPrivateDirectoryExists) {
+			return state.Repository{}, fmt.Errorf("create temporary repository directory: generated name already exists: %w", err)
+		}
+		return state.Repository{}, fmt.Errorf("create temporary repository directory privately: %w", err)
 	}
 	created := false
 	defer func() {

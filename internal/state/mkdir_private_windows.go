@@ -25,7 +25,7 @@ func MkdirPrivate(path string) error {
 		SecurityDescriptor: descriptor,
 	}
 	if err := windows.CreateDirectory(name, attributes); err != nil {
-		return &os.PathError{Op: "mkdir", Path: path, Err: err}
+		return privateDirectoryMkdirError(path, &os.PathError{Op: "mkdir", Path: path, Err: err})
 	}
 	return nil
 }

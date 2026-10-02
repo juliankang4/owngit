@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -15,13 +16,18 @@ import (
 	"owngit/internal/state"
 )
 
-func TestInitialDirectoryCreationProblemOnlyTreatsExistenceAsCollision(t *testing.T) {
-	collisionIssue, collision := initialDirectoryCreationProblem(os.ErrExist)
+func TestInitialDirectoryCreationProblemOnlyTreatsCreationCollisionAsTaken(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "existing")
+	noErr(t, os.Mkdir(path, 0o700))
+	collisionErr := state.MkdirPrivate(path)
+	collisionIssue, collision := initialDirectoryCreationProblem(collisionErr)
 	if collision.Code != CodeRepositoryTaken || collisionIssue != "directory name was already present" {
 		t.Fatalf("collision issue=%q problem=%+v", collisionIssue, collision)
 	}
-	failureIssue, failure := initialDirectoryCreationProblem(errors.New("permission inspection failed"))
-	if failure.Code != CodeRepositoryCreateFailed || failureIssue != initialDestinationCreateIssue {
+
+	cleanupErr := errors.Join(errors.New("new folder inherited a permit entry"), fmt.Errorf("remove synthetic staging: %w", syscall.ENOTEMPTY))
+	failureIssue, failure := initialDirectoryCreationProblem(cleanupErr)
+	if failure.Code != CodeRepositoryCreateFailed || failureIssue != initialDestinationCreateIssue || !strings.Contains(failure.Error(), "inherited a permit") || !strings.Contains(failure.Error(), "directory not empty") {
 		t.Fatalf("private creation issue=%q problem=%+v", failureIssue, failure)
 	}
 }

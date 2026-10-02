@@ -43,29 +43,38 @@ func MkdirPrivate(path string) error {
 	if errors.Is(errno, unix.EINVAL) || errors.Is(errno, unix.ENOTSUP) || errors.Is(errno, unix.EOPNOTSUPP) {
 		return mkdirPrivateWithoutExtendedACL(path)
 	}
-	return &os.PathError{Op: "mkdir", Path: path, Err: errno}
+	return privateDirectoryMkdirError(path, &os.PathError{Op: "mkdir", Path: path, Err: errno})
 }
 
 func mkdirPrivateWithoutExtendedACL(path string) error {
 	if err := os.Mkdir(path, 0o700); err != nil {
-		return err
+		return privateDirectoryMkdirError(path, err)
 	}
 	folder, err := openDirectoryAt(unix.AT_FDCWD, path, path)
 	if err != nil {
-		return errors.Join(err, os.Remove(path))
+		return privateDirectoryCleanupFailure(path, err)
 	}
 	filesec, inspectErr := extendedSecurity(path, folder, 0)
 	permit, permitErr := permitEntry(filesec, ^uint32(0))
 	closeErr := folder.Close()
 	if inspectErr != nil || permitErr != nil || closeErr != nil {
-		return errors.Join(fmt.Errorf("inspect newly created private directory: %w", errors.Join(inspectErr, permitErr, closeErr)), os.Remove(path))
+		return privateDirectoryCleanupFailure(path, fmt.Errorf("inspect newly created private directory: %w", errors.Join(inspectErr, permitErr, closeErr)))
 	}
 	if !permit {
 		return nil
 	}
 	problem := fmt.Errorf("OwnGit could not create %s privately because the storage gives new folders inherited access; remove inheritable entries from the repository root (for example, chmod -N), or run owngit doctor", path)
-	return errors.Join(problem, os.Remove(path))
+	return privateDirectoryCleanupFailure(path, problem)
 }
+
+func privateDirectoryCleanupFailure(path string, cause error) error {
+	if beforePrivateDirectoryCleanup != nil {
+		beforePrivateDirectoryCleanup(path)
+	}
+	return privateDirectoryPostCreateFailure(errors.Join(cause, os.Remove(path)))
+}
+
+var beforePrivateDirectoryCleanup func(string)
 
 var mkdirExtended = func(path uintptr, mode os.FileMode, filesec uintptr) unix.Errno {
 	_, _, errno := unix.Syscall6(unix.SYS_MKDIR_EXTENDED, path, uintptr(kauthUIDNone), uintptr(kauthUIDNone), uintptr(mode), filesec, 0)
