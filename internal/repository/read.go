@@ -319,6 +319,8 @@ type TreePage struct {
 	Total   int
 	Before  int
 	After   string
+	// Unavailable marks a file's sibling listing that could not be completed.
+	Unavailable bool
 }
 
 func treeCursor(entry TreeEntry) string {
@@ -420,24 +422,41 @@ func (b *treePageBuilder) finish(directory string) (TreePage, error) {
 	return b.page, nil
 }
 
-func streamTree(reader io.Reader, visit func(TreeEntry) error) error {
+func streamTree(reader io.Reader, visit func(TreeEntry) error, oversized func([]byte) error) error {
 	// Metadata fits within 128 bytes, including a SHA-256 OID and int64 size.
 	// ReadSlice borrows this fixed buffer and stops before a record can grow.
+	// An exact lookup may discard an over-long path, which cannot match its
+	// validated target. Its callback borrows only the initial path prefix.
 	stream := bufio.NewReaderSize(reader, MaximumTreePathBytes+128+1)
 	for {
 		record, err := stream.ReadSlice(0)
-		if errors.Is(err, bufio.ErrBufferFull) {
-			return &TreeEntryLimitError{}
-		}
 		if err == io.EOF && len(record) == 0 {
 			return nil
 		}
-		if err != nil {
+		full := errors.Is(err, bufio.ErrBufferFull)
+		if err != nil && !full {
 			return err
 		}
 		separator := bytes.IndexByte(record, '\t')
-		if separator > 128 || (separator >= 0 && len(record)-separator-2 > MaximumTreePathBytes) {
+		if separator > 128 || (full && separator < 0) {
 			return &TreeEntryLimitError{}
+		}
+		if full || (separator >= 0 && len(record)-separator-2 > MaximumTreePathBytes) {
+			if oversized == nil {
+				return &TreeEntryLimitError{}
+			}
+			if err := oversized(record[separator+1:]); err != nil {
+				return err
+			}
+			// Drain in the same borrowed buffer, never assembling the name.
+			for full {
+				_, err = stream.ReadSlice(0)
+				full = errors.Is(err, bufio.ErrBufferFull)
+				if err != nil && !full {
+					return err
+				}
+			}
+			continue
 		}
 		entry, err := parseTreeEntry(record[:len(record)-1])
 		if err != nil {
@@ -476,7 +495,7 @@ func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, afte
 			args = append(args, "--", ":(top,literal)"+directory+"/")
 		}
 		_, err := m.Git.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
-			return streamTree(reader, func(entry TreeEntry) error { return builder.add(entry, directory) })
+			return streamTree(reader, func(entry TreeEntry) error { return builder.add(entry, directory) }, nil)
 		}, args...)
 		if err != nil {
 			return cachedResult{}, false, err
@@ -497,7 +516,8 @@ func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, afte
 
 // PathPageAt streams the parent and children in one Git process. Exact file
 // lookup is independent of the retained page; at most two bounded listings
-// are built, and only the chosen one is cached.
+// are built, and only the chosen one is cached. Over-long paths cannot match
+// a validated file path. They invalidate only the listing that contains them.
 func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after string) (PathView, TreePage, error) {
 	if filePath == "" {
 		page, err := m.TreePageAt(ctx, id, commitOID, "", after)
@@ -526,6 +546,7 @@ func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after
 	}
 	result, err := m.cachedRead(ctx, id, "path-page", commitOID+"\x00"+filePath+"\x00"+after, func(repositoryPath string) (cachedResult, bool, error) {
 		view := pathPage{}
+		var siblingsUnavailable, childrenUnavailable bool
 		_, err := m.Git.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
 			return streamTree(reader, func(entry TreeEntry) error {
 				if strings.HasPrefix(entry.Name, filePath+"/") {
@@ -537,16 +558,30 @@ func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after
 					view.Folder = entry.Type == "tree"
 				}
 				return siblings.add(entry, parent)
+			}, func(prefix []byte) error {
+				if bytes.HasPrefix(prefix, []byte(filePath+"/")) {
+					childrenUnavailable = true
+				} else {
+					siblingsUnavailable = true
+				}
+				return nil
 			})
 		}, "--git-dir", ".", "ls-tree", "-z", "-l", commitOID, "--", parentSpec, ":(top,literal)"+filePath+"/")
 		if err != nil {
 			return cachedResult{}, false, err
 		}
-		view.Folder = view.Folder || children.page.Total > 0
+		view.Folder = view.Folder || children.page.Total > 0 || childrenUnavailable
 		if view.Folder {
+			if childrenUnavailable {
+				return cachedResult{}, false, &TreeEntryLimitError{}
+			}
 			view.Page, err = children.finish(filePath)
 		} else if view.File.Type == "blob" {
-			view.Page, err = siblings.finish(parent)
+			if siblingsUnavailable {
+				view.Page = TreePage{Unavailable: true}
+			} else {
+				view.Page, err = siblings.finish(parent)
+			}
 		} else {
 			err = errFileNotFound
 		}

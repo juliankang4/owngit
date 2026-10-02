@@ -1034,6 +1034,8 @@ func (p PageContinuation) Shown() int { return max(0, p.Last-p.First+1) }
 // CodeView is the file browser panel.
 type CodeView struct {
 	Continuation PageContinuation
+	// ListingUnavailable keeps a failed drawer distinct from an empty folder.
+	ListingUnavailable bool
 	// Path is the current repository-relative path. Empty at the root.
 	Path string
 	// Crumbs are the navigable path segments, root first.

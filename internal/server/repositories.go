@@ -1231,7 +1231,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 				file.Rendered, file.NotRendered = app.renderMarkdown(request.Context(), page.Repo.URL, selectedRef, parent, blob.Content)
 			}
 		}
-		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.URL, selectedRef, commitOID, lookup.Entries)}
+		view := webui.CodeView{Path: requestedPath, Dir: parent, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath), File: file, Entries: treeViewEntries(page.Repo.URL, selectedRef, commitOID, lookup.Entries), ListingUnavailable: listing.Unavailable}
 		view.Continuation = directoryContinuation(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, listing)
 		// The drawer lists the file's folder, so "up" leaves that folder.
 		if parent != "" {

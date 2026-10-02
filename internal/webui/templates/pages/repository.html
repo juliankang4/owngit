@@ -399,6 +399,9 @@
 {{$lang := .Lang}}{{$c := .C}}
 <nav class="tree" {{biAttr $lang "aria-label" "app.files_label"}}>
   <p class="tree__h mono">/{{$c.Dir}}</p>
+  {{if $c.ListingUnavailable}}
+  <p class="empty">{{bi $lang "error.unavailable"}}</p>
+  {{else}}
   {{template "pageContinuation" dict "Lang" $lang "C" $c.Continuation}}
   <ul class="tree__list">
     {{with $c.UpURL}}
@@ -414,6 +417,7 @@
       </li>
     {{end}}
   </ul>
+  {{end}}
 </nav>
 {{end}}
 

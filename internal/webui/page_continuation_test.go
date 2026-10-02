@@ -8,6 +8,36 @@ import (
 	"testing"
 )
 
+func TestUnavailableFileDrawerDoesNotPresentACompleteListing(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range []Lang{LangEN, LangKO} {
+		page := codePage(lang, &FileView{Path: "small.txt", Lines: []string{"x"}})
+		page.Code.ListingUnavailable = true
+		page.Code.Entries = []TreeEntry{{Name: "should-not-be-listed.txt", Path: "should-not-be-listed.txt", URL: "/hidden"}}
+		page.Code.Continuation = PageContinuation{First: 1, Last: 1, Total: 2, MoreURL: "/hidden-more"}
+		out := render(t, r, page)
+		start := strings.Index(out, `<nav class="tree"`)
+		if start < 0 {
+			t.Fatal("drawer missing")
+		}
+		end := strings.Index(out[start:], "</nav>")
+		if end < 0 {
+			t.Fatal("drawer did not close")
+		}
+		drawer := out[start : start+end]
+		message := "This is temporarily unavailable."
+		if lang == LangKO {
+			message = "지금은 사용할 수 없습니다."
+		}
+		if !strings.Contains(drawer, message) || strings.Contains(drawer, "tree__row") || strings.Contains(drawer, "data-page-continuation") || strings.Contains(drawer, "hidden") || strings.Contains(drawer, "page-transfer-complete") {
+			t.Fatalf("%s: unavailable drawer presents listing data: %s", lang, drawer)
+		}
+		if !strings.Contains(out, `class="codetable__t">x</td>`) || !strings.Contains(out, `<summary class="btn drawer__btn">`) || strings.Count(out, "data-page-transfer-complete") != 1 {
+			t.Fatalf("%s: file body, native toggle or document tail missing", lang)
+		}
+	}
+}
+
 func TestPageTransferNoticeStartsBeforeContentAndEndsAtTheBodyTail(t *testing.T) {
 	r := newRenderer(t)
 	tail := regexp.MustCompile(`^<link data-page-transfer-complete rel="stylesheet" href="(/assets/page-complete\.css\?v=[0-9a-f]+)">\n</body>\n</html>$`)
