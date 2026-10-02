@@ -28,19 +28,9 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	if ValidateID(id) != nil {
 		return "", ErrRepositoryNotFound
 	}
-	branch := strings.TrimPrefix(value, "refs/heads/")
-	if !utf8.ValidString(branch) || strings.ContainsAny(branch, "\x00\r\n\t") || branch == "HEAD" || validateShortRef(branch) != nil {
-		return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
-	}
-	if exact && !strings.HasPrefix(value, "refs/heads/") {
-		return "", ErrBranchNotFound
-	}
-	ref := "refs/heads/" + branch
-	if _, err := m.Git.Run(ctx, "", nil, "check-ref-format", ref); err != nil {
-		if gitAnsweredNo(ctx, err) {
-			return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
-		}
-		return "", fmt.Errorf("check branch name: %w", err)
+	ref, err := m.validateDefaultBranchInput(ctx, value, exact)
+	if err != nil {
+		return "", err
 	}
 	// Like Delete, wait only briefly for Git operations that hold the
 	// repository, and report it in use instead of outliving the request.
@@ -58,7 +48,13 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	if !exists {
 		return "", ErrRepositoryNotFound
 	}
-	ref, err = m.SelectBranchRef(ctx, repositoryPath, value, exact)
+	ref, err = m.SelectBranchRefWithEligibility(ctx, repositoryPath, value, exact, func(operand string) (bool, error) {
+		_, err := m.validateDefaultBranchInput(ctx, operand, false)
+		if errors.Is(err, ErrBranchNotFound) {
+			return false, nil
+		}
+		return err == nil, err
+	})
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			return "", ErrBranchNotFound
@@ -67,6 +63,26 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	}
 	if _, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "symbolic-ref", "HEAD", ref); err != nil {
 		return "", fmt.Errorf("change default branch: %w", err)
+	}
+	return ref, nil
+}
+
+// validateDefaultBranchInput is the save and advice eligibility rule. Its
+// namespace removal is validation only, never branch identity selection.
+func (m *Manager) validateDefaultBranchInput(ctx context.Context, value string, exact bool) (string, error) {
+	branch := strings.TrimPrefix(value, "refs/heads/")
+	if !utf8.ValidString(branch) || strings.ContainsAny(branch, "\x00\r\n\t") || branch == "HEAD" || validateShortRef(branch) != nil {
+		return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
+	}
+	if exact && !strings.HasPrefix(value, "refs/heads/") {
+		return "", ErrBranchNotFound
+	}
+	ref := "refs/heads/" + branch
+	if _, err := m.Git.Run(ctx, "", nil, "check-ref-format", ref); err != nil {
+		if gitAnsweredNo(ctx, err) {
+			return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
+		}
+		return "", fmt.Errorf("check branch name: %w", err)
 	}
 	return ref, nil
 }

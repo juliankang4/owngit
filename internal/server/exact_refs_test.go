@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/webui"
 )
@@ -91,6 +92,96 @@ func TestInvalidExactCompareQueriesKeepTheOppositeChoice(t *testing.T) {
 		if page.status != http.StatusUnprocessableEntity || strings.Count(page.body, `<option value="" selected disabled>`) != 2 {
 			t.Fatal("supplied invalid or empty pair fell back to defaults")
 		}
+	}
+}
+
+func TestPullRequestAdviceValuesAreAcceptedByAPI(t *testing.T) {
+	for _, field := range []string{"source_branch", "target_branch"} {
+		t.Run(field, func(t *testing.T) {
+			fixture := newAPIFixture(t, false)
+			first := "refs/heads/refs/owngit/topic"
+			second := "refs/heads/refs/heads/refs/owngit/topic"
+			apiRunGit(t, fixture.work, "push", "origin", fixture.targetOID+":"+first)
+			apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":"+second)
+			server := serve(t, fixture.app.Handler())
+			endpoint := server.URL + "/api/v1/repositories/project/pull-requests"
+			input := map[string]string{"title": "Accepted advice", "source_branch": "feature", "target_branch": "main"}
+			input[field] = first
+			response := apiRequest(t, http.MethodPost, endpoint, input, "", "")
+			if response.StatusCode != http.StatusUnprocessableEntity {
+				t.Fatalf("ambiguity status=%d", response.StatusCode)
+			}
+			problem := decodeAPIObject(t, response)["error"].(map[string]any)
+			_, err := fixture.app.PullRequests.Create(t.Context(), pullrequest.CreateInput{
+				Repository: "project", Title: input["title"], SourceBranch: input["source_branch"], TargetBranch: input["target_branch"],
+			})
+			var ambiguous *repository.AmbiguousBranchError
+			if !errors.As(err, &ambiguous) || problem["code"] != "ambiguous_branch" || problem["message"] != pullrequest.AsProblem(err).Message {
+				t.Fatalf("API and shared advice disagree: %v / %v", problem, err)
+			}
+			for index, value := range ambiguous.Values {
+				if value == "" {
+					continue
+				}
+				input[field] = value
+				response = apiRequest(t, http.MethodPost, endpoint, input, "", "")
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("offered value %q is refused: status=%d", value, response.StatusCode)
+				}
+				answer := decodeAPIObject(t, response)["pull_request"].(map[string]any)
+				revision := "source"
+				if field == "target_branch" {
+					revision = "target"
+				}
+				if answer[revision].(map[string]any)["branch"] != strings.TrimPrefix(ambiguous.Refs[index], "refs/heads/") {
+					t.Fatal("accepted PR advice selected a different branch")
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultBranchAdviceRespectsCallerEligibility(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	first := "refs/heads/refs/heads/HEAD"
+	second := "refs/heads/refs/heads/refs/heads/HEAD"
+	apiRunGit(t, fixture.work, "push", "origin", fixture.targetOID+":"+first)
+	apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":"+second)
+	server := serve(t, fixture.app.Handler())
+	endpoint := server.URL + "/api/v1/repositories/project/default-branch"
+	response := adminAPIRequest(t, http.MethodPost, endpoint, map[string]string{"branch": first}, "admin-password")
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("ambiguity status=%d", response.StatusCode)
+	}
+	problem := decodeAPIObject(t, response)["error"].(map[string]any)
+	_, err := fixture.app.Repositories.SetDefaultBranchInput(t.Context(), "project", first, false)
+	var ambiguous *repository.AmbiguousBranchError
+	if !errors.As(err, &ambiguous) || problem["code"] != "ambiguous_branch" || problem["message"] != ambiguous.Error() {
+		t.Fatalf("API and shared advice disagree: %v / %v", problem, err)
+	}
+	if len(ambiguous.Values) != 2 || ambiguous.Values[0] != "" || ambiguous.Values[1] == "" {
+		t.Fatalf("advice offers an unsupported HEAD operand: %v", ambiguous.Values)
+	}
+	for index, value := range ambiguous.Values {
+		if value == "" {
+			continue
+		}
+		response = adminAPIRequest(t, http.MethodPost, endpoint, map[string]string{"branch": value}, "admin-password")
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("offered value %q is refused: status=%d", value, response.StatusCode)
+		}
+		answer := decodeAPIObject(t, response)
+		if answer["default_branch"] != strings.TrimPrefix(ambiguous.Refs[index], "refs/heads/") || apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD") != ambiguous.Refs[index] {
+			t.Fatal("accepted advice selected a different branch")
+		}
+	}
+	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, endpoint, map[string]string{"branch": "refs/heads/HEAD"}, "admin-password")); status != http.StatusUnprocessableEntity || code != "branch_not_found" {
+		t.Fatalf("deferred HEAD grammar changed: status=%d code=%s", status, code)
+	}
+	full, err := fixture.app.Repositories.SetDefaultBranchInput(t.Context(), "project", first, true)
+	noErr(t, err)
+	if full != first || apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD") != first {
+		t.Fatal("exact browser control could not select the legal literal branch")
 	}
 }
 
