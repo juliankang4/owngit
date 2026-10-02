@@ -143,9 +143,10 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	}
 	// Plain HTTP needs the acknowledgement, unless it came over the
 	// tailnet, which Tailscale encrypted.
-	notices, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure() && !app.throughTailnet(request))
+	feedback, err := app.CompleteSetup(request.Context(), answers, !requestctx.Of(request).Secure() && !app.throughTailnet(request))
 	switch {
-	case len(notices) != 0:
+	case len(feedback.Problems) != 0:
+		notices := append(feedback.Problems, feedback.Warnings...)
 		app.renderSetupWizard(writer, request, session.CSRF, form, notices, http.StatusUnprocessableEntity)
 		return
 	case errors.Is(err, ErrSetupUnavailable):
@@ -172,7 +173,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	// shows the notice there. With it, the address loses its notice at the
 	// sign-in page, so the dashboard shows the notice after sign-in instead
 	// (see handleOverview).
-	notice := setupResultNotice(err)
+	notice := setupResultNotice(err, len(feedback.Warnings) != 0)
 	if answers.AccessMode == "open" {
 		app.setupResult.Store(nil)
 	}

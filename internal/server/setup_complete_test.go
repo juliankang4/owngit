@@ -110,9 +110,9 @@ func setupAnswers(root string) SetupAnswers {
 func activeSetupRoot(t *testing.T) (*App, string) {
 	t.Helper()
 	first, _, root := newTestApp(t)
-	notices, err := first.CompleteSetup(context.Background(), setupAnswers(root), true)
-	if err != nil || len(notices) != 0 {
-		t.Fatalf("first setup notices=%v err=%v", notices, err)
+	feedback, err := first.CompleteSetup(context.Background(), setupAnswers(root), true)
+	if err != nil || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 {
+		t.Fatalf("first setup feedback=%+v err=%v", feedback, err)
 	}
 	noErr(t, first.Repositories.ClaimStorage())
 	t.Cleanup(first.Repositories.ReleaseStorage)
@@ -142,18 +142,18 @@ func TestSetupRefusesActiveStorageAndCanChooseAnotherFolder(t *testing.T) {
 			t.Cleanup(second.Repositories.ReleaseStorage)
 			completed := 0
 			second.OnSetupComplete = func() { completed++ }
-			notices, err := second.CompleteSetup(context.Background(), setupAnswers(chosen), true)
-			if err != nil || len(notices) != 1 || notices[0].Code != webui.MsgSetupStorageInUse {
-				t.Fatalf("busy setup notices=%v err=%v", notices, err)
+			feedback, err := second.CompleteSetup(context.Background(), setupAnswers(chosen), true)
+			if err != nil || len(feedback.Problems) != 1 || feedback.Problems[0].Code != webui.MsgSetupStorageInUse || len(feedback.Warnings) != 0 {
+				t.Fatalf("busy setup feedback=%+v err=%v", feedback, err)
 			}
 			settings, err := store.Settings(context.Background())
 			noErr(t, err)
 			if settings.Initialized || completed != 0 || second.setupResult.Load() != nil || second.Repositories.RepositoryRoot() != "" {
 				t.Fatalf("busy storage announced success: settings=%+v completed=%d", settings, completed)
 			}
-			notices, err = second.CompleteSetup(context.Background(), setupAnswers(alternative), true)
-			if err != nil || len(notices) != 0 || completed != 1 {
-				t.Fatalf("alternative setup notices=%v err=%v completed=%d", notices, err, completed)
+			feedback, err = second.CompleteSetup(context.Background(), setupAnswers(alternative), true)
+			if err != nil || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || completed != 1 {
+				t.Fatalf("alternative setup feedback=%+v err=%v completed=%d", feedback, err, completed)
 			}
 			_, err = second.Repositories.Create(context.Background(), "separate", "")
 			noErr(t, err)
@@ -171,8 +171,8 @@ func TestSetupHoldsClaimThroughCommitAndReleasesFailedChoice(t *testing.T) {
 	noErr(t, os.Mkdir(root, 0o700))
 	noErr(t, os.WriteFile(filepath.Join(root, "existing-data"), []byte("preserve"), 0o600))
 	noErr(t, store.Exec(ctx, `CREATE TRIGGER refuse_setup BEFORE INSERT ON passwords BEGIN SELECT RAISE(ABORT,'setup record refused'); END`))
-	if notices, err := app.CompleteSetup(ctx, setupAnswers(root), true); !errors.Is(err, ErrSetupUnavailable) || len(notices) != 0 {
-		t.Fatalf("failed save notices=%v err=%v", notices, err)
+	if feedback, err := app.CompleteSetup(ctx, setupAnswers(root), true); !errors.Is(err, ErrSetupUnavailable) || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 {
+		t.Fatalf("failed save feedback=%+v err=%v", feedback, err)
 	}
 	probe := &repository.Manager{Root: root}
 	if err := probe.ClaimStorage(); err != nil {
@@ -189,8 +189,8 @@ func TestSetupHoldsClaimThroughCommitAndReleasesFailedChoice(t *testing.T) {
 			t.Errorf("claim not held when setup announces completion: %v", err)
 		}
 	}
-	if notices, err := app.CompleteSetup(ctx, setupAnswers(root), true); err != nil || len(notices) != 0 {
-		t.Fatalf("recovered setup notices=%v err=%v", notices, err)
+	if feedback, err := app.CompleteSetup(ctx, setupAnswers(root), true); err != nil || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 {
+		t.Fatalf("recovered setup feedback=%+v err=%v", feedback, err)
 	}
 	// A competing finish must not disturb the winning claim or root.
 	if _, err := app.CompleteSetup(ctx, setupAnswers(filepath.Join(t.TempDir(), "other")), true); !errors.Is(err, ErrSetupCompletedElsewhere) {

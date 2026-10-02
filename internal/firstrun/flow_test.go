@@ -315,8 +315,8 @@ func TestSetupFinishedElsewhereEndsTheTerminalFlow(t *testing.T) {
 	go func() { result <- h.flow.run() }()
 	h.waitFor("  Folder")
 	root := filepath.Join(h.base, "elsewhere")
-	if notices, err := h.app.CompleteSetup(context.Background(), server.SetupAnswers{StoragePath: root, AccessMode: "open", AdminPassword: "admin-password-1", InsecureAccepted: true}, true); len(notices) != 0 || err != nil {
-		t.Fatalf("notices=%v err=%v", notices, err)
+	if feedback, err := h.app.CompleteSetup(context.Background(), server.SetupAnswers{StoragePath: root, AccessMode: "open", AdminPassword: "admin-password-1", InsecureAccepted: true}, true); len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || err != nil {
+		t.Fatalf("feedback=%+v err=%v", feedback, err)
 	}
 	if err := <-result; err != nil {
 		t.Fatalf("err=%v", err)

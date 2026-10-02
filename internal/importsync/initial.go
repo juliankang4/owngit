@@ -194,6 +194,9 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		storageRoot: storageRoot, rootID: root.rootID, generation: run.runtimeGeneration,
 		name: name, path: path, token: token, repositoryID: run.run.RepositoryID, runID: run.run.ID,
 	}
+	if err := state.ProtectPrivatePath(path, true); err != nil {
+		return "", s.discardInitialDestination(ctx, dest, now, fmt.Errorf("protect unpublished destination: %w", err))
+	}
 	if s.afterInitialDirectoryCreated != nil {
 		s.afterInitialDirectoryCreated()
 	}

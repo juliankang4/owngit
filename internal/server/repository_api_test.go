@@ -320,8 +320,8 @@ func lazyStorageCollision(t *testing.T) (*App, *App, string) {
 	first, _, root := newTestApp(t)
 	second, _, _ := newTestApp(t)
 	for _, app := range []*App{first, second} {
-		if notices, err := app.CompleteSetup(context.Background(), setupAnswers(root), true); err != nil || len(notices) != 0 {
-			t.Fatalf("empty-root setup notices=%v err=%v", notices, err)
+		if feedback, err := app.CompleteSetup(context.Background(), setupAnswers(root), true); err != nil || len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 {
+			t.Fatalf("empty-root setup feedback=%+v err=%v", feedback, err)
 		}
 	}
 	_, err := first.Repositories.Create(context.Background(), "owner", "")

@@ -200,6 +200,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 			_ = os.RemoveAll(temporaryPath)
 		}
 	}()
+	if err := state.ProtectPrivatePath(temporaryPath, true); err != nil {
+		return state.Repository{}, fmt.Errorf("protect temporary repository directory: %w", err)
+	}
 
 	if err := m.InitBareRepository(ctx, temporaryPath, options); err != nil {
 		return state.Repository{}, err
@@ -702,9 +705,24 @@ func (m *Manager) RefWriteEnvironment(ctx context.Context, id string) ([]string,
 // Git service allows deleting such a ref that exists), and the hook
 // refuses every ref if the file cannot be read.
 func writeRetentionHook(repositoryPath string, runner *gitexec.Runner) error {
-	hooks := filepath.Join(repositoryPath, "hooks")
-	if err := os.MkdirAll(hooks, 0o700); err != nil {
+	repositoryDir, err := os.Open(repositoryPath)
+	if err != nil {
+		return fmt.Errorf("open repository for hook refresh: %w", err)
+	}
+	defer repositoryDir.Close()
+	hooksPath := filepath.Join(repositoryPath, "hooks")
+	if err := os.Mkdir(hooksPath, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return fmt.Errorf("create hooks directory: %w", err)
+	}
+	// Open the child relative to the held repository without following links,
+	// then make that exact directory private before opening any hook in it.
+	hooks, err := state.OpenOwnFolderIn(repositoryDir, "hooks")
+	if err != nil {
+		return fmt.Errorf("open hooks directory without following links: %w", err)
+	}
+	defer hooks.Close()
+	if err := state.ProtectPrivateHandle(hooks, true); err != nil {
+		return fmt.Errorf("protect hooks directory: %w", err)
 	}
 	git := shellQuote(runner.GitPath)
 	home := shellQuote(runner.HomeDir)
@@ -813,30 +831,47 @@ fi
 `, shellQuote(filepath.Dir(runner.GitPath)), home, home, config, config, temp, git,
 		shellQuote(filepath.Dir(runner.GitPath)), home, home, config, config, temp, git,
 		shellQuote(filepath.Join(runner.TempDir, "owngit-retention-commands.XXXXXX")))
-	if err := writeHookFile(filepath.Join(hooks, "update"), updateScript); err != nil {
+	if err := writeHookFile(hooks, "update", updateScript); err != nil {
 		return err
 	}
 	for _, obsolete := range []string{"pre-receive", "reference-transaction"} {
-		if err := os.Remove(filepath.Join(hooks, obsolete)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(hooks.Name(), obsolete)); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove obsolete Git hook %s: %w", obsolete, err)
 		}
 	}
 	return nil
 }
 
-func writeHookFile(path, content string) error {
-	// Startup refreshes every hook. An identical regular file with the
-	// expected mode is left alone, which avoids a write per repository on
-	// slow storage.
-	if existing, err := os.ReadFile(path); err == nil && string(existing) == content {
-		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Mode().Perm() == 0o700 {
-			return nil
+func writeHookFile(hooks *os.File, name, content string) error {
+	file, err := state.OpenOwnFile(hooks, name, os.O_RDWR|os.O_CREATE)
+	if err != nil {
+		return fmt.Errorf("open Git hook %s without following links: %w", name, err)
+	}
+	defer file.Close()
+	if err := state.ProtectPrivateHandle(file, false); err != nil {
+		return fmt.Errorf("protect Git hook %s: %w", name, err)
+	}
+	// Startup refreshes every hook. Read only enough to decide whether this
+	// script is already exact, without trusting an existing file's size.
+	existing, err := io.ReadAll(io.LimitReader(file, int64(len(content)+1)))
+	if err != nil {
+		return fmt.Errorf("read Git hook %s: %w", name, err)
+	}
+	if string(existing) != content {
+		if err := file.Truncate(0); err != nil {
+			return fmt.Errorf("truncate Git hook %s: %w", name, err)
+		}
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind Git hook %s: %w", name, err)
+		}
+		if _, err := io.WriteString(file, content); err != nil {
+			return fmt.Errorf("write Git hook %s: %w", name, err)
 		}
 	}
-	if err := os.WriteFile(path, []byte(content), 0o700); err != nil {
-		return fmt.Errorf("write Git hook %s: %w", filepath.Base(path), err)
+	if err := file.Chmod(0o700); err != nil {
+		return fmt.Errorf("make Git hook %s executable: %w", name, err)
 	}
-	return os.Chmod(path, 0o700)
+	return nil
 }
 
 func shellQuote(value string) string {

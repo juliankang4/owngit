@@ -26,8 +26,9 @@ func TestServerDiagnosisIgnoresFailedCreationPreservation(t *testing.T) {
 	root := filepath.Join(base, "repositories")
 	noErr(t, os.Mkdir(root, 0o700))
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: root}
-	diagnosis := serverDiagnosis(store.Dir(), "127.0.0.1:48933", false, func(context.Context) (string, error) {
-		return manager.CanonicalStorageRoot()
+	diagnosis := serverDiagnosis(store.Dir(), "127.0.0.1:48933", false, func(context.Context) (string, []string, error) {
+		root, err := manager.CanonicalStorageRoot()
+		return root, []string{"sample"}, err
 	})
 	before := diagnosis(ctx)
 	noErr(t, store.Exec(ctx, `CREATE TRIGGER refuse_creation BEFORE INSERT ON repositories BEGIN SELECT RAISE(ABORT,'recording refused'); END`))

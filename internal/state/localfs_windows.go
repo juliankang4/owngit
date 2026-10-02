@@ -193,10 +193,7 @@ func requirePrivateFolder(dir *os.File) error {
 	return nil
 }
 
-// OpenPrivateFolderIn opens the folder name in the held folder parent
-// without following a reparse point at that name, refuses any reparse
-// point, and requires the folder to be private like requirePrivateFolder.
-func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+func openFolderIn(parent *os.File, name string) (*os.File, error) {
 	dir, err := openAt(parent, filepath.Join(parent.Name(), name), folderAccess, folderShare, windows.FILE_OPEN, folderOptions, "open")
 	if err != nil {
 		return nil, err
@@ -208,10 +205,42 @@ func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
 		err = &os.PathError{Op: "inspect", Path: dir.Name(), Err: err}
 	case info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
 		err = fmt.Errorf("%s is a reparse point, not a plain folder", dir.Name())
-	default:
-		err = requirePrivateFolder(dir)
 	}
 	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
+// OpenOwnFolderIn opens the folder name in the held parent without following
+// a reparse point and requires it to belong to the current account or token
+// owner. It changes nothing.
+func OpenOwnFolderIn(parent *os.File, name string) (*os.File, error) {
+	dir, err := openFolderIn(parent, name)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := OwnedByCurrentUser(dir)
+	if err == nil && !owned {
+		err = fmt.Errorf("%s belongs to another account", dir.Name())
+	}
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
+// OpenPrivateFolderIn opens the folder name in the held folder parent
+// without following a reparse point at that name, refuses any reparse
+// point, and requires the folder to be private like requirePrivateFolder.
+func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+	dir, err := openFolderIn(parent, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := requirePrivateFolder(dir); err != nil {
 		dir.Close()
 		return nil, err
 	}
@@ -747,6 +776,77 @@ func OwnedByCurrentUser(file *os.File) (bool, error) {
 
 func ownerMatchesProcess(owner, user, defaultOwner *windows.SID) bool {
 	return owner != nil && (owner.Equals(user) || owner.Equals(defaultOwner))
+}
+
+// OthersCanChange reports whether an account other than this one, SYSTEM or
+// Administrators can change path or what a directory holds. It reads the
+// current DACL without changing it. The FileInfo parameter keeps the same
+// cross-platform contract as the Unix implementation.
+func OthersCanChange(path string, _ os.FileInfo) (bool, string, error) {
+	user, defaultOwner, err := processIdentity()
+	if err != nil {
+		return false, "", err
+	}
+	descriptor, err := pathDescriptor(path)
+	if err != nil {
+		return false, "", err
+	}
+	changeable, err := descriptorAllowsOtherChanges(descriptor, user, defaultOwner)
+	if err != nil || !changeable {
+		return changeable, "", err
+	}
+	return true, userOnlyACLCommand(path, user), nil
+}
+
+func descriptorAllowsOtherChanges(descriptor *windows.SECURITY_DESCRIPTOR, user, defaultOwner *windows.SID) (bool, error) {
+	if descriptor == nil {
+		return false, errors.New("folder has no security descriptor")
+	}
+	owner, _, err := descriptor.Owner()
+	if err != nil {
+		return false, fmt.Errorf("read folder owner: %w", err)
+	}
+	if !trustedChangePrincipal(owner, user, defaultOwner) {
+		return true, nil
+	}
+	dacl, _, err := descriptor.DACL()
+	if err != nil {
+		return false, fmt.Errorf("read folder ACL: %w", err)
+	}
+	if dacl == nil {
+		return true, nil
+	}
+	for index := uint16(0); index < dacl.AceCount; index++ {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, uint32(index), &ace); err != nil || ace == nil {
+			return false, errors.New("folder ACL cannot be inspected")
+		}
+		if ace.Header.AceType == windows.ACCESS_DENIED_ACE_TYPE {
+			continue
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return false, errors.New("folder ACL has an access entry OwnGit cannot inspect")
+		}
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		if !trustedChangePrincipal(sid, user, defaultOwner) && grantsFileChanges(ace.Mask) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func trustedChangePrincipal(sid, user, defaultOwner *windows.SID) bool {
+	return sid != nil && (sid.Equals(user) || sid.Equals(defaultOwner) ||
+		sid.IsWellKnown(windows.WinLocalSystemSid) || sid.IsWellKnown(windows.WinBuiltinAdministratorsSid) ||
+		sid.IsWellKnown(windows.WinCreatorOwnerSid))
+}
+
+func grantsFileChanges(mask windows.ACCESS_MASK) bool {
+	const fileDeleteChild windows.ACCESS_MASK = 0x40
+	const changeAccess = windows.DELETE | windows.WRITE_DAC | windows.WRITE_OWNER |
+		windows.FILE_WRITE_DATA | windows.FILE_APPEND_DATA | windows.FILE_WRITE_EA |
+		fileDeleteChild | windows.FILE_WRITE_ATTRIBUTES
+	return mask&(changeAccess|windows.GENERIC_WRITE|windows.GENERIC_ALL) != 0
 }
 
 func validateOwnerOnly(path string, user *windows.SID, directory bool) error {

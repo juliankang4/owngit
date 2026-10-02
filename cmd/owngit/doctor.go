@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/netip"
 	"os"
@@ -121,6 +122,7 @@ type doctorSubject struct {
 	administrator bool
 	stateDir      string
 	repositories  string
+	repositoryIDs []string
 }
 
 // servingService is the service of this account that runs OwnGit for a
@@ -167,6 +169,13 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 		subject.setupComplete = settings.Initialized
 		if settings.Initialized && filepath.IsAbs(settings.RepositoryRoot) {
 			subject.repositories = filepath.Clean(settings.RepositoryRoot)
+			repositories, err := store.Repositories(ctx)
+			if err != nil {
+				return doctorSubject{}, err
+			}
+			for _, repository := range repositories {
+				subject.repositoryIDs = append(subject.repositoryIDs, repository.ID)
+			}
 		}
 	}
 	address, _ := healthTarget(observed, savedListen)
@@ -203,7 +212,7 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 // serverDiagnosis returns the checkup that the Settings page shows, from
 // the facts of this server: it runs, setup is done, and it listens on
 // listen. asService is true when a service manager started it.
-func serverDiagnosis(stateDir, listen string, asService bool, repositoryRoot func(context.Context) (string, error)) func(context.Context) []webui.Finding {
+func serverDiagnosis(stateDir, listen string, asService bool, repositoryStorage func(context.Context) (string, []string, error)) func(context.Context) []webui.Finding {
 	return func(ctx context.Context) []webui.Finding {
 		program, _ := runningExecutable()
 		subject := doctorSubject{
@@ -211,11 +220,12 @@ func serverDiagnosis(stateDir, listen string, asService bool, repositoryRoot fun
 			listen: listen, program: program, stateDir: stateDir,
 			administrator: probeEnvironment().Administrator,
 		}
-		root, err := repositoryRoot(ctx)
+		root, repositoryIDs, err := repositoryStorage(ctx)
 		if err != nil {
 			return append(diagnose(ctx, subject), webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{err.Error()}, Unchecked: true})
 		}
 		subject.repositories = root
+		subject.repositoryIDs = repositoryIDs
 		return diagnose(ctx, subject)
 	}
 }
@@ -233,7 +243,7 @@ func diagnose(ctx context.Context, subject doctorSubject) []webui.Finding {
 		facts.OtherDevices = !server.IsLoopbackHost(host)
 	}
 	if subject.server != doctor.ServerRunning {
-		return doctor.Diagnose(facts)
+		return append(doctor.Diagnose(facts), repositoryPrivacyFindings(subject)...)
 	}
 	var firewallErr error
 	switch runtime.GOOS {
@@ -259,7 +269,64 @@ func diagnose(ctx context.Context, subject doctorSubject) []webui.Finding {
 	if firewallErr != nil {
 		facts.Unchecked = append(facts.Unchecked, doctor.Unchecked{Code: webui.MsgDoctorUncheckedFirewall, Reason: firewallErr.Error()})
 	}
-	return doctor.Diagnose(facts)
+	return append(doctor.Diagnose(facts), repositoryPrivacyFindings(subject)...)
+}
+
+func repositoryPrivacyFindings(subject doctorSubject) []webui.Finding {
+	if subject.repositories == "" || len(subject.repositoryIDs) == 0 {
+		return nil
+	}
+	var findings []webui.Finding
+	var exposed []string
+	for _, id := range subject.repositoryIDs {
+		path := filepath.Join(subject.repositories, id+".git")
+		info, err := os.Stat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err == nil && !info.IsDir() {
+			err = fmt.Errorf("%s is not a folder", path)
+		}
+		changeable := false
+		if err == nil {
+			changeable, _, err = state.OthersCanChange(path, info)
+		}
+		if err != nil {
+			findings = append(findings, webui.Finding{Code: webui.MsgDoctorUncheckedOwner, Args: []string{err.Error()}, Unchecked: true})
+			continue
+		}
+		if changeable {
+			exposed = append(exposed, path)
+		}
+	}
+	if len(exposed) != 0 {
+		findings = append(findings, webui.Finding{
+			Code: webui.MsgDoctorRepositoriesShared, Args: []string{strconv.Itoa(len(exposed)), subject.repositories},
+			Repair: repositoryPrivacyRepair(exposed),
+		})
+	}
+	return findings
+}
+
+func repositoryPrivacyRepair(paths []string) string {
+	quoted := make([]string, len(paths))
+	for index, path := range paths {
+		quoted[index] = shellWord(runtime.GOOS, path)
+	}
+	switch runtime.GOOS {
+	case "windows":
+		commands := []string{"$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value"}
+		for _, path := range quoted {
+			commands = append(commands, "icacls "+path+` /inheritance:r /grant:r "*${sid}:(OI)(CI)F" /T`,
+				"if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+		}
+		return strings.Join(commands, "; ")
+	case "darwin":
+		arguments := strings.Join(quoted, " ")
+		return "chmod -RN " + arguments + " && chmod -R go-rwx " + arguments
+	default:
+		return "chmod -R go-rwx " + strings.Join(quoted, " ")
+	}
 }
 
 // doctorToolTimeout and doctorOutputLimit bound each tool that the

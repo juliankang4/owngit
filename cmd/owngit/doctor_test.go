@@ -84,8 +84,8 @@ func TestDoctorReadsWindowsFoldersAndFirewall(t *testing.T) {
 // The Settings page reports a repository folder it could not read as a
 // check that could not run.
 func TestServerDiagnosisSaysWhatItCouldNotRead(t *testing.T) {
-	diagnosis := serverDiagnosis(t.TempDir(), "127.0.0.1:18961", false, func(context.Context) (string, error) {
-		return "", errors.New("state closed")
+	diagnosis := serverDiagnosis(t.TempDir(), "127.0.0.1:18961", false, func(context.Context) (string, []string, error) {
+		return "", nil, errors.New("state closed")
 	})
 	got := diagnosis(context.Background())
 	if runtime.GOOS == "windows" {

@@ -612,17 +612,42 @@ func requirePrivateFolder(dir *os.File) error {
 	return nil
 }
 
-// OpenPrivateFolderIn opens the folder name in the held folder parent
-// without following a link at that name, and requires it to be private
-// like requirePrivateFolder.
-func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+func openFolderIn(parent *os.File, name string) (*os.File, error) {
 	path := filepath.Join(parent.Name(), name)
 	descriptor, err := unix.Openat(int(parent.Fd()), name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	runtime.KeepAlive(parent)
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	dir := os.NewFile(uintptr(descriptor), path)
+	return os.NewFile(uintptr(descriptor), path), nil
+}
+
+// OpenOwnFolderIn opens the folder name in the held parent without following
+// a link and requires it to belong to the current account. It changes nothing.
+func OpenOwnFolderIn(parent *os.File, name string) (*os.File, error) {
+	dir, err := openFolderIn(parent, name)
+	if err != nil {
+		return nil, err
+	}
+	owned, err := OwnedByCurrentUser(dir)
+	if err == nil && !owned {
+		err = fmt.Errorf("%s belongs to another account", dir.Name())
+	}
+	if err != nil {
+		dir.Close()
+		return nil, err
+	}
+	return dir, nil
+}
+
+// OpenPrivateFolderIn opens the folder name in the held folder parent
+// without following a link at that name, and requires it to be private
+// like requirePrivateFolder.
+func OpenPrivateFolderIn(parent *os.File, name string) (*os.File, error) {
+	dir, err := openFolderIn(parent, name)
+	if err != nil {
+		return nil, err
+	}
 	if err := requirePrivateFolder(dir); err != nil {
 		dir.Close()
 		return nil, err

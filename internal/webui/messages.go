@@ -113,6 +113,7 @@ const (
 	MsgDoctorUncheckedServer               MessageCode = "doctor.unchecked_server"
 	MsgDoctorUncheckedFirewall             MessageCode = "doctor.unchecked_firewall"
 	MsgDoctorUncheckedOwner                MessageCode = "doctor.unchecked_owner"
+	MsgDoctorRepositoriesShared            MessageCode = "doctor.repositories_shared"
 )
 
 // Setup and bootstrap.
@@ -155,6 +156,7 @@ const (
 	MsgSetupStorageInUse    MessageCode = "setup.storage.in_use"
 	MsgSetupStorageOverlap  MessageCode = "setup.storage.overlaps_state"
 	MsgSetupStorageRemote   MessageCode = "setup.storage.network_share"
+	MsgSetupStorageShared   MessageCode = "setup.storage.shared_warning"
 
 	MsgSetupAccessLabel     MessageCode = "setup.access.label"
 	MsgSetupAccessHelp      MessageCode = "setup.access.help"
@@ -679,6 +681,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupStorageRemote: {
 		en: "That folder looks like a network share. Repositories can be kept there while only one OwnGit uses it at a time. The database always stays on this computer.",
 		ko: "네트워크 공유 폴더로 보입니다. 한 번에 OwnGit 하나만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 둡니다.",
+	},
+	MsgSetupStorageShared: {
+		en: "Setup continued, but other accounts can change the repository folder you chose, or OwnGit could not verify that they cannot. Run owngit doctor on this computer to see the folder and how to make it private.",
+		ko: "설정은 계속 진행했지만, 다른 계정이 선택한 저장소 폴더를 바꿀 수 있거나 OwnGit이 안전한지 확인하지 못했습니다. 이 컴퓨터에서 owngit doctor를 실행하면 해당 폴더와 비공개로 바꾸는 방법을 볼 수 있습니다.",
 	},
 	MsgSetupAccessLabel: {
 		en: "Who can read and write repositories",
@@ -1287,6 +1293,11 @@ var catalog = map[MessageCode]message{
 	MsgDoctorUncheckedOwner: {
 		en: "OwnGit could not read who owns its folders: %s",
 		ko: "OwnGit 폴더의 소유자를 읽지 못했습니다: %s",
+	},
+	// Two %s: the exposed repository count, then the repository root.
+	MsgDoctorRepositoriesShared: {
+		en: "%s hosted repository folders under %s can be changed by other accounts.",
+		ko: "호스팅 저장소 폴더 %s개를 다른 계정이 바꿀 수 있습니다. 저장소 폴더: %s",
 	},
 
 	// -- connection ----------------------------------------------------

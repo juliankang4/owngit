@@ -332,11 +332,11 @@ func TestSetupCompletionVoidsApprovals(t *testing.T) {
 	browser := newSetupBrowser(t, server)
 	browser.ask()
 	root := filepath.Join(t.TempDir(), "repositories")
-	notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
+	feedback, err := app.CompleteSetup(context.Background(), SetupAnswers{
 		StoragePath: root, AccessMode: "open", AdminPassword: "admin-password-one",
 	}, false)
-	if len(notices) != 0 || err != nil {
-		t.Fatalf("notices=%v err=%v", notices, err)
+	if len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || err != nil {
+		t.Fatalf("feedback=%+v err=%v", feedback, err)
 	}
 	select {
 	case <-app.Approvals.Done():
@@ -389,8 +389,8 @@ func TestTerminalAndWebSetupReachTheSameState(t *testing.T) {
 	}
 	terminal, terminalStore, terminalRoot := newTestApp(t)
 	answers.StoragePath = terminalRoot
-	if notices, err := terminal.CompleteSetup(context.Background(), answers, true); len(notices) != 0 || err != nil {
-		t.Fatalf("terminal setup notices=%v err=%v", notices, err)
+	if feedback, err := terminal.CompleteSetup(context.Background(), answers, true); len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || err != nil {
+		t.Fatalf("terminal setup feedback=%+v err=%v", feedback, err)
 	}
 	for _, c := range []struct {
 		app  *App
@@ -440,13 +440,19 @@ func TestRepositoryFolderCheckCreatesNothing(t *testing.T) {
 		{missing, ""},
 		{base, ""},
 	} {
-		if got := app.CheckRepositoryFolder(c.path); string(got) != c.want {
-			t.Errorf("%s: %q want %q", c.path, got, c.want)
+		feedback := app.CheckRepositoryFolder(c.path)
+		got := ""
+		if len(feedback.Problems) != 0 {
+			got = string(feedback.Problems[0].Code)
+		}
+		if got != c.want || len(feedback.Warnings) != 0 {
+			t.Errorf("%s: feedback=%+v want problem %q", c.path, feedback, c.want)
 		}
 	}
 	if os.Geteuid() > 0 { // not root, and not Windows (-1)
-		if got := app.CheckRepositoryFolder(filepath.Join(locked, "git")); got != "setup.storage.denied" {
-			t.Errorf("unwritable folder: %q", got)
+		feedback := app.CheckRepositoryFolder(filepath.Join(locked, "git"))
+		if len(feedback.Problems) != 1 || feedback.Problems[0].Code != webui.MsgSetupStorageDenied || len(feedback.Warnings) != 0 {
+			t.Errorf("unwritable folder: %+v", feedback)
 		}
 	}
 	if _, err := os.Stat(filepath.Join(base, "new")); !os.IsNotExist(err) {
@@ -507,10 +513,10 @@ func TestApprovalStatusReportsOnlyAndRedeemsNothing(t *testing.T) {
 // it does for any installation that has not given it.
 func TestLocalTerminalSetupIsAskedAboutPlainHTTPLater(t *testing.T) {
 	app, _, root := newTestApp(t)
-	if notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
+	if feedback, err := app.CompleteSetup(context.Background(), SetupAnswers{
 		StoragePath: root, AccessMode: "open", AdminPassword: "admin-password-one",
-	}, false); len(notices) != 0 || err != nil {
-		t.Fatalf("notices=%v err=%v", notices, err)
+	}, false); len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || err != nil {
+		t.Fatalf("feedback=%+v err=%v", feedback, err)
 	}
 	settings, err := app.Store.Settings(context.Background())
 	noErr(t, err)
@@ -628,10 +634,10 @@ func TestSetupFinishedNoticeIsShownOnceAfterSetup(t *testing.T) {
 				}
 				var path, page string
 				if c.terminal {
-					if notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
+					if feedback, err := app.CompleteSetup(context.Background(), SetupAnswers{
 						StoragePath: root, AccessMode: c.mode, AccessPassword: "shared-password-1", AdminPassword: "admin-password-1",
-					}, false); len(notices) != 0 || !errors.Is(err, wantErr) {
-						t.Fatalf("notices=%v err=%v", notices, err)
+					}, false); len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || !errors.Is(err, wantErr) {
+						t.Fatalf("feedback=%+v err=%v", feedback, err)
 					}
 					path, page = browser.follow(browser.get("/"))
 				} else {
@@ -682,10 +688,10 @@ func TestSetupFinishedNoticeIsShownOnceAfterSetup(t *testing.T) {
 func TestSetupFinishedNoticeKeepsAnotherFirstPage(t *testing.T) {
 	finished := ">" + webui.Text(webui.LangEN, webui.MsgSetupCompleted) + "<"
 	app, _, root := newTestApp(t)
-	if notices, err := app.CompleteSetup(context.Background(), SetupAnswers{
+	if feedback, err := app.CompleteSetup(context.Background(), SetupAnswers{
 		StoragePath: root, AccessMode: "open", AdminPassword: "admin-password-1",
-	}, false); len(notices) != 0 || err != nil {
-		t.Fatalf("notices=%v err=%v", notices, err)
+	}, false); len(feedback.Problems) != 0 || len(feedback.Warnings) != 0 || err != nil {
+		t.Fatalf("feedback=%+v err=%v", feedback, err)
 	}
 	browser := newSetupBrowser(t, serve(t, app.Handler()))
 	status, location, page := browser.get("/repositories/new")

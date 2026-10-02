@@ -293,8 +293,9 @@ func (f *flow) askFolder(step string) error {
 			return err
 		}
 		path := expandHome(strings.TrimSpace(value))
-		if code := f.app.CheckRepositoryFolder(path); code != "" {
-			problem = f.text(code)
+		feedback := f.app.CheckRepositoryFolder(path)
+		if len(feedback.Problems) != 0 {
+			problem = f.text(feedback.Problems[0].Code)
 			continue
 		}
 		f.folder = filepath.Clean(path)
@@ -528,10 +529,10 @@ func (f *flow) save() (bool, error) {
 		StoragePath: f.folder, AccessMode: f.access, AccessPassword: f.shared, AdminPassword: f.admin,
 		InsecureAccepted: f.insecure,
 	}
-	notices, err := f.app.CompleteSetup(f.ctx, answers, f.network)
+	feedback, err := f.app.CompleteSetup(f.ctx, answers, f.network)
 	switch {
-	case len(notices) != 0:
-		for _, notice := range notices {
+	case len(feedback.Problems) != 0:
+		for _, notice := range feedback.Problems {
 			f.screen.notice("err", f.text(notice.Code))
 		}
 		return true, nil
@@ -550,6 +551,13 @@ func (f *flow) save() (bool, error) {
 		log.Printf("terminal setup: setup file removal could not be completed: %s", logtext.Cause(err))
 	case err != nil:
 		return false, err
+	}
+	for _, notice := range feedback.Warnings {
+		message := f.text(notice.Code)
+		if notice.Detail != "" {
+			message += " " + notice.Detail
+		}
+		f.screen.notice("warn", message)
 	}
 	f.shared, f.admin = "", ""
 	f.done()

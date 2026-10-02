@@ -653,9 +653,20 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		Releases:         releases,
 		UpdateCommand:    dashboardUpdateCommand(*asService),
 		RestoreGuide:     restoreGuide(mustAbs(*stateDir), *asService),
-		Diagnose: serverDiagnosis(mustAbs(*stateDir), listener.Addr().String(), *asService, func(ctx context.Context) (string, error) {
+		Diagnose: serverDiagnosis(mustAbs(*stateDir), listener.Addr().String(), *asService, func(ctx context.Context) (string, []string, error) {
 			current, err := store.Settings(ctx)
-			return current.RepositoryRoot, err
+			if err != nil {
+				return "", nil, err
+			}
+			repositories, err := store.Repositories(ctx)
+			if err != nil {
+				return "", nil, err
+			}
+			ids := make([]string, 0, len(repositories))
+			for _, repository := range repositories {
+				ids = append(ids, repository.ID)
+			}
+			return current.RepositoryRoot, ids, nil
 		}),
 		HeadlessListen: headlessListenInUse(headlessSetup, network),
 		TrayAvailable:  trayAvailable(*stateDir),

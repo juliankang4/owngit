@@ -412,6 +412,8 @@ func noticeFor(notice string) []webui.Notice {
 	switch notice {
 	case "setup_completed":
 		return []webui.Notice{webui.Success(webui.MsgSetupCompleted)}
+	case "setup_completed_storage_warning":
+		return []webui.Notice{webui.Success(webui.MsgSetupCompleted), {Kind: webui.NoticeWarning, Code: webui.MsgSetupStorageShared}}
 	case "setup_file_remains":
 		return []webui.Notice{webui.Success(webui.MsgSetupCompleted), {Kind: webui.NoticeWarning, Code: webui.MsgSetupFileRemains}}
 	case "repository_created":

@@ -33,6 +33,13 @@ type SetupAnswers struct {
 	KeepHost string
 }
 
+// SetupFeedback keeps refusals separate from warnings that inform the owner
+// without blocking setup.
+type SetupFeedback struct {
+	Problems []webui.Notice
+	Warnings []webui.Notice
+}
+
 // CompleteSetup's errors wrap their cause, so the server log can name it.
 var (
 	// ErrSetupUnavailable means setup could not be completed now, because
@@ -109,45 +116,46 @@ func setupNotices(answers SetupAnswers, insecureRequired bool) []webui.Notice {
 // them and starts serving the configured installation. insecureRequired says
 // whether the plain HTTP acknowledgement is required: always for a browser
 // request without TLS, and for the terminal when OwnGit listens on a network
-// address. A validation problem is returned as notices with nothing saved.
+// address. Problems stop setup; warnings are returned separately and do not.
 // After a successful save it applies the repository root, arranges the
 // "Setup finished" notice for the next dashboard view, runs OnSetupComplete
 // once, and voids every pending browser approval.
-func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecureRequired bool) ([]webui.Notice, error) {
-	notices := setupNotices(answers, insecureRequired)
+func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecureRequired bool) (SetupFeedback, error) {
+	feedback := SetupFeedback{Problems: setupNotices(answers, insecureRequired)}
 	canonical := ""
-	if len(notices) == 0 {
-		var err error
-		canonical, err = app.repositoryRoot(answers.StoragePath, true)
-		if err != nil {
-			notices = append(notices, storageNotice(answers.StoragePath, err))
-		}
+	if len(feedback.Problems) == 0 {
+		var folderFeedback SetupFeedback
+		canonical, folderFeedback = app.checkRepositoryFolder(answers.StoragePath, true)
+		feedback.Problems = append(feedback.Problems, folderFeedback.Problems...)
+		feedback.Warnings = append(feedback.Warnings, folderFeedback.Warnings...)
 	}
-	if len(notices) != 0 {
-		return notices, nil
+	if len(feedback.Problems) != 0 {
+		return feedback, nil
 	}
 	adminHash, err := auth.HashPassword(answers.AdminPassword)
 	if err != nil {
-		return []webui.Notice{webui.Error("admin_password", webui.MsgSetupAdminShort)}, nil
+		feedback.Problems = append(feedback.Problems, webui.Error("admin_password", webui.MsgSetupAdminShort))
+		return feedback, nil
 	}
 	accessHash := ""
 	if answers.AccessMode == "password" {
 		accessHash, err = auth.HashPassword(answers.AccessPassword)
 		if err != nil {
-			return []webui.Notice{webui.Error("access_password", webui.MsgSetupAccessPassShort)}, nil
+			feedback.Problems = append(feedback.Problems, webui.Error("access_password", webui.MsgSetupAccessPassShort))
+			return feedback, nil
 		}
 	}
 	unlock, err := bootstrap.AcquireSetupLock(ctx, app.Store.Dir())
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
 	}
 	defer unlock()
 	settings, err := app.Store.Settings(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
 	}
 	if settings.Initialized {
-		return nil, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, state.ErrSetupComplete)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, state.ErrSetupComplete)
 	}
 	var keepHosts []string
 	if answers.KeepHost != "" {
@@ -159,17 +167,18 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		return app.Store.CompleteSetup(ctx, canonical, answers.AccessMode, accessHash, adminHash, answers.InsecureAccepted, keepHosts...)
 	})
 	if completeErr != nil && !saved {
-		return []webui.Notice{storageNotice(answers.StoragePath, completeErr)}, nil
+		feedback.Problems = append(feedback.Problems, storageNotice(answers.StoragePath, completeErr))
+		return feedback, nil
 	}
 	var cleanupErr error
 	if completeErr == nil {
 		cleanupErr = bootstrap.RemoveOwnerSetupFiles(app.Store.Dir())
 	}
 	if errors.Is(completeErr, state.ErrSetupComplete) {
-		return nil, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, completeErr)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupCompletedElsewhere, completeErr)
 	}
 	if completeErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSetupUnavailable, completeErr)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupUnavailable, completeErr)
 	}
 	// Setup is committed, so this process serves it even when removing the
 	// obsolete owner setup files failed. The failure is still reported, and
@@ -182,7 +191,7 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 			app.OnHostAccepted()
 		}
 	}
-	notice := setupResultNotice(cleanupErr)
+	notice := setupResultNotice(cleanupErr, len(feedback.Warnings) != 0)
 	app.setupResult.Store(&notice)
 	if app.Approvals != nil {
 		app.Approvals.Void()
@@ -191,30 +200,48 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 		app.OnSetupComplete()
 	}
 	if cleanupErr != nil {
-		return nil, fmt.Errorf("%w: %w", ErrSetupCleanup, cleanupErr)
+		return feedback, fmt.Errorf("%w: %w", ErrSetupCleanup, cleanupErr)
 	}
-	return nil, nil
+	return feedback, nil
 }
 
-// setupResultNotice is the result notice of saved setup: "setup_completed",
-// or "setup_file_remains" when the used owner setup files could not be
-// removed. Setup is in effect either way.
-func setupResultNotice(cleanupErr error) string {
+// setupResultNotice is the result notice of saved setup. Cleanup failure takes
+// precedence because it requires a different owner action.
+func setupResultNotice(cleanupErr error, storageWarning bool) string {
 	if cleanupErr != nil {
 		return "setup_file_remains"
+	}
+	if storageWarning {
+		return "setup_completed_storage_warning"
 	}
 	return "setup_completed"
 }
 
-// CheckRepositoryFolder applies the repository folder rules without
-// creating anything, so the terminal can check the folder before the other
-// questions. It returns the message for the problem, or "". Setup
-// completion checks the folder again and creates it.
-func (app *App) CheckRepositoryFolder(value string) webui.MessageCode {
-	if _, err := app.repositoryRoot(value, false); err != nil {
-		return storageProblem(err)
+// CheckRepositoryFolder applies the repository folder rules without creating
+// anything. Setup completion calls the same decision with creation enabled.
+func (app *App) CheckRepositoryFolder(value string) SetupFeedback {
+	_, feedback := app.checkRepositoryFolder(value, false)
+	return feedback
+}
+
+func (app *App) checkRepositoryFolder(value string, create bool) (string, SetupFeedback) {
+	canonical, err := app.repositoryRoot(value, create)
+	if err != nil {
+		return "", SetupFeedback{Problems: []webui.Notice{storageNotice(value, err)}}
 	}
-	return ""
+	info, err := os.Stat(canonical)
+	if errors.Is(err, fs.ErrNotExist) {
+		return canonical, SetupFeedback{}
+	}
+	changeable := false
+	if err == nil {
+		changeable, _, err = state.OthersCanChange(canonical, info)
+	}
+	if err != nil || changeable {
+		warning := webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgSetupStorageShared, Field: "storage_path", Detail: canonical}
+		return canonical, SetupFeedback{Warnings: []webui.Notice{warning}}
+	}
+	return canonical, SetupFeedback{}
 }
 
 // storageProblem names what is wrong with a repository folder.
