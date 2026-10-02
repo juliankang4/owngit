@@ -345,7 +345,7 @@ func validateTreePath(value string) error {
 	if value == "" {
 		return nil
 	}
-	if len(value) > 4096 || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "/") || path.Clean(value) != value || value == "." || value == ".." || strings.HasPrefix(value, "../") {
+	if len(value) > MaximumTreePathBytes || strings.ContainsRune(value, 0) || strings.HasPrefix(value, "/") || path.Clean(value) != value || value == "." || value == ".." || strings.HasPrefix(value, "../") {
 		return errors.New("invalid repository path")
 	}
 	return nil

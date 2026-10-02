@@ -287,6 +287,15 @@ func (app *App) serveSharedRepository(writer http.ResponseWriter, request *http.
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
+	var tab []string
+	if page != "" {
+		tab = strings.Split(page, "/")
+	}
+	address, err := parsePageAddress(request, tab)
+	if err != nil {
+		app.renderError(writer, request, http.StatusBadRequest, webui.MsgErrNotFound, "")
+		return
+	}
 	chrome := app.shareChrome(writer, request, shareBase(link.ID))
 	snapshot, err := app.Repositories.RefSnapshot(request.Context(), stored.ID)
 	base := app.sharedRepositoryPage(request, chrome, stored, snapshot.Summary, link)
@@ -294,11 +303,7 @@ func (app *App) serveSharedRepository(writer http.ResponseWriter, request *http.
 		app.renderRepositoryReadFailure(writer, request, base, err)
 		return
 	}
-	var tab []string
-	if page != "" {
-		tab = strings.Split(page, "/")
-	}
-	app.serveCodePage(writer, request, base, snapshot, tab)
+	app.serveCodePage(writer, request, base, snapshot, tab, address)
 }
 
 // sharedRepositoryPage is baseRepositoryPage for a share link's pages: they

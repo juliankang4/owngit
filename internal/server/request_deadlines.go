@@ -30,6 +30,12 @@ import (
 // Reading the body and authentication never gain that extra time. A handler
 // that already outlasted its deadline cannot start a transfer.
 
+// maximumPageTransferTime bounds retention even while a client makes progress.
+const maximumPageTransferTime = 10 * time.Minute
+
+// pageTransferTimeLimit permits scaled socket tests; production uses the constant.
+var pageTransferTimeLimit = maximumPageTransferTime
+
 // requestDeadlinesKey finds a request's requestDeadlines in its context.
 type requestDeadlinesKey struct{}
 
@@ -146,6 +152,7 @@ func writePage(writer http.ResponseWriter, request *http.Request, status int, co
 	controller := http.NewResponseController(writer)
 	deadlines, _ := request.Context().Value(requestDeadlinesKey{}).(*requestDeadlines)
 	progress := deadlines != nil && deadlines.cancel == nil && time.Now().Before(deadlines.current)
+	transferEnd := time.Now().Add(pageTransferTimeLimit)
 	if progress {
 		if deadlines.body.ended.Load() {
 			// net/http's disconnect watcher must not mistake the old body-read
@@ -158,7 +165,14 @@ func writePage(writer http.ResponseWriter, request *http.Request, status int, co
 	writer.WriteHeader(status)
 	for len(content) > 0 {
 		if progress {
-			deadlines.current = time.Now().Add(deadlines.replyIdle)
+			now := time.Now()
+			if !now.Before(transferEnd) {
+				return context.DeadlineExceeded
+			}
+			deadlines.current = now.Add(deadlines.replyIdle)
+			if deadlines.current.After(transferEnd) {
+				deadlines.current = transferEnd
+			}
 			if err := controller.SetWriteDeadline(deadlines.current); err != nil && !errors.Is(err, http.ErrNotSupported) {
 				return err
 			}

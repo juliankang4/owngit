@@ -30,6 +30,27 @@ import (
 // not found either. Every other read error means the read could not tell.
 var ErrNotFound = errors.New("not found")
 
+// MaximumTreePathBytes is the byte limit for a full repository path.
+const MaximumTreePathBytes = 4096
+
+// TreeEntryLimitError means Git returned an entry outside the path contract.
+// It is a failed read, not a missing entry or a complete partial listing.
+type TreeEntryLimitError struct{}
+
+func (*TreeEntryLimitError) Error() string { return "Git tree entry exceeds the repository path limit" }
+
+// ValidateTreeCursor checks a directory continuation without reading Git data.
+func ValidateTreeCursor(after string) error {
+	if after == "" {
+		return nil
+	}
+	kind, name, ok := strings.Cut(after, ":")
+	if !ok || (kind != "d" && kind != "f") || name == "" || len(name) > MaximumTreePathBytes || strings.ContainsAny(name, "/\x00") || name == "." || name == ".." {
+		return errDirectoryNotFound
+	}
+	return nil
+}
+
 // These say which kind of object was not found.
 var (
 	errRefNotFound       = fmt.Errorf("branch or tag %w", ErrNotFound)
@@ -341,12 +362,12 @@ type treePageBuilder struct {
 }
 
 func newTreePageBuilder(after string) (*treePageBuilder, error) {
+	if err := ValidateTreeCursor(after); err != nil {
+		return nil, err
+	}
 	builder := &treePageBuilder{after: after, cursorFound: after == ""}
 	if after != "" {
-		kind, name, ok := strings.Cut(after, ":")
-		if !ok || (kind != "d" && kind != "f") || name == "" || strings.ContainsAny(name, "/\x00") {
-			return nil, errDirectoryNotFound
-		}
+		kind, name, _ := strings.Cut(after, ":")
 		builder.cursor.Name = name
 		if kind == "d" {
 			builder.cursor.Type = "tree"
@@ -400,14 +421,23 @@ func (b *treePageBuilder) finish(directory string) (TreePage, error) {
 }
 
 func streamTree(reader io.Reader, visit func(TreeEntry) error) error {
-	stream := bufio.NewReader(reader)
+	// Metadata fits within 128 bytes, including a SHA-256 OID and int64 size.
+	// ReadSlice borrows this fixed buffer and stops before a record can grow.
+	stream := bufio.NewReaderSize(reader, MaximumTreePathBytes+128+1)
 	for {
-		record, err := stream.ReadBytes(0)
+		record, err := stream.ReadSlice(0)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return &TreeEntryLimitError{}
+		}
 		if err == io.EOF && len(record) == 0 {
 			return nil
 		}
 		if err != nil {
 			return err
+		}
+		separator := bytes.IndexByte(record, '\t')
+		if separator > 128 || (separator >= 0 && len(record)-separator-2 > MaximumTreePathBytes) {
+			return &TreeEntryLimitError{}
 		}
 		entry, err := parseTreeEntry(record[:len(record)-1])
 		if err != nil {

@@ -352,6 +352,14 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 			return
 		}
 	}
+	var address pageAddress
+	if request.Method == http.MethodGet && (len(parts) == 1 || parts[1] == "code" || parts[1] == "commits") {
+		address, err = parsePageAddress(request, parts[1:])
+		if err != nil {
+			app.renderError(writer, request, http.StatusBadRequest, webui.MsgErrNotFound, "")
+			return
+		}
+	}
 	// One ref listing gives the summary every tab needs and the activity key
 	// the overview's graph needs, where Summary alone would start two Git
 	// processes and the graph a third.
@@ -468,17 +476,17 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgErrNotFound, request.URL.Path)
 		return
 	}
-	app.serveCodePage(writer, request, app.baseRepositoryPage(request, chrome, stored, summary), snapshot, parts[1:])
+	app.serveCodePage(writer, request, app.baseRepositoryPage(request, chrome, stored, summary), snapshot, parts[1:], address)
 }
 
 // serveCodePage answers a GET of a repository's overview (tab empty), Code
 // and Commits pages from snapshot, the repository's ref snapshot. base is
 // the page before it is filled: a dashboard page (baseRepositoryPage) or a
 // share link's (sharedRepositoryPage).
-func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request, base webui.RepositoryPage, snapshot repository.RefSnapshot, tab []string) {
+func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request, base webui.RepositoryPage, snapshot repository.RefSnapshot, tab []string, address pageAddress) {
 	summary := snapshot.Summary
 	page := base
-	requestedRef := request.URL.Query().Get("ref")
+	requestedRef := address.Ref
 	status := http.StatusOK
 	var err error
 	switch {
@@ -490,7 +498,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		}
 	case len(tab) == 1 && tab[0] == "code":
 		page.Tab = webui.RepoTabCode
-		err = app.fillCode(request, &page, summary, requestedRef, request.URL.Query().Get("path"))
+		err = app.fillCode(request, &page, summary, address)
 		// A path or a requested branch or tag that does not exist is not
 		// found. The page keeps the repository and links back to it. A
 		// default branch that has gone is the repository's state, not a bad
@@ -500,7 +508,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		}
 	case len(tab) == 1 && tab[0] == "commits":
 		page.Tab = webui.RepoTabCommits
-		err = app.fillCommits(request, &page, summary, requestedRef, "")
+		err = app.fillCommits(request, &page, summary, address, "")
 		if page.Commits.NotFound || (requestedRef != "" && page.Ref.Missing) {
 			status = http.StatusNotFound
 		}
@@ -510,7 +518,7 @@ func (app *App) serveCodePage(writer http.ResponseWriter, request *http.Request,
 		// another repository has, is not found. A commit that exists opens
 		// even when the address names a missing branch: the page then shows
 		// it as a bare revision.
-		err = app.fillCommits(request, &page, summary, requestedRef, tab[1])
+		err = app.fillCommits(request, &page, summary, address, tab[1])
 		if page.Commits.NotFound {
 			status = http.StatusNotFound
 		}
@@ -949,6 +957,11 @@ func recoveredTarget(oid string, branches []repository.Ref) string {
 
 var errPageAddress = errors.New("invalid page address")
 
+type pageAddress struct {
+	Ref, Path, View, Revision, Blob, After string
+	Lines                                  linePageRequest
+}
+
 type linePageRequest struct {
 	First, Line, From int
 }
@@ -957,38 +970,63 @@ type lineNotFoundError struct{ firstURL string }
 
 func (*lineNotFoundError) Error() string { return "line is not in the file" }
 
-// requestedLinePage validates every supplied position before choosing a page.
-// Keep the original positions so rounding cannot hide an out-of-range address.
-func requestedLinePage(request *http.Request) (linePageRequest, error) {
-	page := linePageRequest{First: 1}
+// parsePageAddress runs after authority checks but before any repository read.
+// Original positions survive rounding for later content-range checks.
+func parsePageAddress(request *http.Request, tab []string) (pageAddress, error) {
+	address := pageAddress{Lines: linePageRequest{First: 1}}
+	// Maximum-size paths and arbitrary-byte cursors fit when percent-encoded.
+	if len(request.URL.RawQuery) > 64<<10 {
+		return address, errPageAddress
+	}
 	query, err := url.ParseQuery(request.URL.RawQuery)
 	if err != nil {
-		return page, errPageAddress
+		return address, errPageAddress
 	}
+	for _, key := range []string{"revision", "blob", "after"} {
+		values, present := query[key]
+		if !present {
+			continue
+		}
+		if len(values) != 1 || values[0] == "" {
+			return address, errPageAddress
+		}
+		if key == "after" {
+			if repository.ValidateTreeCursor(values[0]) != nil {
+				return address, errPageAddress
+			}
+		} else if !validOID(values[0]) {
+			return address, errPageAddress
+		}
+	}
+	if len(tab) == 2 && tab[0] == "commits" && !validOID(tab[1]) {
+		return address, errPageAddress
+	}
+	address.Ref, address.Path, address.View = query.Get("ref"), query.Get("path"), query.Get("view")
+	address.Revision, address.Blob, address.After = query.Get("revision"), query.Get("blob"), query.Get("after")
 	for _, key := range []string{"line", "from"} {
 		values, present := query[key]
 		if !present {
 			continue
 		}
 		if len(values) != 1 {
-			return page, errPageAddress
+			return address, errPageAddress
 		}
 		position, err := strconv.Atoi(values[0])
 		if err != nil || position < 1 {
-			return page, errPageAddress
+			return address, errPageAddress
 		}
 		if key == "line" {
-			page.Line = position
+			address.Lines.Line = position
 		} else {
-			page.From = position
+			address.Lines.From = position
 		}
 	}
-	position := max(1, page.From)
-	if page.Line != 0 {
-		position = page.Line
+	position := max(1, address.Lines.From)
+	if address.Lines.Line != 0 {
+		position = address.Lines.Line
 	}
-	page.First = (position-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1
-	return page, nil
+	address.Lines.First = (position-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1
+	return address, nil
 }
 
 func (page linePageRequest) check(total int, incomplete bool, firstURL string) error {
@@ -1067,8 +1105,7 @@ func directoryContinuation(address, revision string, listing repository.TreePage
 	return continuation
 }
 
-func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPage) (string, error) {
-	revision := request.URL.Query().Get("revision")
+func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPage, revision string) (string, error) {
 	if revision == "" || revision == page.Ref.Revision {
 		return page.Ref.Revision, nil
 	}
@@ -1100,16 +1137,13 @@ func (app *App) codePageRevision(request *http.Request, page *webui.RepositoryPa
 
 // fillCode fills the Code tab. A ref or path that does not exist is marked
 // on the page; a read that failed is returned.
-func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, requestedPath string) error {
-	pagination, err := requestedLinePage(request)
-	if err != nil {
-		return err
-	}
+func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, address pageAddress) error {
+	pagination, requested, requestedPath := address.Lines, address.Ref, address.Path
 	selectedRef, resolved, err := app.selectRef(request, page, summary, requested)
 	if err != nil {
 		return err
 	}
-	if !resolved && (request.URL.Query().Get("revision") == "" || page.Shared) {
+	if !resolved && (address.Revision == "" || page.Shared) {
 		if requested == "" && page.Ref.Missing {
 			page.Chrome.Notices = append(page.Chrome.Notices, webui.Notice{Kind: webui.NoticeWarning, Code: webui.MsgRepoDefaultGone})
 		}
@@ -1117,7 +1151,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	}
 	// A continuation names the original commit, not the branch's new tip.
 	currentRevision := page.Ref.Revision
-	commitOID, err := app.codePageRevision(request, page)
+	commitOID, err := app.codePageRevision(request, page, address.Revision)
 	if errors.Is(err, repository.ErrNotFound) {
 		page.Code.NotFound = true
 		return nil
@@ -1125,7 +1159,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 	if err != nil {
 		return err
 	}
-	lookup, listing, err := app.Repositories.PathPageAt(request.Context(), page.Repo.ID, commitOID, requestedPath, request.URL.Query().Get("after"))
+	lookup, listing, err := app.Repositories.PathPageAt(request.Context(), page.Repo.ID, commitOID, requestedPath, address.After)
 	if errors.Is(err, repository.ErrNotFound) {
 		page.Code = webui.CodeView{Path: requestedPath, NotFound: true, Crumbs: codeCrumbs(page.Repo, selectedRef, requestedPath)}
 		return nil
@@ -1164,7 +1198,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		if lookup.File.Size >= 0 {
 			file.Size = lookup.File.Size
 		}
-		if pinnedBlob := request.URL.Query().Get("blob"); pinnedBlob != "" && pinnedBlob != blob.OID {
+		if pinnedBlob := address.Blob; pinnedBlob != "" && pinnedBlob != blob.OID {
 			page.Code.NotFound = true
 			return nil
 		}
@@ -1186,7 +1220,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, summ
 		}
 		if !binary && markdown.IsDocument(requestedPath) {
 			file.Document = true
-			file.ShowSource = request.URL.Query().Get("view") == "source" || pagination.Line != 0 || pagination.From != 0
+			file.ShowSource = address.View == "source" || pagination.Line != 0 || pagination.From != 0
 			file.PreviewURL = fileAddress
 			file.SourceURL = file.LineURL
 			// A cut-off document would render a broken ending, so only a
@@ -1261,12 +1295,8 @@ func (app *App) noteUnreadableCommits(request *http.Request, page *webui.Reposit
 // fillCommits fills the Commits tab: the list, or the commit openedOID. A
 // ref, commit or path that does not exist is marked on the page, and so is a
 // commit that could not be read; any other read that failed is returned.
-func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, requested, openedOID string) error {
-	pagination, err := requestedLinePage(request)
-	if err != nil {
-		return err
-	}
-	requestedPath := request.URL.Query().Get("path")
+func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, summary repository.Summary, address pageAddress, openedOID string) error {
+	pagination, requested, requestedPath := address.Lines, address.Ref, address.Path
 	if (pagination.Line != 0 || pagination.From != 0) && (openedOID == "" || requestedPath == "") {
 		return errPageAddress
 	}

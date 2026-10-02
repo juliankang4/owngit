@@ -131,7 +131,7 @@ func TestCodePagePinsDoNotExposeKeptHistoryToShares(t *testing.T) {
 	apiRunGit(t, work, "push", "-q", remote, "HEAD:refs/heads/temporary")
 	apiRunGit(t, remote, "update-ref", "refs/owngit/test-only", other)
 	apiRunGit(t, remote, "update-ref", "-d", "refs/heads/temporary")
-	if _, err := app.codePageRevision(request.WithContext(context.Background()), &page); err == nil {
+	if _, err := app.codePageRevision(request.WithContext(context.Background()), &page, other); err == nil {
 		t.Fatal("share continuation exposed an unrelated commit")
 	}
 }
