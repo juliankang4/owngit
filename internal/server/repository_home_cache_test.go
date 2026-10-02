@@ -66,6 +66,39 @@ func TestRepositoryHomeProcessCounts(t *testing.T) {
 	}
 }
 
+func TestRepositoryHomeWarmProcessCounts(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the tracing wrapper is a POSIX-shell fixture")
+	}
+	app, remote, work := newActivityFixture(t, "warm", 2)
+	apiRunGit(t, work, "tag", "-a", "old-release", "-m", "old-release", "HEAD~1")
+	apiRunGit(t, work, "tag", "-a", "release", "-m", "release")
+	apiRunGit(t, work, "push", remote, "refs/tags/old-release", "refs/tags/release")
+	apiRunGit(t, work, "push", remote, ":refs/tags/old-release")
+	trace := traceGitCommands(t, app)
+	server := serve(t, app.Handler())
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	// Fill the cache without timing first-visit or post-write behavior.
+	if _, status := dashboardGET(t, client, server.URL+"/repositories/warm"); status != http.StatusOK {
+		t.Fatal("warm-up page failed")
+	}
+	for visit := 0; visit < 3; visit++ {
+		before, err := os.ReadFile(trace)
+		noErr(t, err)
+		started := time.Now()
+		body, status := dashboardGET(t, client, server.URL+"/repositories/warm")
+		elapsed := time.Since(started)
+		after, err := os.ReadFile(trace)
+		noErr(t, err)
+		processes := bytes.Count(after[len(before):], []byte{'\n'})
+		t.Logf("home_warm visit=%d latency_ms=%.3f git_processes=%d", visit+1, float64(elapsed)/float64(time.Millisecond), processes)
+		if status != http.StatusOK || processes != 0 || !strings.Contains(body, ">release<") || !strings.Contains(body, "Kept history") {
+			t.Fatal("small resident overview did not preserve warm zero-process behavior")
+		}
+	}
+}
+
 func TestRepositoryHomePinsListTipsHeadAndReadme(t *testing.T) {
 	app, remote, work := newActivityFixture(t, "pinned", 1)
 	noErr(t, os.WriteFile(filepath.Join(work, "README.md"), []byte("old readme\n"), 0o600))
