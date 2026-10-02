@@ -31,6 +31,10 @@ type repositoryAPIItem struct {
 	// DefaultBranch is shown by a single repository read when its refs can be
 	// read now. It is left out of lists, which read no Git data.
 	DefaultBranch string `json:"default_branch,omitempty"`
+	// DefaultBranchError replaces DefaultBranch when the branches could not
+	// be read now, so an unreadable repository is never shown as one without
+	// a default branch.
+	DefaultBranchError string `json:"default_branch_error,omitempty"`
 	// PushRefNamespaces, shown by a single repository read, are the ref
 	// namespaces a push may change: branches, tags and the repository's
 	// extra ref namespaces. PushRefNamespacesError replaces them when the
@@ -150,9 +154,29 @@ func (app *App) showRepositoryAPI(writer http.ResponseWriter, request *http.Requ
 		item.Aliases = append(item.Aliases, repositoryAliasItem{Name: alias.Name, Until: alias.AliasUntil.UTC()})
 	}
 	// A repository that is being prepared or held by another Git operation
-	// is still described; only its default branch is left out.
-	if snapshot, err := app.Repositories.RefSnapshotWithin(request.Context(), stored.ID, repositoryListWait); err == nil && !snapshot.Stale {
+	// is still described; only its default branch is left out. A branch read
+	// that failed is named as such, so it is never shown as a repository
+	// without a default branch.
+	switch snapshot, err := app.Repositories.RefSnapshotWithin(request.Context(), stored.ID, repositoryListWait); {
+	case err == nil && !snapshot.Stale:
 		item.DefaultBranch = snapshot.Summary.DefaultBranch
+	case err == nil:
+		// The last snapshot read is stale: a writer may have changed the refs
+		// since, so the branch is left out like a busy repository's.
+	case errors.Is(err, repository.ErrRepositoryBusy) || errors.Is(err, repository.ErrRepositoryPreparing):
+		// Intended fallback: the repository is being written or prepared.
+	case request.Context().Err() != nil:
+		// The client left; the answer it would have read is moot.
+	case errors.Is(err, repository.ErrRepositoryNotFound):
+		// The repository was deleted while this request ran.
+		writeAPIError(writer, http.StatusNotFound, "repository_not_found", "The repository does not exist.", nil)
+		return
+	case errors.Is(err, repository.ErrStorageUnavailable):
+		logFailure(request, "repository ref read", err)
+		item.DefaultBranchError = "The repository folder is missing or unusable; see the server log."
+	default:
+		logFailure(request, "repository ref read", err)
+		item.DefaultBranchError = "OwnGit could not read the branches; see the server log."
 	}
 	extra, err := app.Store.RepositoryExtraRefPrefixes(request.Context(), stored.ID)
 	var policyErr *state.PolicyError
