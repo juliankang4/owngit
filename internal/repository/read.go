@@ -119,19 +119,36 @@ func BrowseRefName(summary Summary, requested string) (string, error) {
 }
 
 // AmbiguousBranchError describes distinct existing interpretations of a legacy
-// branch operand. Choices maps each full ref to an unambiguous legacy operand.
+// branch operand. Values holds corresponding unambiguous operands; an empty
+// value means that ref must be chosen in the browser.
 type AmbiguousBranchError struct {
-	Input   string
-	Refs    []string
-	Choices []string
+	Input  string
+	Refs   []string
+	Values []string
 }
 
 func (err *AmbiguousBranchError) Detail() string {
-	return strings.Join(err.Choices, "; ")
+	details := make([]string, len(err.Refs))
+	for index, full := range err.Refs {
+		details[index] = full
+		if index < len(err.Values) && err.Values[index] != "" {
+			details[index] += ": " + err.Values[index]
+		}
+	}
+	return strings.Join(details, "; ")
+}
+
+// LimitInputBytes keeps advice within the caller's existing input allowance.
+func (err *AmbiguousBranchError) LimitInputBytes(maximum int) {
+	for index, value := range err.Values {
+		if len(value) > maximum {
+			err.Values[index] = ""
+		}
+	}
 }
 
 func (err *AmbiguousBranchError) Error() string {
-	return "That name matches two branches. Choose a full ref and enter its corresponding value: " + err.Detail()
+	return "That name matches two branches. Enter the value beside the full ref you want. If no value is shown, choose that branch in the browser: " + err.Detail()
 }
 
 // selectRefName owns exact identity, legacy branch ambiguity and browse
@@ -176,11 +193,7 @@ func selectRefName(value string, exact, browse bool, exists func(string) (bool, 
 				break
 			}
 		}
-		if choice == "" {
-			problem.Choices = append(problem.Choices, full+" (Settings)")
-		} else {
-			problem.Choices = append(problem.Choices, full+": "+choice)
-		}
+		problem.Values = append(problem.Values, choice)
 	}
 	return "", problem
 }

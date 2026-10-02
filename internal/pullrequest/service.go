@@ -1210,8 +1210,9 @@ func (service *Service) repositoryPath(ctx context.Context, repositoryID string)
 }
 
 func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, value string, exact bool) (string, error) {
+	const legacyInputBytes = 255
 	input := value
-	if value != strings.TrimSpace(value) || value == "" || (!exact && len(value) > 255) || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
+	if value != strings.TrimSpace(value) || value == "" || (!exact && len(value) > legacyInputBytes) || !utf8.ValidString(value) || strings.ContainsAny(value, "\x00\r\n") {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
 	if strings.HasPrefix(value, "refs/owngit/") {
@@ -1231,6 +1232,7 @@ func (service *Service) normalizeBranch(ctx context.Context, repositoryPath, val
 	full, err := service.Repositories.SelectBranchRef(ctx, repositoryPath, input, exact)
 	var ambiguous *repository.AmbiguousBranchError
 	if errors.As(err, &ambiguous) {
+		ambiguous.LimitInputBytes(legacyInputBytes)
 		return "", &Problem{Code: "ambiguous_branch", Message: ambiguous.Error(), Cause: ambiguous}
 	}
 	if errors.Is(err, repository.ErrNotFound) {

@@ -1508,8 +1508,8 @@ var catalog = map[MessageCode]message{
 		ko: "아직 커밋 없음",
 	},
 	MsgBranchAmbiguous: {
-		en: "That name matches two branches. Choose a full ref and enter its corresponding value:",
-		ko: "이 이름에 해당하는 브랜치가 두 개 있습니다. 원하는 전체 ref를 확인하고 옆에 표시된 값을 입력하세요:",
+		en: "That name matches two branches. Enter the value beside the full ref you want. If no value is shown, choose that branch in the browser:",
+		ko: "이 이름에 해당하는 브랜치가 두 개 있습니다. 원하는 전체 ref 옆에 표시된 값을 입력하세요. 값이 없으면 브라우저에서 그 브랜치를 선택하세요:",
 	},
 	MsgRepoRefMissing: {
 		en: "That branch or tag does not exist in this repository.",
