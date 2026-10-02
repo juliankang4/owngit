@@ -152,20 +152,25 @@ func TestUnreadableRepositoryPageStatesItOnce(t *testing.T) {
 // Each read that fails is logged once with its cause where its answer is
 // decided: the unavailable page, a panel that says it could not be read, and
 // a raw file or archive download answered as unavailable. The branch and tag
-// tips are two reads, so one Git failure behind both is two lines. A page
+// tips and kept history are separate reads, so a shared Git failure is
+// reported once per affected panel. A page
 // that could be read logs nothing.
 func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the failing Git wrapper is a Unix test fixture")
 	}
 	app := newConfiguredApp(t)
-	_, _, commit, _, _ := readFailureRepository(t, app, "logged")
+	work, remote, commit, _, _ := readFailureRepository(t, app, "logged")
+	apiRunGit(t, work, "commit", "--allow-empty", "-m", "kept")
+	apiRunGit(t, work, "push", remote, "HEAD:refs/heads/main")
+	apiRunGit(t, work, "push", "--force", remote, commit+":refs/heads/main")
 	server := serve(t, app.Handler())
 	client, _ := newBrowserClient(t)
 	base := server.URL + "/repositories/logged"
 	serverLog := captureServerLog(t)
 
-	// Each failing read is the first of its kind, so no cache answers it.
+	// Each failure is tested after a new write generation, so a previously
+	// successful immutable read does not answer the injected failure.
 	for _, check := range []struct {
 		pattern, path string
 		status        int
@@ -173,14 +178,15 @@ func TestRepositoryReadFailuresLogTheirCauseOnce(t *testing.T) {
 	}{
 		{"--max-count=8", "", http.StatusServiceUnavailable, []string{"GET /repositories/logged: repository read"}},
 		{"blob", "", http.StatusOK, []string{"GET /repositories/logged: README read"}},
-		{"refs/owngit/retained", "", http.StatusOK, []string{"GET /repositories/logged: kept history read"}},
-		{"--stdin", "", http.StatusOK, []string{"GET /repositories/logged: branch tip read", "GET /repositories/logged: tag tip read"}},
+		{"rev-list", "", http.StatusOK, []string{"GET /repositories/logged: kept history read"}},
+		{"--stdin", "", http.StatusOK, []string{"GET /repositories/logged: branch tip read", "GET /repositories/logged: tag tip read", "GET /repositories/logged: kept history read"}},
 		{"ls-tree", "/raw?ref=refs/heads/main&path=docs/a.txt", http.StatusServiceUnavailable, []string{"GET /repositories/logged/raw: file read"}},
 		{"cat-file", "/archive?format=zip&ref=" + commit, http.StatusServiceUnavailable, []string{"GET /repositories/logged/archive: archive ref read"}},
 	} {
 		endFailureWindows()
 		since := len(serverLog.String())
 		failPath := failGitWhile(t, app, check.pattern)
+		wroteRefs(app, "logged")
 		noErr(t, os.WriteFile(failPath, nil, 0o600))
 		_, status := dashboardGET(t, client, base+check.path)
 		noErr(t, os.Remove(failPath))
@@ -249,7 +255,8 @@ func TestOverviewSidePanelsSayWhenTheyCouldNotBeRead(t *testing.T) {
 		t.Errorf("unreadable README status=%d named=%v note=%v", status, strings.Contains(body, `>README.md</a>`), strings.Contains(body, en(webui.MsgReadmeUnreadable)))
 	}
 
-	failPath = failGitWhile(t, app, "refs/owngit/retained")
+	failPath = failGitWhile(t, app, "rev-list")
+	wroteRefs(app, "panels")
 	noErr(t, os.WriteFile(failPath, nil, 0o600))
 	body, status = dashboardGET(t, client, overview)
 	kept := keptPanel(body)
@@ -258,6 +265,7 @@ func TestOverviewSidePanelsSayWhenTheyCouldNotBeRead(t *testing.T) {
 	}
 
 	failPath = failGitWhile(t, app, "--stdin")
+	wroteRefs(app, "panels")
 	noErr(t, os.WriteFile(failPath, nil, 0o600))
 	body, status = dashboardGET(t, client, overview)
 	// Each note carries its text once as the English attribute and once as

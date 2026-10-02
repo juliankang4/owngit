@@ -109,6 +109,8 @@ func TestDashboardRendersRealEscapedGitDataAndRetainedHistory(t *testing.T) {
 	releaseOID := apiGitOutput(t, work, "rev-parse", "HEAD")
 	apiRunGit(t, work, "push", "origin", "HEAD:refs/heads/release")
 	apiRunGit(t, work, "push", "origin", ":refs/heads/release")
+	// Path pushes stand in for OwnGit writes in this fixture.
+	wroteRefs(app, "real-project")
 	recovered := "recovered-" + shortOID(releaseOID)
 	body, status = dashboardGET(t, client, server.URL+"/repositories/real-project")
 	retainedRestoreLink := `/repositories/real-project/restore?source=` + releaseOID + `&amp;target=` + recovered
