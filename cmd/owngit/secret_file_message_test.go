@@ -22,16 +22,22 @@ func TestSecretFileRefusalSaysWhatIsWrongAndHowToFixIt(t *testing.T) {
 	noErr(t, state.ProtectPrivatePath(path, false))
 	makePasswordFileBroad(t, path)
 
-	var problem, run, fix string
+	var problem, run, fix, scope string
 	switch runtime.GOOS {
 	case "windows":
-		problem, run, fix = "can also access it", ". In PowerShell, run: $f = Get-Item -LiteralPath '", "$f = Get-Item -LiteralPath '"+path+"' -ErrorAction Stop; "
+		problem, run = "can also access it", ". In PowerShell, run: & {"
+		scope = "$ErrorActionPreference = 'Stop';"
+		fix = "$root = Get-Item -LiteralPath '" + path + "' -Force -ErrorAction Stop;"
 	default:
 		problem, run, fix = "its mode 0644 gives access to its group and all other users", ". To fix it, run: ", "chmod 600 '"+path+"'"
 	}
 	check := func(source, message, what string) {
 		t.Helper()
-		for _, want := range []string{what + " is not private: ", problem, run, fix, `(see "Password and token files" in docs/OPERATIONS.md).`} {
+		wantParts := []string{what + " is not private: ", problem, run, fix, `(see "Password and token files" in docs/OPERATIONS.md).`}
+		if scope != "" {
+			wantParts = append(wantParts, scope)
+		}
+		for _, want := range wantParts {
 			if !strings.Contains(message, want) {
 				t.Errorf("%s: message %q lacks %q", source, message, want)
 			}
