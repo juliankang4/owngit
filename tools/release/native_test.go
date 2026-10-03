@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -1023,6 +1024,128 @@ func trayFeedFixtures(t *testing.T) map[string]string {
 	}
 	fixtures["bad not the feed"] = `{"ok":true}`
 	return fixtures
+}
+
+// macPanelNoWindowServer is the panel fixture's exit code when the process
+// has no window server session, as over SSH, so AppKit cannot run. The
+// fixture exits with it as exit(77).
+const macPanelNoWindowServer = 77
+
+// macPanelFixture checks, with Panel.swift, that the panel keeps keyboard
+// focus on the same control when its size changes, also on a control
+// without a title or whose title has changed, and that it reads only the
+// integer sizes it stores. It never shows a window or a Dock icon, and it
+// reads defaults only from its own in-memory argument domain.
+const macPanelFixture = `import AppKit
+
+guard CGSessionCopyCurrentDictionary() != nil else {
+    print("no window server session")
+    exit(77)
+}
+
+func require(_ condition: Bool, _ message: String) {
+    if !condition { fatalError(message) }
+}
+
+NSApplication.shared.setActivationPolicy(.prohibited)
+
+func controls(_ view: NSView) -> [NSView] {
+    view.subviews.flatMap { [$0] + controls($0) }
+}
+
+func control(_ name: String) -> NSView? {
+    controls(panel.view).first { $0.identifier?.rawValue == name }
+}
+
+let status = try! JSONDecoder().decode(TrayStatus.self, from: Data(#"""
+{"ok":true,"state":"running","version":"1.1.4","shown":true,"clone_address":"http://127.0.0.1:7654/git/",
+ "setup_required":false,"update":null,"findings":[],
+ "pushes":[{"repository":"notes","ref":"refs/heads/main","branch":"main","pushed_at":"2026-10-03T00:00:00Z","actor_label":"Sample"}]}
+"""#.utf8))
+var model = PanelModel()
+model.state = .status(status)
+model.notifications = try! JSONDecoder().decode(NotificationChoice.self, from: Data(#"{"all":true,"only_others":false,"kinds":{"push":true}}"#.utf8))
+let panel = PanelViewController(words: .en, appVersion: "1.1.4") { _ in }
+panel.render(model)
+// The window is never ordered in, so nothing appears on screen.
+let window = NSWindow(contentRect: NSRect(origin: .zero, size: panel.preferredContentSize), styleMask: [.borderless], backing: .buffered, defer: true)
+window.contentView = panel.view
+
+// keepsFocus focuses the control named name, changes the panel's size and
+// requires the focus on the redrawn control of that name.
+func keepsFocus(_ name: String, to size: PanelSize) {
+    let before = control(name)
+    require(before != nil && window.makeFirstResponder(before), "cannot focus \(name)")
+    let width = panel.preferredContentSize.width
+    model.size = size
+    panel.render(model)
+    window.setContentSize(panel.preferredContentSize)
+    let focused = (window.firstResponder as? NSView)?.identifier?.rawValue ?? "\(String(describing: window.firstResponder))"
+    require(panel.preferredContentSize.width != width, "the size of \(name)'s panel did not change")
+    require(focused == name, "focus moved from \(name) to \(focused)")
+    require(control(name) !== before, "\(name) was not drawn again")
+}
+
+// The Settings button has no title, and Copy shows Copied once used.
+keepsFocus("settings", to: .large)
+(control("copy-clone-address") as! NSButton).title = Words.en.copied
+keepsFocus("copy-clone-address", to: .larger)
+keepsFocus("open-dashboard", to: .standard)
+model.showingSettings = true
+panel.render(model)
+keepsFocus("panel-size", to: .larger)
+keepsFocus("notify-push", to: .large)
+keepsFocus("quit", to: .standard)
+window.contentView = nil
+
+// Only the integer choices count; anything else reads as Default.
+let defaults = UserDefaults(suiteName: "org.example.owngit.panel-fixture")!
+func stored(_ value: Any?) -> PanelSize {
+    defaults.setVolatileDomain(value.map { ["PanelSize": $0] } ?? [:], forName: UserDefaults.argumentDomain)
+    return PanelSize(stored: defaults.object(forKey: "PanelSize"))
+}
+require(stored(nil) == .standard && stored(0) == .standard && stored(1) == .large && stored(2) == .larger, "the integer sizes")
+for value: Any in [3, -1, 1.5, 2.9, 1.0, true, false, "1", "junk", [1]] {
+    require(stored(value) == .standard, "\(String(reflecting: value)) must read as Default")
+}
+print("panel fixture passed")
+`
+
+// The panel's focus across a size change and its stored size, run with
+// AppKit. Without a window server session, as over SSH, the test is skipped.
+func TestMacPanelKeepsFocusAndReadsStoredSize(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("the panel is a macOS launcher input")
+	}
+	dir := t.TempDir()
+	fixture := filepath.Join(dir, "main.swift")
+	noErr(t, os.WriteFile(fixture, []byte(macPanelFixture), 0o600))
+	binary := filepath.Join(dir, "panel-fixture")
+	sources := filepath.Join(repoRoot(t), "packaging", "macos")
+	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "Panel.swift"), filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "Notifications.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
+		t.Fatalf("compile panel fixture: %v\n%s", err, output)
+	}
+	// Its home is in the test's folder, so whatever AppKit keeps stays
+	// there, away from the owner's.
+	home := filepath.Join(dir, "home")
+	noErr(t, os.Mkdir(home, 0o700))
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	run := exec.CommandContext(ctx, binary)
+	run.Env = append(os.Environ(), "HOME="+home, "CFFIXED_USER_HOME="+home, "TMPDIR="+home)
+	run.WaitDelay = 5 * time.Second
+	output, err := run.CombinedOutput()
+	var exit *exec.ExitError
+	switch {
+	case ctx.Err() != nil:
+		t.Fatalf("panel fixture did not finish within a minute: %v\n%s", err, output)
+	case errors.As(err, &exit) && exit.ExitCode() == macPanelNoWindowServer:
+		t.Skip("no window server session (for example over SSH), which the panel fixture needs")
+	case err != nil:
+		t.Fatalf("run panel fixture: %v\n%s", err, output)
+	case string(output) != "panel fixture passed\n":
+		t.Fatalf("panel fixture output = %q", output)
+	}
 }
 
 // The macOS archive may hold OwnGit.app beside the program: with its bundle

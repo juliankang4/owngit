@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         popover.animates = false
         popover.contentViewController = panel
         popover.delegate = self
-        model.size = PanelSize(rawValue: UserDefaults.standard.integer(forKey: panelSizeKey)) ?? .standard
+        model.size = PanelSize(stored: UserDefaults.standard.object(forKey: panelSizeKey))
         if runsFromTemporaryPlace() {
             fail(words.moveApp)
             return

@@ -26,6 +26,21 @@ enum PanelSize: Int, CaseIterable {
         }
     }
 
+    /// init(stored:) reads the size kept in the app's defaults: one of the
+    /// integer choices, and Default for anything else, also for a fraction,
+    /// a Boolean or text that would convert to a choice.
+    init(stored value: Any?) {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) == CFNumberGetTypeID(),
+              !CFNumberIsFloatType(number),
+              let size = PanelSize(rawValue: number.intValue)
+        else {
+            self = .standard
+            return
+        }
+        self = size
+    }
+
     /// The control size of check boxes and the size choice, which grows
     /// with the scale.
     var controlSize: NSControl.ControlSize {
@@ -187,7 +202,6 @@ final class PanelViewController: NSViewController {
     private var width: CGFloat { 344 * scale }
     private var inset: CGFloat { 16 * scale }
     private var inner: CGFloat { width - 2 * inset }
-    private static let sizeControl = NSUserInterfaceItemIdentifier("panel-size")
 
     init(words: Words, appVersion: String, perform: @escaping (PanelAction) -> Void) {
         self.words = words
@@ -220,14 +234,14 @@ final class PanelViewController: NSViewController {
         perform(.close)
     }
 
-    /// focusFirstControl puts keyboard focus on the button titled
-    /// preferring when the panel has one, and on its main button otherwise.
-    func focusFirstControl(preferring title: String? = nil) {
+    /// focusFirstControl puts keyboard focus on the control named preferring
+    /// when the panel has one, and on its main control otherwise.
+    func focusFirstControl(preferring name: String? = nil) {
         guard let window = view.window else {
             return
         }
         window.autorecalculatesKeyViewLoop = true
-        let control = title.flatMap { $0.isEmpty ? nil : self.control(named: $0, in: view) } ?? firstControl
+        let control = name.flatMap { self.control(named: $0, in: view) } ?? firstControl
         window.makeFirstResponder(control)
         // The popover takes its new size after render; reveal the control
         // again once it has.
@@ -236,14 +250,11 @@ final class PanelViewController: NSViewController {
         }
     }
 
-    /// control finds the button titled name, or the control whose
-    /// identifier is name.
+    /// control finds the control named name: its identifier, which stays the
+    /// same across redraws whatever its title shows.
     private func control(named name: String, in parent: NSView) -> NSView? {
         for child in parent.subviews {
-            if let button = child as? PanelButton, button.title == name {
-                return button
-            }
-            if !(child is NSButton), child.identifier?.rawValue == name {
+            if child.identifier?.rawValue == name {
                 return child
             }
             if let found = control(named: name, in: child) {
@@ -299,7 +310,7 @@ final class PanelViewController: NSViewController {
         }
         let focused = view.window?.firstResponder
         let focusWasInside = focused is NSView
-        let focusedName = (focused as? NSButton)?.title ?? (focused as? NSView)?.identifier?.rawValue
+        let focusedName = (focused as? NSView)?.identifier?.rawValue
         rendered = model
         size = model.size
         // Each state is built in a new stack, measured before it joins the
@@ -387,9 +398,9 @@ final class PanelViewController: NSViewController {
         var primary: PanelButton?
         if let status {
             if status.setup_required {
-                primary = button(words.finishSetup) { [perform] _ in perform(.finishSetup) }
+                primary = button(words.finishSetup, id: "finish-setup") { [perform] _ in perform(.finishSetup) }
             } else {
-                primary = button(words.openDashboard) { [perform] _ in perform(.openDashboard) }
+                primary = button(words.openDashboard, id: "open-dashboard") { [perform] _ in perform(.openDashboard) }
             }
         }
         add(footer(primary: primary))
@@ -461,7 +472,7 @@ final class PanelViewController: NSViewController {
                 } else {
                     lines.append(help(words.runInTerminal))
                     lines.append(code(update.command))
-                    lines.append(button(words.copyCommand) { [perform, words] button in
+                    lines.append(button(words.copyCommand, id: "copy-command") { [perform, words] button in
                         perform(.copy(update.command))
                         button.title = words.copied
                     })
@@ -479,7 +490,7 @@ final class PanelViewController: NSViewController {
             return lines.isEmpty ? nil : lines
         case .stopped(let start):
             return [label(words.stoppedLine),
-                    button(words.start) { [perform] _ in perform(.run(start)) }]
+                    button(words.start, id: "start") { [perform] _ in perform(.run(start)) }]
         case .unavailable(let why):
             switch why {
             case .noAnswer:
@@ -491,7 +502,7 @@ final class PanelViewController: NSViewController {
             case .silent(let restart):
                 var lines: [NSView] = [label(words.silentLine)]
                 if !restart.isEmpty {
-                    lines.append(button(words.restart) { [perform] _ in perform(.run(restart)) })
+                    lines.append(button(words.restart, id: "restart") { [perform] _ in perform(.run(restart)) })
                 }
                 return lines
             case .addressTaken:
@@ -504,7 +515,7 @@ final class PanelViewController: NSViewController {
 
     private func cloneField(_ address: String) -> NSView {
         let field = code(address)
-        let copy = button(words.copy) { [perform, words] button in
+        let copy = button(words.copy, id: "copy-clone-address") { [perform, words] button in
             perform(.copy(address))
             button.title = words.copied
         }
@@ -554,7 +565,7 @@ final class PanelViewController: NSViewController {
             primary.bezelColor = .controlAccentColor
             views.append(primary)
         }
-        let settings = button("") { [perform] _ in perform(.settings(true)) }
+        let settings = button("", id: "settings") { [perform] _ in perform(.settings(true)) }
         settings.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: words.settings)
         settings.imagePosition = .imageOnly
         settings.setAccessibilityLabel(words.settings)
@@ -564,7 +575,7 @@ final class PanelViewController: NSViewController {
         row.addView(settings, in: .trailing)
         row.widthAnchor.constraint(equalToConstant: inner).isActive = true
         firstControl = primary ?? settings
-        let hide = button(words.hide, inline: true) { [perform] _ in perform(.hide) }
+        let hide = button(words.hide, id: "hide", inline: true) { [perform] _ in perform(.hide) }
         hide.isBordered = false
         hide.contentTintColor = .linkColor
         let column = NSStackView(views: [row, hide])
@@ -577,7 +588,7 @@ final class PanelViewController: NSViewController {
     // MARK: - Settings
 
     private func buildSettings(_ model: PanelModel) {
-        let back = button(words.back) { [perform] _ in perform(.settings(false)) }
+        let back = button(words.back, id: "back") { [perform] _ in perform(.settings(false)) }
         back.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: nil)
         back.imagePosition = .imageLeading
         let title = label(words.settingsTitle, weight: .semibold)
@@ -590,14 +601,14 @@ final class PanelViewController: NSViewController {
         add(help(words.panelSizeHelp))
         add(separator())
 
-        let signIn = toggle(words.openAtSignIn, on: model.signIn != .off) { [perform] button in
+        let signIn = toggle(words.openAtSignIn, id: "open-at-sign-in", on: model.signIn != .off) { [perform] button in
             perform(.openAtSignIn(button.state == .on))
         }
         add(signIn)
         add(help(words.openAtSignInHelp))
         if model.signIn == .needsApproval {
             add(notice([label(words.allowSignIn),
-                        button(words.openLoginItems) { [perform] _ in perform(.openLoginItems) }]))
+                        button(words.openLoginItems, id: "open-login-items") { [perform] _ in perform(.openLoginItems) }]))
         }
         if let failure = model.failure {
             add(notice([label(String(format: words.failed, failure), selectable: true)]))
@@ -607,10 +618,10 @@ final class PanelViewController: NSViewController {
             buildNotifications(choice, denied: model.notificationsDenied)
         }
         add(separator())
-        add(button(words.hide) { [perform] _ in perform(.hide) })
+        add(button(words.hide, id: "hide") { [perform] _ in perform(.hide) })
         add(help(words.hideHelp))
         add(separator())
-        add(button(words.quit) { [perform] _ in perform(.quit) })
+        add(button(words.quit, id: "quit") { [perform] _ in perform(.quit) })
         add(help(words.quitHelp))
         firstControl = back
     }
@@ -627,7 +638,7 @@ final class PanelViewController: NSViewController {
         choice.font = .systemFont(ofSize: body)
         choice.segmentDistribution = .fillEqually
         choice.selectedSegment = current.rawValue
-        choice.identifier = Self.sizeControl
+        choice.identifier = NSUserInterfaceItemIdentifier("panel-size")
         choice.setAccessibilityLabel(words.panelSize)
         choice.widthAnchor.constraint(equalToConstant: inner).isActive = true
         return choice
@@ -640,7 +651,7 @@ final class PanelViewController: NSViewController {
         add(caption(words.notifications))
         if denied {
             add(notice([label(words.notificationsOff),
-                        button(words.openNotificationSettings) { [perform] _ in perform(.openNotificationSettings) }]))
+                        button(words.openNotificationSettings, id: "open-notification-settings") { [perform] _ in perform(.openNotificationSettings) }]))
         }
         add(notificationSwitch("all", words.notifyAll, on: choice.all, enabled: true))
         add(notificationSwitch("only_others", words.notifyOthers, on: choice.only_others, enabled: choice.all))
@@ -652,7 +663,7 @@ final class PanelViewController: NSViewController {
     }
 
     private func notificationSwitch(_ setting: String, _ title: String, on: Bool, enabled: Bool) -> PanelButton {
-        let button = toggle(title, on: on) { [perform] button in
+        let button = toggle(title, id: "notify-" + setting, on: on) { [perform] button in
             perform(.notify(setting, button.state == .on))
         }
         button.isEnabled = enabled
@@ -677,9 +688,12 @@ final class PanelViewController: NSViewController {
     /// title above its middle, so the button has a flexible height instead,
     /// which looks the same at Default and takes the capsule shape of
     /// macOS's larger buttons at Large and Larger. inline gives a link-like
-    /// button instead.
-    private func button(_ title: String, inline: Bool = false, handler: @escaping (PanelButton) -> Void) -> PanelButton {
+    /// button instead. id names the control across redraws, so focus stays
+    /// on it when the panel is drawn again, also when its title is empty or
+    /// has changed, as Copy's does.
+    private func button(_ title: String, id: String, inline: Bool = false, handler: @escaping (PanelButton) -> Void) -> PanelButton {
         let button = PanelButton(title: title, bezel: inline ? .inline : .flexiblePush, handler: handler)
+        button.identifier = NSUserInterfaceItemIdentifier(id)
         button.font = .systemFont(ofSize: body)
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: body, weight: .regular)
         if !inline {
@@ -689,9 +703,10 @@ final class PanelViewController: NSViewController {
         return button
     }
 
-    /// toggle is a check box at the panel's size.
-    private func toggle(_ title: String, on: Bool, handler: @escaping (PanelButton) -> Void) -> PanelButton {
+    /// toggle is a check box at the panel's size, named id like a button.
+    private func toggle(_ title: String, id: String, on: Bool, handler: @escaping (PanelButton) -> Void) -> PanelButton {
         let toggle = PanelButton(title: title, handler: handler)
+        toggle.identifier = NSUserInterfaceItemIdentifier(id)
         toggle.setButtonType(.switch)
         toggle.controlSize = size.controlSize
         toggle.font = .systemFont(ofSize: body)
