@@ -241,6 +241,8 @@ final class PanelViewController: NSViewController {
             return
         }
         window.autorecalculatesKeyViewLoop = true
+        // The window's lazy Tab order rebuild is lost when the popover closes and reopens.
+        window.recalculateKeyViewLoop()
         let control = name.flatMap { self.control(named: $0, in: view) } ?? firstControl
         window.makeFirstResponder(control)
         // The popover takes its new size after render; reveal the control
