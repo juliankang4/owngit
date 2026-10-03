@@ -18,6 +18,14 @@ private let closedPanelInterval: TimeInterval = 30
 // answer.
 private let statusTimeout: TimeInterval = 70
 
+/// The owner's panel size, kept in the app's own defaults for this macOS
+/// account.
+private let panelSizeKey = "PanelSize"
+
+/// The popover's arrow and the gaps above and below it, which the panel's
+/// height leaves free on the screen.
+private let popoverMargin: CGFloat = 40
+
 /// What the bundled owngit command printed and how it ended.
 struct HelperResult {
     let status: Int32
@@ -86,6 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         popover.animates = false
         popover.contentViewController = panel
         popover.delegate = self
+        model.size = PanelSize(rawValue: UserDefaults.standard.integer(forKey: panelSizeKey)) ?? .standard
         if runsFromTemporaryPlace() {
             fail(words.moveApp)
             return
@@ -242,8 +251,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         }
         model.showingSettings = false
         model.signIn = signInState()
-        panel.render(model)
-        popover.contentSize = panel.preferredContentSize
+        renderPanel()
         NSApp.activate(ignoringOtherApps: true)
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         popover.contentViewController?.view.window?.makeKey()
@@ -260,6 +268,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     private func update(_ change: (inout PanelModel) -> Void) {
         change(&model)
         drawIcon()
+        renderPanel()
+    }
+
+    /// renderPanel shows the model in the panel and sizes the popover to
+    /// it, no taller than the visible part of the menu bar icon's screen.
+    private func renderPanel() {
+        if let screen = statusItem?.button?.window?.screen ?? NSScreen.main {
+            panel.maxHeight = max(screen.visibleFrame.height - popoverMargin, 200)
+        }
         panel.render(model)
         popover.contentSize = panel.preferredContentSize
     }
@@ -491,6 +508,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
             if let settings = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=" + id) {
                 NSWorkspace.shared.open(settings)
             }
+        case .size(let size):
+            UserDefaults.standard.set(size.rawValue, forKey: panelSizeKey)
+            update { $0.size = size }
         case .quit:
             NSApp.terminate(nil)
         case .close:

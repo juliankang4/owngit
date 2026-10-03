@@ -513,6 +513,7 @@ struct Words {
     let noAnswerLine, noStatusLine, startingLine, silentLine, addressTakenLine, uncheckedLine: String
     let hide, hideHelp: String
     let settings, settingsTitle, back: String
+    let panelSize, sizeDefault, sizeLarge, sizeLarger, panelSizeHelp: String
     let openAtSignIn, openAtSignInHelp, allowSignIn, openLoginItems: String
     let quit, quitHelp: String
     let moveApp: String
@@ -548,6 +549,8 @@ struct Words {
         hide: "Hide from the menu bar",
         hideHelp: "OwnGit keeps running. To show the icon again, open the OwnGit app, turn on the OwnGit icon switch in the dashboard's Settings, or run owngit tray on.",
         settings: "Settings", settingsTitle: "Icon settings on this Mac", back: "Back",
+        panelSize: "Panel size", sizeDefault: "Default", sizeLarge: "Large", sizeLarger: "Larger",
+        panelSizeHelp: "While the panel is open, ⌘+ and ⌘- change its size, and ⌘0 returns to Default.",
         openAtSignIn: "Open at sign-in", openAtSignInHelp: "Shows this icon when you sign in. OwnGit itself starts either way.",
         allowSignIn: "Allow OwnGit in System Settings, under Login Items.", openLoginItems: "Open Login Items",
         quit: "Quit the icon", quitHelp: "OwnGit keeps running. Open the OwnGit app to see the icon again.",
@@ -593,6 +596,8 @@ struct Words {
         hide: "메뉴 막대에서 숨기기",
         hideHelp: "OwnGit은 계속 실행됩니다. 아이콘을 다시 보려면 OwnGit 앱을 다시 열거나, 대시보드 설정에서 OwnGit 아이콘 스위치를 켜거나, owngit tray on을 실행하세요.",
         settings: "설정", settingsTitle: "이 Mac의 아이콘 설정", back: "뒤로",
+        panelSize: "패널 크기", sizeDefault: "기본", sizeLarge: "크게", sizeLarger: "아주 크게",
+        panelSizeHelp: "패널이 열려 있을 때 ⌘+와 ⌘-로 크기를 바꾸고, ⌘0을 누르면 기본 크기로 돌아갑니다.",
         openAtSignIn: "로그인할 때 열기", openAtSignInHelp: "로그인하면 이 아이콘을 보여 줍니다. OwnGit 자체는 이 설정과 관계없이 시작됩니다.",
         allowSignIn: "시스템 설정의 로그인 항목에서 OwnGit을 허용하세요.", openLoginItems: "로그인 항목 열기",
         quit: "아이콘 종료", quitHelp: "OwnGit은 계속 실행됩니다. OwnGit 앱을 다시 열면 아이콘이 나타납니다.",
