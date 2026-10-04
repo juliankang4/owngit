@@ -13,15 +13,30 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
 
+// TestMain also runs the fake Git backend in this binary, as git-http-backend
+// runs the CGI program. A fake backend child answers one request and is done,
+// so it leaves through syscall.Exit instead of the runtime's exit path. That
+// skips the race detector's exit handling as a whole: neither the one-second
+// wait for goroutines that still run nor the finalization that turns a
+// reported race into exit status 66 happens. A race this child reports is
+// still printed on its stderr, which the handler captures, but it no longer
+// fails the child or the parent, and no test ever read the child's exit
+// status. That is acceptable because the child runs only
+// runPortableFakeBackend below, never product code. The GORACE that
+// internal/testfixture/race.go sets for other children is not an option here:
+// the child's environment comes from gitexec.Runner.Environment, which passes
+// no GORACE, and the production Git environment does not change. The parent
+// test process keeps its own race checking and its normal exit wait.
 func TestMain(m *testing.M) {
 	pathInfo := os.Getenv("PATH_INFO")
 	if os.Getenv("GIT_HTTP_EXPORT_ALL") == "1" && os.Getenv("SCRIPT_NAME") == "/git" && strings.HasPrefix(pathInfo, "/sample.git/") {
 		runPortableFakeBackend()
-		os.Exit(0)
+		syscall.Exit(0)
 	}
 	os.Exit(m.Run())
 }

@@ -14,8 +14,12 @@ import (
 // child that runs one command, one render or one open for a test has
 // finished its work by then, so the wait only adds a second to each child.
 // The race detector still checks everything a child runs, and a race it
-// finds still fails the child. What is given up is a race in a goroutine
-// that still runs after the child decided to exit.
+// finds still fails the child. A child that leaves through syscall.Exit
+// instead of os.Exit is the exception: it skips the runtime's exit path
+// entirely, so neither the wait nor the exit status 66 happens and a race it
+// reports does not fail it (the fake Git backend child in internal/githttp
+// does this, and runs only test code). What is given up here is a race in a
+// goroutine that still runs after the child decided to exit.
 //
 // An atexit_sleep_ms that GORACE already sets is kept, so a developer can
 // ask for the wait again, and a child that runs TestMain itself does not add
