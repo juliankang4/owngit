@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -87,15 +88,6 @@ func (fixture *pushFixture) git(arguments ...string) string {
 	output, err := command.CombinedOutput()
 	if err != nil {
 		fixture.t.Fatalf("git %v: %v\n%s", arguments, err, output)
-	}
-	for _, argument := range arguments {
-		if argument == "push" {
-			// A push reaches the repository through OwnGit, which releases the
-			// repository's write lock; the cached refs are then read again.
-			lock := fixture.coordinator.Repositories.Locks.For(fixture.repositoryID)
-			lock.Lock()
-			lock.Unlock()
-		}
 	}
 	return strings.TrimSpace(string(output))
 }
@@ -266,5 +258,83 @@ func TestDisabledPushEventObservesNothing(t *testing.T) {
 	}
 	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
 		t.Fatalf("jobs after enabling push=%v, want one for main", refs)
+	}
+}
+
+// The pass a push wakes runs while the push still holds the repository write
+// lock. It waits for the writer and sees the pushed head in that pass.
+func TestPushWakePassWaitsForTheWritingPush(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	fixture.pushWorkflow("main", validWorkflow)
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	lock := fixture.coordinator.Repositories.Locks.For(fixture.repositoryID)
+	lock.Lock()
+	fixture.pushWorkflow("feature", validWorkflow)
+	done := make(chan error, 1)
+	go func() { done <- fixture.coordinator.reconcile(fixture.ctx) }()
+	// The pass is blocked on the lock once it counts as waiting. A pass that
+	// finished first did not wait for the writer.
+	for finished := false; !lock.Waiting() && !finished; {
+		select {
+		case err := <-done:
+			done <- err
+			finished = true
+		default:
+			runtime.Gosched()
+		}
+	}
+	lock.Unlock()
+	noErr(t, <-done)
+	if refs := fixture.jobRefs(); len(refs) != 2 {
+		t.Fatalf("jobs after the pass woken by the push=%v, want main and feature", refs)
+	}
+}
+
+// A branch written straight into the repository folder, not through OwnGit,
+// is seen by the next pass.
+func TestBranchWrittenOutsideOwnGitIsSeenByTheNextPass(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	fixture.pushWorkflow("main", validWorkflow)
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	fixture.git("-C", fixture.work, "update-ref", "refs/heads/outside", "HEAD")
+	fixture.git("-C", fixture.work, "push", fixture.repoPath, "refs/heads/outside")
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 2 {
+		t.Fatalf("jobs=%v, want main and outside", refs)
+	}
+}
+
+// Observations left while push was off, with consent inactive so no pass
+// cleared them, must not hide the head once push is turned on again. A head
+// that already had a job is still not queued twice.
+func TestEnablingPushIgnoresObservationsLeftWhilePushWasOff(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	oid := fixture.pushWorkflow("main", validWorkflow)
+	now := time.Now().UTC()
+	savePolicy := func(consent bool, events ...string) {
+		now = now.Add(2 * time.Second)
+		_, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{
+			RepositoryID: fixture.repositoryID, Executor: state.CheckExecutorExternalRunner, AllowedEvents: events,
+			MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+		}, now)
+		noErr(t, err)
+		if consent {
+			_, err = fixture.store.GrantCheckConsent(fixture.ctx, fixture.repositoryID, now.Add(time.Second))
+			noErr(t, err)
+		}
+	}
+	savePolicy(false, checkworkflow.EventPullRequest)
+	noErr(t, fixture.store.RecordCheckObservation(fixture.ctx, fixture.repositoryID, "refs/heads/main", oid, now))
+	savePolicy(true, checkworkflow.EventPush, checkworkflow.EventPullRequest)
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after enabling push=%v, want one for main", refs)
+	}
+	savePolicy(true, checkworkflow.EventPullRequest)
+	noErr(t, fixture.store.RecordCheckObservation(fixture.ctx, fixture.repositoryID, "refs/heads/main", strings.Repeat("1", 40), now))
+	savePolicy(true, checkworkflow.EventPush, checkworkflow.EventPullRequest)
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after enabling push again=%v, want still one", refs)
 	}
 }

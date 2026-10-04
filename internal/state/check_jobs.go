@@ -410,6 +410,14 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 		}
 		stored = candidate
 	}
+	// Turning push checks on observes the branch heads afresh: an observation
+	// left from while push was off must not make an unchanged head look
+	// handled. A head that already has a job is still not queued again.
+	if policyAllowsCheckEvent(candidate, checkworkflow.EventPush) && !(exists && policyAllowsCheckEvent(existing, checkworkflow.EventPush)) {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM check_observations WHERE repository_id=?`, input.RepositoryID); err != nil {
+			return CheckPolicy{}, err
+		}
+	}
 	if enable {
 		stored, err = grantCheckConsentTx(ctx, tx, input.RepositoryID, &ExpectedCheckPolicy{Version: stored.Version, Digest: candidate.Digest}, now)
 		if err != nil {
@@ -1207,22 +1215,15 @@ func (s *Store) AdmitCheckJob(ctx context.Context, request CheckJobRequest, now 
 	return job, deduped, nil
 }
 
-// RerunCheckJob admits a fresh job for one terminal job. The rerun keeps the
-// exact trigger facts but carries a distinct generation, so it never dedups
-// onto the original and never silently requeues possibly executed work.
+// RerunCheckJob admits a fresh job for one terminal job. The rerun
+// keeps the exact trigger facts but carries a distinct generation, so it never
+// dedups onto the original and never silently requeues possibly executed work.
 //
 // The rerun's limits come from the same rule as a new job's: the workflow's
-// request, cut to the policy's current caps. RerunCheckJob has no request to
-// give, so it keeps the original job's effective limits as the request.
-func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, now time.Time) (CheckJob, bool, error) {
-	return s.RerunCheckJobRequesting(ctx, repositoryID, jobID, nil, now)
-}
-
-// RerunCheckJobRequesting is RerunCheckJob for a caller that read the
-// workflow's own request: its timeout and output limit, each zero when the
-// workflow set none. Nil keeps the original job's effective limits as the
-// request.
-func (s *Store) RerunCheckJobRequesting(ctx context.Context, repositoryID, jobID string, requested *CheckJobLimits, now time.Time) (CheckJob, bool, error) {
+// request, cut to the policy's current caps. requested is that request, the
+// workflow's own timeout and output limit, each zero when the workflow set
+// none. Nil keeps the original job's effective limits as the request.
+func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, requested *CheckJobLimits, now time.Time) (CheckJob, bool, error) {
 	if repositoryID == "" || !validAttemptID(jobID) || now.IsZero() {
 		return CheckJob{}, false, fmt.Errorf("%w: invalid rerun", ErrInvalidCheckJob)
 	}

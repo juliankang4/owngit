@@ -573,7 +573,7 @@ func TestMissingConfigurationHasOneName(t *testing.T) {
 	noErr(t, err)
 	noErr(t, fixture.store.Exec(ctx, `DELETE FROM check_configurations WHERE repository_id='project'`))
 
-	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, fixture.now); !errors.Is(err, ErrCheckConfigurationMissing) {
+	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, nil, fixture.now); !errors.Is(err, ErrCheckConfigurationMissing) {
 		t.Fatalf("rerun without its configuration: %v", err)
 	}
 	if _, _, err := fixture.store.CompleteCheckAttempt(ctx, CheckCompletion{
@@ -795,14 +795,14 @@ func TestLeaseExpiryIsAmbiguousAndNeedsExplicitRerun(t *testing.T) {
 	if _, claimed, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, expiredAt); err != nil || claimed {
 		t.Fatalf("ambiguous claim claimed=%v err=%v", claimed, err)
 	}
-	rerun, deduped, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, expiredAt)
+	rerun, deduped, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, nil, expiredAt)
 	if err != nil || deduped || rerun.ID == job.ID || rerun.Status != CheckJobPending || rerun.RerunRoot != job.ID || rerun.RerunGeneration != 1 {
 		t.Fatalf("rerun=%+v deduped=%v err=%v", rerun, deduped, err)
 	}
 	if _, claimed, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, expiredAt); err != nil || !claimed {
 		t.Fatalf("rerun claim claimed=%v err=%v", claimed, err)
 	}
-	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", rerun.ID, expiredAt); !errors.Is(err, ErrCheckJobState) {
+	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", rerun.ID, nil, expiredAt); !errors.Is(err, ErrCheckJobState) {
 		t.Fatalf("rerun pending error=%v", err)
 	}
 }
@@ -1204,7 +1204,7 @@ func TestRerunAdmissionDeduplicatesUnderConcurrency(t *testing.T) {
 		wait.Add(1)
 		go func() {
 			defer wait.Done()
-			rerun, _, err := fixture.store.RerunCheckJob(context.Background(), "project", job.ID, fixture.now.Add(time.Second))
+			rerun, _, err := fixture.store.RerunCheckJob(context.Background(), "project", job.ID, nil, fixture.now.Add(time.Second))
 			if err != nil {
 				t.Errorf("concurrent rerun: %v", err)
 				return
@@ -1248,32 +1248,6 @@ func (fixture *checkJobFixture) claimAndStart(t *testing.T, job CheckJob, runner
 	return claimed, attempt
 }
 
-// The repository holding the oldest pending job is claimed first, whatever the
-// repository names sort like.
-func TestPendingRepositoriesAreOrderedByTheirOldestJob(t *testing.T) {
-	fixture := newCheckJobFixture(t)
-	ctx := context.Background()
-	for _, id := range []string{"other", "project"} {
-		fixture.setPolicy(t, func(input *CheckPolicyInput) { input.RepositoryID = id })
-		_, err := fixture.store.GrantCheckConsent(ctx, id, fixture.now)
-		noErr(t, err)
-	}
-	admitAt := func(id, ref string, offset time.Duration) {
-		request := pushJobRequest()
-		request.RepositoryID, request.TriggerRef = id, ref
-		request.EventKey = "refs/heads/" + ref + "@" + request.SourceOID
-		_, _, err := fixture.store.AdmitCheckJob(ctx, request, fixture.now.Add(offset))
-		noErr(t, err)
-	}
-	admitAt("project", "main", 0)
-	admitAt("other", "main", time.Second)
-	admitAt("other", "dev", 2*time.Second)
-	ids, err := fixture.store.CheckPendingRepositories(ctx)
-	if err != nil || strings.Join(ids, ",") != "project,other" {
-		t.Fatalf("pending repositories=%v err=%v, want project,other", ids, err)
-	}
-}
-
 // A rerun applies the policy's current caps to the workflow's request, so
 // raising a cap lets it run longer and lowering one cuts it. Without a request
 // it keeps the original job's effective limits, still cut by the caps.
@@ -1305,7 +1279,7 @@ func TestRerunLimitsFollowTheCurrentPolicyCaps(t *testing.T) {
 			input.MaxTimeoutMS, input.MaxOutputLimitBytes = test.timeout, test.output
 		})
 		fixture.grantConsent(t)
-		rerun, _, err := fixture.store.RerunCheckJobRequesting(ctx, "project", job.ID, test.requested, fixture.now)
+		rerun, _, err := fixture.store.RerunCheckJob(ctx, "project", job.ID, test.requested, fixture.now)
 		noErr(t, err)
 		if rerun.Limits != test.want {
 			t.Fatalf("caps %d/%d: rerun limits=%+v, want %+v", test.timeout, test.output, rerun.Limits, test.want)

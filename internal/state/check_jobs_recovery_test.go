@@ -192,7 +192,7 @@ func TestRestoreInvalidatesCheckExecutionAuthority(t *testing.T) {
 	if err != nil || stillInterrupted.Status != CheckJobInterrupted {
 		t.Fatalf("interrupted evidence=%+v err=%v", stillInterrupted, err)
 	}
-	rerun, deduped, err := destination.RerunCheckJob(ctx, "project", fixture.pendingID, fixture.now)
+	rerun, deduped, err := destination.RerunCheckJob(ctx, "project", fixture.pendingID, nil, fixture.now)
 	if err != nil || deduped || rerun.Status != CheckJobPending {
 		t.Fatalf("post-restore rerun=%+v deduped=%v err=%v", rerun, deduped, err)
 	}

@@ -256,32 +256,25 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	if coordinator.skippedRefs == nil {
 		coordinator.skippedRefs = make(map[string]map[string]string)
 	}
-	observations, err := coordinator.Store.CheckObservations(ctx, repositoryID)
-	if err != nil {
-		return err
-	}
 	// A disabled event observes nothing, so enabling it later admits the
-	// heads that arrived meanwhile. Observations an earlier pass recorded
-	// while the event was off are dropped for the same reason.
+	// heads that arrived meanwhile (the policy change clears older records).
 	if !contains(policy.AllowedEvents, checkworkflow.EventPush) {
-		for _, observation := range observations {
-			if err := coordinator.Store.DeleteCheckObservation(ctx, repositoryID, observation.RefName); err != nil {
-				return err
-			}
-		}
 		return nil
 	}
-	// The cached snapshot runs no Git process while no OwnGit write changed
-	// the repository's refs.
-	snapshot, err := coordinator.Repositories.RefSnapshot(ctx, repositoryID)
+	// Summary waits for a writer that is still pushing and reads the refs as
+	// they are, so a change made outside OwnGit is seen in the same pass.
+	summary, err := coordinator.Repositories.Summary(ctx, repositoryID)
 	if err != nil {
 		return err
 	}
-	summary := snapshot.Summary
 	sort.Slice(summary.Branches, func(i, j int) bool { return summary.Branches[i].Name < summary.Branches[j].Name })
 	branches := boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
 	if len(summary.Branches) > maximumObservedRefs {
 		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(summary.Branches))
+	}
+	observations, err := coordinator.Store.CheckObservations(ctx, repositoryID)
+	if err != nil {
+		return err
 	}
 	previous := make(map[string]string, len(observations))
 	for _, observation := range observations {

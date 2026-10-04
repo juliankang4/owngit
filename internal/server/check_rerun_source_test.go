@@ -182,3 +182,46 @@ func TestBrowserRerunOfAChangedWorkflowIsRefused(t *testing.T) {
 		t.Fatalf("browser rerun of a changed workflow: status=%d", result.status)
 	}
 }
+
+// A job migrated from an earlier version records no source limits. Its rerun
+// still reads the workflow, with the default bound, and applies the caps.
+func TestCheckRerunOfAMigratedJobReadsTheWorkflow(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	oid, blobOID, digest := pushWorkflowCommit(t, fixture, []byte(limitedWorkflow))
+	now := fixture.app.now()
+	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+		MaxTimeoutMS: 90000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
+	}, now)
+	noErr(t, err)
+	_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
+	noErr(t, err)
+	job, _, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
+		RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/ci@" + oid, SourceOID: oid, TriggerRef: "ci",
+		WorkflowPath: checkworkflow.Path, WorkflowOID: blobOID, WorkflowDigest: digest, TimeoutMS: 120000,
+		Checks: []state.CheckDefinition{{Name: "unit", Command: "exit 0"}},
+	}, now)
+	noErr(t, err)
+	_, err = fixture.store.CancelCheckJob(ctx, "project", job.ID, now)
+	noErr(t, err)
+	noErr(t, fixture.store.Exec(ctx, `UPDATE check_jobs SET execution_json='{"legacy":true}' WHERE id=?`, job.ID))
+	rerun, _, err := fixture.app.rerunCheckJob(ctx, "project", job.ID)
+	if err != nil || rerun.Limits.TimeoutMS != 90000 {
+		t.Fatalf("rerun of a migrated job: limits=%+v err=%v", rerun.Limits, err)
+	}
+}
+
+// The API refuses the rerun of a job whose workflow differs from its record
+// with a conflict that names the reason.
+func TestAPIRerunOfAChangedWorkflowIsAConflict(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	oid, _, _ := pushWorkflowCommit(t, fixture, []byte(limitedWorkflow))
+	_, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-api-changed", jobFacts{ref: "ci", sourceOID: oid})
+	finishCheckJob(t, fixture)
+	base := server.URL + "/api/v1/repositories/project/check-jobs/"
+	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, base+job.ID+"/rerun", map[string]any{}, "admin-password")); status != http.StatusConflict || code != "check_workflow_changed" {
+		t.Fatalf("API rerun of a changed workflow: status=%d code=%q", status, code)
+	}
+}

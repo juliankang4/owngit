@@ -15,6 +15,7 @@ import (
 	"owngit/internal/checkapi"
 	"owngit/internal/checkrun"
 	"owngit/internal/checksource"
+	"owngit/internal/logtext"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -700,9 +701,11 @@ func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 
 // errRerunSourceMissing reports that the commit a job ran is no longer in
 // the repository, so the job cannot run again.
-var errRerunWorkflowChanged = errors.New("the job's workflow file no longer matches the one the job recorded")
-
 var errRerunSourceMissing = errors.New("the job's commit is no longer in the repository")
+
+// errRerunWorkflowChanged reports that the workflow file at the job's commit
+// is not the one the job recorded, so the job cannot run again.
+var errRerunWorkflowChanged = errors.New("the job's workflow file no longer matches the one the job recorded")
 
 // rerunCheckJob queues a rerun of job jobID while the repository read lock
 // shows the job's commit is still present. Unused object cleanup reads the
@@ -728,7 +731,7 @@ func (app *App) rerunCheckJob(ctx context.Context, repositoryID, jobID string) (
 			if err != nil {
 				return err
 			}
-			job, deduped, err = app.Store.RerunCheckJobRequesting(ctx, repositoryID, jobID, requested, app.now())
+			job, deduped, err = app.Store.RerunCheckJob(ctx, repositoryID, jobID, requested, app.now())
 			return err
 		})
 	})
@@ -741,20 +744,26 @@ func (app *App) rerunCheckJob(ctx context.Context, repositoryID, jobID string) (
 // rerunRequestedLimits reads the timeout and output limit the job's workflow
 // asked for, so the rerun applies the policy's current caps to them and not
 // to the limits the original job ended up with. A workflow that cannot be
-// found at the job's commit gives nil, and the rerun keeps the job's own
-// limits. A workflow that differs from the one the job recorded is an error.
+// read at the job's commit gives nil, with one log line, and the rerun keeps
+// the job's own limits. A workflow that differs from the one the job recorded
+// is an error, and so are a busy repository (the caller retries) and a
+// canceled request.
 func rerunRequestedLimits(ctx context.Context, pinned *repository.PinnedRepository, original state.CheckJob) (*state.CheckJobLimits, error) {
-	if original.WorkflowDigest == "" {
-		log.Printf("configured check rerun %s keeps its recorded limits: the job recorded no workflow", original.ID)
-		return nil, nil
+	// A job migrated from an earlier version records no source limits.
+	metadataLimit := original.Execution.Source.MetadataLimit
+	if metadataLimit <= 0 {
+		metadataLimit = state.DefaultCheckSourceLimits().MetadataLimit
 	}
-	blob, document, err := checkrun.ReadPinnedWorkflow(ctx, pinned, original.Execution.Source.MetadataLimit)
-	if errors.Is(err, repository.ErrPinnedPathNotFound) {
-		log.Printf("configured check rerun %s keeps its recorded limits: its commit has no workflow file", original.ID)
-		return nil, nil
+	blob, document, err := checkrun.ReadPinnedWorkflow(ctx, pinned, metadataLimit)
+	if errors.Is(err, repository.ErrPinnedRepositoryBusy) || ctx.Err() != nil {
+		if err == nil {
+			err = ctx.Err()
+		}
+		return nil, err
 	}
 	if err != nil {
-		return nil, err
+		log.Printf("configured check rerun %s keeps its recorded limits: its workflow could not be read: %s", original.ID, logtext.Cause(err))
+		return nil, nil
 	}
 	digest := sha256.Sum256(blob.Content)
 	if hex.EncodeToString(digest[:]) != original.WorkflowDigest || (original.WorkflowOID != "" && blob.OID != original.WorkflowOID) {

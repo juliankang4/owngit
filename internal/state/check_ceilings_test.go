@@ -159,7 +159,7 @@ func TestLoweredCeilingStopsNewJobsOnly(t *testing.T) {
 	if _, _, err := fixture.store.AdmitCheckJob(ctx, request, fixture.now); !errors.Is(err, ErrCheckCeilingExceeded) {
 		t.Fatalf("admission above a lowered ceiling: %v", err)
 	}
-	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", admitted.ID, fixture.now); err == nil {
+	if _, _, err := fixture.store.RerunCheckJob(ctx, "project", admitted.ID, nil, fixture.now); err == nil {
 		t.Fatal("a pending job was rerun")
 	}
 
