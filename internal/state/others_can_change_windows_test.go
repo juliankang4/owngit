@@ -211,7 +211,7 @@ func TestWindowsPrivateDirectoryFixDoesNotFollowJunctions(t *testing.T) {
 			t.Fatalf("fix failed: %v\n%s", err, output)
 		}
 		normalizedOutput := strings.ReplaceAll(string(output), "\r\n", "")
-		if !strings.Contains(normalizedOutput, "left linked entry unchanged") || !strings.Contains(normalizedOutput, junction) {
+		if !strings.Contains(normalizedOutput, "left linked entry unchanged") || !containsPath(normalizedOutput, filepath.Join(longPath(t, root), "objects-junction")) {
 			t.Fatalf("fix did not report the unchanged junction:\n%s", output)
 		}
 		assertProtectionFingerprints(t, outsideProtection)
@@ -368,12 +368,30 @@ func TestWindowsPrivateDirectoryFixStopsAtFirstItemFailure(t *testing.T) {
 				blockedBefore, after, result.err, result.exit, result.elapsed, result.stdout, result.stderr)
 		}
 		normalizedStderr := strings.ReplaceAll(result.stderr, "\r\n", "")
-		if !strings.Contains(normalizedStderr, blocked) || !strings.Contains(normalizedStderr, "OwnGit could not repair") {
+		if !containsPath(normalizedStderr, filepath.Join(longPath(t, root), "z-blocked")) || !strings.Contains(normalizedStderr, "OwnGit could not repair") {
 			t.Fatalf("repair did not report the failed item\nerr=%v exit=%d elapsed=%s stdout=%q stderr=%q",
 				result.err, result.exit, result.elapsed, result.stdout, result.stderr)
 		}
 		assertProtectionFingerprints(t, healthyProtection)
 	})
+}
+
+// longPath expands 8.3 short names in an existing path. The repair scripts
+// print long paths, while t.TempDir can return a short one: on GitHub's
+// Windows runners TEMP names the profile folder as RUNNER~1.
+func longPath(t *testing.T, path string) string {
+	t.Helper()
+	name, err := windows.UTF16PtrFromString(path)
+	noErr(t, err)
+	buffer := make([]uint16, windows.MAX_LONG_PATH)
+	length, err := windows.GetLongPathName(name, &buffer[0], uint32(len(buffer)))
+	noErr(t, err)
+	return windows.UTF16ToString(buffer[:length])
+}
+
+// containsPath reports whether output names path; Windows paths ignore case.
+func containsPath(output, path string) bool {
+	return strings.Contains(strings.ToLower(output), strings.ToLower(path))
 }
 
 func withWindowsPrivilege(t *testing.T, name string, action func()) {

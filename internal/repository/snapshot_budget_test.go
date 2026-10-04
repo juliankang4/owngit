@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -121,12 +123,23 @@ func TestSnapshotLargeRefSetAndLongMessagesAreServedWithoutRetention(t *testing.
 	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "refs/tags/release")
 	oid := gitOutput(t, work, "rev-parse", "HEAD")
 	tag := gitOutput(t, work, "rev-parse", "release")
-	var input strings.Builder
-	for index := 0; index < 20_000; index++ {
-		fmt.Fprintf(&input, "create refs/heads/topic-%06d %s\ncreate refs/tags/tag-%06d %s\n", index, shortOID, index, shortOID)
+	// The 40,000 refs go into packed-refs, as maintenance stores them in a
+	// large repository. Creating them as loose refs with update-ref takes longer
+	// than Git's 2 minute limit on slow Windows runners.
+	packed := filepath.Join(remote, "packed-refs")
+	if _, err := os.Stat(packed); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("packed-refs before the fixture: %v", err)
 	}
-	fmt.Fprintf(&input, "create refs/owngit/retained/tags/%s %s\ncreate refs/owngit/provenance/tags/gone/%s %s\n", tag, tag, tag, tag)
-	_, err := manager.Git.Run(context.Background(), remote, strings.NewReader(input.String()), "--git-dir", ".", "update-ref", "--stdin")
+	var refs strings.Builder
+	refs.WriteString("# pack-refs with: peeled fully-peeled sorted \n")
+	for _, pattern := range []string{"%s refs/heads/topic-%06d\n", "%s refs/tags/tag-%06d\n"} {
+		for index := 0; index < 20_000; index++ {
+			fmt.Fprintf(&refs, pattern, shortOID, index)
+		}
+	}
+	noErr(t, os.WriteFile(packed, []byte(refs.String()), 0o644))
+	input := fmt.Sprintf("create refs/owngit/retained/tags/%s %s\ncreate refs/owngit/provenance/tags/gone/%s %s\n", tag, tag, tag, tag)
+	_, err := manager.Git.Run(context.Background(), remote, strings.NewReader(input), "--git-dir", ".", "update-ref", "--stdin")
 	noErr(t, err)
 	for visit := 0; visit < 2; visit++ {
 		snapshot := mustSnapshot(t, manager)
