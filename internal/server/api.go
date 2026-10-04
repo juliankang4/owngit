@@ -44,7 +44,8 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		}
 		if !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
-			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
+			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) &&
+			!taskViewQueryAllowed(request) {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 			return
 		}

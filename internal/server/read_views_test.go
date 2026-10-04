@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -312,5 +314,182 @@ func TestCodingToolsCommandFitsTheServer(t *testing.T) {
 		if got := mcpCommandFor(test.origin, test.plainHTTP, test.password); got != test.want {
 			t.Errorf("%s: %q, want %q", test.origin, got, test.want)
 		}
+	}
+}
+
+// taskMoreLink finds the "Show older tasks" link the Tasks page renders. The
+// link is a plain anchor, so following it needs no script.
+var taskMoreLink = regexp.MustCompile(`href="([^"]+)" rel="next"`)
+
+func taskMoreURL(t *testing.T, body string) string {
+	t.Helper()
+	match := taskMoreLink.FindStringSubmatch(body)
+	if match == nil {
+		t.Fatalf("the Tasks page has no older-tasks link")
+	}
+	return html.UnescapeString(match[1])
+}
+
+// recordTaskAttemptAt records one completed attempt under the server time the
+// task list order reads.
+func recordTaskAttemptAt(t *testing.T, store *state.Store, sourceOID, taskID, attemptID string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	attempt := state.CheckAttempt{
+		ID: attemptID, TaskID: taskID, RepositoryID: "project", RevisionOID: sourceOID,
+		WorktreeState: state.WorktreeClean, StartedAt: at, CreatedAt: at,
+		Checks: []state.CheckDefinition{{Name: "test", Command: "go test ./..."}},
+	}
+	_, _, err := store.RegisterCheckAttempt(ctx, attempt)
+	noErr(t, err)
+	exitCode := 0
+	_, _, err = store.CompleteCheckAttempt(ctx, state.CheckCompletion{
+		AttemptID: attemptID, RepositoryID: "project", TaskID: taskID, FinishedAt: at.Add(time.Second),
+		WorktreeState: state.WorktreeClean, Log: "synthetic test output",
+		Results: []state.CheckResult{{
+			Name: "test", Command: "go test ./...", Status: state.AttemptPassed,
+			ExitCode: &exitCode, DurationMS: 50, OutputExcerpt: "ok",
+		}},
+	}, at)
+	noErr(t, err)
+}
+
+// corruptAttemptResult makes one stored result unreadable.
+func corruptAttemptResult(t *testing.T, store *state.Store, attemptID string) {
+	t.Helper()
+	noErr(t, store.Exec(context.Background(), `UPDATE check_results SET exit_code='unreadable' WHERE attempt_id=?`, attemptID))
+}
+
+// The repository tasks page and its API read one bounded page, newest first,
+// and hand back a continuation for the older tasks.
+func TestTaskListPagesReadAndContinueOnePage(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	count := defaultTaskPageSize + 10
+	for index := 0; index < count; index++ {
+		_, err := fixture.store.CreateTask(ctx, "project", fmt.Sprintf("Task %02d", index), base.Add(time.Duration(index)*time.Minute))
+		noErr(t, err)
+	}
+	server := serve(t, fixture.app.Handler())
+
+	var first taskViewListResponse
+	if status := decodeAPI(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath+"/project", nil), &first); status != http.StatusOK {
+		t.Fatalf("first task page status=%d", status)
+	}
+	if len(first.Tasks) != defaultTaskPageSize || first.Next == "" || first.Tasks[0].Title != fmt.Sprintf("Task %02d", count-1) {
+		t.Fatalf("first task page count=%d next=%q first=%q", len(first.Tasks), first.Next, first.Tasks[0].Title)
+	}
+	var rest taskViewListResponse
+	target := server.URL + taskViewAPIPath + "/project?before=" + url.QueryEscape(first.Next)
+	if status := decodeAPI(t, sendJSON(t, http.MethodGet, target, nil), &rest); status != http.StatusOK {
+		t.Fatalf("continued task page status=%d", status)
+	}
+	if rest.Next != "" || len(rest.Tasks) != count-defaultTaskPageSize {
+		t.Fatalf("last task page count=%d next=%q", len(rest.Tasks), rest.Next)
+	}
+	seen := make(map[string]bool, count)
+	for _, view := range append(first.Tasks, rest.Tasks...) {
+		if seen[view.ID] {
+			t.Fatalf("task %s appeared on two pages", view.ID)
+		}
+		seen[view.ID] = true
+	}
+	if len(seen) != count {
+		t.Fatalf("pages covered %d tasks, want %d", len(seen), count)
+	}
+	// The largest allowed page covers the repository in one answer.
+	var whole taskViewListResponse
+	if status := decodeAPI(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath+"/project?limit=100", nil), &whole); status != http.StatusOK || whole.Next != "" || len(whole.Tasks) != count {
+		t.Fatalf("full page status=%d count=%d next=%q", status, len(whole.Tasks), whole.Next)
+	}
+
+	// The browser list is the same page with a plain link to the next one.
+	client, _ := newBrowserClient(t)
+	page := browserGET(t, client, server.URL+tasksURL("project", ""))
+	listed := pageTaskTitles(page.body)
+	if page.status != http.StatusOK || len(listed) != defaultTaskPageSize || listed[0] != fmt.Sprintf("Task %02d", count-1) {
+		t.Fatalf("Tasks page status=%d rows=%d first=%q", page.status, len(listed), listed[0])
+	}
+	older := browserGET(t, client, server.URL+taskMoreURL(t, page.body))
+	olderTitles := pageTaskTitles(older.body)
+	if older.status != http.StatusOK || len(olderTitles) != count-defaultTaskPageSize || taskMoreLink.MatchString(older.body) {
+		t.Fatalf("older page status=%d rows=%d", older.status, len(olderTitles))
+	}
+	covered := make(map[string]bool, count)
+	for _, title := range append(listed, olderTitles...) {
+		if covered[title] {
+			t.Fatalf("task %q appeared on two pages", title)
+		}
+		covered[title] = true
+	}
+	if len(covered) != count {
+		t.Fatalf("the Tasks page covered %d tasks, want %d", len(covered), count)
+	}
+
+	// A page parameter that cannot be read is refused, not guessed.
+	for _, item := range []struct {
+		query string
+		code  string
+	}{
+		{"?limit=0", "invalid_list_limit"},
+		{"?limit=101", "invalid_list_limit"},
+		{"?limit=half", "invalid_list_limit"},
+		{"?before=half", "invalid_list_before"},
+		{"?before=1:2:", "invalid_list_before"},
+		{"?limit=1&limit=2", "invalid_request"},
+		{"?unknown=1", "invalid_request"},
+	} {
+		if status, code := checkStatus(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath+"/project"+item.query, nil)); status != http.StatusBadRequest || code != item.code {
+			t.Fatalf("API %s status=%d code=%s", item.query, status, code)
+		}
+	}
+	if bad := browserGET(t, client, server.URL+tasksURL("project", "")+"?before=half"); bad.status != http.StatusBadRequest {
+		t.Fatalf("Tasks page with a bad continuation status=%d", bad.status)
+	}
+}
+
+// The recent task list reads the tasks it shows only. An unreadable result of
+// an older task outside the shown page no longer fails the list, while an
+// unreadable result of a shown task still fails rather than shortening it.
+func TestRecentTasksIgnoreUnreadableAttemptsOutsideTheShownPage(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	tasks := make([]state.Task, 0, maximumRecentTasks+1)
+	for index := 0; index <= maximumRecentTasks; index++ {
+		task, err := fixture.store.CreateTask(ctx, "project", fmt.Sprintf("Task %02d", index), base.Add(time.Duration(index)*time.Minute))
+		noErr(t, err)
+		tasks = append(tasks, task)
+	}
+	excluded := fmt.Sprintf("%032x", 1)
+	recordTaskAttemptAt(t, fixture.store, fixture.sourceOID, tasks[0].ID, excluded, base)
+	corruptAttemptResult(t, fixture.store, excluded)
+
+	server := serve(t, fixture.app.Handler())
+	client, _ := newBrowserClient(t)
+	var recent taskViewListResponse
+	if status := decodeAPI(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath, nil), &recent); status != http.StatusOK ||
+		!recent.Truncated || len(recent.Tasks) != maximumRecentTasks {
+		t.Fatalf("recent tasks status=%d count=%d truncated=%v", status, len(recent.Tasks), recent.Truncated)
+	}
+	for _, view := range recent.Tasks {
+		if view.ID == tasks[0].ID {
+			t.Fatalf("the unreadable older task was shown")
+		}
+	}
+	if page := browserGET(t, client, server.URL+codingToolsPath); page.status != http.StatusOK || !strings.Contains(page.body, fmt.Sprintf("Task %02d", maximumRecentTasks)) {
+		t.Fatalf("Coding tools with an unreadable older task status=%d", page.status)
+	}
+
+	// A result inside the shown page still fails the whole answer.
+	shown := fmt.Sprintf("%032x", 2)
+	recordTaskAttemptAt(t, fixture.store, fixture.sourceOID, tasks[maximumRecentTasks].ID, shown, base.Add(time.Duration(maximumRecentTasks+1)*time.Minute))
+	corruptAttemptResult(t, fixture.store, shown)
+	if status, code := checkStatus(t, sendJSON(t, http.MethodGet, server.URL+taskViewAPIPath, nil)); status != http.StatusServiceUnavailable || code != "state_unavailable" {
+		t.Fatalf("unreadable shown task status=%d code=%s", status, code)
+	}
+	if page := browserGET(t, client, server.URL+codingToolsPath); page.status != http.StatusServiceUnavailable || strings.Contains(page.body, `class="taskrow"`) {
+		t.Fatalf("Coding tools with an unreadable shown task status=%d", page.status)
 	}
 }

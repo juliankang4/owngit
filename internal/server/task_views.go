@@ -2,10 +2,11 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
-	"sort"
+	"net/url"
+	"strconv"
 	"strings"
-	"time"
 
 	"owngit/internal/checkapi"
 	"owngit/internal/state"
@@ -24,6 +25,10 @@ const (
 	// maximumRecentTasks bounds the tasks across repositories that the
 	// Coding tools page and the recent task list show.
 	maximumRecentTasks = 10
+	// defaultTaskPageSize bounds one page of a repository's tasks, and
+	// maximumTaskPageSize is the largest page a caller may ask for.
+	defaultTaskPageSize = 50
+	maximumTaskPageSize = 100
 
 	taskViewAPIPath = "/api/v1/tasks"
 )
@@ -37,65 +42,77 @@ type taskView struct {
 	hasLatest bool
 }
 
-// repositoryTaskViews lists a repository's tasks, those with the newest
-// registered attempt first. The stored sequence stays the authority and is
-// never replaced with a list index.
-func (app *App) repositoryTaskViews(ctx context.Context, stored state.Repository) ([]taskView, error) {
-	tasks, err := app.Store.Tasks(ctx, stored.ID)
-	if err != nil {
-		return nil, err
+// taskPageInput is the paging of one repository task list.
+type taskPageInput struct {
+	limit  int
+	before *state.TaskCursor
+}
+
+// parseTaskPageInput reads the limit and before parameters of a task list. An
+// invalid value returns the API problem code that names it.
+func parseTaskPageInput(query url.Values) (taskPageInput, string) {
+	input := taskPageInput{limit: defaultTaskPageSize}
+	if value := query.Get("limit"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 1 || limit > maximumTaskPageSize {
+			return taskPageInput{}, "invalid_list_limit"
+		}
+		input.limit = limit
 	}
-	sort.SliceStable(tasks, func(left, right int) bool {
-		if tasks[left].LastRegisteredSequence != tasks[right].LastRegisteredSequence {
-			return tasks[left].LastRegisteredSequence > tasks[right].LastRegisteredSequence
+	if value := query.Get("before"); value != "" {
+		cursor, ok := state.ParseTaskCursor(value)
+		if !ok {
+			return taskPageInput{}, "invalid_list_before"
 		}
-		if !tasks[left].UpdatedAt.Equal(tasks[right].UpdatedAt) {
-			return tasks[left].UpdatedAt.After(tasks[right].UpdatedAt)
-		}
-		return tasks[left].ID > tasks[right].ID
-	})
-	return app.withLatestAttempts(ctx, tasks, map[string]string{stored.ID: stored.Address})
+		input.before = &cursor
+	}
+	return input, ""
+}
+
+// taskPageProblemText is the sentence that goes with one invalid task page
+// parameter.
+func taskPageProblemText(code string) string {
+	if code == "invalid_list_limit" {
+		return fmt.Sprintf("The page size must be a whole number between 1 and %d.", maximumTaskPageSize)
+	}
+	return "The continuation is not a task position."
+}
+
+// repositoryTaskPage lists one page of a repository's tasks, those with the
+// newest registered attempt first, then update time, then ID, and reports
+// whether older tasks follow. The stored sequence stays the authority and is
+// never replaced with a list index.
+func (app *App) repositoryTaskPage(ctx context.Context, stored state.Repository, before *state.TaskCursor, limit int) ([]taskView, bool, error) {
+	tasks, more, err := app.Store.TaskPage(ctx, stored.ID, before, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	views, err := app.withLatestAttempts(ctx, tasks, map[string]string{stored.ID: stored.Address})
+	if err != nil {
+		return nil, false, err
+	}
+	return views, more, nil
 }
 
 // recentTaskViews lists the tasks of repositories with the newest change
-// first, at most maximumRecentTasks, and whether more exist. Attempt
-// sequences count within one repository, so across repositories time
-// orders: when the latest attempt was registered, or the task itself last
-// changed, whichever is later. Both are the server's own times.
+// first, at most maximumRecentTasks, and whether more exist. The change time
+// is the later of the latest attempt's registration and the task's own update,
+// both the server's own times. The state read keeps only the newest page, so
+// the view loads attempts for the tasks it shows alone.
 func (app *App) recentTaskViews(ctx context.Context, repositories []state.Repository) ([]taskView, bool, error) {
-	var tasks []state.Task
+	ids := make([]string, 0, len(repositories))
 	addresses := make(map[string]string, len(repositories))
 	for _, stored := range repositories {
+		ids = append(ids, stored.ID)
 		addresses[stored.ID] = stored.Address
-		listed, err := app.Store.Tasks(ctx, stored.ID)
-		if err != nil {
-			return nil, false, err
-		}
-		tasks = append(tasks, listed...)
+	}
+	tasks, more, err := app.Store.RecentTasks(ctx, ids, maximumRecentTasks)
+	if err != nil {
+		return nil, false, err
 	}
 	views, err := app.withLatestAttempts(ctx, tasks, addresses)
 	if err != nil {
 		return nil, false, err
-	}
-	changed := func(view taskView) time.Time {
-		if view.hasLatest && view.latest.CreatedAt.After(view.task.UpdatedAt) {
-			return view.latest.CreatedAt
-		}
-		return view.task.UpdatedAt
-	}
-	sort.SliceStable(views, func(left, right int) bool {
-		leftChanged, rightChanged := changed(views[left]), changed(views[right])
-		if !leftChanged.Equal(rightChanged) {
-			return leftChanged.After(rightChanged)
-		}
-		if views[left].task.RepositoryID != views[right].task.RepositoryID {
-			return views[left].task.RepositoryID < views[right].task.RepositoryID
-		}
-		return views[left].task.ID > views[right].task.ID
-	})
-	more := len(views) > maximumRecentTasks
-	if more {
-		views = views[:maximumRecentTasks]
 	}
 	return views, more, nil
 }
@@ -128,6 +145,9 @@ type taskViewListResponse struct {
 	Tasks []taskViewJSON `json:"tasks"`
 	// Truncated is true when the recent task list left out older tasks.
 	Truncated bool `json:"truncated"`
+	// Next continues a repository's task list below the last task shown.
+	// It is absent on the last page.
+	Next string `json:"next,omitempty"`
 }
 
 type taskDetailResponse struct {
@@ -150,9 +170,36 @@ func (app *App) taskViewsJSON(request *http.Request, views []taskView) []taskVie
 	return items
 }
 
+// taskPageMoreURL is the next page's address of a task list, keeping the page
+// size the caller read. It works without JavaScript.
+func taskPageMoreURL(listURL string, limit int, cursor state.TaskCursor) string {
+	query := url.Values{}
+	query.Set("limit", strconv.Itoa(limit))
+	query.Set("before", cursor.String())
+	return listURL + "?" + query.Encode()
+}
+
+// taskViewQueryAllowed accepts the paging parameters of one repository's task
+// list, each given once. The recent list and one task take no parameters.
+func taskViewQueryAllowed(request *http.Request) bool {
+	if request.Method != http.MethodGet {
+		return false
+	}
+	rest, found := strings.CutPrefix(request.URL.Path, taskViewAPIPath+"/")
+	if !found || rest == "" || strings.Contains(rest, "/") {
+		return false
+	}
+	for key, values := range request.URL.Query() {
+		if (key != "limit" && key != "before") || len(values) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
 // handleTaskViewAPI answers the task views with general access:
 // GET /api/v1/tasks lists the recent tasks of every repository,
-// GET /api/v1/tasks/REPOSITORY a repository's tasks, and
+// GET /api/v1/tasks/REPOSITORY one page of a repository's tasks, and
 // GET /api/v1/tasks/REPOSITORY/TASK one task with its newest attempts.
 func (app *App) handleTaskViewAPI(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
 	if !app.authorizeAPI(writer, request, settings) {
@@ -198,12 +245,21 @@ func (app *App) handleTaskViewAPI(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	if len(parts) == 1 {
-		views, err := app.repositoryTaskViews(ctx, stored)
+		input, problem := parseTaskPageInput(request.URL.Query())
+		if problem != "" {
+			writeAPIError(writer, http.StatusBadRequest, problem, taskPageProblemText(problem), nil)
+			return
+		}
+		views, more, err := app.repositoryTaskPage(ctx, stored, input.before, input.limit)
 		if err != nil {
 			writeAPIError(writer, unavailable(request, "task list read", err), "state_unavailable", "Task records could not be read.", nil)
 			return
 		}
-		writeAPIJSON(writer, http.StatusOK, taskViewListResponse{OK: true, Tasks: app.taskViewsJSON(request, views)})
+		response := taskViewListResponse{OK: true, Tasks: app.taskViewsJSON(request, views)}
+		if more {
+			response.Next = views[len(views)-1].task.Cursor().String()
+		}
+		writeAPIJSON(writer, http.StatusOK, response)
 		return
 	}
 	task, exists, err := app.Store.Task(ctx, repositoryID, parts[1])

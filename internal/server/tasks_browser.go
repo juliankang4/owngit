@@ -61,12 +61,20 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		page.NotFound = true
 	}
 
-	views, err := app.repositoryTaskViews(request.Context(), stored)
+	input, problem := parseTaskPageInput(request.URL.Query())
+	if problem != "" {
+		app.renderError(writer, request, http.StatusBadRequest, webui.MsgErrBadRequest, "")
+		return
+	}
+	views, more, err := app.repositoryTaskPage(request.Context(), stored, input.before, input.limit)
 	if err != nil {
 		answerUnavailable("task list read", err)
 		return
 	}
 	page.Tasks = app.browserTaskSummaries(request.Context(), views)
+	if more {
+		page.MoreURL = taskPageMoreURL(page.ListURL, input.limit, views[len(views)-1].task.Cursor())
+	}
 	if page.NotFound {
 		app.render(writer, request, http.StatusNotFound, page)
 		return

@@ -140,6 +140,7 @@
           </a>
         {{end}}
       </div>
+      {{with $p.MoreURL}}<p><a class="btn" href="{{.}}" rel="next">{{bi $lang "tasks.more"}}</a></p>{{end}}
     {{else}}
       <div class="empty">
         <p class="empty__lead">{{bi $lang "tasks.empty"}}</p>

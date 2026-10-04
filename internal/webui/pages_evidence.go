@@ -291,6 +291,9 @@ type TasksPage struct {
 	Configuration CheckConfigurationView
 	// ListURL is this screen without a selected task.
 	ListURL string
+	// MoreURL opens the next page of an older task list. Empty on the last
+	// page.
+	MoreURL string
 	// HelperURL opens helper credential management, and ConfiguredChecksURL
 	// the repository's configured-check execution policy. Both are
 	// administrator screens offered to every viewer; the page marks them

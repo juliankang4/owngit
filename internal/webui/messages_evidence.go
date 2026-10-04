@@ -242,6 +242,7 @@ const (
 	MsgTasksUnavail    MessageCode = "tasks.unavailable"
 	MsgTaskNotFound    MessageCode = "tasks.not_found"
 	MsgTasksBackToList MessageCode = "tasks.back_to_list"
+	MsgTasksMore       MessageCode = "tasks.more"
 
 	MsgTaskStateActive    MessageCode = "tasks.state.active"
 	MsgTaskStateResolved  MessageCode = "tasks.state.resolved"
@@ -748,6 +749,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgTaskNotFound:    {en: "That task does not exist.", ko: "해당 작업이 없습니다."},
 	MsgTasksBackToList: {en: "All tasks", ko: "작업 목록"},
+	MsgTasksMore:       {en: "Show older tasks", ko: "이전 작업 더 보기"},
 
 	MsgTaskStateActive:    {en: "Active", ko: "진행 중"},
 	MsgTaskStateResolved:  {en: "Resolved", ko: "해결됨"},
