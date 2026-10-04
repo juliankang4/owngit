@@ -275,8 +275,7 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	gitHandler, err := githttp.New(manager.Git, manager, "")
 	noErr(t, err)
 	authentication := &auth.Manager{Store: store, AdminSessionLife: 5 * time.Minute}
-	renderer, err := webui.New()
-	noErr(t, err)
+	renderer := sharedRenderer(t)
 	// The pull request and import services are part of every app, as they
 	// are of the serving process. The import fetch answers locally, so no
 	// test reaches a network.
@@ -311,6 +310,26 @@ func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	// the temporary directory until the service releases it.
 	t.Cleanup(func() { _ = imports.Close() })
 	return app, store, repositoryRoot
+}
+
+// testRenderer is the renderer every test app in this binary shares. A
+// webui.Renderer is immutable and safe for concurrent use, so the tests
+// parse the embedded pages once instead of once per app.
+var testRenderer = struct {
+	once     sync.Once
+	renderer *webui.Renderer
+	err      error
+}{}
+
+// sharedRenderer returns the shared renderer, reporting the constructor's
+// error at the test that first needed it.
+func sharedRenderer(t *testing.T) *webui.Renderer {
+	t.Helper()
+	testRenderer.once.Do(func() {
+		testRenderer.renderer, testRenderer.err = webui.New()
+	})
+	noErr(t, testRenderer.err)
+	return testRenderer.renderer
 }
 
 // emptySourceFetch answers every import fetch with an empty source.
