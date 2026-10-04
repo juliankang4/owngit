@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -240,7 +241,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 				if err != nil {
 					return nil, err
 				}
-				return server.fitPullRequestList(content), nil
+				return server.fitPullRequestList(content)
 			},
 		},
 		{
@@ -669,32 +670,34 @@ func (server *mcpServer) pullRequestDiff(ctx context.Context, raw json.RawMessag
 // fitPullRequestList cuts a list longer than the result limit to the pull
 // requests that fit, and sets next to the last one kept, so the following
 // page continues right after it and skips none. The result says it was cut.
-// A list that cannot be read this way is left to the general cut.
-func (server *mcpServer) fitPullRequestList(content []byte) []byte {
+// When not even the first pull request fits, it is an error, because the
+// page would otherwise be skipped. A list that cannot be read this way is
+// left to the general cut.
+func (server *mcpServer) fitPullRequestList(content []byte) ([]byte, error) {
+	content = bytes.TrimRight(content, "\n")
 	if len(content) <= server.resultLimit {
-		return content
+		return content, nil
 	}
 	var root map[string]any
-	var items []json.RawMessage
 	var envelope struct {
 		Items []json.RawMessage `json:"pull_requests"`
 	}
-	if json.Unmarshal(content, &root) != nil || json.Unmarshal(content, &envelope) != nil {
-		return content
+	if json.Unmarshal(content, &root) != nil || json.Unmarshal(content, &envelope) != nil || len(envelope.Items) == 0 {
+		return content, nil
 	}
-	items = envelope.Items
+	items := envelope.Items
 	note := map[string]any{"bytes": len(content), "limit": server.resultLimit, "cut": []string{"pull_requests"}}
 	for keep := len(items) - 1; keep > 0; keep-- {
 		var last struct {
 			Number int64 `json:"number"`
 		}
 		if json.Unmarshal(items[keep-1], &last) != nil || last.Number < 1 {
-			return content
+			return content, nil
 		}
 		root["pull_requests"], root["next"], root["result_truncated"] = items[:keep], last.Number, note
 		if encoded, err := bidi.MarshalJSON(root); err == nil && len(encoded) <= server.resultLimit {
-			return encoded
+			return encoded, nil
 		}
 	}
-	return content
+	return nil, cliProblem("result_limit_too_small", "The result limit is too small to show one pull request. Raise it with the --result-limit option of owngit mcp.")
 }

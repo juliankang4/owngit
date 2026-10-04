@@ -1139,3 +1139,19 @@ func TestMCPCutPullRequestListContinuesAfterTheLastKeptItem(t *testing.T) {
 		t.Fatalf("cut list (%d bytes, %d kept): next %d, truncated %v", len(text), kept, result.Next, result.Truncated)
 	}
 }
+
+// A result limit too small for even the first pull request is an error that
+// names the option, not an empty list that would skip the page.
+func TestMCPPullRequestListRefusesALimitTooSmallForOneItem(t *testing.T) {
+	page := `{"ok":true,"pull_requests":[{"number":9,"title":"` + strings.Repeat("t", 5000) + `"},{"number":8,"title":"b"}],"next":7}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(page))
+	}))
+	defer server.Close()
+	session := startMCPSession(t, mcpOptions{server: server.URL, repository: "project", acceptInsecureHTTP: true, resultLimit: minimumMCPResultLimit})
+	text, isError := session.call("pull_request_list", map[string]any{})
+	if !isError || !strings.Contains(text, "result_limit_too_small") || !strings.Contains(text, "--result-limit") || strings.Contains(text, `"next"`) {
+		t.Fatalf("isError=%v, result %.300s; want an error naming --result-limit and no continuation", isError, text)
+	}
+}
