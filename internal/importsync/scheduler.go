@@ -17,7 +17,9 @@ import (
 // Fairness comes from the store: starting a run stamps its schedule's
 // last_started_at, and due selection orders by that stamp, so a slow repository
 // cannot starve the others. A repository still being prepared is passed over
-// unclaimed, so its schedule stays due and keeps its place.
+// unclaimed, so its schedule stays due and keeps its place. A schedule is
+// claimed only once an execution slot is held; when every slot is busy the
+// schedules stay due and unchanged, and they run in that order as slots free.
 //
 // Batch bounds the runs one pass starts and the rows one query returns. A
 // pass pages past the rows it passed over, so a page of preparing
@@ -141,6 +143,26 @@ func (s *Scheduler) pump(ctx context.Context, slots chan struct{}) {
 	if limit <= 0 {
 		limit = 4
 	}
+	// A slot is taken before any schedule is read or claimed. With none free
+	// the pass ends at once and every schedule stays due, so a run that never
+	// started is never recorded. A slot not handed to start is given back.
+	held := false
+	acquire := func() bool {
+		select {
+		case slots <- struct{}{}:
+			held = true
+		default:
+		}
+		return held
+	}
+	defer func() {
+		if held {
+			<-slots
+		}
+	}()
+	if !acquire() {
+		return
+	}
 	// The pass keeps one time, so its pages read one due set, and each page
 	// continues after the last row examined, whether claimed or passed over.
 	now := s.Service.clock()
@@ -168,15 +190,11 @@ func (s *Scheduler) pump(ctx context.Context, slots chan struct{}) {
 			if !claimed {
 				continue
 			}
-			select {
-			case slots <- struct{}{}:
-			default:
-				_ = s.Service.recordScheduledClaimFailure(ctx, schedule.RepositoryID, "scheduled import concurrency is saturated", now)
-				return
-			}
+			held = false
 			s.start(ctx, schedule.RepositoryID, now, slots)
 			started++
-			if started == limit {
+			// Waiting schedules stay due for the next tick or wake once a slot frees.
+			if started == limit || !acquire() {
 				return
 			}
 		}

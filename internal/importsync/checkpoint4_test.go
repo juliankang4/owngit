@@ -156,9 +156,46 @@ func TestRefusedScheduledRefreshIsRecordedAsFailed(t *testing.T) {
 	}
 }
 
-// A claimed schedule that finds every run slot taken is recorded as a failed
-// run, and Stop returns only after the run in flight finished.
-func TestSchedulerRecordsSaturationAndStopJoinsItsRun(t *testing.T) {
+// With every run slot taken, a pass leaves the due schedules untouched and
+// records no run. When slots free, the schedules that waited run in due order
+// and none is passed over.
+func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
+	f := newFixture(t)
+	f.scheduleOtherAndProject()
+	ctx := context.Background()
+	scheduler := &Scheduler{Service: f.service, Batch: 4}
+	full := make(chan struct{}, 1)
+	full <- struct{}{}
+	scheduler.pump(ctx, full)
+	for _, id := range []string{"other", "project"} {
+		schedule, exists, err := f.store.ImportSchedule(ctx, id)
+		if err != nil || !exists || schedule.LastStartedAt != nil {
+			t.Fatalf("%s schedule was claimed with no free slot: exists=%v schedule=%+v err=%v", id, exists, schedule, err)
+		}
+		if runs := f.scheduledRuns(id); len(runs) != 0 {
+			t.Fatalf("%s recorded a run that never started: %+v", id, runs)
+		}
+	}
+	if len(full) != 1 {
+		t.Fatal("a full pass changed the slots it did not own")
+	}
+	<-full
+	f.pump(scheduler, 1)
+	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunComplete {
+		t.Fatalf("the longest waiting schedule did not run first: runs=%+v", other)
+	}
+	if project := f.scheduledRuns("project"); len(project) != 0 {
+		t.Fatalf("the second schedule ran in the single slot's first pass: runs=%+v", project)
+	}
+	f.pump(scheduler, 1)
+	if project := f.scheduledRuns("project"); len(project) != 1 || project[0].Status != state.ImportRunComplete {
+		t.Fatalf("the waiting schedule starved: runs=%+v", project)
+	}
+}
+
+// Stop returns only after a scheduled run in flight finished, and a schedule
+// that finds the only slot taken waits unclaimed instead of failing.
+func TestSchedulerStopJoinsItsRunAndSaturationLeavesWaitersDue(t *testing.T) {
 	f := newFixture(t)
 	f.scheduleOtherAndProject()
 	f.transport.gate = make(chan struct{})
@@ -171,15 +208,15 @@ func TestSchedulerRecordsSaturationAndStopJoinsItsRun(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the first scheduled run never fetched")
 	}
-	waitUntil(t, "the saturated claim is recorded", func() bool { return len(f.scheduledRuns("project")) == 1 })
-	if project := f.scheduledRuns("project"); project[0].Status != state.ImportRunFailed || !strings.Contains(project[0].Message, "saturated") {
-		t.Fatalf("saturated claim: runs=%+v", project)
-	}
+	scheduler.Wake()
 	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	noErr(t, scheduler.Stop(stop))
 	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].FinishedAt.IsZero() {
 		t.Fatalf("Stop returned before the run in flight finished: runs=%+v", other)
+	}
+	if project := f.scheduledRuns("project"); len(project) != 0 {
+		t.Fatalf("a schedule with no free slot recorded a run: runs=%+v", project)
 	}
 }
 
