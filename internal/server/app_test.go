@@ -24,6 +24,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/state/statetest"
 	"owngit/internal/tailscale"
 	"owngit/internal/webui"
 )
@@ -266,7 +267,9 @@ func newRepositoryManager(t *testing.T, store *state.Store, runtimeDirectory str
 func newTestApp(t *testing.T) (*App, *state.Store, string) {
 	t.Helper()
 	root := t.TempDir()
-	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
+	stateDirectory, err := statetest.CopiedStateDirectory(filepath.Join(root, "state"))
+	noErr(t, err)
+	store, err := state.Open(context.Background(), stateDirectory)
 	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	repositoryRoot := filepath.Join(root, "repositories")

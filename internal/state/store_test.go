@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -201,10 +202,146 @@ func TestStateFilesAreOwnerOnly(t *testing.T) {
 
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
-	store, err := Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+	store, err := Open(context.Background(), copiedStateDirectory(t, filepath.Join(t.TempDir(), "state")))
 	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return store
+}
+
+// emptyStateSchema is the empty current-schema database that ordinary
+// fixtures copy, generated once in this test binary. Tests of creation,
+// migration, preflight, publication and permissions keep opening real new
+// states (see copiedStateDirectory).
+var emptyStateSchema struct {
+	once  sync.Once
+	files map[string][]byte
+	err   error
+}
+
+// copiedStateDirectory creates directory as a private state directory that
+// holds a copy of the current empty state database, for Open. Every fixture
+// gets its own writable database: no database is shared, hard-linked or
+// reused, and no released dump is used as the current schema. The packages
+// whose fixtures open a store repeat this helper, because internal/testfixture
+// imports no state and this package's tests import it.
+func copiedStateDirectory(t *testing.T, directory string) string {
+	t.Helper()
+	emptyStateSchema.once.Do(func() { emptyStateSchema.files, emptyStateSchema.err = buildEmptyStateSchema() })
+	noErr(t, emptyStateSchema.err)
+	held, err := CreateDirectory(directory)
+	noErr(t, err)
+	noErr(t, held.Close())
+	for name, content := range emptyStateSchema.files {
+		file, err := CreatePrivateFile(filepath.Join(directory, name))
+		noErr(t, err)
+		_, err = file.Write(content)
+		noErr(t, err)
+		noErr(t, file.Close())
+	}
+	return directory
+}
+
+// buildEmptyStateSchema opens a new state, closes it and returns the files
+// it left behind.
+func buildEmptyStateSchema() (map[string][]byte, error) {
+	directory, err := os.MkdirTemp("", "owngit-empty-state-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(directory)
+	store, err := Open(context.Background(), directory)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Close(); err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, err
+	}
+	files := make(map[string][]byte, len(entries))
+	for _, entry := range entries {
+		content, err := os.ReadFile(filepath.Join(directory, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		files[entry.Name()] = content
+	}
+	return files, nil
+}
+
+// An ordinary fixture copies the current empty database instead of building
+// it again, so the copy must be indistinguishable from a state this build
+// created, and two fixtures in one binary must stay independent.
+func TestCopiedStateFixturesMatchAFreshStateAndStayIndependent(t *testing.T) {
+	ctx := context.Background()
+	fresh, err := Open(ctx, filepath.Join(t.TempDir(), "state"))
+	noErr(t, err)
+	defer fresh.Close()
+	copied, err := Open(ctx, copiedStateDirectory(t, filepath.Join(t.TempDir(), "state")))
+	noErr(t, err)
+	defer copied.Close()
+
+	freshFingerprint, freshObjects, err := schemaFingerprint(ctx, fresh.db)
+	noErr(t, err)
+	copiedFingerprint, copiedObjects, err := schemaFingerprint(ctx, copied.db)
+	noErr(t, err)
+	if freshFingerprint != copiedFingerprint || freshObjects != copiedObjects {
+		t.Fatalf("the copied state has catalog %s (%d objects), the fresh one %s (%d objects)",
+			copiedFingerprint, copiedObjects, freshFingerprint, freshObjects)
+	}
+	freshMetadata, copiedMetadata := metadataRows(t, fresh), metadataRows(t, copied)
+	if !reflect.DeepEqual(copiedMetadata, freshMetadata) {
+		t.Fatalf("the copied state holds %v, the fresh one %v", copiedMetadata, freshMetadata)
+	}
+	freshSettings, err := fresh.Settings(ctx)
+	noErr(t, err)
+	copiedSettings, err := copied.Settings(ctx)
+	noErr(t, err)
+	if copiedSettings != freshSettings {
+		t.Fatalf("the copied state defaults to %+v, a fresh one to %+v", copiedSettings, freshSettings)
+	}
+	assertStateStoragePrivate(t, fresh.dir)
+	assertStateStoragePrivate(t, copied.dir)
+	freshDirectory, err := os.Stat(fresh.dir)
+	noErr(t, err)
+	copiedDirectory, err := os.Stat(copied.dir)
+	noErr(t, err)
+	if copiedDirectory.Mode().Perm() != freshDirectory.Mode().Perm() {
+		t.Fatalf("the copied directory mode is %v, a fresh one %v", copiedDirectory.Mode(), freshDirectory.Mode())
+	}
+
+	// Every fixture is its own database.
+	other, err := Open(ctx, copiedStateDirectory(t, filepath.Join(t.TempDir(), "state")))
+	noErr(t, err)
+	defer other.Close()
+	noErr(t, copied.Exec(ctx, `INSERT INTO metadata(key,value) VALUES('fixture-check','one')`))
+	var rows int
+	noErr(t, other.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metadata WHERE key='fixture-check'`).Scan(&rows))
+	if rows != 0 {
+		t.Fatal("a write in one copied fixture is visible in another")
+	}
+	noErr(t, copied.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM metadata WHERE key='fixture-check'`).Scan(&rows))
+	if rows != 1 {
+		t.Fatalf("the write in the copied fixture left %d rows", rows)
+	}
+}
+
+// metadataRows returns the state's metadata keys and values.
+func metadataRows(t *testing.T, store *Store) map[string]string {
+	t.Helper()
+	rows, err := store.db.QueryContext(context.Background(), `SELECT key, value FROM metadata`)
+	noErr(t, err)
+	defer rows.Close()
+	values := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		noErr(t, rows.Scan(&key, &value))
+		values[key] = value
+	}
+	noErr(t, rows.Err())
+	return values
 }
 
 // noErr stops the test on an unexpected error. t.Helper keeps the failure

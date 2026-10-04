@@ -21,6 +21,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/state/statetest"
 	"owngit/internal/testfixture"
 )
 
@@ -1215,7 +1216,9 @@ func newBackupStore(t *testing.T, root string) (*state.Store, *repository.Manage
 	stateDir := filepath.Join(root, "source-state")
 	repositoriesRoot := filepath.Join(root, "source-repositories")
 	noErr(t, os.Mkdir(repositoriesRoot, 0o700))
-	store, err := state.Open(ctx, stateDir)
+	copied, err := statetest.CopiedStateDirectory(stateDir)
+	noErr(t, err)
+	store, err := state.Open(ctx, copied)
 	noErr(t, err)
 	// Windows cannot remove the open database file during TempDir cleanup.
 	t.Cleanup(func() { _ = store.Close() })

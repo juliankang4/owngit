@@ -17,6 +17,7 @@ import (
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/state/statetest"
 	"owngit/internal/testfixture"
 )
 
@@ -227,7 +228,9 @@ func useLimits(t *testing.T, handler *Handler, change func(*Limits)) *Limits {
 func newHTTPTestRepository(t *testing.T) (*repository.Manager, *gitexec.Runner) {
 	t.Helper()
 	root := t.TempDir()
-	store, err := state.Open(context.Background(), filepath.Join(root, "state"))
+	stateDirectory, err := statetest.CopiedStateDirectory(filepath.Join(root, "state"))
+	noErr(t, err)
+	store, err := state.Open(context.Background(), stateDirectory)
 	noErr(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	runner, err := gitexec.New("", filepath.Join(root, "runtime"))
