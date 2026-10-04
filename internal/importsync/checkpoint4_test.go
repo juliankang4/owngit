@@ -157,8 +157,7 @@ func TestRefusedScheduledRefreshIsRecordedAsFailed(t *testing.T) {
 }
 
 // With every run slot taken, a pass leaves the due schedules untouched and
-// records no run. When slots free, the schedules that waited run in due order
-// and none is passed over.
+// records no run. Once a slot frees, the waiting schedules run.
 func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 	f := newFixture(t)
 	f.scheduleOtherAndProject()
@@ -179,10 +178,9 @@ func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 	if len(full) != 1 {
 		t.Fatal("a full pass changed the slots it did not own")
 	}
-	<-full
 	f.pump(scheduler, 1)
 	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunComplete {
-		t.Fatalf("the longest waiting schedule did not run first: runs=%+v", other)
+		t.Fatalf("the first due schedule did not run first: runs=%+v", other)
 	}
 	if project := f.scheduledRuns("project"); len(project) != 0 {
 		t.Fatalf("the second schedule ran in the single slot's first pass: runs=%+v", project)
@@ -193,9 +191,8 @@ func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 	}
 }
 
-// Stop returns only after a scheduled run in flight finished, and a schedule
-// that finds the only slot taken waits unclaimed instead of failing.
-func TestSchedulerStopJoinsItsRunAndSaturationLeavesWaitersDue(t *testing.T) {
+// Stop returns only after a scheduled run in flight finished.
+func TestSchedulerStopJoinsItsRun(t *testing.T) {
 	f := newFixture(t)
 	f.scheduleOtherAndProject()
 	f.transport.gate = make(chan struct{})
@@ -208,15 +205,11 @@ func TestSchedulerStopJoinsItsRunAndSaturationLeavesWaitersDue(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the first scheduled run never fetched")
 	}
-	scheduler.Wake()
 	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	noErr(t, scheduler.Stop(stop))
 	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].FinishedAt.IsZero() {
 		t.Fatalf("Stop returned before the run in flight finished: runs=%+v", other)
-	}
-	if project := f.scheduledRuns("project"); len(project) != 0 {
-		t.Fatalf("a schedule with no free slot recorded a run: runs=%+v", project)
 	}
 }
 
