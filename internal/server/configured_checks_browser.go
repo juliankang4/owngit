@@ -350,6 +350,8 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 			code, status = webui.MsgCCJobRefused, http.StatusConflict
 		case errors.Is(err, errRerunSourceMissing):
 			code, status = webui.MsgCCJobSourceMissing, http.StatusConflict
+		case errors.Is(err, errRerunWorkflowChanged):
+			code, status = webui.MsgCCJobWorkflowChanged, http.StatusConflict
 		case errors.Is(err, state.ErrCheckCeilingExceeded):
 			code, status = webui.MsgCCRunAboveCeilings, http.StatusConflict
 		case errors.As(err, new(*state.PolicyError)):

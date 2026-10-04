@@ -342,6 +342,7 @@ const (
 	MsgCCJobRerunExisting   MessageCode = "cc.result.job_rerun_existing"
 	MsgCCJobRefused         MessageCode = "cc.result.job_refused"
 	MsgCCJobSourceMissing   MessageCode = "cc.result.job_source_missing"
+	MsgCCJobWorkflowChanged MessageCode = "cc.result.job_workflow_changed"
 	MsgCCJobMissing         MessageCode = "cc.result.job_missing"
 	MsgCCPolicyRefused      MessageCode = "cc.result.policy_refused"
 	MsgCCPolicyMissing      MessageCode = "cc.result.policy_missing"
@@ -1029,6 +1030,10 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCJobSourceMissing: {
 		en: "The job's commit is no longer in this repository, so the job cannot run again.",
 		ko: "이 작업의 커밋이 더 이상 저장소에 없어 다시 실행할 수 없습니다.",
+	},
+	MsgCCJobWorkflowChanged: {
+		en: "The workflow file at this job's commit differs from the one the job recorded, so the job cannot run again.",
+		ko: "이 작업의 커밋에 있는 워크플로 파일이 작업에 기록된 것과 달라 다시 실행할 수 없습니다.",
 	},
 	MsgCCJobMissing: {en: "That job does not exist in this repository.", ko: "이 저장소에 그런 작업이 없습니다."},
 	MsgCCPolicyRefused: {

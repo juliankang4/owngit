@@ -95,45 +95,54 @@ func TestCheckRerunWaitsForTheRepositoryAndNeedsItsCommit(t *testing.T) {
 	}
 }
 
-// A rerun starts from what the job's workflow asked for, not from the limits
-// the first run ended with, so raising the policy's cap lets the rerun run
-// longer. A workflow file that no longer matches the recorded one refuses it.
-func TestCheckRerunAppliesTheCurrentCapsToTheWorkflowRequest(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	ctx := context.Background()
-	workflow := []byte(`{"version":1,"events":{"push":{}},"checks":[{"name":"unit","command":"exit 0"}],"limits":{"timeout_ms":120000}}`)
+// pushWorkflowCommit commits workflow on a new branch of the fixture and
+// returns the commit, the workflow blob and the workflow's SHA-256 digest.
+func pushWorkflowCommit(t *testing.T, fixture apiFixture, workflow []byte) (string, string, string) {
+	t.Helper()
 	noErr(t, os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700))
 	noErr(t, os.WriteFile(filepath.Join(fixture.work, checkworkflow.Path), workflow, 0o600))
 	apiRunGit(t, fixture.work, "add", ".")
 	apiRunGit(t, fixture.work, "commit", "-m", "workflow")
 	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/ci")
-	oid := apiGitOutput(t, fixture.work, "rev-parse", "HEAD")
-	blobOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:"+checkworkflow.Path)
 	digest := sha256.Sum256(workflow)
+	return apiGitOutput(t, fixture.work, "rev-parse", "HEAD"), apiGitOutput(t, fixture.work, "rev-parse", "HEAD:"+checkworkflow.Path), hex.EncodeToString(digest[:])
+}
+
+const limitedWorkflow = `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"unit","command":"exit 0"}],"limits":{"timeout_ms":120000}}`
+
+// A rerun starts from what the job's workflow asked for, not from the limits
+// the first run ended with, so raising the policy's cap lets the rerun run
+// longer. A pull request job's workflow is the one at its source commit, which
+// differs from the base's, and its rerun reads that same file. A workflow file
+// that no longer matches the recorded one refuses the rerun.
+func TestCheckRerunAppliesTheCurrentCapsToTheWorkflowRequest(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	oid, blobOID, digest := pushWorkflowCommit(t, fixture, []byte(limitedWorkflow))
 
 	now := fixture.app.now()
 	setCap := func(timeoutMS int64) {
 		_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-			RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+			RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", "pull_request"},
 			MaxTimeoutMS: timeoutMS, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 		}, now)
 		noErr(t, err)
 		_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
 		noErr(t, err)
 	}
-	admit := func(recordedDigest string) state.CheckJob {
-		job, _, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
-			RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/ci@" + oid + recordedDigest[:4], SourceOID: oid, TriggerRef: "ci",
-			WorkflowPath: checkworkflow.Path, WorkflowOID: blobOID, WorkflowDigest: recordedDigest, TimeoutMS: 120000,
-			Checks: []state.CheckDefinition{{Name: "unit", Command: "exit 0"}},
-		}, now)
+	admit := func(request state.CheckJobRequest, recordedDigest string) state.CheckJob {
+		request.RepositoryID, request.SourceOID, request.WorkflowPath = "project", oid, checkworkflow.Path
+		request.WorkflowOID, request.WorkflowDigest, request.TimeoutMS = blobOID, recordedDigest, 120000
+		request.Checks = []state.CheckDefinition{{Name: "unit", Command: "exit 0"}}
+		job, _, err := fixture.store.AdmitCheckJob(ctx, request, now)
 		noErr(t, err)
 		_, err = fixture.store.CancelCheckJob(ctx, "project", job.ID, now)
 		noErr(t, err)
 		return job
 	}
+	push := state.CheckJobRequest{Trigger: "push", EventKey: "refs/heads/ci@" + oid, TriggerRef: "ci"}
 	setCap(30000)
-	job := admit(hex.EncodeToString(digest[:]))
+	job := admit(push, digest)
 	if job.Limits.TimeoutMS != 30000 {
 		t.Fatalf("limits=%+v", job.Limits)
 	}
@@ -142,8 +151,34 @@ func TestCheckRerunAppliesTheCurrentCapsToTheWorkflowRequest(t *testing.T) {
 	if err != nil || rerun.Limits.TimeoutMS != 90000 {
 		t.Fatalf("rerun after raising the cap: limits=%+v err=%v", rerun.Limits, err)
 	}
-	other := admit(strings.Repeat("d", 64))
+	// The base commit has no workflow file; the head's workflow is the one read.
+	pullRequest := admit(state.CheckJobRequest{
+		Trigger: "pull_request", EventKey: "pr/1/" + oid + "/" + fixture.targetOID, BaseOID: fixture.targetOID,
+		PullRequestNumber: 1, TriggerRef: "main",
+	}, digest)
+	if rerun, _, err := fixture.app.rerunCheckJob(ctx, "project", pullRequest.ID); err != nil || rerun.Limits.TimeoutMS != 90000 {
+		t.Fatalf("pull request rerun: limits=%+v err=%v", rerun.Limits, err)
+	}
+	other := admit(state.CheckJobRequest{Trigger: "push", EventKey: "refs/heads/ci@" + oid + "#2", TriggerRef: "ci"}, strings.Repeat("d", 64))
 	if _, _, err := fixture.app.rerunCheckJob(ctx, "project", other.ID); !errors.Is(err, errRerunWorkflowChanged) {
 		t.Fatalf("rerun of a job whose workflow differs: err=%v", err)
+	}
+}
+
+// A workflow that differs from the recorded one is a refusal the owner can
+// read, not the server being unavailable.
+func TestBrowserRerunOfAChangedWorkflowIsRefused(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server, client, jar := openBrowser(t, fixture)
+	oid, _, _ := pushWorkflowCommit(t, fixture, []byte(limitedWorkflow))
+	// admitEnabledJob records a placeholder workflow digest, which differs from the file.
+	csrf, job := admitEnabledJob(t, fixture, server.URL, client, jar, "cc-rerun-changed", jobFacts{ref: "ci", sourceOID: oid})
+	finishCheckJob(t, fixture)
+	result := browserForm(t, client, server.URL+configuredChecksURL("project"), url.Values{
+		"csrf": {csrf}, "action": {webui.ActionRerunCheckJob},
+		"admin_password": {"admin-password"}, "job_id": {job.ID},
+	}, server.URL)
+	if result.status != http.StatusConflict || !strings.Contains(noticeRegion(t, result.body), browserText(webui.MsgCCJobWorkflowChanged)) {
+		t.Fatalf("browser rerun of a changed workflow: status=%d", result.status)
 	}
 }
