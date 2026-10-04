@@ -44,7 +44,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		}
 		if !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
-			!pullRequestDiffQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
+			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 			return
 		}
@@ -153,13 +153,19 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			writeAPIMethodError(writer, http.MethodGet)
 			return
 		}
-		var items []*pullrequest.View
-		items, err = app.PullRequests.List(request.Context(), repositoryID)
+		input, parseErr := pullRequestListInput(request.URL.Query())
+		if parseErr != nil {
+			err = parseErr
+			break
+		}
+		var page *pullrequest.ListResult
+		page, err = app.PullRequests.List(request.Context(), repositoryID, input)
 		if err == nil {
 			result = struct {
 				OK    bool                `json:"ok"`
 				Items []*pullrequest.View `json:"pull_requests"`
-			}{OK: true, Items: items}
+				Next  int64               `json:"next,omitempty"`
+			}{OK: true, Items: page.Items, Next: page.Next}
 		}
 	case "create":
 		if request.Method != http.MethodPost {
@@ -359,6 +365,20 @@ func parseRepositoryAPIRoute(requestPath string) (string, string, string, bool) 
 	return parts[0], resource, remainder, true
 }
 
+// pullRequestListQueryAllowed accepts the paging parameters of a pull request
+// list, each given once.
+func pullRequestListQueryAllowed(request *http.Request) bool {
+	if _, _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); request.Method != http.MethodGet || !ok || operation != "collection" {
+		return false
+	}
+	for key, values := range request.URL.Query() {
+		if (key != "state" && key != "limit" && key != "before") || len(values) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
 func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) {
 	const prefix = "/api/v1/repositories/"
 	if !strings.HasPrefix(requestPath, prefix) {
@@ -503,6 +523,8 @@ func apiStatus(request *http.Request, step string, err error) int {
 	case "invalid_repository", "invalid_pull_request_number", "invalid_title", "invalid_body", "invalid_note", "invalid_edit", "invalid_edit_revision", "invalid_branch", "ambiguous_branch", "reserved_ref", "same_branch", "invalid_review_choice", "invalid_review_decision", "invalid_reviewer_label", "invalid_revision",
 		"invalid_task", "invalid_credential", "invalid_attempt", "invalid_attempt_id", "invalid_job_id", "invalid_check_definition", "invalid_worktree_state", "invalid_revision_oid", "invalid_cycle_id", "revision_not_recorded":
 		return http.StatusUnprocessableEntity
+	case "invalid_list_state", "invalid_list_limit", "invalid_list_before":
+		return http.StatusBadRequest
 	case "repository_not_found", "pull_request_not_found", "task_not_found", "configuration_not_found", "attempt_not_found", "log_not_recorded", "cycle_not_found":
 		return http.StatusNotFound
 	case "stale_revision", "stale_edit", "merge_conflict", "merge_blocked", "pull_request_not_open", "pull_request_exists", "pull_request_merged", "git_update_failed",
@@ -516,8 +538,6 @@ func apiStatus(request *http.Request, step string, err error) int {
 		return http.StatusGone
 	case "unsupported_git":
 		return http.StatusNotImplemented
-	case "result_too_large":
-		return http.StatusRequestEntityTooLarge
 	case "state_unavailable", "repository_unavailable", "repository_preparing", "repository_busy", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
 		return unavailable(request, step, err)
 	case "repository_integrity_error":

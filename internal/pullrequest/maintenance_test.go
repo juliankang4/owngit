@@ -29,8 +29,9 @@ func TestPullRequestRecoveryAndMergeSucceedAfterMaintenance(t *testing.T) {
 	fixture.git("checkout", "main")
 	targetOID := fixture.commitFile("main.txt", "main\n", "main")
 	fixture.push("HEAD:refs/heads/main")
-	before, err := fixture.service.List(fixture.ctx, fixture.repositoryID)
+	beforePage, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{})
 	noErr(t, err)
+	before := beforePage.Items
 	refsBefore := fixture.gitOutput("--git-dir", fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)")
 
 	var mu sync.Mutex
@@ -74,8 +75,9 @@ func TestPullRequestRecoveryAndMergeSucceedAfterMaintenance(t *testing.T) {
 	if fixture.manager.Preparing(fixture.repositoryID) {
 		t.Fatal("pull request recovery failed after maintenance")
 	}
-	after, err := fixture.service.List(fixture.ctx, fixture.repositoryID)
+	afterPage, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{})
 	noErr(t, err)
+	after := afterPage.Items
 	if len(after) != 1 || len(before) != 1 || after[0].Number != created.Number || after[0].Source != before[0].Source || after[0].Target != before[0].Target {
 		t.Fatalf("pull request changed: before %+v after %+v", before, after)
 	}

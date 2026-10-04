@@ -17,21 +17,59 @@ import (
 	"owngit/internal/webui"
 )
 
+// pullRequestListInput reads the state, limit and before parameters of a list
+// request. An absent state lists every state. A value that is not a whole
+// number is refused like an out-of-range one.
+func pullRequestListInput(query url.Values) (pullrequest.ListInput, error) {
+	input := pullrequest.ListInput{State: query.Get("state")}
+	if value := query.Get("limit"); value != "" {
+		limit, err := strconv.Atoi(value)
+		if err != nil || limit < 1 {
+			return input, pullrequest.NewProblem("invalid_list_limit", "The page size must be a whole number of at least 1.")
+		}
+		input.Limit = limit
+	}
+	if value := query.Get("before"); value != "" {
+		before, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || before < 1 {
+			return input, pullrequest.NewProblem("invalid_list_before", "The continuation must be a pull request number.")
+		}
+		input.Before = before
+	}
+	return input, nil
+}
+
 func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
 	page := app.pullRequestsPage(request, stored, summary, chrome)
+	query := request.URL.Query()
+	// The browser lists open pull requests unless another state is chosen.
+	if !query.Has("state") {
+		query.Set("state", state.PullRequestOpen)
+	}
+	input, err := pullRequestListInput(query)
+	page.State = query.Get("state")
 	status := http.StatusOK
-	views, err := app.PullRequests.List(request.Context(), stored.ID)
+	var result *pullrequest.ListResult
+	if err == nil {
+		result, err = app.PullRequests.List(request.Context(), stored.ID, input)
+	}
 	if err != nil {
-		page.Unavailable = true
-		switch status = apiStatus(request, "pull request list read", err); status {
-		case http.StatusRequestEntityTooLarge:
-			page.UnavailableReason = webui.MsgPRListTooLarge
-		default:
-			page.UnavailableReason = failureText(status)
+		if status = apiStatus(request, "pull request list read", err); status == http.StatusBadRequest {
+			app.renderError(writer, request, status, webui.MsgErrBadRequest, "")
+			return
 		}
+		page.Unavailable = true
+		page.UnavailableReason = failureText(status)
 	} else {
-		for _, view := range views {
+		for _, view := range result.Items {
 			page.Items = append(page.Items, app.pullRequestRow(stored.Address, view))
+		}
+		if result.Next != 0 {
+			more := url.Values{"state": {page.State}, "before": {strconv.FormatInt(result.Next, 10)}}
+			if input.Limit != 0 {
+				more.Set("limit", strconv.Itoa(input.Limit))
+			}
+			page.MoreURL = page.Repo.URL + "/pull-requests?" + more.Encode()
 		}
 	}
 	app.render(writer, request, status, page)

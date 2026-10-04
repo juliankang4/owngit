@@ -46,8 +46,9 @@ func TestPullRequestDescriptionIsKeptWithWhoCreatedIt(t *testing.T) {
 	if created.CreatedBy == nil || *created.CreatedBy != access || created.EditedBy != nil || created.MergedBy != nil {
 		t.Fatalf("created actors=%v %v %v", created.CreatedBy, created.EditedBy, created.MergedBy)
 	}
-	listed, err := fixture.service.List(fixture.ctx, fixture.repositoryID)
+	listedPage, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{})
 	noErr(t, err)
+	listed := listedPage.Items
 	if len(listed) != 1 || listed[0].Body != nil || listed[0].ReviewNotes != nil {
 		t.Fatalf("a list carried the description: %+v", listed[0])
 	}

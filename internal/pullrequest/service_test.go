@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -224,7 +225,7 @@ func TestPassivePullRequestReadsDoNotPersistRevisionState(t *testing.T) {
 	if _, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, number); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID); err != nil {
+	if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{}); err != nil {
 		t.Fatal(err)
 	}
 	refsAfter := fixture.gitOutput("--git-dir", fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/owngit/pull-requests")
@@ -269,7 +270,7 @@ func TestPassivePullRequestReadsInvokeNoUpdateRef(t *testing.T) {
 	if _, err := fixture.service.Show(fixture.ctx, fixture.repositoryID, number); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID); err != nil {
+	if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{}); err != nil {
 		t.Fatal(err)
 	}
 	trace, err := os.ReadFile(tracePath)
@@ -401,7 +402,10 @@ func TestPassivePullRequestReadsHoldTheSharedLock(t *testing.T) {
 			_, err := fixture.service.Show(ctx, fixture.repositoryID, number)
 			return err
 		}},
-		{"List", func(ctx context.Context) error { _, err := fixture.service.List(ctx, fixture.repositoryID); return err }},
+		{"List", func(ctx context.Context) error {
+			_, err := fixture.service.List(ctx, fixture.repositoryID, ListInput{})
+			return err
+		}},
 	}
 	for _, read := range reads {
 		func() {
@@ -851,7 +855,7 @@ func TestReconcileRejectsMismatchedDurableMergeObjects(t *testing.T) {
 			if !fixture.manager.Preparing(fixture.repositoryID) {
 				t.Fatal("a repository whose pull request recovery failed is served")
 			}
-			if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID); problemCode(err) != "repository_preparing" {
+			if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{}); problemCode(err) != "repository_preparing" {
 				t.Fatalf("list during preparation error=%v code=%q", err, problemCode(err))
 			}
 			after, ok, err := fixture.store.PullRequestMergeIntent(fixture.ctx, fixture.repositoryID, created.Number, sourceOID, targetOID)
@@ -1227,4 +1231,34 @@ func problemCode(err error) string {
 		return problem.Code
 	}
 	return ""
+}
+
+// The list answers newest first by state, hands back the number to continue
+// below, and refuses a state, page size or continuation it cannot honor.
+func TestListPagesByStateAndRefusesInvalidInput(t *testing.T) {
+	fixture := newServiceFixture(t)
+	noErr(t, fixture.store.Exec(fixture.ctx, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5)
+		INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at)
+		SELECT ?,i,'PR','feature','main',CASE WHEN i%2=0 THEN 'closed' ELSE 'open' END,1,1 FROM n`, fixture.repositoryID))
+	numbers := func(input ListInput) ([]int64, int64) {
+		t.Helper()
+		page, err := fixture.service.List(fixture.ctx, fixture.repositoryID, input)
+		noErr(t, err)
+		var got []int64
+		for _, view := range page.Items {
+			got = append(got, view.Number)
+		}
+		return got, page.Next
+	}
+	if got, next := numbers(ListInput{Limit: 2}); !slices.Equal(got, []int64{5, 4}) || next != 4 {
+		t.Errorf("first page of all = %v next %d, want [5 4] next 4", got, next)
+	}
+	if got, next := numbers(ListInput{State: "open", Limit: 2, Before: 5}); !slices.Equal(got, []int64{3, 1}) || next != 0 {
+		t.Errorf("open page below 5 = %v next %d, want [3 1] and no continuation", got, next)
+	}
+	for _, input := range []ListInput{{State: "draft"}, {Limit: MaximumListLimit + 1}, {Limit: -1}, {Before: -1}} {
+		if _, err := fixture.service.List(fixture.ctx, fixture.repositoryID, input); !strings.HasPrefix(problemCode(err), "invalid_list_") {
+			t.Errorf("list %+v: problem %q, want an invalid_list_ code", input, problemCode(err))
+		}
+	}
 }

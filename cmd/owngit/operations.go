@@ -109,8 +109,30 @@ func createRepository(ctx context.Context, target connection, input repositoryIn
 // wrong resource, and check text with the server's own rules before sending
 // it (see textProblem).
 
-func listPullRequests(ctx context.Context, target connection) ([]byte, error) {
-	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/pull-requests", nil)
+// pullRequestListQuery selects a page of listPullRequests. The zero value is
+// the server's first page of every state.
+type pullRequestListQuery struct {
+	State  string `json:"state"`
+	Limit  int    `json:"limit"`
+	Before int64  `json:"before"`
+}
+
+func listPullRequests(ctx context.Context, target connection, query pullRequestListQuery) ([]byte, error) {
+	values := url.Values{}
+	if query.State != "" {
+		values.Set("state", query.State)
+	}
+	if query.Limit != 0 {
+		values.Set("limit", strconv.Itoa(query.Limit))
+	}
+	if query.Before != 0 {
+		values.Set("before", strconv.FormatInt(query.Before, 10))
+	}
+	path := target.repositoryPath() + "/pull-requests"
+	if len(values) != 0 {
+		path += "?" + values.Encode()
+	}
+	return target.client().Do(ctx, http.MethodGet, path, nil)
 }
 
 func showPullRequest(ctx context.Context, target connection, number int64) ([]byte, error) {

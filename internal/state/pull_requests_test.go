@@ -215,3 +215,57 @@ func TestPullRequestEditIsRefusedOnceAnotherEditMovedIt(t *testing.T) {
 	// A restore accepts the record as it was written.
 	noErr(t, validatePullRequestRecord(current))
 }
+
+// A repository with more than a thousand pull requests in every state lists
+// newest first in pages that continue below the last number, hide a request
+// still being created, and never read a description.
+func TestPullRequestSummariesPageNewestFirstWithoutDescriptions(t *testing.T) {
+	store, ctx, _ := newProjectStore(t)
+	noErr(t, store.Exec(ctx, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<1101)
+		INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,body)
+		SELECT 'project',i,'PR','feature','main',
+			CASE WHEN i=1101 THEN 'creating' WHEN i%3=0 THEN 'merged' WHEN i%3=1 THEN 'open' ELSE 'closed' END,1,1,
+			CASE WHEN i%2=0 THEN 'description' ELSE '' END FROM n`))
+
+	for _, check := range []struct {
+		status string
+		want   int
+	}{{"", 1100}, {PullRequestOpen, 367}, {PullRequestClosed, 367}, {PullRequestMerged, 366}} {
+		var seen int
+		var before int64
+		for pages := 0; ; pages++ {
+			records, more, err := store.PullRequestSummaries(ctx, "project", check.status, before, 100)
+			noErr(t, err)
+			for _, record := range records {
+				if (before != 0 && record.Number >= before) || (check.status != "" && record.Status != check.status) || record.Status == PullRequestCreating || record.Body != "" {
+					t.Fatalf("state %q page after %d: record %d status %q body %q", check.status, before, record.Number, record.Status, record.Body)
+				}
+				before = record.Number
+			}
+			seen += len(records)
+			if !more {
+				break
+			}
+			if len(records) != 100 || pages > 20 {
+				t.Fatalf("state %q: a page of %d said more remain after %d pages", check.status, len(records), pages)
+			}
+		}
+		if seen != check.want {
+			t.Errorf("state %q listed %d pull requests, want %d", check.status, seen, check.want)
+		}
+	}
+	first, _, err := store.PullRequestSummaries(ctx, "project", "", 0, 3)
+	noErr(t, err)
+	if len(first) != 3 || first[0].Number != 1100 || first[2].Number != 1098 {
+		t.Errorf("the first page is not the newest numbers: %+v", first)
+	}
+	for _, bad := range []struct {
+		status string
+		before int64
+		limit  int
+	}{{"", 0, 0}, {"", 0, 1001}, {"", -1, 10}, {"creating", 0, 10}, {"nonsense", 0, 10}} {
+		if _, _, err := store.PullRequestSummaries(ctx, "project", bad.status, bad.before, bad.limit); err == nil {
+			t.Errorf("page %+v was accepted", bad)
+		}
+	}
+}

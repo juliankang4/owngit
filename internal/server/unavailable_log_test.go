@@ -231,27 +231,22 @@ func TestLanguageCountFailureIsLogged(t *testing.T) {
 }
 
 // The pull request list says what its status says: a fault in OwnGit for
-// 500, which waiting does not fix, unavailable for 503, and for 413 that the
-// list is too long to show.
+// 500, which waiting does not fix, and unavailable for 503.
 func TestPullRequestListTextFollowsItsStatus(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the failing wrapper is a Unix test fixture")
 	}
 	internal, unavailable := "Something went wrong on the server.", "This is temporarily unavailable."
-	tooLong := "more pull requests than the list can show"
 	for _, check := range []struct {
 		what, wrapper string
-		// rows are closed pull requests recorded beside the open one.
-		rows   int
-		status int
-		text   string
-		logged []string
+		status        int
+		text          string
+		logged        []string
 	}{
-		{"an invalid branch head", `for a in "$@"; do if test "$a" = for-each-ref; then printf 'refs/heads/main\000nothex\000commit\n'; exit 0; fi; done`, 0,
+		{"an invalid branch head", `for a in "$@"; do if test "$a" = for-each-ref; then printf 'refs/heads/main\000nothex\000commit\n'; exit 0; fi; done`,
 			http.StatusInternalServerError, internal, []string{"pull request list read"}},
-		{"branch heads that could not be read", `for a in "$@"; do if test "$a" = for-each-ref; then echo 'fatal: simulated storage failure' >&2; exit 128; fi; done`, 0,
+		{"branch heads that could not be read", `for a in "$@"; do if test "$a" = for-each-ref; then echo 'fatal: simulated storage failure' >&2; exit 128; fi; done`,
 			http.StatusServiceUnavailable, unavailable, []string{"pull request list read"}},
-		{"a list longer than one answer", "", pullrequest.MaximumListResults, http.StatusRequestEntityTooLarge, tooLong, nil},
 	} {
 		fixture := newAPIFixture(t, false)
 		_, err := fixture.app.PullRequests.Create(context.Background(), pullrequest.CreateInput{
@@ -259,11 +254,6 @@ func TestPullRequestListTextFollowsItsStatus(t *testing.T) {
 			SourceOID: fixture.sourceOID, TargetOID: fixture.targetOID,
 		})
 		noErr(t, err)
-		if check.rows != 0 {
-			noErr(t, fixture.store.Exec(context.Background(), `INSERT INTO pull_requests(repository_id,number,title,source_branch,target_branch,status,created_at,updated_at)
-				WITH RECURSIVE n(i) AS (SELECT 2 UNION ALL SELECT i+1 FROM n WHERE i<?)
-				SELECT 'project',i,'Closed','feature','main','closed',1,1 FROM n`, check.rows+1))
-		}
 		server, client, _ := openBrowser(t, fixture)
 		if check.wrapper != "" {
 			useGitWrapper(t, fixture.app, check.wrapper)
@@ -273,7 +263,7 @@ func TestPullRequestListTextFollowsItsStatus(t *testing.T) {
 		if result.status != check.status || !strings.Contains(result.body, check.text) {
 			t.Errorf("%s: status=%d, want %d with %q", check.what, result.status, check.status, check.text)
 		}
-		for _, other := range []string{internal, unavailable, tooLong} {
+		for _, other := range []string{internal, unavailable} {
 			if other != check.text && strings.Contains(result.body, other) {
 				t.Errorf("%s: the page also says %q", check.what, other)
 			}

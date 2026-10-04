@@ -380,6 +380,52 @@ func (s *Store) OpenPullRequestsAfter(ctx context.Context, repositoryID string, 
 	return records, more, nil
 }
 
+// PullRequestSummaries returns one newest-first page of a repository's
+// visible pull requests, optionally of one status, continuing below number
+// before (0 starts at the newest). It returns at most limit records and
+// whether older ones remain. The records carry no description.
+func (s *Store) PullRequestSummaries(ctx context.Context, repositoryID, status string, before int64, limit int) ([]PullRequest, bool, error) {
+	if limit < 1 || limit > 1000 || before < 0 {
+		return nil, false, errors.New("invalid pull request page")
+	}
+	switch status {
+	case "", PullRequestOpen, PullRequestClosed, PullRequestMerged:
+	default:
+		return nil, false, errors.New("invalid pull request status")
+	}
+	query := pullRequestSummarySelect + ` WHERE repository_id=? AND status!='creating'`
+	args := []any{repositoryID}
+	if status != "" {
+		query += ` AND status=?`
+		args = append(args, status)
+	}
+	if before > 0 {
+		query += ` AND number<?`
+		args = append(args, before)
+	}
+	rows, err := s.db.QueryContext(ctx, query+` ORDER BY number DESC LIMIT ?`, append(args, limit+1)...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	var records []PullRequest
+	for rows.Next() {
+		record, err := scanPullRequest(rows)
+		if err != nil {
+			return nil, false, err
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(records) > limit
+	if more {
+		records = records[:limit]
+	}
+	return records, more, nil
+}
+
 func (s *Store) PullRequests(ctx context.Context, repositoryID string) ([]PullRequest, error) {
 	rows, err := s.db.QueryContext(ctx, pullRequestSelect+` WHERE repository_id=? AND status!='creating' ORDER BY number`, repositoryID)
 	if err != nil {
@@ -400,6 +446,12 @@ func (s *Store) PullRequests(ctx context.Context, repositoryID string) ([]PullRe
 const pullRequestSelect = `SELECT repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
 	merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at,
 	body,edit_revision,edited_at,created_by,edited_by,merged_by FROM pull_requests`
+
+// pullRequestSummarySelect is pullRequestSelect without the description,
+// which a list never shows and which can be 64 KiB a record.
+const pullRequestSummarySelect = `SELECT repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
+	merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at,
+	'',edit_revision,edited_at,created_by,edited_by,merged_by FROM pull_requests`
 
 type rowScanner interface {
 	Scan(...any) error

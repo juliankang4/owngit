@@ -140,9 +140,9 @@ func TestStoredDuplicatePullRequestsStillMerge(t *testing.T) {
 	if second.Merge == nil || second.Merge.Mode != "up_to_date" || second.Merge.OID != mergeOID || fixture.ref("refs/heads/main") != mergeOID {
 		t.Fatalf("second merge=%+v, main=%s, want no new commit after %s", second.Merge, fixture.ref("refs/heads/main"), mergeOID)
 	}
-	views, err := fixture.service.List(fixture.ctx, fixture.repositoryID)
+	page, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{})
 	noErr(t, err)
-	if len(views) != 2 || views[0].State != state.PullRequestMerged || views[1].State != state.PullRequestMerged {
+	if views := page.Items; len(views) != 2 || views[0].State != state.PullRequestMerged || views[1].State != state.PullRequestMerged {
 		t.Fatalf("list=%d views", len(views))
 	}
 }

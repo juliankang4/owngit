@@ -225,9 +225,11 @@ const (
 	MsgPRMergedFixed   MessageCode = "pr.result.merged_fixed"
 	MsgPRUpToDate      MessageCode = "pr.result.up_to_date"
 
-	// MsgPRListTooLarge explains a pull request list longer than one answer
-	// holds.
-	MsgPRListTooLarge MessageCode = "pr.list.too_large"
+	// The pull request list filter and its next page.
+	MsgPRFilterLabel      MessageCode = "pr.filter.label"
+	MsgPRFilterAll        MessageCode = "pr.filter.all"
+	MsgPRListMore         MessageCode = "pr.list.more"
+	MsgPRListEmptyInState MessageCode = "pr.list.empty_state"
 )
 
 // Task and check history screens.
@@ -698,19 +700,19 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "A branch moved since this page was loaded, so nothing was changed. Reload and check the new commits first.",
 		ko: "페이지를 연 뒤 브랜치가 움직여 아무것도 바뀌지 않았습니다. 페이지를 새로 고쳐 새 커밋부터 확인하세요.",
 	},
-	MsgPRMergeBlocked:  {en: "The merge was refused.", ko: "병합이 거부되었습니다."},
-	MsgPRNotFound:      {en: "That pull request does not exist.", ko: "해당 풀 리퀘스트가 없습니다."},
-	MsgPRNotOpen:       {en: "That pull request is not open.", ko: "해당 풀 리퀘스트는 열려 있지 않습니다."},
-	MsgPRInvalidTitle:  {en: "Enter a title on one line, in 500 bytes or fewer: up to 500 characters in English, or about 160 in Korean.", ko: "제목은 줄바꿈 없이 500바이트 이내로 입력하세요. 영문은 500자, 한글은 약 160자입니다."},
-	MsgPRInvalidBranch: {en: "That branch name cannot be used here.", ko: "여기서는 사용할 수 없는 브랜치 이름입니다."},
-	MsgPRSameBranch:    {en: "Pick two different branches.", ko: "서로 다른 브랜치를 골라 주세요."},
-	MsgPRFailed:        {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},
-	MsgPRClosedDone:    {en: "Pull request closed.", ko: "풀 리퀘스트를 닫았습니다."},
-	MsgPRReopenedDone:  {en: "Pull request reopened.", ko: "풀 리퀘스트를 다시 열었습니다."},
-	MsgPRListTooLarge: {
-		en: "This repository has more pull requests than the list can show. Open one at its address, which ends in /pull-requests/ and its number.",
-		ko: "이 저장소에는 목록에 모두 보여 줄 수 없을 만큼 풀 리퀘스트가 많습니다. 주소 끝에 /pull-requests/와 번호를 붙여 여세요.",
-	},
+	MsgPRMergeBlocked:     {en: "The merge was refused.", ko: "병합이 거부되었습니다."},
+	MsgPRNotFound:         {en: "That pull request does not exist.", ko: "해당 풀 리퀘스트가 없습니다."},
+	MsgPRNotOpen:          {en: "That pull request is not open.", ko: "해당 풀 리퀘스트는 열려 있지 않습니다."},
+	MsgPRInvalidTitle:     {en: "Enter a title on one line, in 500 bytes or fewer: up to 500 characters in English, or about 160 in Korean.", ko: "제목은 줄바꿈 없이 500바이트 이내로 입력하세요. 영문은 500자, 한글은 약 160자입니다."},
+	MsgPRInvalidBranch:    {en: "That branch name cannot be used here.", ko: "여기서는 사용할 수 없는 브랜치 이름입니다."},
+	MsgPRSameBranch:       {en: "Pick two different branches.", ko: "서로 다른 브랜치를 골라 주세요."},
+	MsgPRFailed:           {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},
+	MsgPRClosedDone:       {en: "Pull request closed.", ko: "풀 리퀘스트를 닫았습니다."},
+	MsgPRReopenedDone:     {en: "Pull request reopened.", ko: "풀 리퀘스트를 다시 열었습니다."},
+	MsgPRFilterLabel:      {en: "Show pull requests that are", ko: "표시할 풀 리퀘스트 상태"},
+	MsgPRFilterAll:        {en: "All", ko: "전체"},
+	MsgPRListMore:         {en: "Show older pull requests", ko: "이전 풀 리퀘스트 더 보기"},
+	MsgPRListEmptyInState: {en: "No pull requests in this state.", ko: "이 상태의 풀 리퀘스트가 없습니다."},
 	MsgPRMergedFixed: {
 		en: "A merged pull request cannot be closed or reopened.",
 		ko: "병합된 풀 리퀘스트는 닫거나 다시 열 수 없습니다.",

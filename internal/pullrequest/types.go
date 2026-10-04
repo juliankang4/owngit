@@ -3,12 +3,56 @@ package pullrequest
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 	"time"
 
 	"owngit/internal/state"
 )
 
-const MaximumListResults = 1000
+const (
+	// DefaultListLimit and MaximumListLimit are the page sizes of List.
+	DefaultListLimit = 50
+	MaximumListLimit = 100
+	// ListStateAll lists every state.
+	ListStateAll = "all"
+)
+
+// ListInput selects a page of List: pull requests in State (open, closed,
+// merged, or all when empty), at most Limit of them (DefaultListLimit when
+// zero), all with a number below Before (the newest when zero).
+type ListInput struct {
+	State  string
+	Limit  int
+	Before int64
+}
+
+// ListResult is one page, newest first. Next is the Before value of the
+// following page and is zero on the last page.
+type ListResult struct {
+	Items []*View
+	Next  int64
+}
+
+func (input ListInput) check() (status string, limit int, err error) {
+	switch input.State {
+	case "", ListStateAll:
+	case state.PullRequestOpen, state.PullRequestClosed, state.PullRequestMerged:
+		status = input.State
+	default:
+		return "", 0, NewProblem("invalid_list_state", "The state must be open, closed, merged, or all.")
+	}
+	limit = input.Limit
+	if limit == 0 {
+		limit = DefaultListLimit
+	}
+	if limit < 0 || limit > MaximumListLimit {
+		return "", 0, NewProblem("invalid_list_limit", "The page size must be from 1 to "+strconv.Itoa(MaximumListLimit)+".")
+	}
+	if input.Before < 0 {
+		return "", 0, NewProblem("invalid_list_before", "The continuation must be a pull request number.")
+	}
+	return status, limit, nil
+}
 
 const (
 	// MaximumTextRequestBytes bounds a JSON request that carries pull request

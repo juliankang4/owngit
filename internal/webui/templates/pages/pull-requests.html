@@ -13,6 +13,13 @@
     {{if not $p.Unavailable}}<span class="sec__n">{{biCount $lang "item" (len $p.Items)}}</span>{{end}}
     {{with $p.NewURL}}<span class="sec__hint"><a href="{{.}}">{{bi $lang "pr.new.title"}}</a></span>{{end}}
   </div>
+  {{/* The current state is marked by bold text and aria-current, not by color. */}}
+  <nav class="sec__hint" aria-label="{{bi $lang "pr.filter.label"}}">
+    {{template "prFilter" dict "Lang" $lang "Cur" $p.State "S" "open"}}
+    {{template "prFilter" dict "Lang" $lang "Cur" $p.State "S" "closed"}}
+    {{template "prFilter" dict "Lang" $lang "Cur" $p.State "S" "merged"}}
+    {{template "prFilter" dict "Lang" $lang "Cur" $p.State "S" "all"}}
+  </nav>
 
   {{/* Records that could not be read are missing, not absent. An empty list
        here would say this repository has no pull requests, which is a
@@ -42,10 +49,15 @@
         </a>
       {{end}}
     </div>
+    {{with $p.MoreURL}}<p><a href="{{.}}">{{bi $lang "pr.list.more"}}</a></p>{{end}}
   {{else}}
     <div class="empty">
-      <p class="empty__lead">{{bi $lang "pr.list.empty"}}</p>
-      <p>{{bi $lang "pr.list.start"}}</p>
+      {{if eq $p.State "all"}}
+        <p class="empty__lead">{{bi $lang "pr.list.empty"}}</p>
+        <p>{{bi $lang "pr.list.start"}}</p>
+      {{else}}
+        <p class="empty__lead">{{bi $lang "pr.list.empty_state"}}</p>
+      {{end}}
       {{with $p.NewURL}}
         <a class="btn btn--primary" href="{{.}}">{{icon "plus"}}{{bi $lang "pr.new.title"}}</a>
       {{end}}
@@ -54,3 +66,6 @@
 </section>
 </div>
 {{end}}
+
+{{define "prFilter"}}{{$name := ""}}{{if eq .S "open"}}{{$name = bi .Lang "pr.state.open"}}{{else if eq .S "closed"}}{{$name = bi .Lang "pr.state.closed"}}{{else if eq .S "merged"}}{{$name = bi .Lang "pr.state.merged"}}{{else}}{{$name = bi .Lang "pr.filter.all"}}{{end -}}
+{{if eq .S .Cur}}<strong aria-current="true">{{$name}}</strong>{{else}}<a href="?state={{.S}}">{{$name}}</a>{{end}} {{end}}

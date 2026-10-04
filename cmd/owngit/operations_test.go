@@ -25,7 +25,7 @@ func TestOperationResultIsPrintedByteForByte(t *testing.T) {
 	defer server.Close()
 	parsed, err := url.Parse(server.URL)
 	noErr(t, err)
-	content, err := listPullRequests(context.Background(), connection{server: parsed, repository: "project", credential: credential{kind: credentialNone}})
+	content, err := listPullRequests(context.Background(), connection{server: parsed, repository: "project", credential: credential{kind: credentialNone}}, pullRequestListQuery{})
 	noErr(t, err)
 	if string(content) != body {
 		t.Fatalf("operation returned %q, want %q", content, body)
@@ -101,5 +101,25 @@ func TestCheckAttemptStepsRecordACancelledExecution(t *testing.T) {
 	var exit *checkExit
 	if err := attempt.outcome(); !errors.As(err, &exit) || exit.code != 130 {
 		t.Fatalf("outcome=%v, want exit 130", err)
+	}
+}
+
+// The list flags reach the server as its paging parameters, and the result,
+// including the continuation, is printed as the server sent it.
+func TestPullRequestListSendsStateAndContinuation(t *testing.T) {
+	const body = `{"ok":true,"pull_requests":[{"number":9}],"next":9}`
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		query = request.URL.RawQuery
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(body))
+	}))
+	defer server.Close()
+	output, err := captureStdout(func() error {
+		return prCommand([]string{"list", "--server", server.URL, "--accept-insecure-http", "--repository", "project", "--state", "merged", "--limit", "1", "--before", "12"})
+	})
+	noErr(t, err)
+	if query != "before=12&limit=1&state=merged" || output != body+"\n" {
+		t.Fatalf("query %q, output %q; want the paging parameters and the server bytes", query, output)
 	}
 }

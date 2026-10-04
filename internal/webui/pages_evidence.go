@@ -21,6 +21,10 @@ type PullRequestsPage struct {
 
 	// Items are the pull requests, already ordered by the backend.
 	Items []PullRequestRow
+	// State is the state the list shows: open, closed, merged or all.
+	State string
+	// MoreURL shows the next, older page. Empty on the last page.
+	MoreURL string
 	// NewURL opens the creation screen. Empty when the backend does not offer
 	// it, for example on an empty repository with no branches to compare.
 	NewURL string

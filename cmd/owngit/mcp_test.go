@@ -317,6 +317,7 @@ func TestMCPReadToolsReturnTheCommandLineJSON(t *testing.T) {
 		{"repository_list", nil, cliOutput(t, repoCommand, "list", "--server", serverURL, "--accept-insecure-http")},
 		{"repository_show", map[string]any{}, cliOutput(t, repoCommand, append([]string{"show"}, remote...)...)},
 		{"pull_request_list", map[string]any{"repository": "project"}, cliOutput(t, prCommand, append([]string{"list"}, remote...)...)},
+		{"pull_request_list", map[string]any{"repository": "project", "state": "open", "limit": 1, "before": 99}, cliOutput(t, prCommand, append([]string{"list", "--state", "open", "--limit", "1", "--before", "99"}, remote...)...)},
 		{"pull_request_show", map[string]any{"number": json.Number(number)}, cliOutput(t, prCommand, append([]string{"show", "--number", number}, remote...)...)},
 		{"pull_request_diff", map[string]any{"number": json.Number(number)}, cliOutput(t, prCommand, append([]string{"diff", "--number", number}, remote...)...)},
 		{"pull_request_diff", map[string]any{"number": json.Number(number), "patch": false}, cliOutput(t, prCommand, append([]string{"diff", "--number", number, "--stat"}, remote...)...)},

@@ -368,9 +368,9 @@ func TestPullRequestListRefReadsDoNotGrowWithPullRequests(t *testing.T) {
 	listProcesses := func() int {
 		t.Helper()
 		started := countGit(t, app)
-		views, err := app.PullRequests.List(context.Background(), "listed")
+		listed, err := app.PullRequests.List(context.Background(), "listed", pullrequest.ListInput{})
 		noErr(t, err)
-		for _, view := range views {
+		for _, view := range listed.Items {
 			if view.Source.Status != "commit" || view.Target.Status != "commit" || view.Source.OID == view.Target.OID {
 				t.Fatalf("pull request %d heads: %+v %+v", view.Number, view.Source, view.Target)
 			}

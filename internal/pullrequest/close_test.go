@@ -41,8 +41,9 @@ func TestCloseAndReopenPullRequest(t *testing.T) {
 	if got := fixture.ref("refs/heads/main"); got != targetOID {
 		t.Fatalf("a closed pull request changed the target: %s", got)
 	}
-	views, err := fixture.service.List(fixture.ctx, fixture.repositoryID)
+	viewsPage, err := fixture.service.List(fixture.ctx, fixture.repositoryID, ListInput{})
 	noErr(t, err)
+	views := viewsPage.Items
 	if len(views) != 1 || views[0].State != state.PullRequestClosed {
 		t.Fatalf("the closed pull request left the history: %d", len(views))
 	}

@@ -177,7 +177,14 @@ func (service *Service) reconcileProvisionalCreationLocked(ctx context.Context, 
 	return activated, true, nil
 }
 
-func (service *Service) List(ctx context.Context, repositoryID string) ([]*View, error) {
+// List returns one newest-first page of the repository's pull requests. A page
+// that does not reach the oldest one carries Next, the number to continue
+// below.
+func (service *Service) List(ctx context.Context, repositoryID string, input ListInput) (*ListResult, error) {
+	status, limit, err := input.check()
+	if err != nil {
+		return nil, err
+	}
 	repositoryPath, err := service.repositoryPath(ctx, repositoryID)
 	if err != nil {
 		return nil, err
@@ -187,18 +194,15 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 		return nil, err
 	}
 	defer lock.RUnlock()
-	records, err := service.Store.PullRequests(ctx, repositoryID)
+	records, more, err := service.Store.PullRequestSummaries(ctx, repositoryID, status, input.Before, limit)
 	if err != nil {
 		return nil, &Problem{Code: "state_unavailable", Message: "Pull request metadata could not be read.", Cause: err}
-	}
-	if len(records) > MaximumListResults {
-		return nil, NewProblem("result_too_large", "The pull request list exceeds the supported response limit. Use show with a pull request number.")
 	}
 	// One ref listing serves every pull request, so the list starts the same
 	// number of ref reads however many pull requests it shows. A list leaves
 	// out each description and its review notes, so its size stays bounded.
 	var heads map[string]branchHead
-	views := make([]*View, 0, len(records))
+	result := &ListResult{Items: make([]*View, 0, len(records))}
 	for _, record := range records {
 		if heads == nil && record.Status != state.PullRequestMerged {
 			if heads, err = service.branchHeads(ctx, repositoryPath); err != nil {
@@ -210,9 +214,12 @@ func (service *Service) List(ctx context.Context, repositoryID string) ([]*View,
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, view)
+		result.Items = append(result.Items, view)
 	}
-	return views, nil
+	if more {
+		result.Next = records[len(records)-1].Number
+	}
+	return result, nil
 }
 
 func (service *Service) Show(ctx context.Context, repositoryID string, number int64) (*View, error) {

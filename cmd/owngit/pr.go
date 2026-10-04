@@ -159,6 +159,10 @@ func readPullRequestText(path, flagName string) (string, error) {
 func prList(arguments []string) error {
 	flags := newCommandFlagSet("pr list")
 	remote := addGeneralRemoteFlags(flags, true)
+	var query pullRequestListQuery
+	flags.StringVar(&query.State, "state", "", "list only open, closed, or merged pull requests (default: all states)")
+	flags.IntVar(&query.Limit, "limit", 0, "pull requests per page, 1 to 100 (default 50)")
+	flags.Int64Var(&query.Before, "before", 0, "continue below this pull request number: the \"next\" value of the previous page")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -166,7 +170,7 @@ func prList(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return writeResult(listPullRequests(context.Background(), target))
+	return writeResult(listPullRequests(context.Background(), target, query))
 }
 
 func prShow(arguments []string) error {
@@ -481,4 +485,5 @@ func writeStructuredCommandError(writer io.Writer, err error) bool {
 func printPRUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit pr <create|list|show|edit|diff|review|mergeability|merge|close|reopen> [options]")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote. HTTP also requires --accept-insecure-http.")
+	fmt.Fprintln(writer, "pr list shows the newest pull requests first, one page at a time. When more remain, the result has \"next\"; pass it as --before for the following page.")
 }

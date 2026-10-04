@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/testfixture"
@@ -118,8 +119,9 @@ func TestAPIPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 					t.Fatalf("%s status=%d code=%q challenge=%q", response.Request.URL.Path, status, code, challenge)
 				}
 			}
-			pullRequests, err := fixture.app.PullRequests.List(context.Background(), "project")
+			listed, err := fixture.app.PullRequests.List(context.Background(), "project", pullrequest.ListInput{})
 			noErr(t, err)
+			pullRequests := listed.Items
 			credentials, err := fixture.store.HelperCredentials(context.Background(), "project")
 			noErr(t, err)
 			if len(pullRequests) != 0 || len(credentials) != 0 {
