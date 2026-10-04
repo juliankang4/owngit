@@ -39,9 +39,15 @@ func TestPullRequestListPagesPastAThousandRequests(t *testing.T) {
 		len(last.Items) != 2 || last.Items[0].Number != 3 || last.Next != nil {
 		t.Fatalf("last open page: status %d, %+v, next %v; want 200, numbers 3 and 1, no next", status, last.Items, last.Next)
 	}
-	for _, query := range []string{"?state=draft", "?limit=0", "?limit=101", "?limit=x", "?before=0", "?before=x"} {
-		if response := apiRequest(t, http.MethodGet, list+query, nil, "", ""); response.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s answered %d, want 400", query, response.StatusCode)
+	for _, bad := range []struct{ query, code string }{
+		{"?state=draft", "invalid_list_state"}, {"?limit=0", "invalid_list_limit"}, {"?limit=101", "invalid_list_limit"},
+		{"?limit=x", "invalid_list_limit"}, {"?before=0", "invalid_list_before"}, {"?before=x", "invalid_list_before"},
+		{"?state=open&state=closed", "invalid_request"}, {"?cursor=2", "invalid_request"},
+	} {
+		response := apiRequest(t, http.MethodGet, list+bad.query, nil, "", "")
+		status := response.StatusCode
+		if code := apiErrorCode(t, response); status != http.StatusBadRequest || code != bad.code {
+			t.Errorf("%s answered %d %q, want 400 %q", bad.query, status, code, bad.code)
 		}
 	}
 
@@ -51,6 +57,9 @@ func TestPullRequestListPagesPastAThousandRequests(t *testing.T) {
 		!strings.Contains(page.body, webui.Text(webui.LangEN, webui.MsgPRListMore)) ||
 		!strings.Contains(page.body, "before=1001") || !strings.Contains(page.body, "?state=closed") {
 		t.Errorf("open page: status %d, want 200 with the newest open request, a More link and the other states", page.status)
+	}
+	if strings.Contains(page.body, "50 items") {
+		t.Errorf("a page of a longer list states its size as the count")
 	}
 	closed := browserGET(t, client, server.URL+"/repositories/project/pull-requests?state=closed&before=1100")
 	if closed.status != http.StatusOK || !strings.Contains(closed.body, "Request 1098") || strings.Contains(closed.body, "Request 1099") {

@@ -709,7 +709,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRFailed:           {en: "The pull request operation did not complete.", ko: "풀 리퀘스트 작업을 끝내지 못했습니다."},
 	MsgPRClosedDone:       {en: "Pull request closed.", ko: "풀 리퀘스트를 닫았습니다."},
 	MsgPRReopenedDone:     {en: "Pull request reopened.", ko: "풀 리퀘스트를 다시 열었습니다."},
-	MsgPRFilterLabel:      {en: "Show pull requests that are", ko: "표시할 풀 리퀘스트 상태"},
+	MsgPRFilterLabel:      {en: "Pull request state", ko: "풀 리퀘스트 상태"},
 	MsgPRFilterAll:        {en: "All", ko: "전체"},
 	MsgPRListMore:         {en: "Show older pull requests", ko: "이전 풀 리퀘스트 더 보기"},
 	MsgPRListEmptyInState: {en: "No pull requests in this state.", ko: "이 상태의 풀 리퀘스트가 없습니다."},

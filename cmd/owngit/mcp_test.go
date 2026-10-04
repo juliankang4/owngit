@@ -1105,3 +1105,37 @@ func sendRawTool(session *mcpSession, tool, arguments string) toolResult {
 func refusedAsNotUTF8(result toolResult) bool {
 	return result.IsError && strings.Contains(result.Content[0].Text, `"code":"invalid_arguments"`) && strings.Contains(result.Content[0].Text, "not valid UTF-8")
 }
+
+// A pull request list cut to the result limit continues right after its last
+// kept pull request, so a client that follows next skips none, and the
+// result says it was cut.
+func TestMCPCutPullRequestListContinuesAfterTheLastKeptItem(t *testing.T) {
+	var page strings.Builder
+	page.WriteString(`{"ok":true,"pull_requests":[`)
+	for number := 100; number > 40; number-- {
+		if number < 100 {
+			page.WriteString(",")
+		}
+		fmt.Fprintf(&page, `{"number":%d,"title":"%s"}`, number, strings.Repeat("t", 150))
+	}
+	page.WriteString(`],"next":41}`)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(page.String()))
+	}))
+	defer server.Close()
+	session := startMCPSession(t, mcpOptions{server: server.URL, repository: "project", acceptInsecureHTTP: true, resultLimit: minimumMCPResultLimit})
+	text, isError := session.call("pull_request_list", map[string]any{})
+	var result struct {
+		Items []struct {
+			Number int64 `json:"number"`
+		} `json:"pull_requests"`
+		Next      int64          `json:"next"`
+		Truncated map[string]any `json:"result_truncated"`
+	}
+	noErr(t, json.Unmarshal([]byte(text), &result))
+	kept := len(result.Items)
+	if isError || len(text) > minimumMCPResultLimit || kept == 0 || kept >= 60 || result.Next != result.Items[kept-1].Number || result.Truncated == nil {
+		t.Fatalf("cut list (%d bytes, %d kept): next %d, truncated %v", len(text), kept, result.Next, result.Truncated)
+	}
+}

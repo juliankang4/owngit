@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"owngit/internal/apiclient"
+	"owngit/internal/bidi"
 	"owngit/internal/checkexec"
 	"owngit/internal/pullrequest"
 )
@@ -235,7 +236,11 @@ func (server *mcpServer) buildTools() []mcpTool {
 				if err != nil {
 					return nil, err
 				}
-				return listPullRequests(ctx, target, arguments.pullRequestListQuery)
+				content, err := listPullRequests(ctx, target, arguments.pullRequestListQuery)
+				if err != nil {
+					return nil, err
+				}
+				return server.fitPullRequestList(content), nil
 			},
 		},
 		{
@@ -659,4 +664,37 @@ func (server *mcpServer) pullRequestDiff(ctx context.Context, raw json.RawMessag
 	diff.Patch = ""
 	diff.Fit(server.resultLimit)
 	return encodeDiffStat(diff)
+}
+
+// fitPullRequestList cuts a list longer than the result limit to the pull
+// requests that fit, and sets next to the last one kept, so the following
+// page continues right after it and skips none. The result says it was cut.
+// A list that cannot be read this way is left to the general cut.
+func (server *mcpServer) fitPullRequestList(content []byte) []byte {
+	if len(content) <= server.resultLimit {
+		return content
+	}
+	var root map[string]any
+	var items []json.RawMessage
+	var envelope struct {
+		Items []json.RawMessage `json:"pull_requests"`
+	}
+	if json.Unmarshal(content, &root) != nil || json.Unmarshal(content, &envelope) != nil {
+		return content
+	}
+	items = envelope.Items
+	note := map[string]any{"bytes": len(content), "limit": server.resultLimit, "cut": []string{"pull_requests"}}
+	for keep := len(items) - 1; keep > 0; keep-- {
+		var last struct {
+			Number int64 `json:"number"`
+		}
+		if json.Unmarshal(items[keep-1], &last) != nil || last.Number < 1 {
+			return content
+		}
+		root["pull_requests"], root["next"], root["result_truncated"] = items[:keep], last.Number, note
+		if encoded, err := bidi.MarshalJSON(root); err == nil && len(encoded) <= server.resultLimit {
+			return encoded
+		}
+	}
+	return content
 }

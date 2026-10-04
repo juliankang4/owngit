@@ -64,6 +64,7 @@ func (app *App) handlePullRequestsGet(writer http.ResponseWriter, request *http.
 		for _, view := range result.Items {
 			page.Items = append(page.Items, app.pullRequestRow(stored.Address, view))
 		}
+		page.Complete = input.Before == 0 && result.Next == 0
 		if result.Next != 0 {
 			more := url.Values{"state": {page.State}, "before": {strconv.FormatInt(result.Next, 10)}}
 			if input.Limit != 0 {

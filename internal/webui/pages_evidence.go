@@ -23,6 +23,9 @@ type PullRequestsPage struct {
 	Items []PullRequestRow
 	// State is the state the list shows: open, closed, merged or all.
 	State string
+	// Complete is true when Items are the whole list of State, so a count of
+	// them is the total.
+	Complete bool
 	// MoreURL shows the next, older page. Empty on the last page.
 	MoreURL string
 	// NewURL opens the creation screen. Empty when the backend does not offer
