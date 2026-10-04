@@ -366,6 +366,132 @@ func (s *Store) Tasks(ctx context.Context, repositoryID string) ([]Task, error) 
 	return tasks, rows.Err()
 }
 
+// TaskCursor is one task's position in the order the Tasks page lists: the
+// newest registered attempt sequence first, then the last update, then the
+// task ID. It is the continuation a page hands back for the next one.
+type TaskCursor struct {
+	Sequence  int64
+	UpdatedAt time.Time
+	ID        string
+}
+
+// Cursor is this task's position in the Tasks page order.
+func (task Task) Cursor() TaskCursor {
+	return TaskCursor{Sequence: task.LastRegisteredSequence, UpdatedAt: task.UpdatedAt, ID: task.ID}
+}
+
+// String encodes the cursor for a URL or an API reply.
+func (cursor TaskCursor) String() string {
+	return strconv.FormatInt(cursor.Sequence, 10) + ":" +
+		strconv.FormatInt(cursor.UpdatedAt.Unix(), 10) + ":" + cursor.ID
+}
+
+// ParseTaskCursor reads one encoded cursor. A value that is not exactly one
+// position of this shape is refused rather than read as another position.
+func ParseTaskCursor(value string) (TaskCursor, bool) {
+	parts := strings.Split(value, ":")
+	if len(parts) != 3 || !validOpaqueID(parts[2]) {
+		return TaskCursor{}, false
+	}
+	sequence, ok := cursorNumber(parts[0])
+	if !ok {
+		return TaskCursor{}, false
+	}
+	updated, ok := cursorNumber(parts[1])
+	if !ok {
+		return TaskCursor{}, false
+	}
+	return TaskCursor{Sequence: sequence, UpdatedAt: time.Unix(updated, 0).UTC(), ID: parts[2]}, true
+}
+
+// cursorNumber reads one non-negative decimal field of a cursor.
+func cursorNumber(value string) (int64, bool) {
+	if value == "" || strings.Trim(value, "0123456789") != "" {
+		return 0, false
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return parsed, true
+}
+
+// TaskPage reads one page of a repository's tasks in the Tasks page order,
+// newest registered attempt first, and reports whether older tasks follow.
+// before is the position of the previous page's last task, nil for the first
+// page. The stored sequence stays the authority and is never replaced with a
+// list index.
+func (s *Store) TaskPage(ctx context.Context, repositoryID string, before *TaskCursor, limit int) ([]Task, bool, error) {
+	if repositoryID == "" || limit < 1 || limit > 1000 {
+		return nil, false, errors.New("invalid task page request")
+	}
+	query := taskProjection + ` WHERE t.repository_id=?`
+	arguments := []any{repositoryID}
+	if before != nil {
+		query += ` AND (` + taskRegisteredSequence + `,t.updated_at,t.id)<(?,?,?)`
+		arguments = append(arguments, before.Sequence, before.UpdatedAt.Unix(), before.ID)
+	}
+	query += ` ORDER BY ` + taskRegisteredSequence + ` DESC,t.updated_at DESC,t.id DESC LIMIT ?`
+	arguments = append(arguments, limit+1)
+	tasks, err := s.taskList(ctx, query, arguments...)
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(tasks) > limit
+	if more {
+		tasks = tasks[:limit]
+	}
+	return tasks, more, nil
+}
+
+// RecentTasks reads the most recently changed tasks across the given
+// repositories, newest first, and reports whether older tasks exist. The
+// changed time is the later of the task's own last change and its newest
+// attempt's registration, which is what the Coding tools page shows. Ties fall
+// back to the repository and then the task ID, so the page is stable.
+func (s *Store) RecentTasks(ctx context.Context, repositoryIDs []string, limit int) ([]Task, bool, error) {
+	if limit < 1 || limit > 1000 {
+		return nil, false, errors.New("invalid recent task request")
+	}
+	if len(repositoryIDs) == 0 {
+		return nil, false, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(repositoryIDs)), ",")
+	arguments := make([]any, 0, len(repositoryIDs)+1)
+	for _, repositoryID := range repositoryIDs {
+		arguments = append(arguments, repositoryID)
+	}
+	arguments = append(arguments, limit+1)
+	query := taskProjection + ` WHERE t.repository_id IN (` + placeholders + `) ORDER BY ` + taskChanged + ` DESC,t.repository_id,t.id DESC LIMIT ?`
+	tasks, err := s.taskList(ctx, query, arguments...)
+	if err != nil {
+		return nil, false, err
+	}
+	more := len(tasks) > limit
+	if more {
+		tasks = tasks[:limit]
+	}
+	return tasks, more, nil
+}
+
+// taskList reads the tasks one query describes.
+func (s *Store) taskList(ctx context.Context, query string, arguments ...any) ([]Task, error) {
+	rows, err := s.db.QueryContext(ctx, query, arguments...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var tasks []Task
+	for rows.Next() {
+		task, err := scanTask(rows)
+		if err != nil {
+			return nil, err
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
+}
+
 func (s *Store) task(ctx context.Context, queryer querier, repositoryID, id string) (Task, error) {
 	task, err := scanTask(queryer.QueryRowContext(ctx, taskProjection+` WHERE t.repository_id=? AND t.id=?`, repositoryID, id))
 	if errors.Is(err, sql.ErrNoRows) {
@@ -374,22 +500,30 @@ func (s *Store) task(ctx context.Context, queryer querier, repositoryID, id stri
 	return task, err
 }
 
+// taskRegisteredSequence is the newest registered attempt sequence of the task
+// aliased t. Reading it through check_attempts_task keeps one task's figure
+// independent of every other task's history.
+const taskRegisteredSequence = `COALESCE((SELECT MAX(sequence) FROM check_attempts WHERE task_id=t.id),0)`
+
+// taskChanged is the later of a task's own last change and the registration of
+// its newest attempt. Both are the server's own times.
+const taskChanged = `MAX(t.updated_at,COALESCE((SELECT created_at FROM check_attempts WHERE task_id=t.id ORDER BY sequence DESC LIMIT 1),0))`
+
 // taskProjection derives the whole task presentation in one indexed query. The
 // applied attempt is the newest completed attempt, the pending attempt is the
 // newest pending attempt after it, and the reservation boundary is the newest
-// reserved round.
+// reserved round. Each figure is read through the task's own index, so another
+// task's cycles and attempts never add work here.
 const taskProjection = `SELECT t.id,t.repository_id,t.title,t.created_at,t.updated_at,
 	COALESCE(a.id,''),COALESCE(a.sequence,0),COALESCE(a.finished_at,0),COALESCE(a.status,''),
 	COALESCE(p.id,''),
-	COALESCE(c.used,0),COALESCE(c.boundary,0),
-	COALESCE(r.registered,0),
-	COALESCE(i.initial,0)
+	COALESCE((SELECT COUNT(*) FROM check_cycles WHERE task_id=t.id),0),
+	COALESCE((SELECT MAX(reserved_after_sequence) FROM check_cycles WHERE task_id=t.id),0),
+	` + taskRegisteredSequence + `,
+	COALESCE((SELECT 1 FROM check_attempts WHERE task_id=t.id AND status IN ('passed','failed','error') LIMIT 1),0)
 FROM tasks t
 LEFT JOIN check_attempts a ON a.id=(SELECT id FROM check_attempts WHERE task_id=t.id AND status!='pending' ORDER BY sequence DESC LIMIT 1)
-LEFT JOIN check_attempts p ON p.id=(SELECT id FROM check_attempts WHERE task_id=t.id AND status='pending' AND sequence>COALESCE(a.sequence,0) ORDER BY sequence DESC LIMIT 1)
-LEFT JOIN (SELECT task_id,COUNT(*) AS used,MAX(reserved_after_sequence) AS boundary FROM check_cycles GROUP BY task_id) c ON c.task_id=t.id
-LEFT JOIN (SELECT task_id,MAX(sequence) AS registered FROM check_attempts GROUP BY task_id) r ON r.task_id=t.id
-LEFT JOIN (SELECT task_id,1 AS initial FROM check_attempts WHERE status IN ('passed','failed','error') GROUP BY task_id) i ON i.task_id=t.id`
+LEFT JOIN check_attempts p ON p.id=(SELECT id FROM check_attempts WHERE task_id=t.id AND status='pending' AND sequence>COALESCE(a.sequence,0) ORDER BY sequence DESC LIMIT 1)`
 
 func scanTask(scanner rowScanner) (Task, error) {
 	var task Task
@@ -1258,6 +1392,12 @@ func matchResults(checks []CheckDefinition, results []CheckResult) error {
 
 // validAttemptID accepts the 32 lowercase hex characters produced by RandomID.
 func validAttemptID(value string) bool {
+	return validOpaqueID(value)
+}
+
+// validOpaqueID reports whether value is one of the 16-byte hex identities the
+// server issues for tasks, attempts and other records.
+func validOpaqueID(value string) bool {
 	if len(value) != 32 {
 		return false
 	}

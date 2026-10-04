@@ -1602,3 +1602,183 @@ func TestConcurrentDifferentCompletionsKeepOneHonestOutcome(t *testing.T) {
 		t.Fatalf("submitted log digest does not describe the accepted row")
 	}
 }
+
+// taskTitles joins the titles of a task list for a compact comparison.
+func taskTitles(tasks []Task) string {
+	names := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		names = append(names, task.Title)
+	}
+	return strings.Join(names, ",")
+}
+
+// explainTaskRead returns the SQLite plan of one task query.
+func explainTaskRead(t *testing.T, store *Store, query string, arguments ...any) string {
+	t.Helper()
+	rows, err := store.db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, arguments...)
+	noErr(t, err)
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var id, parent, notUsed int
+		var detail string
+		noErr(t, rows.Scan(&id, &parent, &notUsed, &detail))
+		lines = append(lines, detail)
+	}
+	noErr(t, rows.Err())
+	return strings.Join(lines, "\n")
+}
+
+// The Tasks page reads one bounded page in its own order, newest registered
+// attempt first, and continues below the last task it showed. A task created
+// after the page was read does not change that continuation.
+func TestTaskPageOrdersAndContinuesNewestAttemptFirst(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	created := make(map[string]Task)
+	for index, title := range []string{"A", "B", "C", "D", "E", "F"} {
+		task, err := store.CreateTask(ctx, "project", title, now.Add(time.Duration(index)*time.Minute))
+		noErr(t, err)
+		created[title] = task
+	}
+	// The newest registered attempt decides the listing, whatever the
+	// task's own time is.
+	for index, title := range []string{"C", "A", "F"} {
+		attempt := attemptFor(created[title], fmt.Sprintf("%040d", index+1), now.Add(10*time.Minute), AttemptPassed)
+		recordAttempt(t, store, attempt)
+	}
+	first, more, err := store.TaskPage(ctx, "project", nil, 2)
+	noErr(t, err)
+	if !more || taskTitles(first) != "F,A" {
+		t.Fatalf("first page=%q more=%v", taskTitles(first), more)
+	}
+	before := first[len(first)-1].Cursor()
+	if before.Sequence != 2 || before.ID != created["A"].ID {
+		t.Fatalf("first page continuation=%+v", before)
+	}
+	second, more, err := store.TaskPage(ctx, "project", &before, 2)
+	noErr(t, err)
+	if !more || taskTitles(second) != "C,E" {
+		t.Fatalf("second page=%q more=%v", taskTitles(second), more)
+	}
+	// The continuation is stable: an older task created after the first page
+	// is folded in below the cursor, and no row is repeated.
+	if _, err := store.CreateTask(ctx, "project", "G", now.Add(30*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	again, more, err := store.TaskPage(ctx, "project", &before, 2)
+	noErr(t, err)
+	if !more || taskTitles(again) != "C,E" {
+		t.Fatalf("continued page after a new task=%q more=%v", taskTitles(again), more)
+	}
+	between := second[len(second)-1].Cursor()
+	third, more, err := store.TaskPage(ctx, "project", &between, 2)
+	noErr(t, err)
+	if !more || taskTitles(third) != "D,B" {
+		t.Fatalf("third page=%q more=%v", taskTitles(third), more)
+	}
+	last := third[len(third)-1].Cursor()
+	rest, more, err := store.TaskPage(ctx, "project", &last, 2)
+	noErr(t, err)
+	if more || taskTitles(rest) != "G" {
+		t.Fatalf("last page=%q more=%v", taskTitles(rest), more)
+	}
+}
+
+// Recent tasks read the bounded newest page across the repositories they are
+// given, ordered by the later of the task's own change and the registration
+// of its newest attempt.
+func TestRecentTasksBoundTheChangedOrderAcrossRepositories(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	for _, id := range []string{"alpha", "project"} {
+		noErr(t, store.AddRepository(ctx, Repository{ID: id, Name: id, CreatedAt: now}))
+	}
+	create := func(repository, title string, at time.Time) Task {
+		task, err := store.CreateTask(ctx, repository, title, at)
+		noErr(t, err)
+		return task
+	}
+	create("alpha", "alpha old", now.Add(time.Minute))
+	alphaAttempt := create("alpha", "alpha attempt", now.Add(2*time.Minute))
+	projectNewest := create("project", "project newest", now.Add(3*time.Minute))
+	create("project", "project plain", now.Add(4*time.Minute))
+	projectLatest := create("project", "project latest", now.Add(6*time.Minute))
+	recordAttempt(t, store, attemptFor(projectNewest, "1111111111111111111111111111111111111111", now.Add(10*time.Minute), AttemptPassed))
+	recordAttempt(t, store, attemptFor(alphaAttempt, "2222222222222222222222222222222222222222", now.Add(8*time.Minute), AttemptFailed))
+	// The newest attempt is the one registered last, even when its server
+	// time is earlier than an older attempt's: the page keeps the order the
+	// view has always used.
+	recordAttempt(t, store, attemptFor(projectLatest, fmt.Sprintf("%040d", 3), now.Add(20*time.Minute), AttemptFailed))
+	recordAttempt(t, store, attemptFor(projectLatest, fmt.Sprintf("%040d", 4), now.Add(7*time.Minute), AttemptPassed))
+
+	page, more, err := store.RecentTasks(ctx, []string{"alpha", "project"}, 3)
+	noErr(t, err)
+	if !more || taskTitles(page) != "project newest,alpha attempt,project latest" {
+		t.Fatalf("recent page=%q more=%v", taskTitles(page), more)
+	}
+	all, more, err := store.RecentTasks(ctx, []string{"alpha", "project"}, 10)
+	noErr(t, err)
+	if more || taskTitles(all) != "project newest,alpha attempt,project latest,project plain,alpha old" {
+		t.Fatalf("recent tasks=%q more=%v", taskTitles(all), more)
+	}
+	scoped, more, err := store.RecentTasks(ctx, []string{"project"}, 10)
+	noErr(t, err)
+	if more || taskTitles(scoped) != "project newest,project latest,project plain" {
+		t.Fatalf("tasks of one repository=%q more=%v", taskTitles(scoped), more)
+	}
+	if empty, more, err := store.RecentTasks(ctx, nil, 10); err != nil || more || len(empty) != 0 {
+		t.Fatalf("no repositories: %v more=%v err=%v", empty, more, err)
+	}
+}
+
+// An equal change time falls back to the repository and then the task ID, so
+// the newest page is stable.
+func TestRecentTasksBreakTiesByRepositoryThenTaskID(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	now := time.Unix(1_800_000_000, 0)
+	for _, id := range []string{"alpha", "project"} {
+		noErr(t, store.AddRepository(ctx, Repository{ID: id, Name: id, CreatedAt: now}))
+	}
+	for _, item := range []struct{ repository, title string }{
+		{"alpha", "alpha first"}, {"alpha", "alpha second"}, {"project", "project task"},
+	} {
+		_, err := store.CreateTask(ctx, item.repository, item.title, now)
+		noErr(t, err)
+	}
+	page, more, err := store.RecentTasks(ctx, []string{"alpha", "project"}, 10)
+	noErr(t, err)
+	if more || len(page) != 3 || page[0].RepositoryID != "alpha" || page[1].RepositoryID != "alpha" || page[2].RepositoryID != "project" {
+		t.Fatalf("tied order=%q more=%v", taskTitles(page), more)
+	}
+	if page[0].ID < page[1].ID {
+		t.Fatalf("equal tasks are not newest ID first: %s, %s", page[0].ID, page[1].ID)
+	}
+}
+
+// Reading one task reads only that task's cycles and attempts: the plan seeks
+// the task and then its own indexed rows, with no whole-installation
+// aggregation.
+func TestTaskReadPlanStaysWithinTheTask(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
+	noErr(t, store.AddRepository(ctx, Repository{ID: "other", Name: "Other", CreatedAt: now}))
+	for index := 0; index < 20; index++ {
+		other, err := store.CreateTask(ctx, "other", fmt.Sprintf("Other %02d", index), now)
+		noErr(t, err)
+		attempt := attemptFor(other, fmt.Sprintf("%040d", index), now, AttemptFailed)
+		recordAttempt(t, store, attempt)
+	}
+	plan := explainTaskRead(t, store, taskProjection+` WHERE t.repository_id=? AND t.id=?`, "project", task.ID)
+	for _, unwanted := range []string{"SCAN check_attempts", "SCAN check_cycles", "MATERIALIZE"} {
+		if strings.Contains(plan, unwanted) {
+			t.Fatalf("the task read aggregates unrelated history (%s):\n%s", unwanted, plan)
+		}
+	}
+	for _, wanted := range []string{"check_attempts_task", "check_cycles_task"} {
+		if !strings.Contains(plan, wanted) {
+			t.Fatalf("the task read does not use %s:\n%s", wanted, plan)
+		}
+	}
+}
