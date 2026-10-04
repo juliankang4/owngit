@@ -91,8 +91,9 @@ type State struct {
 	Calls [][]string `json:"calls,omitempty"`
 	// Running counts the LocalAPI requests in progress, delays included, and
 	// MaxRunning the most that were in progress at once, so a test can tell
-	// whether calls overlapped. A request abandoned during its delay stays
-	// counted until the delay ends.
+	// whether calls overlapped. A read that its client abandoned, or that the
+	// fixture ended before it answered, stays counted: a test can then tell
+	// that no new command started meanwhile.
 	Running    int `json:"running,omitempty"`
 	MaxRunning int `json:"max_running,omitempty"`
 
@@ -100,7 +101,9 @@ type State struct {
 	// wait, after any ReadDelay, until the test clears it, so a test can
 	// change the state at a known point: a waiting read answers from the
 	// state as it is when released. PassReads lets that many more reads
-	// answer meanwhile, and HeldReads counts the reads waiting now.
+	// answer meanwhile, and HeldReads counts the reads waiting now. A read
+	// whose client abandoned it, or whose fixture ended, stops waiting
+	// without answering and stays counted, as Running does.
 	HoldReads bool `json:"hold_reads,omitempty"`
 	PassReads int  `json:"pass_reads,omitempty"`
 	HeldReads int  `json:"held_reads,omitempty"`
@@ -160,6 +163,10 @@ type Fake struct {
 	// Path is the empty file that stands for the tailscale command.
 	Path     string
 	localAPI *httptest.Server
+	// closed ends the delayed and held reads when the fixture is finished,
+	// before the LocalAPI server closes (finish).
+	closed     chan struct{}
+	finishOnce sync.Once
 	// mu guards state, the State as JSON, so that every reader gets its own
 	// copy.
 	mu    sync.Mutex
@@ -197,7 +204,9 @@ func (fake *Fake) Command() tailscale.Command {
 }
 
 // New creates a fake that reports state. Its LocalAPI and the file that
-// stands for its command belong to this test.
+// stands for its command belong to this test. A delayed or held read that
+// the test no longer waits for ends when the test does, instead of holding
+// cleanup for its delay.
 func New(t *testing.T, state State) *Fake {
 	t.Helper()
 	name := "tailscale"
@@ -212,14 +221,23 @@ func New(t *testing.T, state State) *Fake {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake := &Fake{t: t, Path: path, state: content}
+	fake := &Fake{t: t, Path: path, closed: make(chan struct{}), state: content}
 	fake.localAPI = httptest.NewServer(http.HandlerFunc(fake.answer))
 	fakes.Store(path, fake)
 	t.Cleanup(func() {
 		fakes.Delete(path)
+		// A delayed or held read ends before the server closes, so a test
+		// that abandons a read does not wait its delay out in cleanup.
+		fake.finish()
 		fake.localAPI.Close()
 	})
 	return fake
+}
+
+// finish ends the fake's delayed and held reads without answering them,
+// before its LocalAPI server closes.
+func (fake *Fake) finish() {
+	fake.finishOnce.Do(func() { close(fake.closed) })
 }
 
 // Update changes the fake's state.
@@ -304,10 +322,18 @@ func (fake *Fake) update(change func(*State) bool) error {
 	return nil
 }
 
+// errAbandonedRead is the answer of a read whose client went away, or whose
+// fixture was finished, before it answered. Nothing is recorded and the read
+// stays counted (State.Running).
+var errAbandonedRead = errors.New("fake tailscale: the read was abandoned before it answered")
+
 // call runs one LocalAPI request: it counts the call as running, waits for
 // the delay of a write or a read and for a held read to be released, then
-// records the call and answers it from the state.
-func (fake *Fake) call(name string, write, read bool, answer func(*State)) error {
+// records the call and answers it from the state. A write that the caller
+// stopped waiting for still completes and is recorded, as Tailscale's does;
+// a read ends without answering when its request ends or the fixture is
+// finished.
+func (fake *Fake) call(ctx context.Context, name string, write, read bool, answer func(*State)) error {
 	var started State
 	err := fake.update(func(state *State) bool {
 		state.Running++
@@ -321,11 +347,17 @@ func (fake *Fake) call(name string, write, read bool, answer func(*State)) error
 	case write && started.WriteDelay > 0:
 		time.Sleep(time.Duration(started.WriteDelay) * time.Millisecond)
 	case read && started.ReadDelay > 0:
-		time.Sleep(time.Duration(started.ReadDelay) * time.Millisecond)
+		if !fake.waitFor(ctx, time.Duration(started.ReadDelay)*time.Millisecond) {
+			return errAbandonedRead
+		}
 	}
 	if read {
-		if err := fake.awaitRelease(); err != nil {
+		released, err := fake.awaitRelease(ctx)
+		if err != nil {
 			return err
+		}
+		if !released {
+			return errAbandonedRead
 		}
 	}
 	return fake.update(func(state *State) bool {
@@ -336,9 +368,26 @@ func (fake *Fake) call(name string, write, read bool, answer func(*State)) error
 	})
 }
 
-// awaitRelease returns once this read may answer: nothing holds reads, or a
-// pass is left (HoldReads).
-func (fake *Fake) awaitRelease() error {
+// waitFor waits for delay, and reports false when this read's request ends
+// first or the fixture is finished, so neither waits out a configured delay
+// in a handler that nobody is listening to.
+func (fake *Fake) waitFor(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-fake.closed:
+		return false
+	}
+}
+
+// awaitRelease reports whether this read may answer: nothing holds reads, or
+// a pass is left (HoldReads). It reports false when the read ends without
+// answering: its request ended or the fixture was finished while it waited.
+func (fake *Fake) awaitRelease(ctx context.Context) (bool, error) {
 	held := false
 	for {
 		released := false
@@ -361,9 +410,15 @@ func (fake *Fake) awaitRelease() error {
 			return state.HoldReads || held
 		})
 		if err != nil || released {
-			return err
+			return released, err
 		}
-		time.Sleep(5 * time.Millisecond)
+		select {
+		case <-time.After(5 * time.Millisecond):
+		case <-ctx.Done():
+			return false, nil
+		case <-fake.closed:
+			return false, nil
+		}
 	}
 }
 
@@ -384,7 +439,7 @@ func (fake *Fake) answer(response http.ResponseWriter, request *http.Request) {
 	}
 	switch {
 	case request.URL.Path == "/localapi/v0/status" && request.Method == http.MethodGet && request.URL.RawQuery == "peers=false":
-		fake.status(response)
+		fake.status(response, request)
 	case request.URL.Path == "/localapi/v0/serve-config":
 		fake.serveConfig(response, request)
 	default:
@@ -393,10 +448,10 @@ func (fake *Fake) answer(response http.ResponseWriter, request *http.Request) {
 }
 
 // status answers a status read.
-func (fake *Fake) status(response http.ResponseWriter) {
+func (fake *Fake) status(response http.ResponseWriter, request *http.Request) {
 	var code int
 	var answer []byte
-	err := fake.call(StatusRead, false, true, func(state *State) {
+	err := fake.call(request.Context(), StatusRead, false, true, func(state *State) {
 		if state.StatusError != "" {
 			code, answer = http.StatusInternalServerError, errorJSON(state.StatusError)
 			return
@@ -428,7 +483,7 @@ func (fake *Fake) serveConfig(response http.ResponseWriter, request *http.Reques
 	var status int
 	var answer []byte
 	var version string
-	err = fake.call(name, write, !write, func(state *State) {
+	err = fake.call(request.Context(), name, write, !write, func(state *State) {
 		if write {
 			status, answer = state.change(request.Header.Get("If-Match"), body)
 			return
