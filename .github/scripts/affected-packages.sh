@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prints the Go packages whose tests a change can affect.
 #
-# Usage: affected-packages.sh BASE HEAD
+# Usage: affected-packages.sh [--full] BASE HEAD
 #
 # A changed file belongs to the package of its nearest enclosing package
 # directory. A package is affected when its test binary depends on a package
@@ -16,14 +16,26 @@
 # they are declared below with what they read. A Markdown file outside every
 # package selects only those readers.
 #
+# --full prints the packages that keep their full flags on a pull request,
+# which test-shard.sh turns into a -short run for the rest: every affected
+# package that contains a changed file, or every affected package when a
+# changed file belongs to a test helper package, whose code other test
+# binaries compile into themselves. The full list is a subset of the normal
+# list.
+#
 # Test binaries include different files on each system, so the packages and
 # their dependencies are taken from Linux, Windows and macOS together.
 # Renames count as a removal and an addition, so both paths are considered.
 # The script needs bash 4 or later.
 set -euo pipefail
 
+full=
+if [ "${1-}" = --full ]; then
+	full=1
+	shift
+fi
 [ $# -eq 2 ] || {
-	echo "usage: $0 BASE HEAD" >&2
+	echo "usage: $0 [--full] BASE HEAD" >&2
 	exit 2
 }
 base=$1
@@ -34,6 +46,10 @@ systems="linux windows darwin"
 # stops the script instead of selecting fewer packages.
 files="$(git diff --no-renames --name-only -z "$base" "$head" | tr '\0' '\n')"
 module="$(go list -m)"
+# Test helper packages: other packages' test binaries compile them in, so a
+# change here can change what those tests do, and --full then keeps every
+# affected package out of the -short tier.
+helper_packages="$module/internal/testfixture $module/internal/tailscale/tailscaletest"
 
 # Package directories relative to the repository root, which is the module
 # root, mapped to their import paths.
@@ -67,6 +83,7 @@ release=$module/tools/release
 owngit=$module/cmd/owngit
 
 declare -A changed own_tests affected
+helper_changed=
 while read -r file; do
 	[ -n "$file" ] || continue
 	case $file in
@@ -100,6 +117,9 @@ while read -r file; do
 		echo ./...
 		exit 0
 	fi
+	case " $helper_packages " in
+	*" ${package_of[$dir]} "*) helper_changed=1 ;;
+	esac
 	case $file in
 	*_test.go) own_tests[${package_of[$dir]}]=1 ;;
 	*) changed[${package_of[$dir]}]=1 ;;
@@ -133,6 +153,15 @@ for goos in $systems; do
 	done <<<"$tests"
 done
 
+# --full keeps only the packages that contain a changed file of their own,
+# a product file or their own test files; the rest are affected only through a
+# dependency, or through a file their tests read, and run with -short. A
+# change to a test helper package appears in other packages' test binaries,
+# so every affected package then runs in full.
 for pkg in "${!affected[@]}"; do
+	if [ -n "$full" ] && [ -z "$helper_changed" ] &&
+		[ -z "${changed[$pkg]-}" ] && [ -z "${own_tests[$pkg]-}" ]; then
+		continue
+	fi
 	echo "$pkg"
 done | LC_ALL=C sort

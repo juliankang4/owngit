@@ -15,6 +15,11 @@ name: CI
 # directory whose name starts with a dot, which those tests skip, tests every
 # package. Any other change outside every package, such as go.mod or this
 # workflow, tests every package. gofmt and go vet always cover every package.
+# The packages a change touches directly run in full; a package selected only
+# because its tests depend on a changed package, or read a changed file, runs
+# with -short, which skips the tests that wait on the real clock. A change to
+# a test helper package, whose code other test binaries contain, and a change
+# outside every package, run every selected package in full.
 #
 # Full runs test every package: once a day at an off-peak hour, which catches
 # tests that fail only now and then, and when started by hand, which a release
@@ -86,6 +91,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       packages: ${{ steps.select.outputs.packages }}
+      fullpackages: ${{ steps.select.outputs.fullpackages }}
       vulncheck: ${{ steps.select.outputs.vulncheck }}
     steps:
       # A pull request's checkout is GitHub's merge of the pull request into
@@ -108,16 +114,21 @@ jobs:
           if [ "$EVENT" = pull_request ]; then
             packages="$(bash .github/scripts/affected-packages.sh HEAD^1 HEAD | tr '\n' ' ')"
             packages="${packages% }"
+            fullpackages="$(bash .github/scripts/affected-packages.sh --full HEAD^1 HEAD | tr '\n' ' ')"
+            fullpackages="${fullpackages% }"
             vulncheck=false
             if [ -n "$(git diff --name-only HEAD^1 HEAD -- go.mod go.sum)" ]; then
               vulncheck=true
             fi
           else
             packages=./...
+            fullpackages=./...
             vulncheck=true
           fi
           echo "Packages to test: ${packages:-none}"
+          echo "Packages to test in full: ${fullpackages:-none}"
           echo "packages=$packages" >>"$GITHUB_OUTPUT"
+          echo "fullpackages=$fullpackages" >>"$GITHUB_OUTPUT"
           echo "vulncheck=$vulncheck" >>"$GITHUB_OUTPUT"
 
   test:
@@ -170,11 +181,19 @@ jobs:
       - name: go test (shard ${{ matrix.shard }} of 4)
         env:
           PACKAGES: ${{ needs.select.outputs.packages }}
+          FULLPACKAGES: ${{ needs.select.outputs.fullpackages }}
+          EVENT: ${{ github.event_name }}
           FLAGS: ${{ runner.os == 'Linux' && '-race' || '' }} ${{ github.event_name == 'schedule' && '-shuffle=on' || '' }}
         run: |
           read -ra flags <<<"$FLAGS"
           echo "go test flags: ${flags[*]-none}"
-          bash .github/scripts/test-shard.sh --packages "$PACKAGES" ${{ matrix.shard }} 4 ${flags[@]+"${flags[@]}"}
+          # A pull request runs the packages it changes in full and the rest
+          # with -short; a full run tests every package.
+          full=()
+          if [ "$EVENT" = pull_request ]; then
+            full=(--full-packages "$FULLPACKAGES")
+          fi
+          bash .github/scripts/test-shard.sh --packages "$PACKAGES" ${full[@]+"${full[@]}"} ${{ matrix.shard }} 4 ${flags[@]+"${flags[@]}"}
 
   vulnerabilities:
     name: govulncheck

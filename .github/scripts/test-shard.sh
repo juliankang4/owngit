@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Runs one shard of the Go tests of every package, or of the packages given.
 #
-# Usage: test-shard.sh [--dry-run] [--packages LIST] SHARD SHARDS [GO TEST FLAGS...]
+# Usage: test-shard.sh [--dry-run] [--packages LIST] [--full-packages LIST] SHARD SHARDS [GO TEST FLAGS...]
 #
 # LIST holds import paths separated by spaces; the default is "./...", every
 # package. An empty LIST runs nothing and succeeds, for a change that no test
 # can see.
+#
+# --full-packages holds the packages that run with the flags as given; every
+# other package runs with -short added, which skips the tests that wait on the
+# real clock. "./..." in its LIST means every package runs as given. The
+# listing and the shard assignment do not depend on this option, because
+# -short changes only what a test does at run time, not what it is.
 #
 # The script lists the top-level tests, examples and fuzz tests of the
 # packages with "go test -list", sorts them by package and name, and numbers
@@ -29,12 +35,14 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--dry-run] [--packages LIST] SHARD SHARDS [GO TEST FLAGS...]" >&2
+	echo "usage: $0 [--dry-run] [--packages LIST] [--full-packages LIST] SHARD SHARDS [GO TEST FLAGS...]" >&2
 	exit 2
 }
 
 dry_run=
 packages=./...
+full_packages=
+full_given=
 while :; do
 	case "${1-}" in
 	--dry-run)
@@ -44,6 +52,12 @@ while :; do
 	--packages)
 		[ $# -ge 2 ] || usage
 		packages=$2
+		shift 2
+		;;
+	--full-packages)
+		[ $# -ge 2 ] || usage
+		full_packages=$2
+		full_given=1
 		shift 2
 		;;
 	*) break ;;
@@ -141,6 +155,13 @@ worker='
 		case " $SHARD_NO_RACE " in *" $pkg "*) [ "$flag" = -race ] && continue ;; esac
 		flags+=("$flag")
 	done
+	if [ -n "$SHARD_FULL_GIVEN" ]; then
+		case " $SHARD_FULL_PACKAGES " in
+		*" ./... "*) ;;
+		*" $pkg "*) ;;
+		*) flags+=(-short) ;;
+		esac
+	fi
 	if go test ${flags[@]+"${flags[@]}"} -count=1 -timeout 30m -run "$(cat "$dir/$id.run")" "$pkg" >"$dir/$id.log" 2>&1; then
 		status=0
 	else
@@ -148,7 +169,7 @@ worker='
 	fi
 	echo "$status $SECONDS ${flags[*]-}" >"$dir/$id.status"
 '
-export SHARD_WORK="$work" SHARD_NO_RACE="$no_race"
+export SHARD_WORK="$work" SHARD_NO_RACE="$no_race" SHARD_FULL_GIVEN="$full_given" SHARD_FULL_PACKAGES="$full_packages"
 : >"$work/alone.txt"
 : >"$work/queue.txt"
 if [ -f "$work/jobs.txt" ]; then
