@@ -1126,6 +1126,12 @@ func TestObservationsAreBoundedAndUpserted(t *testing.T) {
 	if err != nil || refreshed[0].OID != updated || len(refreshed) != MaximumCheckObservations {
 		t.Fatalf("upserted observation=%+v err=%v", refreshed[0], err)
 	}
+	// The same object again is not written: its observation time stays.
+	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-63", updated, fixture.now.Add(90*time.Minute)))
+	again, err := fixture.store.CheckObservations(ctx, "project")
+	if err != nil || !again[0].ObservedAt.Equal(fixture.now.Add(time.Hour)) {
+		t.Fatalf("an unchanged observation was rewritten: %+v err=%v", again[0], err)
+	}
 	for _, invalid := range []struct{ ref, oid string }{
 		{"", strings.Repeat("a", 40)},
 		{"main", strings.Repeat("a", 40)},
@@ -1240,4 +1246,71 @@ func (fixture *checkJobFixture) claimAndStart(t *testing.T, job CheckJob, runner
 		t.Fatalf("start job: %v", err)
 	}
 	return claimed, attempt
+}
+
+// The repository holding the oldest pending job is claimed first, whatever the
+// repository names sort like.
+func TestPendingRepositoriesAreOrderedByTheirOldestJob(t *testing.T) {
+	fixture := newCheckJobFixture(t)
+	ctx := context.Background()
+	for _, id := range []string{"other", "project"} {
+		fixture.setPolicy(t, func(input *CheckPolicyInput) { input.RepositoryID = id })
+		_, err := fixture.store.GrantCheckConsent(ctx, id, fixture.now)
+		noErr(t, err)
+	}
+	admitAt := func(id, ref string, offset time.Duration) {
+		request := pushJobRequest()
+		request.RepositoryID, request.TriggerRef = id, ref
+		request.EventKey = "refs/heads/" + ref + "@" + request.SourceOID
+		_, _, err := fixture.store.AdmitCheckJob(ctx, request, fixture.now.Add(offset))
+		noErr(t, err)
+	}
+	admitAt("project", "main", 0)
+	admitAt("other", "main", time.Second)
+	admitAt("other", "dev", 2*time.Second)
+	ids, err := fixture.store.CheckPendingRepositories(ctx)
+	if err != nil || strings.Join(ids, ",") != "project,other" {
+		t.Fatalf("pending repositories=%v err=%v, want project,other", ids, err)
+	}
+}
+
+// A rerun applies the policy's current caps to the workflow's request, so
+// raising a cap lets it run longer and lowering one cuts it. Without a request
+// it keeps the original job's effective limits, still cut by the caps.
+func TestRerunLimitsFollowTheCurrentPolicyCaps(t *testing.T) {
+	fixture := newCheckJobFixture(t)
+	ctx := context.Background()
+	fixture.setPolicy(t, func(input *CheckPolicyInput) { input.MaxTimeoutMS, input.MaxOutputLimitBytes = 5000, 2048 })
+	fixture.grantConsent(t)
+	request := pushJobRequest()
+	request.TimeoutMS, request.OutputLimitBytes = 600000, 65536
+	job := fixture.admit(t, request)
+	if job.Limits.TimeoutMS != 5000 || job.Limits.OutputLimitBytes != 2048 {
+		t.Fatalf("limits=%+v", job.Limits)
+	}
+	_, err := fixture.store.CancelCheckJob(ctx, "project", job.ID, fixture.now)
+	noErr(t, err)
+	asked := &CheckJobLimits{TimeoutMS: 600000, OutputLimitBytes: 65536}
+	for _, test := range []struct {
+		timeout, output int64
+		requested       *CheckJobLimits
+		want            CheckJobLimits
+	}{
+		{30000, 8192, asked, CheckJobLimits{TimeoutMS: 30000, OutputLimitBytes: 8192}},
+		{600000, 65536, &CheckJobLimits{}, CheckJobLimits{TimeoutMS: checkworkflow.DefaultTimeoutMS, OutputLimitBytes: checkworkflow.DefaultOutputLimitBytes}},
+		{30000, 8192, nil, CheckJobLimits{TimeoutMS: 5000, OutputLimitBytes: 2048}},
+		{2000, 1024, asked, CheckJobLimits{TimeoutMS: 2000, OutputLimitBytes: 1024}},
+	} {
+		fixture.setPolicy(t, func(input *CheckPolicyInput) {
+			input.MaxTimeoutMS, input.MaxOutputLimitBytes = test.timeout, test.output
+		})
+		fixture.grantConsent(t)
+		rerun, _, err := fixture.store.RerunCheckJobRequesting(ctx, "project", job.ID, test.requested, fixture.now)
+		noErr(t, err)
+		if rerun.Limits != test.want {
+			t.Fatalf("caps %d/%d: rerun limits=%+v, want %+v", test.timeout, test.output, rerun.Limits, test.want)
+		}
+		_, err = fixture.store.CancelCheckJob(ctx, "project", rerun.ID, fixture.now)
+		noErr(t, err)
+	}
 }

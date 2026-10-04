@@ -88,6 +88,15 @@ func (fixture *pushFixture) git(arguments ...string) string {
 	if err != nil {
 		fixture.t.Fatalf("git %v: %v\n%s", arguments, err, output)
 	}
+	for _, argument := range arguments {
+		if argument == "push" {
+			// A push reaches the repository through OwnGit, which releases the
+			// repository's write lock; the cached refs are then read again.
+			lock := fixture.coordinator.Repositories.Locks.For(fixture.repositoryID)
+			lock.Lock()
+			lock.Unlock()
+		}
+	}
 	return strings.TrimSpace(string(output))
 }
 
@@ -197,5 +206,65 @@ func TestFullQueueKeepsTheBranchForALaterPass(t *testing.T) {
 	noErr(t, fixture.coordinator.reconcilePushes(fixture.ctx, fixture.repositoryID, policy))
 	if observed := fixture.observed(); observed["refs/heads/b-second"] != secondOID {
 		t.Fatalf("the branch was not admitted after the queue drained: %v", observed)
+	}
+}
+
+// A branch name the observation cannot hold used to fail the pass before its
+// cursor moved, so every later branch of the repository was never checked.
+func TestUnrecordableBranchNameDoesNotBlockLaterBranches(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	component := strings.Repeat("a", 100)
+	long := component + "/" + component + "/" + component
+	fixture.pushWorkflow(long, validWorkflow)
+	mainOID := fixture.pushWorkflow("main", validWorkflow)
+	for pass := 0; pass < 3; pass++ {
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	}
+	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
+		t.Fatalf("admitted jobs for %v, want only main", refs)
+	}
+	if observed := fixture.observed(); observed["refs/heads/main"] != mainOID || len(observed) != 1 {
+		t.Fatalf("observations=%v", observed)
+	}
+	skips := 0
+	for _, line := range fixture.logs {
+		if strings.Contains(line, "is skipped") {
+			skips++
+		}
+	}
+	if skips != 1 {
+		t.Fatalf("the skipped branch was reported %d times, want once: %v", skips, fixture.logs)
+	}
+}
+
+// A push event that is off observes nothing, so turning it on later admits the
+// heads that arrived meanwhile, and a head that already has a job stays unqueued.
+func TestDisabledPushEventObservesNothing(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	now := time.Now().UTC()
+	policy := func(events ...string) {
+		_, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{
+			RepositoryID: fixture.repositoryID, Executor: state.CheckExecutorExternalRunner, AllowedEvents: events,
+			MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+		}, now)
+		noErr(t, err)
+		_, err = fixture.store.GrantCheckConsent(fixture.ctx, fixture.repositoryID, now.Add(time.Second))
+		noErr(t, err)
+		now = now.Add(2 * time.Second)
+	}
+	policy(checkworkflow.EventPullRequest)
+	fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"exit 0"}]}`)
+	for pass := 0; pass < 2; pass++ {
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	}
+	if observed := fixture.observed(); len(observed) != 0 {
+		t.Fatalf("observations while push was off: %v", observed)
+	}
+	policy(checkworkflow.EventPush, checkworkflow.EventPullRequest)
+	for pass := 0; pass < 2; pass++ {
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	}
+	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
+		t.Fatalf("jobs after enabling push=%v, want one for main", refs)
 	}
 }

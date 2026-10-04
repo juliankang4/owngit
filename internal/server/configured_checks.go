@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -697,6 +700,8 @@ func sourceLimits(limits state.CheckSourceLimits) checksource.Limits {
 
 // errRerunSourceMissing reports that the commit a job ran is no longer in
 // the repository, so the job cannot run again.
+var errRerunWorkflowChanged = errors.New("the job's workflow file no longer matches the one the job recorded")
+
 var errRerunSourceMissing = errors.New("the job's commit is no longer in the repository")
 
 // rerunCheckJob queues a rerun of job jobID while the repository read lock
@@ -719,7 +724,11 @@ func (app *App) rerunCheckJob(ctx context.Context, repositoryID, jobID string) (
 			return err
 		}
 		return pinned.WhilePresent(ctx, func() (err error) {
-			job, deduped, err = app.Store.RerunCheckJob(ctx, repositoryID, jobID, app.now())
+			requested, err := rerunRequestedLimits(ctx, pinned, original)
+			if err != nil {
+				return err
+			}
+			job, deduped, err = app.Store.RerunCheckJobRequesting(ctx, repositoryID, jobID, requested, app.now())
 			return err
 		})
 	})
@@ -727,6 +736,31 @@ func (app *App) rerunCheckJob(ctx context.Context, repositoryID, jobID string) (
 		err = errRerunSourceMissing
 	}
 	return job, deduped, err
+}
+
+// rerunRequestedLimits reads the timeout and output limit the job's workflow
+// asked for, so the rerun applies the policy's current caps to them and not
+// to the limits the original job ended up with. A workflow that cannot be
+// found at the job's commit gives nil, and the rerun keeps the job's own
+// limits. A workflow that differs from the one the job recorded is an error.
+func rerunRequestedLimits(ctx context.Context, pinned *repository.PinnedRepository, original state.CheckJob) (*state.CheckJobLimits, error) {
+	if original.WorkflowDigest == "" {
+		log.Printf("configured check rerun %s keeps its recorded limits: the job recorded no workflow", original.ID)
+		return nil, nil
+	}
+	blob, document, err := checkrun.ReadPinnedWorkflow(ctx, pinned, original.Execution.Source.MetadataLimit)
+	if errors.Is(err, repository.ErrPinnedPathNotFound) {
+		log.Printf("configured check rerun %s keeps its recorded limits: its commit has no workflow file", original.ID)
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(blob.Content)
+	if hex.EncodeToString(digest[:]) != original.WorkflowDigest || (original.WorkflowOID != "" && blob.OID != original.WorkflowOID) {
+		return nil, errRerunWorkflowChanged
+	}
+	return &state.CheckJobLimits{TimeoutMS: document.Limits.TimeoutMS, OutputLimitBytes: document.Limits.OutputLimitBytes}, nil
 }
 
 func writeConfiguredJobError(writer http.ResponseWriter, request *http.Request, err error) {
@@ -737,6 +771,8 @@ func writeConfiguredJobError(writer http.ResponseWriter, request *http.Request, 
 		writeAPIError(writer, http.StatusConflict, "check_job_state", err.Error(), nil)
 	case errors.Is(err, errRerunSourceMissing):
 		writeAPIError(writer, http.StatusConflict, "check_source_missing", "The job's commit is no longer in the repository, so the job cannot run again.", nil)
+	case errors.Is(err, errRerunWorkflowChanged):
+		writeAPIError(writer, http.StatusConflict, "check_workflow_changed", "The job's workflow file differs from the one the job recorded, so the job cannot run again.", nil)
 	case errors.Is(err, state.ErrCheckCeilingExceeded):
 		writeAPIError(writer, http.StatusConflict, "check_policy_above_ceilings", err.Error(), nil)
 	case errors.As(err, new(*state.PolicyError)):

@@ -2,12 +2,18 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"owngit/internal/checkworkflow"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -86,5 +92,58 @@ func TestCheckRerunWaitsForTheRepositoryAndNeedsItsCommit(t *testing.T) {
 	}
 	if unfinished := unfinishedCheckJobs(t, fixture); unfinished != 0 {
 		t.Fatalf("a refused rerun queued %d jobs", unfinished)
+	}
+}
+
+// A rerun starts from what the job's workflow asked for, not from the limits
+// the first run ended with, so raising the policy's cap lets the rerun run
+// longer. A workflow file that no longer matches the recorded one refuses it.
+func TestCheckRerunAppliesTheCurrentCapsToTheWorkflowRequest(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	workflow := []byte(`{"version":1,"events":{"push":{}},"checks":[{"name":"unit","command":"exit 0"}],"limits":{"timeout_ms":120000}}`)
+	noErr(t, os.MkdirAll(filepath.Join(fixture.work, ".owngit"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(fixture.work, checkworkflow.Path), workflow, 0o600))
+	apiRunGit(t, fixture.work, "add", ".")
+	apiRunGit(t, fixture.work, "commit", "-m", "workflow")
+	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/ci")
+	oid := apiGitOutput(t, fixture.work, "rev-parse", "HEAD")
+	blobOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:"+checkworkflow.Path)
+	digest := sha256.Sum256(workflow)
+
+	now := fixture.app.now()
+	setCap := func(timeoutMS int64) {
+		_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+			RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+			MaxTimeoutMS: timeoutMS, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
+		}, now)
+		noErr(t, err)
+		_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
+		noErr(t, err)
+	}
+	admit := func(recordedDigest string) state.CheckJob {
+		job, _, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
+			RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/ci@" + oid + recordedDigest[:4], SourceOID: oid, TriggerRef: "ci",
+			WorkflowPath: checkworkflow.Path, WorkflowOID: blobOID, WorkflowDigest: recordedDigest, TimeoutMS: 120000,
+			Checks: []state.CheckDefinition{{Name: "unit", Command: "exit 0"}},
+		}, now)
+		noErr(t, err)
+		_, err = fixture.store.CancelCheckJob(ctx, "project", job.ID, now)
+		noErr(t, err)
+		return job
+	}
+	setCap(30000)
+	job := admit(hex.EncodeToString(digest[:]))
+	if job.Limits.TimeoutMS != 30000 {
+		t.Fatalf("limits=%+v", job.Limits)
+	}
+	setCap(90000)
+	rerun, _, err := fixture.app.rerunCheckJob(ctx, "project", job.ID)
+	if err != nil || rerun.Limits.TimeoutMS != 90000 {
+		t.Fatalf("rerun after raising the cap: limits=%+v err=%v", rerun.Limits, err)
+	}
+	other := admit(strings.Repeat("d", 64))
+	if _, _, err := fixture.app.rerunCheckJob(ctx, "project", other.ID); !errors.Is(err, errRerunWorkflowChanged) {
+		t.Fatalf("rerun of a job whose workflow differs: err=%v", err)
 	}
 }

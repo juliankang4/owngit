@@ -1063,6 +1063,16 @@ func (s *Store) RecordCheckObservation(ctx context.Context, repositoryID, refNam
 	if repositoryID == "" || !validObservationRef(refName) || !validObjectID(oid) || now.IsZero() {
 		return ErrInvalidCheckObservation
 	}
+	// An observation of the same object is already recorded; writing it again
+	// would only add to the write-ahead log.
+	var stored string
+	err := s.db.QueryRowContext(ctx, `SELECT oid FROM check_observations WHERE repository_id=? AND ref_name=?`, repositoryID, refName).Scan(&stored)
+	if err == nil && stored == oid {
+		return nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -1079,6 +1089,26 @@ func (s *Store) RecordCheckObservation(ctx context.Context, repositoryID, refNam
 		return err
 	}
 	return tx.Commit()
+}
+
+// CheckPendingRepositories lists the repositories with a pending job, the one
+// holding the oldest pending job first.
+func (s *Store) CheckPendingRepositories(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT repository_id FROM check_jobs WHERE status='pending'
+		GROUP BY repository_id ORDER BY MIN(admitted_at),repository_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // CheckEventsWithJobs reports which of eventKeys already have a job of the
@@ -1141,6 +1171,9 @@ func (s *Store) CheckObservations(ctx context.Context, repositoryID string) ([]C
 	return observations, rows.Err()
 }
 
+// ValidCheckObservationRef reports whether a branch ref can be observed.
+func ValidCheckObservationRef(refName string) bool { return validObservationRef(refName) }
+
 func validObservationRef(value string) bool {
 	const prefix = "refs/heads/"
 	if len(value) <= len(prefix) || len(value) > 500 || !strings.HasPrefix(value, prefix) {
@@ -1177,7 +1210,19 @@ func (s *Store) AdmitCheckJob(ctx context.Context, request CheckJobRequest, now 
 // RerunCheckJob admits a fresh job for one terminal job. The rerun keeps the
 // exact trigger facts but carries a distinct generation, so it never dedups
 // onto the original and never silently requeues possibly executed work.
+//
+// The rerun's limits come from the same rule as a new job's: the workflow's
+// request, cut to the policy's current caps. RerunCheckJob has no request to
+// give, so it keeps the original job's effective limits as the request.
 func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, now time.Time) (CheckJob, bool, error) {
+	return s.RerunCheckJobRequesting(ctx, repositoryID, jobID, nil, now)
+}
+
+// RerunCheckJobRequesting is RerunCheckJob for a caller that read the
+// workflow's own request: its timeout and output limit, each zero when the
+// workflow set none. Nil keeps the original job's effective limits as the
+// request.
+func (s *Store) RerunCheckJobRequesting(ctx context.Context, repositoryID, jobID string, requested *CheckJobLimits, now time.Time) (CheckJob, bool, error) {
 	if repositoryID == "" || !validAttemptID(jobID) || now.IsZero() {
 		return CheckJob{}, false, fmt.Errorf("%w: invalid rerun", ErrInvalidCheckJob)
 	}
@@ -1221,12 +1266,15 @@ func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, n
 		repositoryID, root, root).Scan(&maximum); err != nil {
 		return CheckJob{}, false, err
 	}
+	if requested == nil {
+		requested = &original.Limits
+	}
 	request := CheckJobRequest{
 		RepositoryID: repositoryID, Trigger: original.Trigger, EventKey: original.EventKey,
 		SourceOID: original.SourceOID, BaseOID: original.BaseOID, PullRequestNumber: original.PullRequestNumber,
 		TriggerRef: original.TriggerRef, WorkflowPath: original.WorkflowPath, WorkflowOID: original.WorkflowOID,
 		WorkflowDigest: original.WorkflowDigest, Checks: configuration.Checks,
-		TimeoutMS: original.Limits.TimeoutMS, OutputLimitBytes: original.Limits.OutputLimitBytes,
+		TimeoutMS: requested.TimeoutMS, OutputLimitBytes: requested.OutputLimitBytes,
 		RerunRoot: root, RerunGeneration: maximum + 1,
 	}
 	job, deduped, err := admitCheckJobTx(ctx, tx, request, now)
@@ -1353,28 +1401,22 @@ func ensureAutomaticCheckTaskTx(ctx context.Context, tx *sql.Tx, repositoryID, t
 	return nil
 }
 
+// effectiveCheckJobLimits is the one rule for a job's limits, for new jobs and
+// reruns alike: the workflow's request (the default when it set none), raised
+// to the minimum and cut to the policy's current caps.
 func effectiveCheckJobLimits(request CheckJobRequest, policy CheckPolicy) CheckJobLimits {
 	timeout := request.TimeoutMS
 	if timeout <= 0 {
 		timeout = checkworkflow.DefaultTimeoutMS
 	}
-	if timeout < checkworkflow.MinimumTimeoutMS {
-		timeout = checkworkflow.MinimumTimeoutMS
-	}
-	if timeout > policy.MaxTimeoutMS {
-		timeout = policy.MaxTimeoutMS
-	}
 	output := request.OutputLimitBytes
 	if output <= 0 {
 		output = checkworkflow.DefaultOutputLimitBytes
 	}
-	if output < checkworkflow.MinimumOutputLimitBytes {
-		output = checkworkflow.MinimumOutputLimitBytes
+	return CheckJobLimits{
+		TimeoutMS:        min(max(timeout, checkworkflow.MinimumTimeoutMS), policy.MaxTimeoutMS),
+		OutputLimitBytes: min(max(output, checkworkflow.MinimumOutputLimitBytes), policy.MaxOutputLimitBytes),
 	}
-	if output > policy.MaxOutputLimitBytes {
-		output = policy.MaxOutputLimitBytes
-	}
-	return CheckJobLimits{TimeoutMS: timeout, OutputLimitBytes: output}
 }
 
 // checkJobDedupDigest covers every effective execution condition, not merely

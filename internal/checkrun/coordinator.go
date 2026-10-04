@@ -79,6 +79,7 @@ type Coordinator struct {
 	done              chan struct{}
 	workspace         *checksource.WorkspaceRoot
 	pushCursor        map[string]string
+	skippedRefs       map[string]map[string]string
 	pullRequestCursor map[string]int64
 	mu                sync.Mutex
 }
@@ -252,18 +253,35 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	if coordinator.pushCursor == nil {
 		coordinator.pushCursor = make(map[string]string)
 	}
-	summary, err := coordinator.Repositories.Summary(ctx, repositoryID)
-	if err != nil {
-		return err
-	}
-	sort.Slice(summary.Branches, func(i, j int) bool { return summary.Branches[i].Name < summary.Branches[j].Name })
-	branches := boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
-	if len(summary.Branches) > maximumObservedRefs {
-		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(summary.Branches))
+	if coordinator.skippedRefs == nil {
+		coordinator.skippedRefs = make(map[string]map[string]string)
 	}
 	observations, err := coordinator.Store.CheckObservations(ctx, repositoryID)
 	if err != nil {
 		return err
+	}
+	// A disabled event observes nothing, so enabling it later admits the
+	// heads that arrived meanwhile. Observations an earlier pass recorded
+	// while the event was off are dropped for the same reason.
+	if !contains(policy.AllowedEvents, checkworkflow.EventPush) {
+		for _, observation := range observations {
+			if err := coordinator.Store.DeleteCheckObservation(ctx, repositoryID, observation.RefName); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// The cached snapshot runs no Git process while no OwnGit write changed
+	// the repository's refs.
+	snapshot, err := coordinator.Repositories.RefSnapshot(ctx, repositoryID)
+	if err != nil {
+		return err
+	}
+	summary := snapshot.Summary
+	sort.Slice(summary.Branches, func(i, j int) bool { return summary.Branches[i].Name < summary.Branches[j].Name })
+	branches := boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+	if len(summary.Branches) > maximumObservedRefs {
+		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(summary.Branches))
 	}
 	previous := make(map[string]string, len(observations))
 	for _, observation := range observations {
@@ -272,6 +290,12 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	live := make(map[string]bool, len(summary.Branches))
 	for _, branch := range summary.Branches {
 		live["refs/heads/"+branch.Name] = true
+	}
+	skipped := coordinator.skippedRefs[repositoryID]
+	for refName := range skipped {
+		if !live[refName] {
+			delete(skipped, refName)
+		}
 	}
 	// The observation set is bounded, so in a repository with more branches
 	// a head can lose its observation without moving. A head that already has
@@ -289,6 +313,20 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	}
 	for _, branch := range branches {
 		refName := "refs/heads/" + branch.Name
+		if !state.ValidCheckObservationRef(refName) {
+			// No observation or job can name this branch, so it is skipped
+			// once per head and the rest of the repository continues.
+			if skipped[refName] != branch.OID {
+				if skipped == nil {
+					skipped = make(map[string]string)
+					coordinator.skippedRefs[repositoryID] = skipped
+				}
+				skipped[refName] = branch.OID
+				coordinator.log("configured check push %s %s is skipped: the branch name cannot be recorded", repositoryID, branch.Name)
+			}
+			coordinator.pushCursor[repositoryID] = branch.Name
+			continue
+		}
 		if previous[refName] != branch.OID && !seen[refName+"@"+branch.OID] {
 			admitted, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
 				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
@@ -388,23 +426,12 @@ func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPol
 	if err != nil {
 		return false, fmt.Errorf("pin configured check source %s: %w", request.SourceOID, err)
 	}
-	blob, err := pinned.ReadBlob(ctx, repository.PinnedHead, checkworkflow.Path, 0, policy.Execution.Source.MetadataLimit,
-		checkworkflow.MaximumBytes+1, checkworkflow.MaximumBytes+1)
+	blob, document, err := ReadPinnedWorkflow(ctx, pinned, policy.Execution.Source.MetadataLimit)
 	if errors.Is(err, repository.ErrPinnedPathNotFound) {
 		return false, nil
 	}
-	if errors.Is(err, repository.ErrPinnedUnsupportedObject) || errors.Is(err, repository.ErrPinnedOutputLimit) {
-		return false, fmt.Errorf("%w: read configured check workflow: %w", errRevisionRejected, err)
-	}
 	if err != nil {
-		return false, fmt.Errorf("read configured check workflow: %w", err)
-	}
-	if blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755") || blob.HasMore || blob.Size != int64(len(blob.Content)) || len(blob.Content) > checkworkflow.MaximumBytes {
-		return false, fmt.Errorf("%w: configured check workflow exceeds its source bound", errRevisionRejected)
-	}
-	document, err := checkworkflow.Parse(blob.Content)
-	if err != nil {
-		return false, fmt.Errorf("%w: parse configured check workflow: %w", errRevisionRejected, err)
+		return false, err
 	}
 	effective, err := checkworkflow.Tighten(document, checkworkflow.OperatorPolicy{
 		AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
@@ -420,8 +447,8 @@ func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPol
 	request.WorkflowOID = blob.OID
 	digest := sha256.Sum256(blob.Content)
 	request.WorkflowDigest = fmt.Sprintf("%x", digest[:])
-	request.TimeoutMS = effective.TimeoutMS
-	request.OutputLimitBytes = effective.OutputLimitBytes
+	request.TimeoutMS = document.Limits.TimeoutMS
+	request.OutputLimitBytes = document.Limits.OutputLimitBytes
 	request.Checks = make([]state.CheckDefinition, 0, len(document.Checks))
 	for _, check := range document.Checks {
 		request.Checks = append(request.Checks, state.CheckDefinition{Name: check.Name, Command: check.Command})
@@ -437,8 +464,35 @@ func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPol
 	return !deduped && err == nil, err
 }
 
+// ReadPinnedWorkflow reads and parses the workflow file of a pinned revision.
+// A revision without the file reports repository.ErrPinnedPathNotFound. A file
+// that cannot be a workflow wraps errRevisionRejected.
+func ReadPinnedWorkflow(ctx context.Context, pinned *repository.PinnedRepository, metadataLimit int64) (repository.PinnedBlobChunk, checkworkflow.Document, error) {
+	blob, err := pinned.ReadBlob(ctx, repository.PinnedHead, checkworkflow.Path, 0, metadataLimit,
+		checkworkflow.MaximumBytes+1, checkworkflow.MaximumBytes+1)
+	if errors.Is(err, repository.ErrPinnedPathNotFound) {
+		return blob, checkworkflow.Document{}, err
+	}
+	if errors.Is(err, repository.ErrPinnedUnsupportedObject) || errors.Is(err, repository.ErrPinnedOutputLimit) {
+		return blob, checkworkflow.Document{}, fmt.Errorf("%w: read configured check workflow: %w", errRevisionRejected, err)
+	}
+	if err != nil {
+		return blob, checkworkflow.Document{}, fmt.Errorf("read configured check workflow: %w", err)
+	}
+	if blob.Symlink || (blob.Mode != "100644" && blob.Mode != "100755") || blob.HasMore || blob.Size != int64(len(blob.Content)) || len(blob.Content) > checkworkflow.MaximumBytes {
+		return blob, checkworkflow.Document{}, fmt.Errorf("%w: configured check workflow exceeds its source bound", errRevisionRejected)
+	}
+	document, err := checkworkflow.Parse(blob.Content)
+	if err != nil {
+		return blob, checkworkflow.Document{}, fmt.Errorf("%w: parse configured check workflow: %w", errRevisionRejected, err)
+	}
+	return blob, document, nil
+}
+
 func (coordinator *Coordinator) runOneLocal(ctx context.Context) error {
-	ids, err := coordinator.Store.CheckPolicyRepositories(ctx)
+	// The repository holding the oldest pending job goes first, so a busy
+	// repository never keeps another repository's older job waiting.
+	ids, err := coordinator.Store.CheckPendingRepositories(ctx)
 	if err != nil {
 		return err
 	}
