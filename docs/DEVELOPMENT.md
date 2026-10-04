@@ -119,7 +119,14 @@ Some tests read these documents: `cmd/owngit/check_budget_test.go` (`docs/CODING
 
 ## Continuous integration
 
-The `CI` workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs gofmt and `go vet` on every package and the tests on Linux (with the race detector), Windows, and macOS. A pull request tests only the packages its change can affect, as chosen by [`.github/scripts/affected-packages.sh`](../.github/scripts/affected-packages.sh). A test that reads files from another package or from the whole repository by path is listed once in that script; when you add such a test, add it there. A daily run and a run started by hand test every package, add Linux arm64, and check for known vulnerabilities. Before tagging a release, start a full run on the release commit and wait for it to pass. The `Document links` workflow checks the links and heading anchors between documents on every pull request.
+The `CI` workflow ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs gofmt and `go vet` on every package and the tests on Linux (with the race detector), Windows, and macOS. A pull request tests only the packages its change can affect, as chosen by [`.github/scripts/affected-packages.sh`](../.github/scripts/affected-packages.sh). A daily run and a run started by hand test every package in full, add Linux arm64, and check for known vulnerabilities. Before tagging a release, start a full run on the release commit and wait for it to pass. The `Document links` workflow checks the links and heading anchors between documents on every pull request.
+
+On a pull request, a package that contains a changed file runs its tests in full. A package selected only because its tests depend on a changed package, or read a changed file, runs with `go test -short`. When the change selects every package, or changes a shared test helper package (`internal/testfixture` or `internal/tailscale/tailscaletest`), every selected package runs in full. Only the test jobs keep the Go module and build caches between runs.
+
+When you write a test:
+
+- A slow test, such as one that waits for a real time limit, may skip itself when `testing.Short()` reports true. It still runs in the daily and manual runs, and on every pull request that changes its own package.
+- A test that reads files from another package or from the whole repository by path is listed once in `affected-packages.sh`; when you add such a test, add it there. Do not let such a test skip under `testing.Short()`, because a change to only the files it reads runs its package with `-short`.
 
 ## Real Docker test (opt-in)
 
