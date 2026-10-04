@@ -1,17 +1,19 @@
 #!/usr/bin/env bash
 # Runs one shard of the Go tests of every package, or of the packages given.
 #
-# Usage: test-shard.sh [--dry-run] [--packages LIST] [--full-packages LIST] SHARD SHARDS [GO TEST FLAGS...]
+# Usage: test-shard.sh [--dry-run] [--packages LIST] [--full-packages FULL] SHARD SHARDS [GO TEST FLAGS...]
 #
 # LIST holds import paths separated by spaces; the default is "./...", every
 # package. An empty LIST runs nothing and succeeds, for a change that no test
 # can see.
 #
-# --full-packages holds the packages that run with the flags as given; every
-# other package runs with -short added, which skips the tests that wait on the
-# real clock. "./..." in its LIST means every package runs as given. The
-# listing and the shard assignment do not depend on this option, because
-# -short changes only what a test does at run time, not what it is.
+# FULL holds the packages that run with the flags as given; every other
+# package runs with -short added, which skips the tests that wait on the real
+# clock. "./..." anywhere in FULL means every package runs as given. An empty
+# FULL, a change that only readers of a Markdown file see, runs every selected
+# package with -short. The listing and the shard assignment do not depend on
+# this option, because -short changes only what a test does at run time, not
+# what it is.
 #
 # The script lists the top-level tests, examples and fuzz tests of the
 # packages with "go test -list", sorts them by package and name, and numbers
@@ -35,7 +37,7 @@
 set -euo pipefail
 
 usage() {
-	echo "usage: $0 [--dry-run] [--packages LIST] [--full-packages LIST] SHARD SHARDS [GO TEST FLAGS...]" >&2
+	echo "usage: $0 [--dry-run] [--packages LIST] [--full-packages FULL] SHARD SHARDS [GO TEST FLAGS...]" >&2
 	exit 2
 }
 

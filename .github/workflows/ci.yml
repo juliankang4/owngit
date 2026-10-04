@@ -3,10 +3,11 @@ name: CI
 # Runs the checks on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
 # and pushes to main do not run the checks again. Tests run on Linux (with the
-# race detector), Windows, and macOS, on fresh runners. Only the test jobs
-# write the Go module and build caches: actions/setup-go restores what an
-# earlier test job saved on that system, keyed by go.mod, and saves it again
-# when it changed. gofmt and go vet, package selection and govulncheck
+# race detector), Windows, and macOS, on fresh runners. Only the test jobs keep
+# the Go module and build caches, under a key that hashes go.sum and covers the
+# Go version and the runner system, architecture and image;
+# actions/setup-go restores the cache that key names and saves a new one only
+# when the key changes. gofmt and go vet, package selection and govulncheck
 # download what they need. Tests run with -count=1, so no earlier test result
 # is reused.
 #
@@ -21,7 +22,7 @@ name: CI
 # because its tests depend on a changed package, or read a changed file, runs
 # with -short, which skips the tests that wait on the real clock. A change to
 # a test helper package, whose code other test binaries contain, and a change
-# outside every package, run every selected package in full.
+# that selects every package run every selected package in full.
 #
 # Full runs test every package: once a day at an off-peak hour, which catches
 # tests that fail only now and then, and when started by hand, which a release
@@ -133,9 +134,11 @@ jobs:
           fi
           echo "Packages to test: ${packages:-none}"
           echo "Packages to test in full: ${fullpackages:-none}"
-          echo "packages=$packages" >>"$GITHUB_OUTPUT"
-          echo "fullpackages=$fullpackages" >>"$GITHUB_OUTPUT"
-          echo "vulncheck=$vulncheck" >>"$GITHUB_OUTPUT"
+          {
+            echo "packages=$packages"
+            echo "fullpackages=$fullpackages"
+            echo "vulncheck=$vulncheck"
+          } >>"$GITHUB_OUTPUT"
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.shard }}/4)
@@ -173,10 +176,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-          # The test jobs are the only writers of the Go caches; keying them
-          # by go.mod gives them an identity of their own, so a job that only
-          # lists or vets packages cannot seed an empty cache first.
-          cache-dependency-path: go.mod
+          # The test jobs are the only writers of the Go caches. Their key
+          # hashes go.sum, not actions/setup-go's default go.mod, so this cache
+          # has an identity of its own.
+          cache-dependency-path: go.sum
 
       - name: Tool versions
         run: |
