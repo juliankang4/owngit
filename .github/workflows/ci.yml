@@ -3,10 +3,12 @@ name: CI
 # Runs the checks on every pull request. Pull requests
 # merge by fast-forward, so main receives the commits that already passed here
 # and pushes to main do not run the checks again. Tests run on Linux (with the
-# race detector), Windows, and macOS, on fresh runners. actions/setup-go
-# restores the Go module cache and the Go build cache that an earlier run with
-# the same go.sum saved on that system. Tests run with -count=1, so no earlier
-# test result is reused.
+# race detector), Windows, and macOS, on fresh runners. Only the test jobs
+# write the Go module and build caches: actions/setup-go restores what an
+# earlier test job saved on that system, keyed by go.mod, and saves it again
+# when it changed. gofmt and go vet, package selection and govulncheck
+# download what they need. Tests run with -count=1, so no earlier test result
+# is reused.
 #
 # A pull request tests only the packages its change can affect, as chosen by
 # .github/scripts/affected-packages.sh: those whose tests contain a changed
@@ -70,6 +72,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Only the test jobs write the Go caches.
+          cache: false
 
       - name: gofmt
         run: |
@@ -105,6 +109,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Only the test jobs write the Go caches.
+          cache: false
 
       - name: Packages to test
         id: select
@@ -167,6 +173,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # The test jobs are the only writers of the Go caches; keying them
+          # by go.mod gives them an identity of their own, so a job that only
+          # lists or vets packages cannot seed an empty cache first.
+          cache-dependency-path: go.mod
 
       - name: Tool versions
         run: |
@@ -210,6 +220,8 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          # Only the test jobs write the Go caches.
+          cache: false
 
       # govulncheck reports only vulnerabilities in code OwnGit calls, in its
       # modules and in the Go standard library, and fails if there is one.
