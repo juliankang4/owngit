@@ -331,7 +331,7 @@ tool_timeout_sec = 1800
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`. `source_oid`, `target_branch`, `paths`는 `--source`, `--target`, `--path`에 해당하고 미리 보기는 적용에 필요한 `expected_head`를 돌려줍니다 |
-| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다 |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다. 목록은 최신순으로 한 페이지씩 나옵니다. `state`, `limit`, `before`는 `--state`, `--limit`, `--before`에 해당하고 `next`는 다음 페이지의 `before` 값입니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
 | `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 브랜치가 움직였을 때 `stale`로 답합니다. |
 | `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |

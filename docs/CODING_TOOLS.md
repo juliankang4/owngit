@@ -697,7 +697,7 @@ Read tools change nothing:
 |---|---|
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
 | `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`; `source_oid`, `target_branch`, and `paths` stand for `--source`, `--target`, and `--path`, and the preview returns the `expected_head` that applying needs |
-| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes. The list is newest first, one page at a time: `state`, `limit` and `before` stand for `--state`, `--limit` and `--before`, and `next` is the `before` value of the following page |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
 | `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when a branch moved away from them |
 | `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
