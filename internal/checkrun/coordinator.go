@@ -272,7 +272,15 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 		return err
 	}
 	sort.Slice(summary.Branches, func(i, j int) bool { return summary.Branches[i].Name < summary.Branches[j].Name })
-	branches := boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+	// Verifying pages run toward the last branch without wrapping, so each
+	// head is evaluated once; later pages rotate through all branches.
+	verifying := !coordinator.pushChecked[repositoryID]
+	var branches []repository.Ref
+	if verifying {
+		branches = branchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+	} else {
+		branches = boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+	}
 	if len(summary.Branches) > maximumObservedRefs {
 		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(summary.Branches))
 	}
@@ -303,7 +311,6 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	// once, a head whose observation equals its current object is checked
 	// against the job history too, since an observation can outlive the job
 	// it stood for (left by an earlier version or lost across a restart).
-	verifying := !coordinator.pushChecked[repositoryID]
 	var unobserved []string
 	for _, branch := range branches {
 		if refName := "refs/heads/" + branch.Name; previous[refName] == "" || verifying {
@@ -354,7 +361,8 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	if len(summary.Branches) == 0 {
 		delete(coordinator.pushCursor, repositoryID)
 	}
-	if len(branches) == 0 || branches[len(branches)-1].Name == summary.Branches[len(summary.Branches)-1].Name {
+	// The sweep is complete once a page reaches the last branch.
+	if verifying && (len(branches) == 0 || branches[len(branches)-1].Name == summary.Branches[len(summary.Branches)-1].Name) {
 		coordinator.pushChecked[repositoryID] = true
 	}
 	for refName := range previous {
@@ -755,6 +763,13 @@ func buildLog(results []checkexec.Result) (string, bool) {
 		}
 	}
 	return log.Result()
+}
+
+// branchesAfter returns up to limit branches that sort after the given name,
+// without wrapping to the first branch.
+func branchesAfter(branches []repository.Ref, after string, limit int) []repository.Ref {
+	start := sort.Search(len(branches), func(index int) bool { return branches[index].Name > after })
+	return branches[start:min(start+limit, len(branches))]
 }
 
 func boundedBranchesAfter(branches []repository.Ref, after string, limit int) []repository.Ref {

@@ -3,6 +3,7 @@ package checkrun
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -363,5 +364,35 @@ func TestFirstPassAfterStartAdmitsAnObservedHeadWithoutAJob(t *testing.T) {
 	noErr(t, restarted.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 1 {
 		t.Fatalf("jobs after a later pass=%v, want still one", refs)
+	}
+}
+
+// With more branches than one page holds, the first-pass check pages toward
+// the last branch without wrapping, so it ends after two pages and evaluates
+// each unchanged head once.
+func TestFirstPassCheckSweepsToTheLastBranchWithoutWrapping(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	fixture.pushWorkflow("main", validWorkflow)
+	broken := fixture.pushWorkflow("a-broken", `{`)
+	for index := 0; index < maximumObservedRefs-1; index++ {
+		fixture.git("-C", fixture.work, "push", "-q", fixture.repoPath, fmt.Sprintf("HEAD:refs/heads/z-%02d", index))
+	}
+	// 65 branches: a-broken, main and 63 more; the observation set is bounded,
+	// so the rejected head is evaluated whenever the check runs.
+	noErr(t, fixture.store.RecordCheckObservation(fixture.ctx, fixture.repositoryID, "refs/heads/a-broken", broken, time.Now().UTC()))
+	for pass := 0; pass < 2; pass++ {
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	}
+	if !fixture.coordinator.pushChecked[fixture.repositoryID] {
+		t.Fatal("the first-pass check was not complete after two pages")
+	}
+	rejections := 0
+	for _, line := range fixture.logs {
+		if strings.Contains(line, "was not admitted") {
+			rejections++
+		}
+	}
+	if rejections > 65 {
+		t.Fatalf("rejected heads were evaluated %d times in 2 passes, want at most one per head (65)", rejections)
 	}
 }
