@@ -313,7 +313,7 @@ func TestCloseAndReopenPullRequestInBrowserAndAPI(t *testing.T) {
 		if strings.Contains(page.body, `/merge"`) || strings.Contains(page.body, `/review/request"`) {
 			t.Errorf("%s: a closed pull request still offers merge or review", lang)
 		}
-		list := browserGET(t, client, server.URL+"/repositories/project/pull-requests?lang="+string(lang))
+		list := browserGET(t, client, server.URL+"/repositories/project/pull-requests?state=closed&lang="+string(lang))
 		if !strings.Contains(list.body, webui.Text(lang, webui.MsgPRStateClosed)) || !strings.Contains(list.body, "To close") {
 			t.Errorf("%s: the list does not keep the closed pull request", lang)
 		}
