@@ -190,13 +190,16 @@ func TestCheckRerunOfAMigratedJobReadsTheWorkflow(t *testing.T) {
 	ctx := context.Background()
 	oid, blobOID, digest := pushWorkflowCommit(t, fixture, []byte(limitedWorkflow))
 	now := fixture.app.now()
-	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
-		MaxTimeoutMS: 90000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
-	}, now)
-	noErr(t, err)
-	_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
-	noErr(t, err)
+	setCap := func(timeoutMS int64) {
+		_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+			RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+			MaxTimeoutMS: timeoutMS, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
+		}, now)
+		noErr(t, err)
+		_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
+		noErr(t, err)
+	}
+	setCap(30000)
 	job, _, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
 		RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/ci@" + oid, SourceOID: oid, TriggerRef: "ci",
 		WorkflowPath: checkworkflow.Path, WorkflowOID: blobOID, WorkflowDigest: digest, TimeoutMS: 120000,
@@ -206,6 +209,9 @@ func TestCheckRerunOfAMigratedJobReadsTheWorkflow(t *testing.T) {
 	_, err = fixture.store.CancelCheckJob(ctx, "project", job.ID, now)
 	noErr(t, err)
 	noErr(t, fixture.store.Exec(ctx, `UPDATE check_jobs SET execution_json='{"legacy":true}' WHERE id=?`, job.ID))
+	// Only the workflow itself says it asked for 120000, so a rerun under the
+	// raised cap reaching 90000 shows the workflow was read.
+	setCap(90000)
 	rerun, _, err := fixture.app.rerunCheckJob(ctx, "project", job.ID)
 	if err != nil || rerun.Limits.TimeoutMS != 90000 {
 		t.Fatalf("rerun of a migrated job: limits=%+v err=%v", rerun.Limits, err)

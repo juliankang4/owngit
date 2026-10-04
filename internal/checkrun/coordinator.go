@@ -80,6 +80,7 @@ type Coordinator struct {
 	workspace         *checksource.WorkspaceRoot
 	pushCursor        map[string]string
 	skippedRefs       map[string]map[string]string
+	pushChecked       map[string]bool
 	pullRequestCursor map[string]int64
 	mu                sync.Mutex
 }
@@ -256,6 +257,9 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	if coordinator.skippedRefs == nil {
 		coordinator.skippedRefs = make(map[string]map[string]string)
 	}
+	if coordinator.pushChecked == nil {
+		coordinator.pushChecked = make(map[string]bool)
+	}
 	// A disabled event observes nothing, so enabling it later admits the
 	// heads that arrived meanwhile (the policy change clears older records).
 	if !contains(policy.AllowedEvents, checkworkflow.EventPush) {
@@ -294,9 +298,15 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	// a head can lose its observation without moving. A head that already has
 	// a job for this exact event, under any policy version, is not queued
 	// again; otherwise every policy change would requeue those heads.
+	//
+	// Until this coordinator has gone through every branch of the repository
+	// once, a head whose observation equals its current object is checked
+	// against the job history too, since an observation can outlive the job
+	// it stood for (left by an earlier version or lost across a restart).
+	verifying := !coordinator.pushChecked[repositoryID]
 	var unobserved []string
 	for _, branch := range branches {
-		if refName := "refs/heads/" + branch.Name; previous[refName] == "" {
+		if refName := "refs/heads/" + branch.Name; previous[refName] == "" || verifying {
 			unobserved = append(unobserved, refName+"@"+branch.OID)
 		}
 	}
@@ -320,7 +330,7 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 			coordinator.pushCursor[repositoryID] = branch.Name
 			continue
 		}
-		if previous[refName] != branch.OID && !seen[refName+"@"+branch.OID] {
+		if (previous[refName] != branch.OID || verifying) && !seen[refName+"@"+branch.OID] {
 			admitted, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
 				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
 				EventKey: refName + "@" + branch.OID, SourceOID: branch.OID, TriggerRef: branch.Name,
@@ -332,7 +342,7 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 				coordinator.log("configured check push %s %s at %s was not admitted: %v", repositoryID, branch.Name, branch.OID, err)
 			case err != nil:
 				return err
-			case admitted || previous[refName] != "":
+			case admitted || (previous[refName] != "" && previous[refName] != branch.OID):
 				coordinator.log("observed configured check push %s %s", repositoryID, branch.Name)
 			}
 		}
@@ -343,6 +353,9 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	}
 	if len(summary.Branches) == 0 {
 		delete(coordinator.pushCursor, repositoryID)
+	}
+	if len(branches) == 0 || branches[len(branches)-1].Name == summary.Branches[len(summary.Branches)-1].Name {
+		coordinator.pushChecked[repositoryID] = true
 	}
 	for refName := range previous {
 		if !live[refName] {

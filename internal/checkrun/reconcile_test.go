@@ -338,3 +338,30 @@ func TestEnablingPushIgnoresObservationsLeftWhilePushWasOff(t *testing.T) {
 		t.Fatalf("jobs after enabling push again=%v, want still one", refs)
 	}
 }
+
+// An observation that equals the current head but has no job, such as one
+// left by an earlier version, is checked against the job history by the first
+// pass after a start and queues the head once. A head that already has a job
+// is not queued again, and later passes do not look again.
+func TestFirstPassAfterStartAdmitsAnObservedHeadWithoutAJob(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	oid := fixture.pushWorkflow("main", validWorkflow)
+	noErr(t, fixture.store.RecordCheckObservation(fixture.ctx, fixture.repositoryID, "refs/heads/main", oid, time.Now().UTC()))
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after the first pass=%v, want one for main", refs)
+	}
+	// A restarted coordinator finds the job and queues nothing more.
+	restarted := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, PullRequests: fixture.coordinator.PullRequests}
+	noErr(t, restarted.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after a restart=%v, want still one", refs)
+	}
+	// Later passes trust observations again.
+	feature := fixture.pushWorkflow("feature", validWorkflow)
+	noErr(t, fixture.store.RecordCheckObservation(fixture.ctx, fixture.repositoryID, "refs/heads/feature", feature, time.Now().UTC()))
+	noErr(t, restarted.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after a later pass=%v, want still one", refs)
+	}
+}
