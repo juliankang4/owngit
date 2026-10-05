@@ -285,4 +285,21 @@ func TestBlobAboveTheMemoryBoundIsRefusedWithoutRunningGit(t *testing.T) {
 		t.Fatalf("unknown ceiling: %d bytes truncated=%v tooLarge=%v err=%v; want the 1000 byte prefix",
 			len(blob.Content), blob.Truncated, blob.TooLarge, err)
 	}
+	// The pinned reads share the rule: a listed size above the bound is
+	// refused, and no blob is read. The wrapper fails every "cat-file blob"
+	// argument, so a read that reached Git would report that failure instead.
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	big := commitTree(t, manager, work, "main", map[string]string{"big.txt": strings.Repeat("y", int(bound)+1)})
+	view, err := manager.PathAt(context.Background(), "sample", big, "big.txt")
+	noErr(t, err)
+	pinned, err := manager.PinRepository(context.Background(), "sample", big, big)
+	noErr(t, err)
+	_, failPath, _ := countGitProcesses(t, manager, "blob")
+	noErr(t, os.WriteFile(failPath, nil, 0o600))
+	if _, err := pinned.ReadBlob(context.Background(), PinnedHead, "big.txt", 0, 1<<20, 1<<20, 1<<20); !errors.Is(err, ErrPinnedBlobTooLarge) {
+		t.Fatalf("pinned chunk read = %v; want the bound refusal before cat-file", err)
+	}
+	if _, err := pinned.ReadBlobObject(context.Background(), view.File.OID, view.File.Size); !errors.Is(err, ErrPinnedBlobTooLarge) {
+		t.Fatalf("pinned object read = %v; want the bound refusal before cat-file", err)
+	}
 }
