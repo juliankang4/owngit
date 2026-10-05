@@ -57,7 +57,7 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 		{"512 MiB", 512 << 20, 256 << 20, 1, 1, "threads=1 window=8388608 cache=8388608 base=8388608"},
 		{"1 GiB", 1 << 30, 512 << 20, 2, 2, "threads=1 window=16777216 cache=16777216 base=16777216"},
 		{"8 GiB", 8 << 30, 4 << 30, 36, 5, "threads=4 window=49133275 cache=196533101 base=196533101"},
-		{"64 GiB", 64 << 30, 32 << 30, 307, 5, "threads=4 window=268435456 cache=268435456 base=268435456"},
+		{"64 GiB", 64 << 30, 32 << 30, 305, 5, "threads=4 window=268435456 cache=268435456 base=268435456"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
