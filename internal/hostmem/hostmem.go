@@ -16,11 +16,17 @@
 // A = 3C/8/P is therefore spent as baseGit + threads x window + cache, with
 // window memory and cache half of the rest each, and threads chosen so that
 // each window is at least smallestWindow. The same cache size bounds the delta
-// base cache of index-pack, which receives a push, and core.bigFileThreshold
-// is the rest of the share, so a large object is streamed instead of held in
-// memory (a single 300 MiB blob pushed to a 512 MiB host would otherwise
-// take 300 MiB). Objects past the threshold are not delta-compressed, but
-// the window memory could not hold them for a search anyway.
+// base cache of index-pack, which receives a push. Where the ceiling is
+// known, core.bigFileThreshold is the rest of the share for the processes
+// that build or receive packs, so a large object is streamed instead of held
+// in memory (a single 300 MiB blob pushed to a 512 MiB host would otherwise
+// take 300 MiB). Measured: without it an 8 MiB window still searches deltas
+// for 24 MiB objects and used 166 MiB. With it, objects above the threshold
+// are stored without new deltas, so a new version of a large compressible
+// file can take its full compressed size in the repository and in clones
+// (deltas that exist are reused), and a diff shows such a file as binary.
+// For that reason an unknown ceiling sets no threshold, and no process that
+// reads files for a diff gets one.
 //
 // At a small ceiling the number of requests that build a pack at once
 // (PackSlots) is lowered until every process can still have the smallest
@@ -197,13 +203,24 @@ func PackSlots(ceiling uint64) int {
 // transfer limits on this ceiling.
 func DefaultPackers(ceiling uint64) int { return min(DefaultTransfers, maxPackers(ceiling)) }
 
+// part is the memory a packing process may use beyond baseGit when packers
+// requests build a pack at once. With an unknown ceiling the owner's saved
+// transfer limits do not divide it: the ceiling is a guess, and a large saved
+// count must not shrink every Git process on a large computer.
+func part(ceiling uint64, packers int) uint64 {
+	if ceiling == 0 {
+		packers = min(packers, DefaultTransfers)
+	}
+	processes := uint64(max(packers, 1) + otherPackers)
+	return max(gitShare(ceiling)/processes, baseGit+2*smallestPart) - baseGit
+}
+
 // PackingConfig returns the Git settings that bound one packing process
 // when packers requests build a pack at once (see the package comment for
 // the arithmetic). They change how well Git compresses and how fast, never
 // what a pack contains.
 func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
-	processes := uint64(max(packers, 1) + otherPackers)
-	part := max(gitShare(ceiling)/processes, baseGit+2*smallestPart) - baseGit
+	part := part(ceiling, packers)
 	threads := min(max(part/2/smallestWindow, 1), uint64(max(processors, 1)))
 	window := min(max(part/2/threads, smallestPart), 256*mib)
 	cache := min(max(part/2, smallestPart), 256*mib)
@@ -212,6 +229,14 @@ func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
 		{"pack.windowMemory", strconv.FormatUint(window, 10)},
 		{"pack.deltaCacheSize", strconv.FormatUint(cache, 10)},
 		{"core.deltaBaseCacheLimit", strconv.FormatUint(cache, 10)},
-		{"core.bigFileThreshold", strconv.FormatUint(min(part, 512*mib), 10)},
 	}
+}
+
+// BigFileThreshold returns the core.bigFileThreshold for a Git process that
+// builds or receives a pack, or "" for Git's default: the ceiling is unknown.
+func BigFileThreshold(ceiling uint64, packers int) string {
+	if ceiling == 0 {
+		return ""
+	}
+	return strconv.FormatUint(min(part(ceiling, packers), 512*mib), 10)
 }

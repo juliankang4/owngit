@@ -3,6 +3,7 @@ package hostmem
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -53,7 +54,7 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 		packers  int
 		settings string
 	}{
-		{"unknown", 0, 0, 0, 5, "threads=4 window=20372333 cache=81489334 base=81489334 big=162978669"},
+		{"unknown", 0, 0, 0, 5, "threads=4 window=20372333 cache=81489334 base=81489334 big="},
 		{"512 MiB", 512 << 20, 256 << 20, 1, 1, "threads=1 window=8388608 cache=8388608 base=8388608 big=16777216"},
 		{"1 GiB", 1 << 30, 512 << 20, 2, 2, "threads=1 window=16777216 cache=16777216 base=16777216 big=33554432"},
 		{"8 GiB", 8 << 30, 4 << 30, 36, 5, "threads=4 window=49133275 cache=196533101 base=196533101 big=393066203"},
@@ -71,11 +72,22 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 				t.Errorf("default packers = %d, want %d", got, test.packers)
 			}
 			config := PackingConfig(test.ceiling, 4, test.packers)
-			got := "threads=" + config[0][1] + " window=" + config[1][1] + " cache=" + config[2][1] + " base=" + config[3][1] + " big=" + config[4][1]
+			got := "threads=" + config[0][1] + " window=" + config[1][1] + " cache=" + config[2][1] + " base=" + config[3][1] + " big=" + BigFileThreshold(test.ceiling, test.packers)
 			if got != test.settings {
 				t.Errorf("packing = %s, want %s", got, test.settings)
 			}
 		})
+	}
+}
+
+// With an unknown ceiling the owner's saved transfer limits do not shrink the
+// packing settings, and no large-file threshold is set.
+func TestUnknownCeilingIgnoresLooseTransferLimits(t *testing.T) {
+	if got, want := PackingConfig(0, 10, 64), PackingConfig(0, 10, DefaultTransfers); !reflect.DeepEqual(got, want) {
+		t.Errorf("packing with 64 transfers = %v, want %v", got, want)
+	}
+	if got := BigFileThreshold(0, 64); got != "" {
+		t.Errorf("threshold with an unknown ceiling = %q, want none", got)
 	}
 }
 

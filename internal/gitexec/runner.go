@@ -46,7 +46,8 @@ type Runner struct {
 
 	// transfers is how many requests may build a pack at once, which divides the
 	// packing memory (see package hostmem). Zero means the default.
-	transfers atomic.Int32
+	// A pointer, so a copy of the Runner shares it.
+	transfers *atomic.Int32
 
 	// processSeam optionally injects the owned-process cleanup operations.
 	// Tests set it; production leaves it nil for the real operations.
@@ -123,6 +124,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 		OutputLimit:      defaultOutputLimit,
 		TerminationGrace: 2 * time.Second,
 		GitSource:        source,
+		transfers:        new(atomic.Int32),
 	}
 	if automatic {
 		runner.GitPath, runner.GitSource = runner.preferGitBehindShim(gitPath)
@@ -137,7 +139,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 // commands are unaffected. Packing is bounded by the memory the computer
 // allows OwnGit (see package hostmem), so clones, fetches and backups finish
 // on a small host instead of being killed.
-func (r *Runner) commandConfig() [][2]string {
+func (r *Runner) commandConfig(packs bool) [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
@@ -147,16 +149,39 @@ func (r *Runner) commandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}
-	return append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
+	config = append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
+	// A large-file threshold changes what a diff shows, so only a process
+	// that builds or receives a pack gets one.
+	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), r.packingTransfers()); packs && threshold != "" {
+		config = append(config, [2]string{"core.bigFileThreshold", threshold})
+	}
+	return config
+}
+
+// buildsPacks reports whether the Git command named by commandName builds or
+// receives a pack.
+func buildsPacks(name string) bool {
+	switch strings.TrimPrefix(name, "git ") {
+	case "bundle", "repack", "gc", "maintenance", "pack-objects", "index-pack", "unpack-objects", "receive-pack", "upload-pack", "fetch", "clone":
+		return true
+	}
+	return false
 }
 
 // SetTransfers tells the runner how many requests that build a pack the
-// server admits at once, so the packing bounds of later commands share the memory among them.
-func (r *Runner) SetTransfers(n int) { r.transfers.Store(int32(n)) }
+// server admits at once, so the packing bounds of later commands share the
+// memory among them.
+func (r *Runner) SetTransfers(n int) {
+	if r.transfers != nil {
+		r.transfers.Store(int32(n))
+	}
+}
 
 func (r *Runner) packingTransfers() int {
-	if n := int(r.transfers.Load()); n > 0 {
-		return n
+	if r.transfers != nil {
+		if n := int(r.transfers.Load()); n > 0 {
+			return n
+		}
 	}
 	return hostmem.DefaultPackers(hostmem.Ceiling())
 }
@@ -165,7 +190,11 @@ func (r *Runner) packingTransfers() int {
 // Git. Extra entries are appended; GIT_CONFIG_COUNT, GIT_CONFIG_KEY_n and
 // GIT_CONFIG_VALUE_n entries among them are numbered after commandConfig so
 // that Git sees both.
-func (r *Runner) Environment(extra ...string) []string {
+func (r *Runner) Environment(extra ...string) []string { return r.environment(false, extra...) }
+
+// environment is Environment for a command that builds or receives a pack
+// when packs is true.
+func (r *Runner) environment(packs bool, extra ...string) []string {
 	path := filepath.Dir(r.GitPath)
 	if runtime.GOOS != "windows" {
 		path += string(os.PathListSeparator) + "/usr/bin:/bin"
@@ -192,7 +221,7 @@ func (r *Runner) Environment(extra ...string) []string {
 			}
 		}
 	}
-	config := r.commandConfig()
+	config := r.commandConfig(packs)
 	for i, setting := range config {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting[1]))
 	}
@@ -280,7 +309,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	stderr.limit = stderrLimit
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
-	cmd.Env = r.Environment(extraEnv...)
+	cmd.Env = r.environment(buildsPacks(name), extraEnv...)
 	cmd.Stdout = observedCommandWriter(&stdout, r.stdoutCopyTap)
 	cmd.Stderr = observedCommandWriter(&stderr, r.stderrCopyTap)
 	// Copy caller stdin only after attachment succeeds. Assigning cmd.Stdin
@@ -434,7 +463,7 @@ func isGitCommandToken(s string) bool {
 // process never sees a clean end of its input. A stdin reader that must not
 // end the input cleanly can cancel ctx and block in Read until Close.
 func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
-	return r.stream(ctx, "Git backend", exec.Command(executable), dir, stdin, extraEnv, consume)
+	return r.stream(ctx, "Git backend", exec.Command(executable), true, dir, stdin, extraEnv, consume)
 }
 
 // StreamGit runs Git with args as Stream runs a backend, with no input: its
@@ -442,21 +471,21 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 // and the output in consume; returning an error from consume, or cancelling
 // ctx, stops Git and its owned descendants before StreamGit returns.
 func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
-	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), dir, nil, nil, consume)
+	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), buildsPacks(commandName(args)), dir, nil, nil, consume)
 }
 
 // stream runs cmd for Stream and StreamGit; name names it in error text. Its
 // stderr keeps the runner's output limit, not stderrLimit, because a Smart
 // HTTP caller reads receive-pack's messages there, and passing that limit is
 // an error, so the caller knows it did not read all of them.
-func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
+func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, packs bool, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
 	var stderr limitedBuffer
 	stderr.limit = r.OutputLimit
 	if stderr.limit <= 0 {
 		stderr.limit = defaultOutputLimit
 	}
 	cmd.Dir = dir
-	cmd.Env = r.Environment(extraEnv...)
+	cmd.Env = r.environment(packs, extraEnv...)
 	cmd.Stderr = &stderr
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {

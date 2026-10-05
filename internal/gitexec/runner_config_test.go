@@ -119,3 +119,33 @@ func environmentGitConfig(t *testing.T, environment []string) [][2]string {
 	}
 	return config
 }
+
+// A large-file threshold changes what a diff shows, so only Git commands that
+// build or receive a pack get one, and only where the memory ceiling is known.
+func TestOnlyPackProcessesGetTheLargeFileThreshold(t *testing.T) {
+	runner, err := New("", filepath.Join(t.TempDir(), "runtime"))
+	noErr(t, err)
+	for _, test := range []struct {
+		name  string
+		packs bool
+	}{
+		{commandName([]string{"diff", "--numstat"}), false},
+		{commandName([]string{"--git-dir", ".", "log"}), false},
+		{commandName([]string{"blame", "file"}), false},
+		{commandName([]string{"archive", "HEAD"}), false},
+		{commandName([]string{"bundle", "create", "x", "--all"}), true},
+		{commandName([]string{"-C", ".", "repack", "-d"}), true},
+		{commandName([]string{"index-pack", "x.pack"}), true},
+	} {
+		if got := buildsPacks(test.name); got != test.packs {
+			t.Errorf("buildsPacks(%q) = %v, want %v", test.name, got, test.packs)
+		}
+		has := false
+		for _, setting := range environmentGitConfig(t, runner.environment(buildsPacks(test.name))) {
+			has = has || setting[0] == "core.bigFileThreshold"
+		}
+		if want := test.packs && hostmem.Ceiling() > 0; has != want {
+			t.Errorf("%s: core.bigFileThreshold set = %v, want %v", test.name, has, want)
+		}
+	}
+}
