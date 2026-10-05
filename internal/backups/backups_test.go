@@ -138,6 +138,20 @@ func present(run state.BackupRun) bool {
 	return true
 }
 
+// waitPending waits until the result of the run id waits for the state
+// store, whatever else was reported, and how that report is ordered.
+func waitPending(t *testing.T, service *Service, id string) {
+	t.Helper()
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(time.Millisecond) {
+		if service.pendingResult(id) != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the result of the run never waited for the state store")
+		}
+	}
+}
+
 func TestBackUpNowWritesAndVerifiesABackup(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.service.StartNow(); !errors.Is(err, ErrNotConfigured) {
@@ -513,10 +527,13 @@ func TestRetentionReportsAnUnreadableBackup(t *testing.T) {
 	}
 }
 
-// A backup that finished while the state store refused its final record is
-// not shown as one that is still copying: the run keeps the result, records
-// it when the state store takes writes again, and the backup it wrote stays
-// OwnGit's, so the next backup removes it like any other.
+// A backup that finished while the state store refused its final record
+// says so where the page names the running backup: it stands in as the
+// running one, which keeps another backup from starting, its message gives
+// the result and says the record is not saved yet, the last runs stay the
+// ones OwnGit has recorded, and the result is recorded when the state
+// store takes writes again, so the backup it wrote stays OwnGit's and the
+// next backup removes it like any other.
 func TestFinishedBackupRecordsItsResultWhenTheStateStoreRefusesIt(t *testing.T) {
 	if testing.Short() {
 		t.Skip("waits a second for the retried final record")
@@ -540,22 +557,28 @@ func TestFinishedBackupRecordsItsResultWhenTheStateStoreRefusesIt(t *testing.T) 
 	}
 	run, err := f.service.StartNow()
 	noErr(t, err)
+	// The result is held, whatever order holding it and reporting it happen
+	// in.
+	waitPending(t, f.service, run.ID)
 	select {
 	case <-refused:
 	case <-time.After(time.Minute):
-		t.Fatal("the state store was not asked to record the result")
+		t.Fatal("the state store was refused the result without a report")
 	}
-	// The run has finished, its result waits, and a second backup waits for
-	// the run to settle instead of running beside it.
+	// The run has finished and its record is not saved, so it stands in as
+	// the running backup, and the last runs are still the ones recorded.
 	status, err := f.service.Status(ctx)
 	noErr(t, err)
-	if status.Running != nil || status.LastRun == nil || status.LastRun.ID != run.ID ||
-		status.LastRun.Status != state.BackupSucceeded || status.LastRun.FinishedAt == nil ||
-		!strings.Contains(status.LastRun.Message, "could not be saved yet") {
+	if status.Running == nil || status.Running.ID != run.ID || status.Running.Status != state.BackupRunning ||
+		status.Running.FinishedAt != nil || status.LastRun != nil || status.LastVerified != nil ||
+		!strings.Contains(status.Running.Message, "could not be saved yet") || !strings.Contains(status.Running.Message, state.BackupSucceeded) {
 		t.Fatalf("status while the result waits: %+v", status)
 	}
-	if views, err := f.service.Runs(ctx); err != nil || len(views) != 1 || views[0].Status != state.BackupSucceeded || views[0].Message != status.LastRun.Message {
+	if views, err := f.service.Runs(ctx); err != nil || len(views) != 1 || views[0].Status != state.BackupRunning || views[0].Message != status.Running.Message {
 		t.Fatalf("runs while the result waits: %+v, %v", views, err)
+	}
+	if summary := Summarize(status); summary.LastRun != nil || summary.LastVerifiedAt != nil {
+		t.Fatalf("summary while the result waits: %+v", summary)
 	}
 	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
 		t.Fatalf("a backup started beside the finished run: %v", err)
@@ -589,6 +612,92 @@ func TestFinishedBackupRecordsItsResultWhenTheStateStoreRefusesIt(t *testing.T) 
 	if present(settled) {
 		t.Fatalf("the backup %s whose record was delayed was left behind", settled.BackupName)
 	}
+}
+
+// Removing an older backup waits for the record that owns the new one: a
+// stop while the new result waits for the state store leaves the older
+// backup, its folder and the record that owns it as they were, and the
+// removal happens once the new record is saved.
+func TestRemovingAnOlderBackupWaitsForTheNewRecord(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits a second for the retried final record")
+	}
+	ctx := context.Background()
+	// A state store that refuses the final record, as a full or read-only
+	// one does, made through the seam for breaking one write on purpose.
+	refuse := func(t *testing.T, f *fixture) {
+		t.Helper()
+		noErr(t, f.store.Exec(ctx, `CREATE TRIGGER refuse_backup_record BEFORE UPDATE ON backup_runs BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	}
+	configured := func(t *testing.T) *fixture {
+		t.Helper()
+		f := newFixture(t)
+		enabled, off, keep := false, false, 1
+		f.configure(t, ScheduleChange{Enabled: &enabled, Verify: &off, Keep: &keep})
+		return f
+	}
+
+	t.Run("the result waits and OwnGit stops", func(t *testing.T) {
+		f := configured(t)
+		first := f.backUpNow(t)
+		refuse(t, f)
+		second, err := f.service.StartNow()
+		noErr(t, err)
+		waitPending(t, f.service, second.ID)
+		// The new backup wrote its folder, but nothing says OwnGit made it,
+		// so the older backup is still the one OwnGit keeps.
+		if !present(first) {
+			t.Fatalf("the backup %s was removed before the new record was saved", first.BackupName)
+		}
+		noErr(t, f.service.Stop(ctx))
+		// The next process records the waiting run as interrupted, and the
+		// older backup is still its own: folder, record and manifest.
+		noErr(t, f.store.Exec(ctx, `DROP TRIGGER refuse_backup_record`))
+		restarted := &Service{Store: f.store, Repositories: f.manager, Now: f.clock.Now, Logf: t.Logf}
+		noErr(t, restarted.Start(ctx))
+		noErr(t, restarted.Stop(ctx))
+		recorded := f.run(t, first.ID)
+		if recorded.BackupName != first.BackupName || recorded.ManifestSHA256 == "" || !present(first) {
+			t.Fatalf("the older backup after a restart: %+v, present %v", recorded, present(first))
+		}
+		folder, err := recovery.OpenBackupFolder(f.destination)
+		noErr(t, err)
+		defer folder.Close()
+		backup, err := openOwned(folder, recorded)
+		if err != nil {
+			t.Fatalf("the older backup lost its owner: %v", err)
+		}
+		backup.Close()
+		if waited := f.run(t, second.ID); waited.Status != state.BackupInterrupted || waited.ManifestSHA256 != "" {
+			t.Fatalf("the run whose record waited: %+v", waited)
+		}
+	})
+
+	t.Run("the result is saved", func(t *testing.T) {
+		f := configured(t)
+		first := f.backUpNow(t)
+		refuse(t, f)
+		second, err := f.service.StartNow()
+		noErr(t, err)
+		waitPending(t, f.service, second.ID)
+		if !present(first) {
+			t.Fatalf("the backup %s was removed before the new record was saved", first.BackupName)
+		}
+		// The state store takes records again: the new record is saved, and
+		// only then is the older backup removed.
+		noErr(t, f.store.Exec(ctx, `DROP TRIGGER refuse_backup_record`))
+		f.service.work.Wait()
+		if present(first) {
+			t.Fatalf("the backup %s was kept although the record of its replacement gives it up", first.BackupName)
+		}
+		settled := f.run(t, second.ID)
+		if settled.Status != state.BackupSucceeded || settled.ManifestSHA256 == "" {
+			t.Fatalf("the run whose record waited: %+v", settled)
+		}
+		if run := f.run(t, first.ID); run.BackupName != "" {
+			t.Fatalf("the run of the removed backup still claims it: %+v", run)
+		}
+	})
 }
 
 // Status and its summary come from OwnGit's records alone, so a backup

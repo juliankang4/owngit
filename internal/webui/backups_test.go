@@ -4,7 +4,35 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 )
+
+// A running backup shows its own message under "Running now", where the
+// page names the backup that runs: a finished backup whose record the
+// state store has not saved yet says so there. A message is shown escaped
+// and only when there is one.
+func TestRunningBackupShowsItsMessage(t *testing.T) {
+	r := newRenderer(t)
+	render := func(run *BackupRunInfo) string {
+		var out bytes.Buffer
+		data := struct {
+			Page   SettingsPage
+			Lang   Lang
+			Chrome Chrome
+		}{Page: SettingsPage{Backups: BackupsInfo{Visible: true, Configured: true, Running: run}}}
+		noErr(t, r.templates["settings"].ExecuteTemplate(&out, "setBackups", data))
+		return out.String()
+	}
+	started := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	page := render(&BackupRunInfo{Status: "running", StartedAt: started, Message: "The backup finished: succeeded <safe>"})
+	want := `<span class="bkmsg mono" dir="auto">The backup finished: succeeded &lt;safe&gt;</span>`
+	if !strings.Contains(page, want) {
+		t.Fatalf("the running backup's message is missing or unescaped:\n%s", page)
+	}
+	if quiet := render(&BackupRunInfo{Status: "running", StartedAt: started}); strings.Contains(quiet, "bkmsg") {
+		t.Fatalf("a running backup without a message shows one:\n%s", quiet)
+	}
+}
 
 // When where a backup will be could not be checked, the restore part names
 // the backup and the problem and nothing else: no step to stop OwnGit,

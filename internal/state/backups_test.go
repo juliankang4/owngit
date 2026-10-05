@@ -127,4 +127,25 @@ func TestRecordedBackupRunsKeepTheNewestRecords(t *testing.T) {
 	if len(runs) != 102 {
 		t.Fatalf("%d records kept", len(runs))
 	}
+	// A start records the run a previous process left as interrupted, and
+	// the limit applies to that record too: the interrupted run stays, and
+	// the oldest failure goes.
+	running := at(108, BackupRunManual)
+	noErr(t, store.StartBackupRun(ctx, running))
+	if count, err := store.InterruptBackupRuns(ctx, "OwnGit stopped before this backup finished.", start.Add(200*time.Second)); err != nil || count != 1 {
+		t.Fatalf("a start recorded %d runs as interrupted: %v", count, err)
+	}
+	runs, err = store.BackupRuns(ctx)
+	noErr(t, err)
+	if len(runs) != 102 {
+		t.Fatalf("%d records kept after a start", len(runs))
+	}
+	if interrupted := runs[0]; interrupted.ID != running.ID || interrupted.Status != BackupInterrupted || interrupted.Message == "" {
+		t.Fatalf("the interrupted run: %+v", interrupted)
+	}
+	for _, run := range runs {
+		if run.ID == fmt.Sprintf("%032x", 8) {
+			t.Fatalf("the old failure 8 was kept after a start: %+v", runs)
+		}
+	}
 }
