@@ -221,9 +221,9 @@ var emptyStateSchema struct {
 // copiedStateDirectory creates directory as a private state directory that
 // holds a copy of the current empty state database, for Open. Every fixture
 // gets its own writable database: no database is shared, hard-linked or
-// reused, and no released dump is used as the current schema. The packages
-// whose fixtures open a store repeat this helper, because internal/testfixture
-// imports no state and this package's tests import it.
+// reused, and no released dump is used as the current schema. Other packages
+// use internal/state/statetest; this package keeps its own copy because
+// statetest imports state.
 func copiedStateDirectory(t *testing.T, directory string) string {
 	t.Helper()
 	emptyStateSchema.once.Do(func() { emptyStateSchema.files, emptyStateSchema.err = buildEmptyStateSchema() })

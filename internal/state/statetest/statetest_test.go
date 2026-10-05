@@ -32,6 +32,10 @@ func TestCopiedStateDirectoryMatchesAFreshStateAndStaysIndependent(t *testing.T)
 	if !reflect.DeepEqual(copiedCatalog, freshCatalog) {
 		t.Fatalf("the copied state has catalog %v, a fresh one %v", copiedCatalog, freshCatalog)
 	}
+	copiedMetadata, freshMetadata := metadataRows(t, copiedDirectory), metadataRows(t, freshDirectory)
+	if !reflect.DeepEqual(copiedMetadata, freshMetadata) {
+		t.Fatalf("the copied state holds %v, a fresh one %v", copiedMetadata, freshMetadata)
+	}
 	copiedSettings, err := copied.Settings(ctx)
 	noErr(t, err)
 	freshSettings, err := fresh.Settings(ctx)
@@ -52,6 +56,11 @@ func TestCopiedStateDirectoryMatchesAFreshStateAndStaysIndependent(t *testing.T)
 	noErr(t, err)
 	if copiedDatabaseInfo.Mode().Perm() != freshDatabaseInfo.Mode().Perm() {
 		t.Fatalf("the copied database mode is %v, a fresh one %v", copiedDatabaseInfo.Mode(), freshDatabaseInfo.Mode())
+	}
+	for _, directory := range []string{freshDirectory, copiedDirectory} {
+		if err := state.ValidatePrivateFile(filepath.Join(directory, databaseName)); err != nil {
+			t.Fatalf("the state database in %s is not private: %v", directory, err)
+		}
 	}
 
 	// Every fixture is its own database.
@@ -90,6 +99,24 @@ func stateCatalog(t *testing.T, directory string) []string {
 	}
 	noErr(t, rows.Err())
 	return catalog
+}
+
+// metadataRows returns the metadata keys and values a state database holds.
+func metadataRows(t *testing.T, directory string) map[string]string {
+	t.Helper()
+	database := openStateDatabase(t, directory)
+	defer database.Close()
+	rows, err := database.QueryContext(context.Background(), `SELECT key, value FROM metadata`)
+	noErr(t, err)
+	defer rows.Close()
+	values := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		noErr(t, rows.Scan(&key, &value))
+		values[key] = value
+	}
+	noErr(t, rows.Err())
+	return values
 }
 
 // metadataRowCount counts the metadata rows a key has.
