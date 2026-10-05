@@ -1,34 +1,95 @@
-# Coding tool integration
+# Coding tools: connect Codex, Claude Code and other agents to OwnGit
 
 <p align="center"><b>English</b> | <a href="CODING_TOOLS.ko.md">한국어</a></p>
 
-This guide is for the person who connects a coding tool, such as Codex,
-Claude Code, or Pi, to OwnGit, and for the tool itself. A coding tool uses
-OwnGit in one of two ways:
+This guide shows how to let a coding tool such as Codex, Claude Code or Pi
+work with an OwnGit server. The tool can then list repositories, open,
+review and merge pull requests, and record the results of project checks.
 
-- It runs the `owngit` command in the user's own environment and reads its
-  versioned JSON result. In this role the command is called the helper. A
-  shared Agent Skill tells the tool which commands to run.
-- A tool that supports MCP starts `owngit mcp`, a local
-  [MCP server](#mcp-server) that offers the same commands as tools.
+A tool uses OwnGit in one of two ways:
 
-Either way, the tool can read and review pull requests, list and create
-repositories, and record project checks. For checks, OwnGit keeps one task per
-unit of work while revisions change, stores each result on the server bound to
-the exact revision it tested, and allows three correction rounds per task. The
-skill is only an instruction: a tool can ignore it, and the server records only
-what the helper actually submits.
+- It runs the `owngit` command and reads the JSON it prints. The
+  [owngit-checks skill](../integrations/skills/owngit-checks/SKILL.md) tells
+  the tool which commands to run.
+- A tool that supports MCP (Model Context Protocol) starts
+  [`owngit mcp`](#mcp-server) and calls the same commands as tools.
 
-## Prerequisites
+The commands print JSON. A failure has a stable `error.code` and a message
+that says what to do.
 
-You need an OwnGit server reachable from the coding machine, a repository
-identifier, the `owngit` binary on the coding machine (see
-[Reaching the helper binary](#reaching-the-helper-binary)), and a
-repository-scoped helper credential in a private file. Inspect the supplied
-and project-known facts first; ask the user only for missing choices that
-belong to them.
+## Quick start
 
-Create the credential with the administrator password:
+1. Open **Coding tools** in the dashboard sidebar (`/coding-tools`). It shows
+   this server's address and the commands below, ready to copy.
+2. Install the skill where your coding tool looks for skills:
+
+   ```sh
+   owngit skill --install ~/.agents/skills
+   ```
+
+3. To use MCP, add the server to your tool:
+
+   ```sh
+   claude mcp add --scope user owngit -- owngit mcp --server https://owngit.example.test
+   codex mcp add owngit -- owngit mcp --server https://owngit.example.test
+   ```
+
+   If the server asks for a password, the page adds `--password-file`.
+   For the check tools, also add `--credential-file`.
+
+4. To record checks, [create a helper credential](#helper-credentials).
+
+Inside a clone of an OwnGit repository you can leave out `--server` and
+`--repository`; see [Inside a clone](#inside-a-clone).
+
+## Get the owngit command
+
+Homebrew, npm and the Arch Linux package put `owngit` on `PATH`. The
+one-line installer, a portable archive and a source build do not change
+`PATH`. In that case, give the coding tool the full path of the program
+instead of editing shell startup files for it.
+
+## Install the skill
+
+`owngit skill --install DIR` writes `DIR/owngit-checks/SKILL.md`. Each
+`owngit` binary carries the skill that shipped with it, and the portable
+archives also carry it at `integrations/skills/owngit-checks/SKILL.md`.
+
+If the installed file has your own edits, the command stops with
+`skill_modified` and changes nothing. Compare it with `owngit skill --print`,
+then add `--replace`. The old file is kept beside the new one.
+
+Where tools look for skills:
+
+| Tool | Project | User |
+| --- | --- | --- |
+| Codex | `.agents/skills/` | `~/.agents/skills/` |
+| Pi | `.agents/skills/` or `.pi/skills/` | `~/.agents/skills/` or `~/.pi/agent/skills/` |
+
+Call the skill by name, because a tool can miss a match by description. In
+the Codex app select it with `@`, in the Codex CLI mention it with `$`, and
+in Pi use `/skill:owngit-checks`.
+
+## Access and credentials
+
+OwnGit has three kinds of secret. The shared password is the one every user
+of the server signs in with (general access). Each secret lives in a file
+that only your account can read. Never put a secret in a command argument, a document or a log.
+
+| Secret | Used by | Flag |
+| --- | --- | --- |
+| Shared general-access password | `owngit pr`, `owngit repo list`, `show`, `create`, `owngit tasks`, most MCP tools | `--password-file` (leave it out when access is open) |
+| Helper credential | `owngit check` and the MCP check tools, for one repository | `--credential-file` |
+| Administrator password | `helper-credential`, `check-policy`, `check-job`, administrator `repo` commands | `--password-file` |
+
+Plain HTTP is refused unless you add `--accept-insecure-http` to that
+command. Add it only when you accept that the connection is unencrypted.
+A coding tool must not add it on your behalf.
+
+### Helper credentials
+
+A helper credential lets a tool record checks for one repository. Create it
+with the administrator password:
 
 ```sh
 owngit helper-credential create \
@@ -39,166 +100,44 @@ owngit helper-credential create \
   --output /path/to/helper-token
 ```
 
-The token is written only to the owner-readable `--output` file and stored on
-the server as a hash; keep it out of command arguments, documents, and logs.
-An existing file or symlink at `--output` is reported instead of replaced. The
-file's first line names the server that issued the token (see
-[Credential files and the server line](#credential-files-and-the-server-line)),
-and the command prints that server as `token_file_server`.
-
-The helper refuses plain HTTP unless the user passes `--accept-insecure-http`
-for that request. Do not add that flag on the user's behalf.
-
-## Skill discovery
-
-The shared skill is
-[integrations/skills/owngit-checks/SKILL.md](../integrations/skills/owngit-checks/SKILL.md).
-The portable archives on GitHub Releases carry it at that path together with
-`docs/CODING_TOOLS.md` and `docs/CODING_TOOLS.ko.md`. The Arch Linux package
-installs the same files under `/usr/share/doc/owngit-bin/`, for example
-`/usr/share/doc/owngit-bin/integrations/skills/owngit-checks/SKILL.md`. The
-Homebrew and npm packages install only the `owngit` command, but every binary
-carries the skill it shipped with:
-
-```sh
-owngit skill --install ~/.agents/skills
-```
-
-`--install DIR` writes `DIR/owngit-checks/SKILL.md` and prints a JSON result
-whose `status` is `installed`, `already_current`, or `replaced`. A file with
-other content may hold your edits, so the command fails with `skill_modified`
-and changes nothing; compare with `owngit skill --print`, then add `--replace`
-to install the shipped skill and keep the old file beside it as
-`SKILL.md.previous-TIMESTAMP` (named in `previous`). A symbolic link or other
-non-regular `SKILL.md` is refused with `skill_target_invalid`. From an unpacked
-archive you can also copy it:
-
-```sh
-mkdir -p ~/.agents/skills
-cp -R integrations/skills/owngit-checks ~/.agents/skills/
-```
-
-Install or copy the `owngit-checks` directory, rather than linking to it, into
-a location the coding tool scans:
-
-- Codex: `.agents/skills/owngit-checks` in the repository, or
-  `~/.agents/skills/owngit-checks` for the user. Codex scans `.agents/skills`
-  from the current directory up to the repository root.
-- Pi: `.agents/skills/owngit-checks` or `.pi/skills/owngit-checks` in the
-  project, or `~/.agents/skills/owngit-checks` or
-  `~/.pi/agent/skills/owngit-checks` for the user.
-
-Invoke the skill explicitly, because matching by description can be missed:
-the Codex app selects a skill with `@`, the Codex CLI and IDE extension list
-skills with `/skills` and accept `$` to mention one, and Pi registers
-`/skill:owngit-checks`. If the skill is not loaded, run the commands in this
-guide directly.
-
-### Reaching the helper binary
-
-Homebrew, npm, and the Arch Linux package put `owngit` on `PATH`. A source
-build and a portable archive do not: use `bin/owngit` in a source checkout or
-`./owngit` in an unpacked archive. The one-line installer puts the program in
-`~/.local/bin/owngit` or `/usr/local/bin/owngit` on Linux and macOS, or in a
-release folder under `%LOCALAPPDATA%\Programs\OwnGit` on Windows, and changes
-no `PATH` setting. When the binary is not on `PATH`, give the coding tool the
-full path instead of editing shell startup files on its behalf.
-
-## Coding tools page
-
-The dashboard's sidebar has Coding tools (`/coding-tools`). It shows the
-server's address and commands for this server, each with a copy button:
-
-- `owngit skill --install ~/.agents/skills` installs the skill.
-- `claude mcp add --scope user owngit -- owngit mcp --server ORIGIN` adds the
-  MCP server to Claude Code, `codex mcp add owngit -- owngit mcp --server ORIGIN`
-  adds it to Codex, and `owngit mcp --server ORIGIN` is the command for any
-  other client that uses the stdio transport.
-
-When the address uses plain HTTP, the commands include
-`--accept-insecure-http` and the page warns about it. When the server asks for
-the shared password, the commands include `--password-file PASSWORD_FILE`:
-save the password in a file only you can read and put its path there. The
-check tools also need `--credential-file` and a repository (`--repository`, or
-`--workdir` with a clone). When `owngit` is not on the tool's `PATH`, write its
-full path after `--`.
-
-The page lists every repository's helper credentials with their label,
-repository, issue time, last use (or "Never used") and revocation, but only in
-a browser confirmed as administrator, or while the administrator password
-check is off; others see a link to confirm. A label is the name given when the
-credential was issued, not proof of who used it. No token is ever shown. The
-repository's Helper credentials page issues and revokes them.
-
-The page also lists the 10 check tasks that changed most recently across all
-repositories (the later of the task's own change and its latest attempt), and
-says when there are more.
-
-## Inside a clone
-
-Inside a clone of an OwnGit repository, `owngit pr`, `owngit check`, and
-`owngit repo` find the server and the repository by themselves when `--server`
-or `--repository` is missing: they read the clone's `origin` remote and accept
-only an OwnGit clone address, `http(s)://HOST[:PORT]/git/NAME.git`. `check run`
-reads the clone that contains `--workdir`; the other commands read the clone
-that contains the current directory. Explicit flags always win, `--repository`
-alone keeps the inferred server, and `repo list` and `repo create` infer only
-the server. The command prints one line on standard error that says what it
-inferred, for example
-`owngit: using server https://owngit.example.test and repository example-project from the origin remote`;
-the JSON on standard output does not change. Plain HTTP still needs
-`--accept-insecure-http`.
-
-The command stops before contacting any server with `origin_unavailable` (not
-in a clone, or no `origin`), `origin_ambiguous` (`origin` has more than one
-URL), `origin_unsupported` (another kind of address, such as a GitHub URL, an
-SSH address, or a local path), or `origin_server_mismatch` (`--server` names
-another server than `origin`, and `--repository` is missing).
-
-After a repository is [renamed](OPERATIONS.md#renaming-a-repository), a
-clone's `origin` still names the old address. Commands that use general access
-or the administrator password, such as `owngit pr` and `owngit repo`, then stop
-with `repository_moved`, and `details.address` gives the new name. The helper
-commands keep working there with a helper credential for 90 days and then stop.
-Update the clone with `git remote set-url origin` and the new clone address.
+- The token is written only to the new `--output` file. The server keeps only
+  a hash, so a lost token cannot be shown again; create a new one.
+- An existing file at `--output` is never replaced.
+- `owngit helper-credential list` and `revoke --id ID` manage credentials.
+  The repository's **Helper credentials** page, linked from its Checks tab,
+  does the same. A revoked token stops working at once.
+- The Coding tools page lists every repository's credentials to a browser
+  confirmed as administrator. A label is the name given at creation, not
+  proof of who used it.
 
 ### Credential files and the server line
 
-A clone's `origin` can name any server, so an inferred server does not show
-that you trust it. A password or credential file is sent to an inferred server
-only when the file names that server on its first line:
+A password or token file can start with a line that names the server it
+belongs to:
 
 ```text
 owngit-server: https://owngit.example.test
 SECRET
 ```
 
-The first line is the exact text `owngit-server:`, one space, and one HTTP(S)
-origin without a path, at the very start of the file; the secret is the last
-line. A first line that only resembles it (after a byte order mark or a blank
-line, or in another letter case) is refused. A file without the line must
-hold the secret on one line and still works with an explicit `--server`; a
-file with the line is refused for any other server, including an explicit
-`--server`. Administrator password files and runner token files accept the
-line too, and their commands always need an explicit `--server`. Refusals are
-`credential_origin_required` (the server was inferred and the file names no
-server), `credential_origin_mismatch` (the file names another server), and
-`invalid_credential_origin` (the first line is malformed); nothing is sent in
-any of these cases. Scripts that read a helper or runner token file directly
-must take its last line.
+Such a file is sent only to that server. `helper-credential create` and
+`runner-credential issue` write this line for you. A file without the line
+works only with an explicit `--server`.
 
-`helper-credential create` and `runner-credential issue` write the line for
-the server they used. To bind a shared password file you wrote yourself, add
-the line at the top with a text editor, which keeps the file's permissions, or
-on macOS or Linux write a new file that only you can read:
+When OwnGit reads the server from a clone's `origin` remote, the file must
+have this line. A clone's `origin` can point anywhere, so the line is what
+tells OwnGit that you trust that server.
+
+To add the line to a password file on macOS or Linux, write a new private
+file:
 
 ```sh
 (umask 077; { printf 'owngit-server: %s\n' https://owngit.example.test; cat password-file; } > bound-password-file)
 ```
 
-On Windows, a file made with Notepad or `echo` inherits its folder's access
-entries and is refused as not private. In PowerShell, create the file, limit it
-to your account, write the password, and then add the line:
+On Windows, a file made with Notepad or `echo` can be read by others and is
+refused. In PowerShell (5.1 or 7), create a file only your account can read,
+type the password at the prompt, and add the server line:
 
 ```powershell
 $file = "$HOME\owngit-password.txt"
@@ -211,220 +150,30 @@ $io::SetAccessControl($f, $acl)
 [IO.File]::WriteAllText($file, "owngit-server: https://owngit.example.test`n" + [IO.File]::ReadAllText($file))
 ```
 
-The commands work in Windows PowerShell 5.1 and PowerShell 7, in an ordinary
-window and in one opened with Run as administrator, where the Administrators
-group becomes the file's owner; OwnGit accepts that owner when only your
-account has access. `Read-Host -AsSecureString` keeps the password off the
-screen and out of the history.
+A script that reads a token file itself must use its last line.
 
-## Workflow
+## Inside a clone
 
-Create one stable task for the unit of work. The task keeps its identity while
-revisions change, and a new commit does not reset its correction budget:
+In a clone of an OwnGit repository, `owngit pr`, `owngit check` and
+`owngit repo` read a missing `--server` and `--repository` from the
+`origin` remote. `origin` must be an OwnGit clone address,
+`http(s)://HOST[:PORT]/git/NAME.git`. Flags you pass always win. The command
+prints one line on standard error that says what it read.
 
-```sh
-owngit check task new \
-  --server https://owngit.example.test \
-  --repository example-project \
-  --credential-file /path/to/helper-token \
-  --title "Fix the failing build"
-```
+`check run` reads the clone that holds `--workdir`. The other commands read
+the clone that holds the current directory.
 
-Run the checks. Without `--check`, the command runs the checks in the
-`.owngit/checks.json` committed in the `HEAD` of `--workdir`; the working tree
-copy and configurations recorded on the server for other revisions are never
-used, and a missing or invalid file stops the command before anything runs.
-`--check name=command` runs and records exactly that set instead:
+After a repository is renamed, `owngit pr` and `owngit repo` stop at the old
+address with `repository_moved`, and `details.address` gives the new name.
+Check commands keep working at the old address for 90 days. Update the clone:
 
 ```sh
-owngit check run \
-  --server https://owngit.example.test \
-  --repository example-project \
-  --credential-file /path/to/helper-token \
-  --task TASK_ID \
-  --check "unit=go test ./..." \
-  --check "lint=go vet ./..."
+git remote set-url origin https://owngit.example.test/git/new-name.git
 ```
-
-`check run` registers the attempt before execution, so the server issues a
-repository-wide sequence and a retransmitted request stays idempotent. The
-helper observes the worktree with Git and your Git configuration before and
-after execution: if the initial revision cannot be read, the run stops before
-registration; if only the initial status read fails, the state is `unknown`;
-and at the final observation an unreadable revision becomes `unknown`, while a
-changed revision, dirty status or failed status read is recorded as `dirty`.
-Neither proves a clean tested commit.
-
-Before asking an agent to correct, reserve a correction round and pass it to
-the verifying run:
-
-```sh
-owngit check cycle reserve \
-  --server https://owngit.example.test \
-  --repository example-project \
-  --credential-file /path/to/helper-token \
-  --task TASK_ID
-
-owngit check run \
-  --server https://owngit.example.test \
-  --repository example-project \
-  --credential-file /path/to/helper-token \
-  --task TASK_ID --cycle CYCLE_ID
-```
-
-Read durable state:
-
-```sh
-owngit check task list --server URL --repository NAME --credential-file PATH
-owngit check status --task TASK_ID --server URL --repository NAME --credential-file PATH
-owngit check log --attempt ATTEMPT_ID --server URL --repository NAME --credential-file PATH
-owngit check config show --server URL --repository NAME --credential-file PATH
-owngit check cycle list --task TASK_ID --server URL --repository NAME --credential-file PATH
-```
-
-## Command reference
-
-Every command takes `--server`, `--repository`, `--credential-file`, and
-`--accept-insecure-http` (the remote flags); inside a clone, `--server` and
-`--repository` can come from `origin`.
-
-- `check task new` creates a task (`--title`); `check task list` lists the
-  repository's tasks with their correction budgets, newest first, one page at
-  a time. `--limit` sets the page size, from 1 to 100 (50 by default). When
-  older tasks remain, the result has `next`; pass it as `--before` to get the
-  following page.
-- `check run` executes checks and, unless `--no-upload` is set, records the
-  attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
-  `--timeout` (default 10 minutes), `--output-limit` (default 65536 bytes per
-  check, both must be positive; a check that passes either is stopped and
-  incomplete), `--no-upload` (the remote flags are then
-  optional), and repeatable `--check name=command`.
-- `check cycle reserve` reserves one correction round (`--task` required);
-  `check cycle list` lists the reserved rounds.
-- `check status` reads the task and its latest attempt; `check log` reads one
-  raw log by `--attempt`; `check config show` reads the configuration recorded
-  most recently in the repository, from any branch, which `check run` does not
-  use.
-- `helper-credential create` issues a credential (`--label`, `--output`
-  required, `--password-file` instead of `--credential-file`);
-  `helper-credential list` and `helper-credential revoke --id ID` manage
-  existing credentials. The output of `create` names the repository's current
-  address in `repository_address`. `helper-credential list` without
-  `--repository` lists every repository's credentials, each with its
-  repository's current address in `repository_address` (API
-  `GET /api/v1/helper-credentials`).
-- `owngit tasks` prints check tasks as the dashboard shows them, with general
-  access (`--password-file` with the shared password, no helper credential):
-  without `--repository`, the 10 tasks that changed most recently across all
-  repositories and `truncated`; with `--repository NAME`, the first 50 of that
-  repository's tasks in the order of its Checks tab; with `--task TASK` too,
-  the task with its newest 100 attempts and `attempts_truncated`. Each listed
-  task carries `latest_attempt`, or null when it has none, and its
-  repository's current address in `repository_address`. Errors include
-  `repository_not_found`, `repository_moved` (an earlier name of a renamed
-  repository), `task_not_found`, and `invalid_arguments` (`--task`,
-  `--limit` or `--before` without `--repository`, or `--limit` or `--before`
-  with `--task`). The API routes are `GET /api/v1/tasks`,
-  `GET /api/v1/tasks/NAME`, and `GET /api/v1/tasks/NAME/TASK`.
-- A repository's task list comes one page at a time, in the same order. In
-  `owngit tasks --repository NAME`, `--limit` sets the page size, from 1 to
-  100 (50 by default). When older tasks remain, the result has `next`; pass it as
-  `--before` to get the following page. The API route
-  `GET /api/v1/tasks/NAME` takes the same two optional query parameters,
-  `limit` and `before`. It refuses a value it does not accept with status 400
-  and `invalid_list_limit` or `invalid_list_before`, and any other query
-  parameter, or one given twice, with `invalid_request`. The other two task
-  routes take no query parameters. The repository's Checks tab shows the
-  first page, and Show older tasks below the list opens the next one.
-- `check task list` reads the same pages through the helper route
-  `GET /api/v1/repositories/ID/tasks`, which needs a helper credential for
-  that repository. It takes `limit` and `before`, answers with `next`, and
-  refuses values with the same status and codes as `GET /api/v1/tasks/NAME`.
-
-## Reading the result
-
-`check run` prints one JSON object and exits `0` when every check passed (also
-for a local `--no-upload` run; read `registered` and `uploaded` to see whether
-the attempt was recorded), `1` when a check did not pass, `2` when this client
-could not confirm that the attempt was recorded, and `130` when the run was
-cancelled. If it stops before running any check, for invalid arguments, a
-missing or invalid committed configuration (`checks_not_configured`,
-`invalid_check_configuration`), or a registration the server refused such as
-an unreserved `--cycle`, it prints an error object
-`{"ok":false,"error":{"code":...,"message":...}}` and exits 1; nothing ran
-and nothing was recorded.
-
-The object carries `ok`, `registered`, `uploaded`, `attempt_id`, `cycle_id`,
-`task`, `attempt`, `correction_cycles_remaining`, `results`, and
-`upload_error`. `attempt` carries `status`, `revision_oid`, `worktree_state`,
-`summary`, `cleanup_failed`, `log_truncated`, and the execution limits; each
-entry in `results` carries `name`, `command`, `status`, `exit_code`,
-`duration_ms`, `output_excerpt`, `truncated`, and `cleanup_error`.
-
-Per-check statuses are `passed`, `failed`, `error`, `cancelled`, `incomplete`,
-and `unavailable`; the server recomputes the attempt status from them and does
-not trust a helper-supplied aggregate. A cleanup error makes the result
-`error` even when the exit code is visible; output beyond the limit makes it
-`incomplete`, while a shortened excerpt or log is only marked truncated; an
-empty configured set is `unavailable`, never `passed`; and a registered
-attempt that never reports a completion stays visible as `pending`.
-
-`upload_error` means this client could not confirm the registration or
-completion. A lost response can leave an accepted registration or completion
-on the server, so inspect `check status` before repeating a reservation or a
-run, and do not claim the attempt is absent; it is not the same as a recorded
-failed check, which has a durable attempt with a `failed` result. When the
-server cannot be reached at all, the checks still run, the command exits 2,
-and `upload_error` names the cause, such as a refused connection or a TLS
-error.
-
-## Correction budget
-
-The task budget is three automatic correction rounds. Reserve a round before
-asking an agent to correct, and pass the `cycle.id` from the reserve response
-as `--cycle` to the verifying run. A correction already authorized in the
-active task may continue within the budget without asking the user again; do
-not start an unrequested fix, and reuse the stable task and cycle identifiers
-instead of creating new ones. A reserved round is counted once, whether the
-following check passes or fails, and retries inside the round reuse it. The
-initial check and a manual rerun consume no round, and an unavailable or
-cancelled run does not create one by itself. When the budget is exhausted, the
-reserve command returns `correction_budget_exhausted`: stop automatic
-continuation and report the unresolved task. A manual check can still be
-recorded afterwards.
-
-Only `check status`, or a reserve call that returns
-`correction_budget_exhausted`, shows that the budget is exhausted. The
-top-level `correction_cycles_remaining` in a run output is filled in only from
-a server response and has no separate "unknown" value, so when no response
-set it, the field still prints `0`. That `0` means the client did not read the
-budget, not that the budget ran out. A run carries a measured budget only when
-it also carries a `task` object; read `task.correction_cycles_remaining`
-there. Two cases print the unmeasured `0`:
-
-- `--no-upload` never contacts the server, so the server task is unchanged.
-- A failed registration, where `registered` is false and `upload_error` is set,
-  is unconfirmed rather than absent. If the request was accepted, a durable
-  attempt exists and the sequence moved; if not, nothing changed. Do not assume
-  either.
-
-For an unconfirmed attempt, keep the stable task identifier, preserve the
-printed `attempt_id` as diagnostic evidence, and inspect
-`check status --task TASK_ID`. Do not rerun the check or reserve a round to
-resolve the uncertainty: `check run` generates a new attempt identifier on
-every invocation and cannot resubmit an existing one, so a rerun starts a
-separate attempt. The client's own retry of an unanswered request sends the
-same body and is safe; running the command again from a shell is not. If
-`check status` does not resolve that exact attempt, report it as unconfirmed.
-Never report exhaustion, and never stop an authorized correction, on the
-strength of an unmeasured `0`.
 
 ## Repositories
 
-`owngit repo` lists, shows, and creates repositories, restores their files
-from earlier commits, and prints one JSON object. It uses general access,
-like `owngit pr`: pass the shared general-access password with
-`--password-file`, or omit it when access is open.
+`owngit repo list`, `show` and `create` use general access:
 
 ```sh
 owngit repo list --server https://owngit.example.test
@@ -433,253 +182,185 @@ owngit repo create --server https://owngit.example.test --name example-project \
   --description "Optional description"
 ```
 
-Each repository carries `id`, `name`, `address`, `description`, `created_at`,
-and `clone_url`. `address` is where the repository answers: its current name
-in lowercase, which is its ID until it is renamed. `repo show` adds
-`default_branch` when the branches can be read at that moment,
-`push_ref_namespaces`, the ref namespaces a push may change
-([Other ref namespaces](OPERATIONS.md#other-ref-namespaces)), and `aliases`,
-the earlier addresses that still lead to the repository, each with the time it
-stops (`until`). When the branches could not be read, `default_branch_error`
-takes the place of `default_branch`: `The repository folder is missing or
-unusable; see the server log.` when the repository folder is missing or
-unusable, and `OwnGit could not read the branches; see the server log.` for
-any other read failure. A repository that is busy or still being prepared, or
-whose last read may be out of date, has neither field. `repo list` returns at most 1000 repositories, with
-`truncated` true when there are more. `repo create` applies the browser form's
-rules and fails with `repository_exists`, `invalid_repository_name`,
-`reserved_repository_name`, `invalid_repository_description` (over 500
-bytes), `repository_name_busy` (an import for that name is still running or
-needs recovery; try again after it finishes), `repository_storage_in_use`
-(another running OwnGit server uses the repository folder; stop that server
-or choose another folder), `repository_create_kept` (the repository could
-not be recorded and its folder remains; check its contents and move it aside
-before trying that name again), or `repository_create_failed` (OwnGit could
-not create the repository, for example because its folder could not be made
-private; run `owngit doctor` on the server computer and check the server log).
+Administrator commands (rename, delete, settings, default branch, share links) and
+restoring files from earlier commits are described in
+[Repositories](REPOSITORIES.md).
 
-These `repo` commands are owner actions and need the administrator password in
-`--password-file` instead:
+## Pull requests
 
-- `owngit repo settings show` and `owngit repo settings set` read and change
-  one repository's
-  [kept history and default branch protection](OPERATIONS.md#kept-history)
-  and its [other ref namespaces](OPERATIONS.md#other-ref-namespaces).
-- `owngit repo default-branch --branch BRANCH` makes an existing branch the
-  [default branch](OPERATIONS.md#changing-the-default-branch). A name that
-  matches two branches fails with `ambiguous_branch` (HTTP 422); the message
-  names both full refs and the value to send for each.
-- `owngit repo rename NAME NEW-NAME` gives a repository a new name and prints
-  it as JSON ([Renaming a repository](OPERATIONS.md#renaming-a-repository)).
-  It fails with `repository_name_taken`, `repository_busy`,
-  `invalid_repository_name`, or `reserved_repository_name`.
-- `owngit repo delete --repository NAME --files keep|delete` deletes a
-  repository ([Deleting on the command line](OPERATIONS.md#deleting-on-the-command-line)).
-- `owngit repo share list`, `create` and `revoke` manage a repository's
-  read-only [share links](OPERATIONS.md#share-links). `create` prints the
-  link's secret once; `list` never does.
-
-For 90 days after a rename, a `repo` or `pr` command that names the repository
-by its old address fails with `repository_moved` and changes nothing;
-`details.address` gives the new name. After the 90 days the old address answers
-`repository_not_found`.
-
-Inside a clone, these commands take `--server` from `origin`, except
-`repo rename`, which always needs `--server`. `repo settings`, `repo default-branch` and `repo share` also take
-`--repository` from `origin`. The password file must then name that server
-([Credential files and the server line](#credential-files-and-the-server-line)).
-
-`owngit repo kept-history` and `owngit repo restore` bring back files from an
-earlier commit, as the dashboard's restore pages do, and use the same general
-access ([Restoring repository files](OPERATIONS.md#restoring-repository-files)).
-A restore takes two steps: preview it, then apply it with the `expected_head`
-that the preview returned.
+A push does not open a pull request. After you push a branch, create one:
 
 ```sh
-owngit repo kept-history
-owngit repo restore preview --source OID --target main --path src/app.go
-owngit repo restore apply --source OID --target main --path src/app.go --expected-head OID
+owngit pr create \
+  --server https://owngit.example.test \
+  --repository example-project \
+  --source feature-branch \
+  --target main \
+  --title "Describe the change" \
+  --body-file description.md \
+  --review request
 ```
 
-`repo kept-history` lists, newest first, the earlier values of branches and
-tags that a force push, an import, or a deletion replaced. Each entry names
-the ref it was kept from (`source_ref`), the commit to restore from
-(`commit_oid`), and the new branch that the dashboard offers for it
-(`restore_target`).
+`--body-file -` reads the Markdown description from standard input.
+`--review skip` records that review was skipped on purpose; it is not an
+approval.
 
-`--source` is the full ID of the commit to restore from. `--target` is a
-branch name such as `main`, never a full ref name such as
-`refs/heads/main`, the form `source_ref` uses. Repeat `--path` for each file
-to restore. Without `--path` the whole tree is restored, which also deletes
-files that the source commit does not have. A whole-tree restore onto a branch
-that does not exist creates that branch at the source commit.
-
-The preview changes nothing. It lists each changed path with `status`
-(`added`, `modified`, or `deleted`), `old_mode` and `new_mode` (`120000` is a
-symbolic link), `additions`, `deletions`, and `binary`. `creates_branch` says
-whether applying creates the branch; otherwise applying adds one commit with
-the tree `result_tree` on top of `expected_head`. `can_apply` is false when
-the branch already has these files. A restore never rewrites history.
-
-Apply answers with `commit_oid`. A refused request fails with one of these
-codes:
-
-- `stale_revision`: the branch moved after the preview. Nothing changed;
-  preview again.
-- `restore_no_changes`: the branch already has these files.
-- `restore_unsupported`: the selection includes a submodule, would remove
-  unselected files beneath a selected path, or selects files for a branch that
-  does not exist.
-- `invalid_restore`: the request is invalid, for example a full ref name as
-  the target, a source that is not a full commit ID of this repository, or a
-  target branch whose name some file systems treat as the same as another
-  branch's, such as `Main` beside `main`.
-- `restore_failed`: the restore could not be completed, and it may have taken
-  effect anyway. Read the target branch before trying again.
-
-The API routes are `GET /api/v1/repositories/ID/kept-history`,
-`POST /api/v1/repositories/ID/restore/preview` and
-`POST /api/v1/repositories/ID/restore`.
-
-## Pull request changes
-
-`owngit pr diff --number N` prints what a pull request changes as one JSON
-object: the exact source and target commits it compared, their merge base, the
-changed files with line counts, and the patch. It uses general access, like
-`owngit pr`, and inside a clone it reads the server and repository from
-`origin`.
+Then work with it by number. Review and merge commands take the exact source
+and target commits that `pr show` printed:
 
 ```sh
-owngit pr diff --number 3
-owngit pr diff --number 3 --stat
-owngit pr diff --number 3 --patch
-owngit pr diff --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr list --state open
+owngit pr show --number 1
+owngit pr diff --number 1 --stat
+owngit pr mergeability --number 1
+owngit pr edit --number 1 --edit-revision 0 --title "New title"
+owngit pr review request --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr review submit --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID \
+  --decision approved --reviewer "reviewer label" --note-file note.md
+owngit pr review skip --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr merge --number 1 --source-oid SOURCE_OID --target-oid TARGET_OID
+owngit pr close --number 1
+owngit pr reopen --number 1
 ```
 
-The changes are counted from the merge base to the source, as on the pull
-request page. By default the command reads the current source and target
-commits once and diffs exactly those, so `source.oid` and `target.oid`
-describe the patch even if a branch moves during the read; pass the same
-object IDs to `pr review submit` to review what you read, and the review fails
-with `stale_revision` if a branch moved in the meantime. For a merged pull
-request the current pair is the pair it merged. `--source-oid` and
-`--target-oid` pin a pair, which must be the current one or one recorded for
-the pull request, such as the pair a review was requested for; any other pair
-fails with `revision_not_recorded`, and giving only one of the two fails with
-`invalid_arguments` (`invalid_revision` in the API). When the branches have
-moved away from a pinned pair, the result still shows that pair, sets `moved`
-to true, and gives the current pair in `current`.
+What to know:
 
-The result is bounded: `truncated` is true when the patch leaves out some
-files, `incomplete` when the file list misses files too, and the patch always
-ends at a file boundary. `reason` says why: `output_limit` (the diff reached
-its 8 MiB limit), `time_limit` (Git ran out of time; a later try may read
-more), or `response_limit` (cut to fit the 4 MiB response). When the branches
-share no commit or have more than one merge base, `unavailable` is
-`no_merge_base` or `multiple_merge_bases`, and there is no file list or patch.
-`--stat` prints the object without `patch`; `--patch` prints only the patch
-text and writes the compared commits, and any move or cut, to standard error.
-The API route is `GET /api/v1/repositories/ID/pull-requests/N/diff`, with the
-optional query parameters `source_oid` and `target_oid`.
+- Only one pull request can be open for a source and target pair. A second is
+  refused with `pull_request_exists`.
+- If a branch moved after you read it, a review or merge fails with
+  `stale_revision`. Read the pull request again and decide based on the new commits.
+- `pr edit` needs the `edit_revision` from `pr show`. If someone edited the
+  pull request in between, it fails with `stale_edit`; show it again and
+  reapply your change.
+- `pr diff` shows the changes from the merge base to the source. `--stat`
+  leaves out the patch and `--patch` prints only the patch. Large diffs are
+  cut at file boundaries and the result says so (`truncated`).
+- `pr mergeability` answers `clean`, `conflict`, `unavailable` or `stale`. It
+  changes nothing, and `pr merge` checks again when it runs.
+- A merge is a fast-forward or a merge commit by `OwnGit <owngit@localhost>`.
+  It never squashes, rebases or deletes the source branch, and a retried merge
+  never makes a second commit. Merging needs Git 2.38 or newer on the server.
+- Reviews and checks are advisory. Neither blocks a merge.
+- `pr list` shows 50 pull requests at a time, newest first. When more remain,
+  the result has `next`; pass it as `--before` for the next page.
 
-## Pull request mergeability
+## Recording checks
 
-`owngit pr mergeability --number N` answers whether an open pull request can
-merge now, for its current source and target commits, and prints one JSON
-object. It changes nothing: it creates no ref, no record, and no object in the
-repository. It uses general access, like `owngit pr diff`.
+`owngit check` (the helper) runs a project's checks in your own environment
+and records the result on the server, tied to the exact commit it tested. It needs a
+[helper credential](#helper-credentials). For checks that OwnGit runs by
+itself on each push, see [Automatic checks](AUTOMATIC_CHECKS.md).
 
-```sh
-owngit pr mergeability --number 3
-owngit pr mergeability --number 3 --source-oid SOURCE_OID --target-oid TARGET_OID
-```
+1. Create one task for the unit of work. Keep its ID while the commits change.
 
-`source` and `target` name the commits the answer is about. `status` is one
-of these:
+   ```sh
+   owngit check task new \
+     --server https://owngit.example.test \
+     --repository example-project \
+     --credential-file /path/to/helper-token \
+     --title "Fix the failing build"
+   ```
 
-- `clean`: the merge would succeed. `method` is `fast_forward`,
-  `merge_commit`, or `up_to_date`.
-- `conflict`: `conflict_paths` lists up to 100 conflicting paths, and
-  `conflict_paths_truncated` is true when there are more. Git can report a
-  conflict without naming a file, and `conflict_paths` is then absent. When
-  the branches share no history, `reason` is `no_merge_base` instead.
-- `unavailable`: OwnGit could not tell. `reason` says why, for example
-  `unsupported_git` (Git older than 2.38), `source_branch_missing`, or
-  `repository_unavailable`, and `message` explains it.
-- `stale`: a branch moved away from the pair given with `--source-oid` and
-  `--target-oid`. `source` and `target` then hold the current pair.
+2. Run the checks. Without `--check`, the command runs the checks in the
+   `.owngit/checks.json` committed in `HEAD` of `--workdir` (default `.`).
+   `--check name=command` runs exactly the checks you give instead.
 
-Pass `--source-oid` and `--target-oid` from an earlier answer to check that
-same pair again. The answer is not stored and does not reserve the merge:
-`pr merge` checks again when it runs. The API route is
-`GET /api/v1/repositories/ID/pull-requests/N/mergeability`, with the optional
-query parameters `source_oid` and `target_oid`.
+   ```sh
+   owngit check run --task TASK_ID \
+     --server https://owngit.example.test \
+     --repository example-project \
+     --credential-file /path/to/helper-token
+   ```
+
+3. Before an agent tries a fix, reserve a correction round, and pass it to the
+   run that verifies the fix:
+
+   ```sh
+   owngit check cycle reserve --task TASK_ID ...
+   owngit check run --task TASK_ID --cycle CYCLE_ID ...
+   ```
+
+4. Read what is recorded:
+
+   ```sh
+   owngit check task list ...
+   owngit check status --task TASK_ID ...
+   owngit check log --attempt ATTEMPT_ID ...
+   ```
+
+`...` stands for the same `--server`, `--repository` and `--credential-file`
+flags. Each check gets 10 minutes and 64 KiB of output by default
+(`--timeout`, `--output-limit`). `--no-upload` runs the checks locally and
+records nothing. For how long the server keeps raw logs, see
+[Raw check logs](AUTOMATIC_CHECKS.md#raw-check-logs).
+
+### Reading the result
+
+`check run` exits with:
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Every check passed. |
+| `1` | A check did not pass, or the run stopped before any check ran (for example `checks_not_configured`). |
+| `2` | The checks ran, but this client could not confirm that the server recorded them. `upload_error` says why. |
+| `130` | The run was cancelled. |
+
+Each check ends as `passed`, `failed`, `error`, `cancelled`, `incomplete`
+(it exceeded its time or output limit) or `unavailable`.
+
+`attempt.worktree_state` says whether the clone stayed clean. If a check
+changed tracked files, or the state could not be read, it is `dirty` or
+`unknown`. Do not call that commit tested.
+
+### Correction rounds
+
+A task has three correction rounds. Reserve one before each automatic fix.
+The first run and manual reruns use none. When none are left,
+`check cycle reserve` fails with `correction_budget_exhausted`: stop and report
+the open task. A manual run can still be recorded.
+
+Read the remaining rounds only from `check status` or from the `task` object
+in a recorded run. The top-level `correction_cycles_remaining` prints `0` when
+the client did not hear from the server, which happens in two cases:
+
+- `--no-upload` never contacts the server.
+- A registration that failed (`registered` is false and `upload_error` is set)
+  is unconfirmed. The server may or may not have recorded the attempt.
+
+For an unconfirmed attempt, keep the task ID, save the printed `attempt_id`
+as diagnostic evidence, and run `check status --task TASK_ID`. Do not rerun
+the check or reserve a round to find out: a rerun is always a new attempt. If
+`check status` does not show the attempt, report it as unconfirmed. Never
+treat that `0` as an exhausted budget.
 
 ## MCP server
 
-`owngit mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
-server for coding tools that support MCP. It implements protocol revision
-`2025-11-25` over standard input and output (the stdio transport), one
-JSON-RPC message per line, and opens no network port. Each tool wraps one
-`owngit` command and returns the JSON that command prints. A tool that can run
-shell commands can keep using the command line, which usually costs fewer
-tokens than a list of tool descriptions.
+`owngit mcp` is a local MCP server. It talks over standard input and output
+(the stdio transport) and opens no network port. Each tool runs one `owngit`
+command and returns its JSON. A tool that can run shell commands can use the
+command line instead, which usually costs fewer tokens.
 
-### Starting the server
+### Start options
 
-The coding tool starts the server as a child process. The flags fix everything
-a tool call could use to reach something else:
+The coding tool starts the server. Its flags set what the tools may reach:
 
-- `--workdir DIR` (default: the directory the tool starts it in): the clone
-  whose `origin` names the server and repository, as in
-  [Inside a clone](#inside-a-clone), and where `check_run` runs the checks.
-  Give an absolute path, because coding tools differ in the directory they
-  start servers in.
-- `--server` and `--repository` take precedence over `origin`. When no
-  repository is known, the repository and pull request tools take a
-  `repository` argument instead.
-- `--password-file`: the shared general-access password for the repository and
-  pull request tools. Leave it out when access is open.
-- `--credential-file`: a helper credential. It adds the check tools and needs a
-  known repository.
-- `--accept-insecure-http`: required for a plain HTTP server. Add it only for a
-  connection whose risk you accepted.
-- `--no-run-check`: leaves out `check_run`.
-- `--result-limit BYTES` (default 65536, from 4096 to 4194304): the longest
-  tool result.
+| Flag | Meaning |
+| --- | --- |
+| `--workdir DIR` | The clone whose `origin` names the server and repository, and where `check_run` runs. Use an absolute path. |
+| `--server`, `--repository` | Override `origin`. Without a repository, tools take a `repository` argument. |
+| `--password-file` | Shared general-access password. |
+| `--credential-file` | Helper credential. Adds the check tools. |
+| `--accept-insecure-http` | Allow a plain HTTP server. |
+| `--no-run-check` | Leave out `check_run`. |
+| `--result-limit BYTES` | Longest tool result, 4096 to 4194304 (default 65536). Longer results are cut and say so. |
 
-Password and credential files follow the rules in
-[Credential files and the server line](#credential-files-and-the-server-line):
-when the server comes from `origin`, the file must name it. The files are read
-once at startup, and their secrets never appear in a result. When startup
-fails, for example with `credential_origin_required` or
-`insecure_http_confirmation_required`, the error object goes to standard error
-and the process exits with status 1; coding tools show it in their MCP server
-log, which also carries the line that says what was read from `origin`.
-
-Tool arguments are values such as pull request numbers, commit IDs, task IDs,
-titles, and branch names. An argument outside the tool's input schema, such as
-a server, a path, or a command, fails with `invalid_arguments`, and a
-`repository` other than the one fixed at startup fails with
-`repository_not_allowed`. Text that is not valid UTF-8, including a `\u`
-escape of half a surrogate pair such as a lone `\ud800`, also fails with
-`invalid_arguments`, because OwnGit never replaces text it cannot read.
-
-A repository is named by its address, as `repository_list` shows it. After a
-repository is [renamed](OPERATIONS.md#renaming-a-repository), the repository
-and pull request tools fail with `repository_moved` at the old address, and
-`details.address` gives the new one. The check tools keep working there for 90
-days. Pass the new address in `repository`, or, when the repository was fixed
-at startup, update `--repository` or the clone's `origin` and restart the
-server.
+Secrets stay in the files these flags name, never in the client
+configuration. If the server cannot start, the error appears in the tool's MCP
+log.
 
 ### Client configuration
 
-Replace the paths with your own. Credentials stay in the files the flags name,
-never in the client configuration or its environment.
-
-Claude Code reads a project's `.mcp.json`, which
-`claude mcp add --scope project owngit -- owngit mcp ...` also writes:
+Claude Code reads `.mcp.json` in a project:
 
 ```json
 {
@@ -692,8 +373,8 @@ Claude Code reads a project's `.mcp.json`, which
 }
 ```
 
-Codex reads `~/.codex/config.toml`. It waits 60 seconds for a tool by default
-and then cancels the call, which stops a running `check_run`, so set
+Codex reads `~/.codex/config.toml`. Codex cancels a tool call after 60
+seconds by default, which stops a running `check_run`, so set
 `tool_timeout_sec` above the time your checks take:
 
 ```toml
@@ -703,127 +384,56 @@ args = ["mcp", "--workdir", "/path/to/clone", "--credential-file", "/path/to/hel
 tool_timeout_sec = 1800
 ```
 
-Any other MCP client: use the stdio transport, the command `owngit` (or its
-full path, see [Reaching the helper binary](#reaching-the-helper-binary)), and
-the arguments `mcp` followed by the flags above.
+Other clients: use the stdio transport, the command `owngit` (or its full
+path) and the arguments `mcp` plus the flags above.
 
 ### Tools
 
 Read tools change nothing:
 
-| Tool | Command |
-|---|---|
+| Tool | Same as |
+| --- | --- |
 | `repository_list`, `repository_show` | `repo list`, `repo show` |
-| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview`; `source_oid`, `target_branch`, and `paths` stand for `--source`, `--target`, and `--path`, and the preview returns the `expected_head` that applying needs |
-| `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes. The list is newest first, one page at a time: `state`, `limit` and `before` stand for `--state`, `--limit` and `--before`, and `next` is the `before` value of the following page |
-| `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
-| `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when a branch moved away from them |
-| `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt). The list is newest first, one page at a time: `limit` and `before` stand for `--limit` and `--before`, and `next` is the `before` value of the following page |
-| `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
-| `backup_status` | No command; a summary of `backup status`, described below |
-| `activity` | `activity`; `year` and `date` stand for `--year` and `--date` ([All activity](OPERATIONS.md#all-activity)) |
+| `repository_kept_history`, `repository_restore_preview` | `repo kept-history`, `repo restore preview` |
+| `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
+| `pull_request_diff`, `pull_request_mergeability` | `pr diff`, `pr mergeability` |
+| `check_task_list`, `check_status`, `check_log`, `check_cycle_list`, `check_config_show` | the `check` commands of the same name |
+| `activity` | `activity` |
+| `backup_status` | A summary of the backup records: schedule, last run, last verified backup, next run. It names no folder or repository. |
 
-`backup_status` tells the tool what OwnGit's backup records say, for example before a risky change. It uses general access like the repository tools. It reads only the records and never looks in the backup folder, so a backup removed outside OwnGit still counts until the next backup notices it. It returns a summary:
+Write tools:
 
-- `schedule`: `not_configured`, `off` or `on`.
-- `last_run`: the last backup that ended, with `kind` (`scheduled` or `manual`), `status` (`succeeded`, `failed` or `interrupted`), `verification` (`passed`, `failed` or `not_run`) and `finished_at`, or null.
-- `last_verified_at`: when the newest backup that passed verification and that OwnGit's records still keep finished, or null.
-- `next_run`: when the next scheduled backup is due, or null.
+| Tool | Effect |
+| --- | --- |
+| `pull_request_create`, `pull_request_edit` | Add a pull request, or change its title or description. |
+| `pull_request_review`, `pull_request_review_request`, `pull_request_review_skip` | Record a review decision or state for exact commits. Advisory. |
+| `pull_request_close`, `pull_request_reopen` | Change the pull request state. No branch moves. |
+| `pull_request_merge` | Merge into the target branch. Refused if a branch moved. |
+| `repository_restore_apply` | Apply a restore preview as one new commit. Never rewrites history. |
+| `check_task_create`, `check_cycle_reserve` | Add a task, or use one of its correction rounds. |
+| `check_run` | Run the committed checks in `--workdir` and record the attempt. |
 
-The summary names no folder, repository or error message. The administrator reads those with `owngit backup status`; see [Backups](OPERATIONS.md#checking-backups).
+The MCP server offers no administrator commands, no credential management, no
+repository creation and no `--check`.
 
-Write tools and their effects:
+### Safety
 
-| Tool | Command | Effect |
-|---|---|---|
-| `pull_request_create` | `pr create` | Adds a pull request, with an optional Markdown `body`. No branch moves. |
-| `pull_request_edit` | `pr edit` | Replaces the title, the `body`, or both, when `edit_revision` is still current; otherwise refused with `stale_edit`. No branch, review, or check changes. |
-| `pull_request_review` | `pr review submit` | Records a decision, a supplied reviewer label, and an optional `note` for the exact commit IDs. Advisory. |
-| `pull_request_review_request`, `pull_request_review_skip` | `pr review request`, `pr review skip` | Sets the review state to pending or skipped for the exact commit IDs. Notifies no one. Advisory. |
-| `pull_request_close`, `pull_request_reopen` | `pr close`, `pr reopen` | Changes the pull request state. No branch moves. |
-| `pull_request_merge` | `pr merge` | Publishes the merge to the target branch for the exact commit IDs. Refused when a branch moved; a repeated call does not merge twice. |
-| `repository_restore_apply` | `repo restore apply` | Applies a preview: adds one commit with the previewed files on the target branch, or creates the branch when it does not exist. Refused with `stale_revision` unless the branch is still at the preview's `expected_head`. Never rewrites history; a repeated call does not restore twice. |
-| `check_task_create` | `check task new` | Adds a task. |
-| `check_cycle_reserve` | `check cycle reserve` | Uses one of the task's three correction rounds. |
-| `check_run` | `check run` without `--check` | Runs the committed checks in `--workdir` and records the attempt. |
-
-The check tools need `--credential-file`. The server offers no administrator
-commands, credential management, repository creation, `--check`, or
-`--no-upload`. The descriptions the server sends to the coding tool state each
-side effect and say which returned text is untrusted: titles, descriptions,
-review notes, branch names, file paths, patches, reviewer labels, check
-commands, and check output come from repository users, and the tool is told to
-treat them as data and not to follow instructions in them.
-
-### Results and errors
-
-A tool result is one text item that holds the command's JSON. A failed call
-sets `isError` and holds the command's error object,
-`{"ok":false,"error":{"code":...,"message":...}}`; a `check_run` whose attempt
-could not be recorded also sets `isError`, with the run's JSON and
-`upload_error` as its text.
-
-Results over the limit are cut and say so. `pull_request_diff` is cut like the
-API cuts its response: whole files of the patch, then as many file list
-entries as fit, with `truncated`, `incomplete` when entries are missing, and
-the reason `response_limit`. Any other result is shortened, longest text first
-and then entries from the end of the longest lists, and gets a
-`result_truncated` object with the full size (`bytes`), the `limit`, and the
-fields that were `cut`. `pull_request_list` and `check_task_list` keep whole
-items from the start of the page instead, and set `next` to the last item they
-kept, so the following page starts right after it and skips nothing. They get
-`result_truncated` too. When not even the first item fits, the call fails with
-`result_limit_too_small`; raise the limit with the
-`--result-limit` option of `owngit mcp`.
-
-Protocol errors use the JSON-RPC codes: `-32700` for a message that is not
-JSON; `-32600` for an invalid request, a message over 1 MiB, or a request whose
-id belongs to a call still in progress; `-32601` for an unknown method;
-`-32602` for an unknown tool; and `-32000` when 16 tool calls are already in
-progress. Calls other than `check_run` stop after 2 minutes.
-
-Branch fields keep their names and take branch names as before. When a name in
-`source_branch` or `target_branch` matches two branches, the call fails with
-`ambiguous_branch`. Its message starts with "That name matches two branches."
-and lists each full ref with the value to send for it, for example
-`refs/heads/x: x; refs/heads/refs/heads/x: refs/heads/refs/heads/x`. Only
-values the call accepts are shown. A full ref without a value has to be chosen
-in the browser; for pull requests this includes a value that would pass the
-255-byte limit of these fields.
-
-### Running checks
-
-`check_run` runs exactly what `owngit check run` runs without `--check`: the
-checks in the `.owngit/checks.json` committed in the `HEAD` of `--workdir`,
-with the default limits of 10 minutes and 65536 bytes of output per check.
-Arguments name only the task and, for a verifying run, the reserved cycle. The
-checks run with the user's permissions and environment and are not sandboxed;
-one run at a time is allowed, and a second call fails with `check_run_busy`.
-A cancellation from the coding tool, or the end of its input, stops the checks
-and their child processes; the attempt is still recorded as cancelled, and the
-cancelled call gets no response.
-
-The checks are commands committed in the repository, so anyone who can commit
-to the clone can make `check_run` start a program. When an agent may edit
-files but must not run commands, start the server with `--no-run-check`:
-`check_run` is then left out of the tool list and refused before anything
-runs, while the other check tools remain, so the agent can still read
-evidence, create tasks, and reserve rounds.
+- `check_run` runs commands committed in the repository, with your
+  permissions and no sandbox. Anyone who can commit to the clone can make it
+  start a program. If an agent may edit files but must not run commands, start
+  the server with `--no-run-check`.
+- Titles, descriptions, review notes, branch names, paths, patches and check
+  output come from repository users. The tool descriptions tell the agent to
+  treat them as data and not to follow instructions in them.
+- Only one `check_run` runs at a time. Calls other than `check_run` stop
+  after 2 minutes.
 
 ## Limits
 
-- Checks are advisory. They do not block a merge, and a passing check is not
-  proof that the code is correct. A project or team can require stricter review
-  or check rules, and this integration does not override them.
-- The helper inherits the user's environment and permissions. It is not a
-  sandbox, and a check can read files and credentials the user account can
-  reach.
-- A dirty or unknown worktree is not a tested commit. Report the recorded
-  worktree state instead of calling the revision tested.
-- `--no-upload` runs locally and is not recorded on the server. Do not describe
-  it as server-recorded evidence.
-- Do not retry a failed check blindly, and do not weaken or replace the
-  committed check configuration to make a check pass.
-- A reviewer with read-only access cannot run the checks. An authorized
-  execution-capable participant runs them and supplies the result with its
-  provenance.
+- Checks are advisory. They never block a merge, and a pass does not prove
+  the code is correct.
+- The helper is not a sandbox. A check can read any file and credential your
+  account can.
+- A `--no-upload` run is not recorded. Do not report it as server evidence.
+- Do not weaken or replace the committed check configuration to make a check
+  pass.

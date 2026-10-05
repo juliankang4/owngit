@@ -2,17 +2,25 @@
 
 <p align="center"><b>English</b> | <a href="AUTOMATIC_CHECKS.ko.md">한국어</a></p>
 
-This page is for the owner who wants OwnGit to run a repository's checks by
-itself on pushes and pull requests. A repository commits a check file, the
-owner saves an execution policy and enables it, and OwnGit runs the checks as
-its own account on the host, in a restricted local Docker container, or on a
-separately connected runner. Results are advisory and never hold a merge.
+Automatic checks let OwnGit run a repository's tests by itself when someone
+pushes or updates a pull request. This guide is for the server owner.
 
-## Workflow file
+To turn them on:
 
-A repository opts in with a committed `.owngit/checks.json`, which OwnGit
-reads from the exact commit being checked (a manual helper run without
-`--check` runs the same file; see [Coding tools](CODING_TOOLS.md)):
+1. Commit a [check file](#check-file), `.owngit/checks.json`, to the
+   repository.
+2. Choose [where checks run](#where-checks-run) and save a
+   [policy](#policy-and-turning-checks-on).
+3. Turn checks on for that policy.
+
+Results show on the repository's Checks tab and on each pull request. They are
+advisory and never block a merge. To run checks from a coding tool in your own
+environment instead, see [Coding tools](CODING_TOOLS.md).
+
+## Check file
+
+The repository chooses what to run and when. OwnGit reads the file from the
+exact commit it checks.
 
 ```json
 {
@@ -22,35 +30,34 @@ reads from the exact commit being checked (a manual helper run without
     "pull_request": {}
   },
   "checks": [{"name": "unit", "command": "go test ./..."}],
-  "limits": {"timeout_ms": 60000, "output_limit_bytes": 65536}
+  "limits": {"timeout_ms": 600000, "output_limit_bytes": 65536}
 }
 ```
 
-- `events` may enable `push` and `pull_request`. An empty event object
-  selects every branch; `branches` accepts literal names or a name ending in
-  one `*`, at most 64 patterns of 200 bytes per event.
-- `checks` holds 1 to 50 named shell commands, names up to 100 bytes and
-  commands up to 24000 bytes.
-- `limits` is optional; OwnGit applies defaults and lowers a value that
-  exceeds the owner's policy.
+- `events` turns on `push`, `pull_request` or both. An empty event object,
+  such as `"pull_request": {}`, matches every branch. A branch pattern is a name, or a name that ends in one `*`.
+- `checks` holds 1 to 50 shell commands, each with a name.
+- `limits` is optional. A check gets 10 minutes and 64 KiB of output unless
+  the file asks for other values. OwnGit lowers a value above the policy's
+  maximum.
+- The file may be at most 64 KiB. OwnGit refuses unknown fields and invalid
+  JSON.
 
-Invalid UTF-8, unknown fields, duplicate keys, missing required fields,
-malformed branch patterns, and files over 64 KiB are refused. Repository
-content cannot choose the executor, container image, network, resource limits,
-source limits, runner credential, or consent; those come from the owner's
-policy.
+The check file cannot choose where checks run, the container image, the
+network or any limit of the policy. Only an administrator sets those.
 
-## Owner policy and consent
+## Policy and turning checks on
 
-A policy selects the executor (`host`, `container`, or `external_runner`),
-allowed events, execution limits, queue and concurrency limits, a lease
-duration, and [source limits](#source-limits). A container policy also names
-an immutable image, such as `sha256:<64 lowercase hex digits>` or
-`registry.example/checks@sha256:<64 lowercase hex digits>`, a `none` or
-`bridge` network, and CPU, memory, process, and scratch-space limits, plus the
-[container options](#container-options) the owner chooses. A minimal
-host or external-runner policy leaves `execution.source` empty for the default
-source limits:
+The administrator's policy says where checks run, which events may start them, and
+the limits. Edit it in the browser on the repository's **Automatic checks**
+screen, linked from its Checks and Settings tabs. The screen shows what to do
+next, a check file to copy, and each limit with its range. Changes ask for
+the administrator password.
+
+**Save and turn checks on** shows each setting that would change before it
+saves anything. Plain **Save** never turns checks on.
+
+On the command line, write the policy to a file:
 
 ```json
 {
@@ -65,22 +72,12 @@ source limits:
 }
 ```
 
-Save it and enable it:
+`queue_limit` is how many jobs may wait, `max_active_jobs` how many run at
+once, and `max_lease_ms` how long a claimed job may go without a sign of life
+before its claim ends. `max_timeout_ms` and `max_output_limit_bytes` are the
+most a check file may ask for.
 
-```sh
-owngit check-policy set \
-  --server https://git.example.test \
-  --repository project \
-  --password-file ./admin-password \
-  --policy-file ./check-policy.json
-
-owngit check-policy enable \
-  --server https://git.example.test \
-  --repository project \
-  --password-file ./admin-password
-```
-
-Or save and enable in one step, for exactly the policy in the file:
+Then save it and turn checks on in one step:
 
 ```sh
 owngit check-policy set --enable \
@@ -90,313 +87,127 @@ owngit check-policy set --enable \
   --policy-file ./check-policy.json
 ```
 
-`check-policy enable` approves the exact policy version that is stored, so
-saving a different policy turns execution off until you enable it again.
-`check-policy set --enable` saves the file's policy and approves exactly it in
-one transaction, so the changed commands may run immediately. Over the API it
-is `POST .../check-policy/save-and-enable` with `{"policy": {...}}`; an
-optional `"expected": {"version": N, "digest": "..."}` names the stored policy
-the change was reviewed against (version 0 and an empty digest mean none), and
-another stored policy refuses the step with `check_policy_stale`.
-`check-policy disable` stops new jobs, and a restore turns execution off.
-Nothing runs without both a matching workflow file and current consent.
-`check-policy show` prints the policy and whether the check runtime is
-available: if OwnGit cannot set up its private check workspace or finish its
-startup recovery, it keeps Git, setup, and merges working, stops automatic and
-runner execution, and reports `workspace_unavailable` or
-`restart_reconciliation_unavailable`; fix the cause and restart OwnGit.
+`check-policy show`, `enable` and `disable` take the same `--server`,
+`--repository` and `--password-file` flags.
 
-## Browser screens
+- Turning checks on approves exactly the saved policy. Saving a different
+  policy turns checks off until you turn them on again.
+- Nothing runs without both a matching check file and an approved policy.
+- `check-policy show` also says whether this computer can run checks now. If
+  it reports `workspace_unavailable` or `restart_reconciliation_unavailable`,
+  fix the cause it names and restart OwnGit. Git and merges keep working.
+- The policy's maximums cannot exceed this computer's check ceilings. An
+  administrator sets those in Settings; see [Operations](OPERATIONS.md).
 
-The same operations are on two administrator screens. Changes ask for the
-administrator password as set under
-[Administrator password check](OPERATIONS.md#administrator-password-check).
+## Where checks run
 
-The **Automatic checks** screen, `/repositories/{id}/configured-checks`,
-linked from the repository's Checks and Settings tabs, edits the policy, turns
-execution on or off, and lists jobs. It opens with a status summary (whether
-checks are on, where and when they run, whether the default branch has a valid
-`.owngit/checks.json`, whether a policy is stored and the environment is
-available, and the next thing to do) and walks through five steps: where
-checks run, when they run, the check file (with a minimal example to copy),
-saving, and turning checks on. Enabling approves the policy version shown on
-screen, and is refused if someone saved a different policy in the meantime.
-**Save and turn checks on**, beside Save, first shows each setting that would
-change, with its saved and new value and the warning that changed commands may
-run immediately, and saves nothing. Confirming saves exactly the reviewed
-settings and turns checks on for them; if the form was edited after the review
-or someone saved in between, the review is shown again instead. Ordinary Save
-never turns checks on.
+`executor` is one of three:
 
-Limits sit under **Advanced limits** with working values filled in. Times take
-seconds, minutes, or hours, and sizes take bytes, KB, MB, or GB (1 KB is 1024
-bytes). Each field shows its range and default. The upper end of a range is
-this computer's [check ceiling](OPERATIONS.md#check-ceilings) for that field,
-which an administrator can raise. The time and output limits are
-maximums: a check gets 10 minutes and
-may print 64 KiB of output unless its check file asks for a different value under
-`limits`, up to these maximums. A check that prints more than its output limit
-is stopped, as one that runs out of time is, and ends as `incomplete`; its
-output starts with a line saying so.
-
-A job page shows the commit, executor, workflow path, configuration and policy
-versions, and admission timestamps. It offers Cancel while a job is pending,
-claimed, or running (a recorded cancellation is a request and does not prove
-that the process stopped) and Run again once it has finished, and says whether
-each attempt was a manual helper run or an automatic job.
-
-`/repositories/{id}/runner-tokens` issues and revokes runner tokens, once a
-policy is stored. The token value appears once, in the response that issues
-it, and never in a URL, log, or browser storage; revoked tokens stay listed as
-a record of who had access.
-
-## Jobs
-
-OwnGit notices pushes, pull request updates, and merges, reads the workflow
-file from the exact commit, and admits a job for each matching event; Git
-writes never wait for checks, and the same event never creates a second job.
-An event type the policy does not allow is not recorded at all. When push
-checks are turned on, for the first time or after being off, each matching
-branch head without a push job is queued once, within the queue limit. That
-includes heads pushed while push checks were off.
-
-Each matching branch update in an accepted push gets its own job, even while
-another job runs. OwnGit keeps these updates in memory until it admits them,
-at most 64 per repository and 4,096 across all repositories. A repository that
-already has 64 waiting drops its oldest update, and once 4,096 are waiting in
-total, a new update is dropped. If another write holds a repository for more
-than a few seconds, that repository's updates wait for the next push to any
-repository or for a new attempt about 30 seconds later. Other repositories go
-on in the meantime, but a push that arrives during that wait can be admitted
-up to about 5 seconds later. Updates not admitted yet are lost when OwnGit
-stops, and the next start goes through the branch heads as described below. A
-dropped update, or a push update that the rules or the queue limit refuse, is
-named only in the server log.
-
-Each time OwnGit starts, it goes once through the branch heads of every
-repository and queues each matching head that never got a job. If a head's
-check file is refused, the server log says so again on that pass. A branch
-whose name cannot be stored with a job, such as a name longer than 255 bytes,
-is skipped and named once in the server log, and the other branches are still
-checked.
-
-Saving or enabling a new policy version queues nothing that already had a job
-and marks jobs still waiting to start `interrupted`; to check an existing head
-under the new policy, rerun its job.
-
-Jobs that run on this computer start oldest first across all repositories,
-so a busy repository does not hold back an older job in another one.
-
-A job moves from `pending` to `claimed`, `started`, and a result: `passed`,
-`failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous`, or
-`interrupted`. Once a job has started, OwnGit never queues it again by itself,
-even after a restart or a lost lease, because the commands may already have
-run. Request a rerun instead:
-
-```sh
-owngit check-job list --server https://git.example.test --repository project --password-file ./admin-password
-owngit check-job show --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
-owngit check-job log --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
-owngit check-job cancel --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
-owngit check-job rerun --server https://git.example.test --repository project --password-file ./admin-password --job JOB_ID
-```
-
-`check-job list` returns the newest 100 jobs. `check-job log` reads the raw
-log, which OwnGit keeps for the time chosen in Settings (30 days by default;
-see [Project checks](OPERATIONS.md#project-checks)), while the result stays.
-
-A rerun checks the same commit with the commands the job recorded. Its time
-and output limits are the ones the check file at that commit asks for, cut to
-the maximums the policy has now. If the check file at that commit differs from
-the one the job recorded, the rerun is refused with `check_workflow_changed`,
-and the job page shows "The workflow file at this job's commit differs from
-the one the job recorded, so the job cannot run again." If OwnGit cannot read
-the check file for another reason, the rerun keeps the job's recorded limits,
-again cut to the current maximums. A rerun of a job whose commit is no longer
-in the repository is refused with `check_source_missing`.
-
-`check-job cancel` on a finished job changes nothing and fails with
-`check_job_finished`. A failure before
-start is recorded as `unavailable`, `error`, or `interrupted`. A push that
-holds the repository while a job copies its source only delays it (up to 10
-minutes for a check OwnGit runs, 20 seconds per source request from a runner)
-before it is recorded as `unavailable`. After the commands run, OwnGit checks
-every tracked file again: generated untracked files are fine, but a changed,
-removed, or mode-changed tracked file prevents a clean result, and so does a
-container or process that OwnGit cannot confirm was cleaned up. A container
-of a finished job that OwnGit could not remove is listed under Leftover check
-containers on the repository's Automatic checks page (see
-[When deletion is refused](OPERATIONS.md#when-deletion-is-refused)).
-
-## Source a check sees
-
-Before a job runs, OwnGit copies the exact committed files into a new private
-directory, readable only by the account that runs the check; a runner
-receives the same files over its authenticated connection.
-
-- Bytes are exact: Git attributes, filters, hooks, and line-ending conversion
-  are not applied, and every file is checked against its Git object ID.
-- There is no `.git` directory, index, or empty directory, so commands that
-  need Git metadata will not find it.
-- Symbolic links and submodules are refused, so a repository that tracks them
-  cannot use automatic checks; the job reports this before any command runs.
-  Unsafe paths (`..`, absolute paths, `.git` spelled another way), duplicate
-  paths, and names that collide on a case-insensitive or Unicode-normalizing
-  filesystem are refused too.
-- The Git file mode is recorded, but Windows cannot apply the execute bit.
-- Git LFS pointer files are copied as they are; large-file content is never
-  fetched.
-
-### Source limits
-
-The policy's `execution.source` object bounds what is copied; a job over any
-limit is refused before a file is written. Zero or missing values use the
-defaults, and `max_total_bytes` cannot be smaller than `max_file_bytes`. The
-Automatic checks screen shows each field's range and default.
-
-| Field | Default |
-| --- | --- |
-| `max_entries` | 20000 tree entries, including refused ones |
-| `max_file_bytes` | 64 MiB per file |
-| `max_total_bytes` | 256 MiB in total |
-| `max_path_depth` | 64 path components |
-| `max_path_bytes` | 1024 bytes per path |
-| `max_name_bytes` | 255 bytes per name |
-| `metadata_limit_bytes` | 16 MiB of tree listing |
-
-## Executors
+| Executor | Runs as | Use it for |
+| --- | --- | --- |
+| `host` | The OwnGit account, through the platform shell | Repositories you fully trust |
+| `container` | A restricted container on this computer's Docker | Code you trust less, with resource limits |
+| `external_runner` | A runner you start on another computer | Keeping checks off the OwnGit computer |
 
 ### Host
 
-Host mode runs commands through the platform shell as the OwnGit account. It
-is not a sandbox: a command can reach anything that account can, including
-OwnGit's state and credentials. Use it only for fully trusted repositories.
+Host mode is not a sandbox. A check can reach everything the OwnGit account
+can, including OwnGit's own data and secrets. Use it only for repositories
+whose every committer you trust.
 
-### Restricted local Docker
+### Container
 
-Container mode uses only a local Linux Docker daemon, selected without
-`DOCKER_HOST`, `DOCKER_CONTEXT`, or TLS overrides, and pulls an image only when
-the policy allows it. It resolves the image once per job to an image ID and
-runs every command of the job from that ID, with:
+Container mode needs a Docker daemon on this computer that runs Linux
+containers. A remote Docker is refused, so do not set `DOCKER_HOST`,
+`DOCKER_CONTEXT` or the Docker TLS variables for OwnGit. Set `"executor":
+"container"` and add the image and resource limits to `execution`:
 
-- OwnGit's own nonroot user and, unless the policy allows a writable root, a
-  read-only root filesystem;
-- all Linux capabilities dropped and `no-new-privileges`;
-- the selected `none`, `bridge`, or named network;
-- CPU, memory, and process limits, with no swap;
-- a size-limited, executable `/tmp`;
-- only the job's source directory mounted, read-write, at `/workspace`, which
-  shares the host disk and has no separate size limit;
-- Docker logging turned off.
+```json
+"execution": {
+  "source": {},
+  "container_image": "registry.example/checks@sha256:<64 hex digits>",
+  "container_network": "none",
+  "container_cpu_millis": 1000,
+  "container_memory_bytes": 536870912,
+  "container_pids": 256,
+  "container_scratch_bytes": 536870912
+}
+```
 
-Unless the policy chooses otherwise, OwnGit refuses an image that declares
-volumes, and a daemon that does not enforce the memory, swap, CPU, and process
-limits.
+The values shown for CPU, memory, processes and scratch space are the
+defaults. The network is `none` or `bridge`.
+
+Each check runs:
+
+- as OwnGit's own non-root user, never the image's user;
+- with a read-only root filesystem, all Linux capabilities dropped and
+  `no-new-privileges`;
+- with CPU, memory and process limits and no swap;
+- with only the job's files mounted at `/workspace`, and a size-limited
+  `/tmp`.
+
+There is no privileged mode, no host network, no Docker socket and no host
+mount. OwnGit refuses an image that declares volumes, and a Docker that cannot
+enforce the limits.
 
 #### Container options
 
-Each option is off until the owner turns it on, applies only to container mode,
-and is shown with what it allows. Changing one saves a new policy version, so
-checks turn off until they are enabled again. They are fields of `execution`:
+Each option is off until you turn it on. Turning one on gives checks more
+room, so read what it allows.
 
-| Field | Dashboard | What it allows |
-|---|---|---|
-| `container_allow_tags` | Allow image tags | The image may be a tag such as `registry.example/checks:1`. A tag can point to different code next time; each job resolves it when the job starts and records the image ID. |
-| `container_pull_missing` | Download missing images | When this computer lacks the image, OwnGit downloads it from its registry before the job (bounded to 15 minutes). It uses no saved registry login, credential helper or `DOCKER_AUTH_CONFIG` value, so only images the registry serves to anyone can be downloaded. It needs an image name, not a bare `sha256:` ID. |
-| `container_network` | Use a Docker network I created | A network name other than `none` or `bridge` names a Docker network the owner created. Checks can reach every service on it. `host` is never accepted, because checks could then reach this computer's services, including OwnGit; a network ID or a network using the `host` driver is refused when the job starts. |
-| `container_image_volumes` | Give image volumes temporary space | Each path the image declares as a volume gets its own in-memory space with the temporary space limit, discarded with the container. Docker is checked to have made no volume of its own. Paths at or around `/workspace`, `/tmp`, `/proc`, `/sys`, `/dev` and Docker's `/etc` files keep the image refused, and so does a path that is, or passes through, a link in the image. |
-| `container_writable_root` | Let commands change the container's files | The root filesystem is writable. Commands still run as OwnGit's own user, so they can change only the image files that user may change, and the changes are discarded with the container. |
-| `container_missing_enforcement` | Limits this computer's Docker may not enforce | A list of `memory`, `swap`, `cpu` and `pids`. A listed limit that Docker cannot enforce no longer stops the check; the check can then use more of it than its limit. A limit not listed still stops the check, naming it. |
+| Field | What it allows |
+| --- | --- |
+| `container_allow_tags` | A tag such as `registry.example/checks:1` instead of a digest. A tag can point to different code next time. Each job records the image ID it used. |
+| `container_pull_missing` | Download a missing image before the job. Only public images work; no saved registry login is used. |
+| `container_network` (any other name) | A Docker network you created. Checks can reach every service on it. `host` is never accepted. |
+| `container_image_volumes` | Run an image that declares volumes. Each volume gets temporary in-memory space. |
+| `container_writable_root` | Let commands change the container's own files. Changes are discarded with the container. |
+| `container_missing_enforcement` | A list of `memory`, `swap`, `cpu` and `pids` limits that may go unenforced on this computer's Docker. |
 
-When a job runs a tag, downloads its image, or runs while Docker does not
-enforce a limit the policy accepts as missing, the first check's output starts
-with the image ID and the limits that were not enforced, so the job page and
-`check-job show` state what actually ran.
-
-Commands always run as OwnGit's own user (or a fixed nonroot user when OwnGit
-runs as root), never as the image's user. The files they write in the
-workspace then belong to a user OwnGit can remove them as after the check.
-There is no privileged mode, no host network, no Docker socket or host mount,
-and no free-form Docker flags.
+When a job uses one of these, its output starts with the image ID and any
+limits Docker did not enforce.
 
 ### External runner
 
-External-runner jobs run only on a runner that you connect. Issue a
-repository-scoped token into a new owner-only file, then start the runner:
+A runner is `owngit runner` started on another computer. It runs the checks
+as its own account, without a sandbox, so give it a dedicated account.
 
-```sh
-owngit runner-credential issue \
-  --server https://git.example.test \
-  --repository project \
-  --password-file ./admin-password \
-  --label build-host \
-  --token-file ./runner-token
+1. Save a policy with `"executor": "external_runner"`. Then issue a token
+   for the repository into a new private file:
 
-owngit runner \
-  --server https://git.example.test \
-  --repository project \
-  --token-file ./runner-token \
-  --workspace-root /srv/owngit-runner/project
-```
+   ```sh
+   owngit runner-credential issue \
+     --server https://git.example.test \
+     --repository project \
+     --password-file ./admin-password \
+     --label build-host \
+     --token-file ./runner-token
+   ```
 
-The token file starts with the line `owngit-server: ORIGIN` for the server that
-issued it, and `runner` refuses it for any other `--server` (see
-[Credential files and the server line](CODING_TOOLS.md#credential-files-and-the-server-line)).
-`owngit runner-credential list` and `owngit runner-credential revoke
---credential ID` manage tokens; the server stores only a hash, and revoking a
-token stops its use and interrupts a claimed job that has not started.
+2. Start the runner:
 
-After a repository is renamed, a runner started with the old name keeps
-working for 90 days. Restart it with `--repository` set to the new name before
-then (see
-[Runners and helpers after a rename](OPERATIONS.md#runners-and-helpers-after-a-rename)).
+   ```sh
+   owngit runner \
+     --server https://git.example.test \
+     --repository project \
+     --token-file ./runner-token
+   ```
 
-`runner` and `runner-credential` need an HTTPS address for OwnGit. Either
-share OwnGit on your tailnet and use its `https://NAME.TAILNET.ts.net` address
-from a runner on the same tailnet (see
-[Share on your tailnet over HTTPS](OPERATIONS.md#share-on-your-tailnet-over-https)),
-or put a TLS-terminating reverse proxy in front of OwnGit (see
-[Behind a reverse proxy](OPERATIONS.md#behind-a-reverse-proxy)).
-`--ca-file /path/to/private-ca.pem` trusts a private certificate authority in
-addition to the system roots.
+The runner needs an HTTPS address for OwnGit, for example tailnet sharing or
+a reverse proxy (see [Operations](OPERATIONS.md)). `--ca-file` adds a private
+certificate authority.
 
-A reverse proxy must send a Host that OwnGit accepts (a name approved with
-`--allowed-host` or `approve-host`, or `localhost`, `127.0.0.1` or `::1` when
-it runs on the same computer; see
-[Reaching the server from another device](OPERATIONS.md#reaching-the-server-from-another-device))
-and pass large bodies without a size cap. Once OwnGit trusts the proxy, the
-browser interface works through the same address; tailnet sharing sets this
-up by itself. Plain HTTP with `--accept-insecure-http` is accepted only for a
-loopback address.
+- The runner works in a folder in its account's cache folder. Use
+  `--workspace-root` for another empty folder that the account owns.
+- It keeps retrying while OwnGit restarts or the network drops. It exits only
+  when retrying cannot help, for example after its token was revoked.
+- `owngit runner-credential list` and `revoke --credential ID` manage tokens.
+  The server keeps only a hash of each token.
+- After a repository is renamed, restart the runner with the new
+  `--repository` within 90 days.
 
-The runner claims jobs for its repository only, downloads the exact source
-files, runs the commands as its own account (not sandboxed), cleans its
-workspace, and reports the results. `--workspace-root` must be an absolute
-path to a folder that is empty or was used by an OwnGit runner before and
-belongs to the runner's account; without it, the runner makes one for the
-server and repository in the account's cache folder (`~/.cache/owngit` or
-`$XDG_CACHE_HOME/owngit` on Linux, `~/Library/Caches/owngit` on macOS,
-`%LOCALAPPDATA%\owngit` on Windows), and a workspace that OwnGit 1.1.0 or
-earlier made in the temporary folder stays in use while it exists. The runner
-refuses a root, and says how to fix it, when the root is nonempty and OwnGit
-does not own it, when another runner is using it, when another account owns
-it, or, on Linux and macOS, when another account could rename or replace a
-folder above it. It warns when it runs as root; run it as a dedicated account,
-as in the service example below.
-
-The runner keeps running while OwnGit restarts or the network drops: it
-retries with a growing delay of up to one minute (longer only when OwnGit
-sends `Retry-After`) and logs the outage once and the recovery once. A job
-that was running during the outage may end without a confirmed result; the
-runner logs one line with the job ID and the reason, and OwnGit marks the job
-`ambiguous` when its lease expires. The runner stops with exit status 1 only
-when retrying cannot help: its token is unknown or revoked, belongs to another
-repository than `--repository`, or the server refuses the request as invalid.
-With `--once` it claims at most one job, makes a single attempt, and exits 1
-on any failure, including an unreachable server.
-
-To keep a runner available after a reboot, run it under the system's service
-manager. On Linux with systemd, for example:
+To keep a runner running after a reboot, use the service manager. On Linux
+with systemd:
 
 ```ini
 [Unit]
@@ -414,15 +225,85 @@ RestartSec=60
 WantedBy=multi-user.target
 ```
 
-The token file must be readable only by the service account. On macOS use a
-launchd agent or daemon, and on Windows a service wrapper, with the same
-command. After a revoked token, `Restart=on-failure` only repeats the same
-error, so issue a new token first.
+Only the service account may read the token file. After a token is revoked,
+issue a new one before you restart the service.
+
+## Jobs
+
+OwnGit creates a job for each push or pull request update that matches the
+check file. Git never waits for checks.
+
+- When you turn push checks on, OwnGit queues each matching branch head that
+  has no job yet.
+- At each start, OwnGit queues matching branch heads that never got a job.
+- A job goes from `pending` to `claimed` and `started`, and ends as `passed`,
+  `failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous` or
+  `interrupted`.
+- OwnGit never requeues a job that started, because its commands may already
+  have run. Run it again yourself.
+- A check that changes a tracked file does not get a clean result.
+
+Work with jobs on the Automatic checks screen or on the command line:
+
+```sh
+owngit check-job list   --server https://git.example.test --repository project --password-file ./admin-password
+owngit check-job show   ... --job JOB_ID
+owngit check-job log    ... --job JOB_ID
+owngit check-job cancel ... --job JOB_ID
+owngit check-job rerun  ... --job JOB_ID
+```
+
+`...` stands for the same three flags. `list` shows the newest 100 jobs. A
+rerun checks the same commit with the same commands, under the current
+policy's maximums. Raw logs are kept as set under
+[Raw check logs](#raw-check-logs).
+
+## What a check sees
+
+Before a job runs, OwnGit copies the committed files of that exact commit into
+a new private folder.
+
+- There is no `.git` folder, so commands that need Git history do not work.
+- Git attributes, filters, hooks and line-ending conversion are not applied.
+- Symbolic links and submodules are refused. A repository that tracks them
+  cannot use automatic checks.
+- Git LFS files arrive as pointer files.
+- On a Linux computer with little memory, OwnGit refuses a file larger than
+  one Git process may read: about 16 MiB with 512 MiB of memory and 32 MiB
+  with 1 GiB. The limit grows with memory, up to 512 MiB. The job then ends
+  without running.
+
+The policy's `execution.source` limits what is copied. Leave it empty for the
+defaults:
+
+| Field | Default |
+| --- | --- |
+| `max_entries` | 20000 tree entries |
+| `max_file_bytes` | 64 MiB per file |
+| `max_total_bytes` | 256 MiB in total |
+| `max_path_depth` | 64 folders deep |
+| `max_path_bytes` | 1024 bytes per path |
+| `max_name_bytes` | 255 bytes per name |
+| `metadata_limit_bytes` | 16 MiB of tree listing |
+
+## Raw check logs
+
+The server keeps the raw log of each check (up to 256 KiB), from jobs and
+from coding tool runs alike, for 30 days. To change that, open Settings, Storage & recovery, Raw check logs, or run:
+
+```sh
+owngit settings set --check-logs 90d
+```
+
+The choices are `7d`, `30d`, `90d`, `365d` and `indefinite`. A shorter time
+applies at once to the logs already kept. Results stay after their log
+expires.
 
 ## Backup and restore
 
-Offline backups include policies, jobs, and results, but not runner tokens.
-After a restore, execution is off until the owner enables it again, runner
-tokens must be issued again, and unfinished jobs are marked `interrupted`
-instead of running again. Policies and jobs from older OwnGit versions are kept
-as history and cannot run until the owner saves and enables a current policy.
+Backups keep policies, jobs and results, but not runner tokens. After a
+restore:
+
+- checks are off until you turn them on again;
+- runner tokens must be issued again;
+- jobs that had not finished are marked `interrupted`.
