@@ -44,7 +44,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 			return
 		}
 		if !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
-			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) &&
+			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !helperTaskListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) &&
 			!taskViewQueryAllowed(request) {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 			return
@@ -374,6 +374,25 @@ func pullRequestListQueryAllowed(request *http.Request) bool {
 	}
 	for key, values := range request.URL.Query() {
 		if (key != "state" && key != "limit" && key != "before") || len(values) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+// helperTaskListQueryAllowed accepts the paging parameters of the check
+// helper's repository task list, each given once. Its other routes take no
+// parameters.
+func helperTaskListQueryAllowed(request *http.Request) bool {
+	if request.Method != http.MethodGet {
+		return false
+	}
+	_, resource, remainder, ok := parseRepositoryAPIRoute(request.URL.Path)
+	if !ok || resource != "tasks" || remainder != "" {
+		return false
+	}
+	for key, values := range request.URL.Query() {
+		if (key != "limit" && key != "before") || len(values) != 1 {
 			return false
 		}
 	}

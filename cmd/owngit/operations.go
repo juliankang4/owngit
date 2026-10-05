@@ -262,9 +262,28 @@ func createTask(ctx context.Context, target connection, title string) ([]byte, e
 	return target.client().Do(ctx, http.MethodPost, target.repositoryPath()+"/tasks", checkapi.CreateTaskInput{Title: title})
 }
 
-// listTasks lists the repository's check tasks with their budgets.
-func listTasks(ctx context.Context, target connection) ([]byte, error) {
-	return target.client().Do(ctx, http.MethodGet, target.repositoryPath()+"/tasks", nil)
+// taskListQuery selects a page of listTasks, newest first. The zero value is
+// the server's first page.
+type taskListQuery struct {
+	Limit  int    `json:"limit"`
+	Before string `json:"before"`
+}
+
+// listTasks lists one page of the repository's check tasks with their
+// budgets, newest first.
+func listTasks(ctx context.Context, target connection, query taskListQuery) ([]byte, error) {
+	values := url.Values{}
+	if query.Limit != 0 {
+		values.Set("limit", strconv.Itoa(query.Limit))
+	}
+	if query.Before != "" {
+		values.Set("before", query.Before)
+	}
+	path := target.repositoryPath() + "/tasks"
+	if len(values) != 0 {
+		path += "?" + values.Encode()
+	}
+	return target.client().Do(ctx, http.MethodGet, path, nil)
 }
 
 func showTask(ctx context.Context, target connection, taskID string) ([]byte, error) {

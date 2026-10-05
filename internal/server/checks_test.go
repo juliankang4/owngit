@@ -5,8 +5,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -854,6 +856,83 @@ func TestCompletionWithTheWrongTaskURLDoesNotMutate(t *testing.T) {
 	noErr(t, err)
 	if task.LastAppliedAttemptID != "" || task.Status != state.TaskActive {
 		t.Fatalf("task mutated by the rejected completion: %+v", task)
+	}
+}
+
+// The check helper's repository task list reads one bounded page, newest
+// first, with the same continuation as the task view API, and it refuses a
+// page parameter it cannot honor.
+func TestHelperTaskListPagesLikeTheTaskViewAPI(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	start := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	count := defaultTaskPageSize + 10
+	for index := 0; index < count; index++ {
+		if _, err := fixture.store.CreateTask(ctx, "project", fmt.Sprintf("Task %02d", index), start.Add(time.Duration(index)*time.Minute)); err != nil {
+			t.Fatalf("create task %d: %v", index, err)
+		}
+	}
+
+	var first checkapi.TaskListResponse
+	if status := decodeAPI(t, checkRequest(t, http.MethodGet, base+"/tasks", nil, token), &first); status != http.StatusOK {
+		t.Fatalf("first task page status=%d", status)
+	}
+	if len(first.Tasks) != defaultTaskPageSize || first.Next == "" || first.Tasks[0].Title != fmt.Sprintf("Task %02d", count-1) {
+		t.Fatalf("first task page count=%d next=%q first=%q", len(first.Tasks), first.Next, first.Tasks[0].Title)
+	}
+	var rest checkapi.TaskListResponse
+	target := base + "/tasks?before=" + url.QueryEscape(first.Next)
+	if status := decodeAPI(t, checkRequest(t, http.MethodGet, target, nil, token), &rest); status != http.StatusOK {
+		t.Fatalf("continued task page status=%d", status)
+	}
+	if rest.Next != "" || len(rest.Tasks) != count-defaultTaskPageSize {
+		t.Fatalf("last task page count=%d next=%q", len(rest.Tasks), rest.Next)
+	}
+	seen := make(map[string]bool, count)
+	for _, task := range append(first.Tasks, rest.Tasks...) {
+		if seen[task.ID] {
+			t.Fatalf("task %s appeared on two pages", task.ID)
+		}
+		seen[task.ID] = true
+	}
+	if len(seen) != count {
+		t.Fatalf("pages covered %d tasks, want %d", len(seen), count)
+	}
+	// The largest allowed page covers the repository in one answer.
+	var whole checkapi.TaskListResponse
+	if status := decodeAPI(t, checkRequest(t, http.MethodGet, base+"/tasks?limit=100", nil, token), &whole); status != http.StatusOK || whole.Next != "" || len(whole.Tasks) != count {
+		t.Fatalf("full task page status=%d count=%d next=%q", status, len(whole.Tasks), whole.Next)
+	}
+
+	// A page parameter that cannot be read is refused, not guessed, and the
+	// route takes no other parameter or a repeated one.
+	for _, item := range []struct{ query, code string }{
+		{"?limit=0", "invalid_list_limit"},
+		{"?limit=101", "invalid_list_limit"},
+		{"?limit=half", "invalid_list_limit"},
+		{"?before=half", "invalid_list_before"},
+		{"?before=1:2:", "invalid_list_before"},
+		{"?limit=1&limit=2", "invalid_request"},
+		{"?unknown=1", "invalid_request"},
+	} {
+		status, code := checkStatus(t, checkRequest(t, http.MethodGet, base+"/tasks"+item.query, nil, token))
+		if status != http.StatusBadRequest || code != item.code {
+			t.Errorf("%s answered %d %q, want 400 %q", item.query, status, code, item.code)
+		}
+	}
+
+	// The route keeps its authority and scope: a page still needs a helper
+	// credential for this repository.
+	if status, code := checkStatus(t, checkRequest(t, http.MethodGet, base+"/tasks?limit=5", nil, "")); status != http.StatusUnauthorized || code != "helper_authentication_required" {
+		t.Errorf("task page without a credential: status=%d code=%q", status, code)
+	}
+	if _, err := fixture.app.Repositories.Create(ctx, "other", "Other"); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.TrimSuffix(base, "/project") + "/other/tasks?limit=5"
+	if status, code := checkStatus(t, checkRequest(t, http.MethodGet, other, nil, token)); status != http.StatusForbidden || code != "helper_credential_scope" {
+		t.Errorf("task page of another repository: status=%d code=%q", status, code)
 	}
 }
 

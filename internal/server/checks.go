@@ -104,8 +104,16 @@ func (app *App) createTask(writer http.ResponseWriter, request *http.Request, re
 	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task)})
 }
 
+// listTasks answers the check helper's task list. It pages exactly like the
+// task view API: newest registered attempt first, then update time, then ID,
+// with the same page size and continuation.
 func (app *App) listTasks(writer http.ResponseWriter, request *http.Request, repositoryID string) {
-	tasks, err := app.Store.Tasks(request.Context(), repositoryID)
+	input, problem := parseTaskPageInput(request.URL.Query())
+	if problem != "" {
+		writeAPIError(writer, http.StatusBadRequest, problem, taskPageProblemText(problem), nil)
+		return
+	}
+	tasks, more, err := app.Store.TaskPage(request.Context(), repositoryID, input.before, input.limit)
 	if err != nil {
 		writeAPIError(writer, unavailable(request, "task list read", err), "state_unavailable", "Task records could not be read.", nil)
 		return
@@ -113,6 +121,9 @@ func (app *App) listTasks(writer http.ResponseWriter, request *http.Request, rep
 	response := checkapi.TaskListResponse{OK: true, Tasks: make([]*checkapi.Task, 0, len(tasks))}
 	for _, task := range tasks {
 		response.Tasks = append(response.Tasks, taskJSON(task))
+	}
+	if more {
+		response.Next = tasks[len(tasks)-1].Cursor().String()
 	}
 	writeAPIJSON(writer, http.StatusOK, response)
 }

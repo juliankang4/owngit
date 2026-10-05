@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +18,37 @@ func runReadCommandJSON(t *testing.T, command func([]string) error, arguments []
 	noErr(t, err)
 	if err := json.Unmarshal([]byte(output), result); err != nil {
 		t.Fatalf("decode output: %v\n%s", err, output)
+	}
+}
+
+// The tasks flags reach the server as its paging parameters, and the result,
+// including the continuation, is printed as the server sent it. The paging
+// flags need a repository and cannot be given with --task.
+func TestTasksCommandPagesOneRepository(t *testing.T) {
+	const body = `{"ok":true,"tasks":[],"next":"1:2:0123456789abcdef0123456789abcdef"}`
+	var query string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		query = request.URL.RawQuery
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(body))
+	}))
+	defer server.Close()
+	before := "1:2:0123456789abcdef0123456789abcdef"
+	output, err := captureStdout(func() error {
+		return tasksCommand([]string{"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--limit", "1", "--before", before})
+	})
+	noErr(t, err)
+	if query != "before="+url.QueryEscape(before)+"&limit=1" || output != body+"\n" {
+		t.Fatalf("query %q, output %q; want the paging parameters and the server bytes", query, output)
+	}
+	for _, arguments := range [][]string{
+		{"--server", server.URL, "--accept-insecure-http", "--limit", "1"},
+		{"--server", server.URL, "--accept-insecure-http", "--before", before},
+		{"--server", server.URL, "--accept-insecure-http", "--repository", "project", "--task", "0123", "--limit", "1"},
+	} {
+		if code := commandErrorCode(tasksCommand(arguments)); code != "invalid_arguments" {
+			t.Errorf("%v: code=%q", arguments, code)
+		}
 	}
 }
 

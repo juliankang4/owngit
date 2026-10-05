@@ -492,6 +492,7 @@ func TestMCPCheckReadTools(t *testing.T) {
 		want      string
 	}{
 		{"check_task_list", nil, cliOutput(t, checkCommand, append([]string{"task", "list"}, remoteFlags...)...)},
+		{"check_task_list", map[string]any{"limit": 1, "before": "0:0:00000000000000000000000000000000"}, cliOutput(t, checkCommand, append([]string{"task", "list", "--limit", "1", "--before", "0:0:00000000000000000000000000000000"}, remoteFlags...)...)},
 		{"check_config_show", map[string]any{}, cliOutput(t, checkCommand, append([]string{"config", "show"}, remoteFlags...)...)},
 		{"check_status", map[string]any{"task": taskID}, cliOutput(t, checkCommand, append([]string{"status", "--task", taskID}, remoteFlags...)...)},
 		{"check_cycle_list", map[string]any{"task": taskID}, cliOutput(t, checkCommand, append([]string{"cycle", "list", "--task", taskID}, remoteFlags...)...)},

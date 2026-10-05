@@ -282,6 +282,9 @@ type TaskResponse struct {
 type TaskListResponse struct {
 	OK    bool    `json:"ok"`
 	Tasks []*Task `json:"tasks"`
+	// Next continues the list below the last task shown, and is absent on
+	// the last page.
+	Next string `json:"next,omitempty"`
 }
 
 type ConfigurationResponse struct {

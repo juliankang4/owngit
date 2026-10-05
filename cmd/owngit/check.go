@@ -87,6 +87,9 @@ func checkTaskCommand(arguments []string) error {
 func checkTaskList(arguments []string) error {
 	flags := newCommandFlagSet("check task list")
 	remote := addCheckRemoteFlags(flags)
+	var query taskListQuery
+	flags.IntVar(&query.Limit, "limit", 0, "tasks per page, 1 to 100 (default 50)")
+	flags.StringVar(&query.Before, "before", "", "continue below this task position: the \"next\" value of the previous page")
 	if err := parseFlagsWithoutOperands(flags, arguments); err != nil {
 		return err
 	}
@@ -94,7 +97,7 @@ func checkTaskList(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	return writeResult(listTasks(context.Background(), target))
+	return writeResult(listTasks(context.Background(), target, query))
 }
 
 func checkTaskNew(arguments []string) error {
@@ -761,4 +764,5 @@ func printCheckUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "The helper registers an attempt before execution, runs checks in the current environment, and reports revision-bound evidence.")
 	fmt.Fprintln(writer, "A reserved correction cycle is consumed once. The initial check and manual reruns consume none.")
 	fmt.Fprintln(writer, "Inside a clone of an OwnGit repository, --server and --repository default to its origin remote.")
+	fmt.Fprintln(writer, "check task list shows the newest tasks first, one page at a time. When older tasks remain, the result has \"next\"; pass it as --before for the following page.")
 }

@@ -304,6 +304,49 @@ func TestCheckCLIEndToEndRecordsRevisionBoundEvidence(t *testing.T) {
 	}
 }
 
+// check task list pages the helper's repository task list: the flags reach
+// the server, the newest task comes first, and next continues below it.
+func TestCheckTaskListPagesWithFlags(t *testing.T) {
+	remoteFlags, existing, _ := startCheckCLIServer(t)
+	for index := 0; index < 2; index++ {
+		_, err := captureStdout(func() error {
+			return checkCommand(append([]string{"task", "new", "--title", fmt.Sprintf("Extra %d", index)}, remoteFlags...))
+		})
+		noErr(t, err)
+	}
+
+	list := func(arguments ...string) checkapi.TaskListResponse {
+		t.Helper()
+		output, err := captureStdout(func() error {
+			return checkCommand(append(append([]string{"task", "list"}, arguments...), remoteFlags...))
+		})
+		noErr(t, err)
+		var response checkapi.TaskListResponse
+		noErr(t, json.Unmarshal([]byte(output), &response))
+		return response
+	}
+
+	whole := list("--limit", "100")
+	if !whole.OK || len(whole.Tasks) != 3 || whole.Next != "" {
+		t.Fatalf("whole task list: %+v", whole)
+	}
+	first := list("--limit", "1")
+	if len(first.Tasks) != 1 || first.Next == "" {
+		t.Fatalf("first task page: %+v", first)
+	}
+	second := list("--limit", "1", "--before", first.Next)
+	if len(second.Tasks) != 1 || second.Tasks[0].ID == first.Tasks[0].ID {
+		t.Fatalf("second task page: %+v", second)
+	}
+	shown := false
+	for _, task := range whole.Tasks {
+		shown = shown || task.ID == existing
+	}
+	if !shown {
+		t.Fatalf("the whole list left out the first task %s", existing)
+	}
+}
+
 // TestConfirmWorktreeKeepsUnknownApartFromChanges covers the observation after
 // execution. An unreadable tree or revision shows no change, so it stays
 // unknown, while a moved revision or observed change stays dirty.
