@@ -37,8 +37,14 @@ func outputEnvironment(size int) []string {
 	return append(os.Environ(), outputFixtureBytes+"="+strconv.Itoa(size))
 }
 
-// A large output limit counts every byte but keeps only the evidence prefix,
-// so many checks with much output hold no more than that prefix each.
+// keptWithMarker reports whether output is a cut output of the kept size: it
+// fills the bound closely and says how much was left out.
+func keptWithMarker(output string) bool {
+	return len(output) <= KeptOutputBytes && len(output) > KeptOutputBytes-64 && strings.Contains(output, " bytes omitted ...]")
+}
+
+// A large output limit counts every byte but keeps only the evidence head and
+// tail, so many checks with much output hold no more than that each.
 func TestRunKeepsOnlyTheEvidenceOfManyLargeOutputs(t *testing.T) {
 	const checks, size = 20, 4 << 20
 	runtime.GC()
@@ -54,27 +60,27 @@ func TestRunKeepsOnlyTheEvidenceOfManyLargeOutputs(t *testing.T) {
 	}
 	retained := 0
 	for _, result := range results {
-		if result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes+1 {
+		if result.Status != StatusPassed || result.Truncated || !keptWithMarker(result.Output) {
 			t.Fatalf("result=%s status=%s truncated=%v output=%d", result.Name, result.Status, result.Truncated, len(result.Output))
 		}
 		retained += len(result.Output)
 	}
 	// Keeping whole outputs would hold checks*size = 80 MiB.
 	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
-	if limit := int64(checks*(KeptOutputBytes+1) + 4<<20); growth > limit {
+	if limit := int64(checks*KeptOutputBytes + 4<<20); growth > limit {
 		t.Fatalf("heap grew %d bytes with %d kept; want at most %d", growth, retained, limit)
 	}
 	runtime.KeepAlive(results)
 }
 
-// Bytes past the kept prefix still count against the output limit, and
+// Bytes past the kept text still count against the output limit, and
 // passing the limit stops the check and says so.
-func TestRunCountsOutputBeyondTheKeptPrefix(t *testing.T) {
+func TestRunCountsOutputBeyondTheKeptText(t *testing.T) {
 	const limit = 1 << 20
 	results, _ := Run(context.Background(), outputChecks(1), Options{
 		Timeout: time.Minute, OutputLimit: limit, Env: outputEnvironment(limit),
 	})
-	if result := results[0]; result.Status != StatusPassed || result.Truncated || len(result.Output) != KeptOutputBytes+1 {
+	if result := results[0]; result.Status != StatusPassed || result.Truncated || !keptWithMarker(result.Output) {
 		t.Fatalf("at the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
 	}
 	results, _ = Run(context.Background(), outputChecks(1), Options{
@@ -82,7 +88,7 @@ func TestRunCountsOutputBeyondTheKeptPrefix(t *testing.T) {
 	})
 	note := "[OwnGit stopped this check: its output passed the limit of 1048576 bytes.]\n"
 	if result := results[0]; result.Status != StatusIncomplete || !result.Truncated ||
-		!strings.HasPrefix(result.Output, note) || len(result.Output) != len(note)+KeptOutputBytes+1 {
+		!strings.HasPrefix(result.Output, note) || !keptWithMarker(strings.TrimPrefix(result.Output, note)) {
 		t.Fatalf("past the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
 	}
 }
@@ -156,10 +162,10 @@ func TestKeptOutputDropsASecretCutAtTheEnd(t *testing.T) {
 	}
 }
 
-// The kept text is the head of the whole output with secrets replaced and
-// invalid UTF-8 replaced as the evidence builders do, however the output
+// The kept text is the head and tail of the whole output with secrets replaced
+// and invalid UTF-8 replaced as the evidence builders do, however the output
 // arrives in pieces.
-func TestKeptOutputIsTheHeadOfTheConvertedOutput(t *testing.T) {
+func TestKeptOutputIsTheHeadAndTailOfTheConvertedOutput(t *testing.T) {
 	secret := "synthetic-token-" + strings.Repeat("s", 49)
 	long := strings.Repeat("가나다", KeptOutputBytes/9+10)
 	for name, full := range map[string]string{
@@ -179,7 +185,8 @@ func TestKeptOutputIsTheHeadOfTheConvertedOutput(t *testing.T) {
 			}
 			got := buffer.text()
 			whole := len(want) <= KeptOutputBytes
-			if whole && got != want || !whole && (!strings.HasPrefix(want, got) || len(got) <= KeptOutputBytes || len(got) > KeptOutputBytes+len("[redacted]")) {
+			marker := strings.Index(got, "\n[... ")
+			if whole && got != want || !whole && (marker < 0 || !strings.HasPrefix(want, got[:marker]) || !strings.HasSuffix(want, got[strings.Index(got, "omitted ...]\n")+len("omitted ...]\n"):]) || !keptWithMarker(got)) {
 				t.Fatalf("%s in pieces of %d: kept %d bytes of %d converted", name, piece, len(got), len(want))
 			}
 		}
@@ -188,8 +195,27 @@ func TestKeptOutputIsTheHeadOfTheConvertedOutput(t *testing.T) {
 
 // withoutSecretLetters reports whether text, with every replacement removed,
 // has none of the letters the overlap secrets are made of. Filler output uses
-// other letters, so any such letter is part of a secret.
+// other letters, so any such letter is part of a secret. Where an
+// omitted-output marker cut through "[redacted]", the piece of it left next to
+// the marker is removed too.
 func withoutSecretLetters(text string) bool {
+	if start := strings.Index(text, "\n[... "); start >= 0 {
+		end := strings.Index(text, "omitted ...]\n") + len("omitted ...]\n")
+		before, after := text[:start], text[end:]
+		for k := len("[redacted]") - 1; k > 0; k-- {
+			if strings.HasSuffix(before, "[redacted]"[:k]) {
+				before = before[:len(before)-k]
+				break
+			}
+		}
+		for k := len("[redacted]") - 1; k > 0; k-- {
+			if strings.HasPrefix(after, "[redacted]"[len("[redacted]")-k:]) {
+				after = after[k:]
+				break
+			}
+		}
+		text = before + after
+	}
 	return !strings.ContainsAny(strings.ReplaceAll(text, "[redacted]", ""), "abcde")
 }
 
@@ -230,16 +256,21 @@ func TestOverlappingSecretsAreReplacedWhole(t *testing.T) {
 	}
 }
 
-// No part of an overlapping secret is kept where the kept text or the output
-// limit cuts through it.
-func TestOverlappingSecretsAtTheKeptCutAndTheLimit(t *testing.T) {
+// No part of an overlapping secret is kept where the kept text cuts through it
+// (at the end of the head or the start of the tail) or the output limit does.
+func TestOverlappingSecretsAtTheMarkerAndTheLimit(t *testing.T) {
+	space := KeptOutputBytes - 32
 	for _, testCase := range overlapCases[:2] {
-		for shift := -len(testCase.output); shift <= len(testCase.output); shift++ {
-			output := strings.Repeat("x", KeptOutputBytes+shift) + testCase.output + strings.Repeat("y", 64)
-			buffer := newBoundedBuffer(1<<30, testCase.secrets)
-			_, _ = buffer.Write([]byte(output))
-			if got := buffer.text(); !withoutSecretLetters(got) || len(got) <= KeptOutputBytes {
-				t.Fatalf("%s at the kept cut, shift %d: kept %d bytes ending %q", testCase.name, shift, len(got), got[max(0, len(got)-40):])
+		for shift := -len(testCase.output) - 40; shift <= 40; shift++ {
+			for name, output := range map[string]string{
+				"head": strings.Repeat("x", max(0, space/4+shift)) + testCase.output + strings.Repeat("y", 2*KeptOutputBytes),
+				"tail": strings.Repeat("x", 2*KeptOutputBytes) + testCase.output + strings.Repeat("y", max(0, space-space/4+shift)),
+			} {
+				buffer := newBoundedBuffer(1<<30, testCase.secrets)
+				_, _ = buffer.Write([]byte(output))
+				if got := buffer.text(); !withoutSecretLetters(got) || !keptWithMarker(got) {
+					t.Fatalf("%s at the %s cut, shift %d: kept %d bytes", testCase.name, name, shift, len(got))
+				}
 			}
 			for limit := 1; limit <= len(testCase.output)+1; limit++ {
 				cut := newBoundedBuffer(int64(len("xx")+limit), testCase.secrets)

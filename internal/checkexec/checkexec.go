@@ -11,11 +11,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/checkapi"
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
 )
@@ -37,9 +37,10 @@ const (
 	terminationGrace   = 2 * time.Second
 )
 
-// KeptOutputBytes is about the most output text a result keeps: the largest
-// evidence stored from one check, the raw log. Excerpts and logs are cut from
-// this head, so a check's output limit never sets how much memory a run holds.
+// KeptOutputBytes is the most output text a result keeps: the largest evidence
+// stored from one check, the raw log. A longer output keeps its beginning and
+// its end around a marker (see checkapi.ClipLog), and excerpts and logs are cut
+// from that, so a check's output limit never sets how much memory a run holds.
 const KeptOutputBytes = state.MaximumCheckLogBytes
 
 // DefaultTimeout and DefaultOutputLimit are the effective limits when an
@@ -60,12 +61,16 @@ type Definition struct {
 }
 
 type Result struct {
-	Name      string
-	Command   string
-	Status    string
-	ExitCode  *int
-	Duration  time.Duration
-	Output    string
+	Name     string
+	Command  string
+	Status   string
+	ExitCode *int
+	Duration time.Duration
+	Output   string
+	// OutputGap locates the marker that Output holds when the check printed
+	// more than KeptOutputBytes, and how many bytes it stands for. A later clip
+	// of Output passes it on so the final count refers to the real output.
+	OutputGap checkapi.Gap
 	Truncated bool
 	// CleanupError reports that the owned process group or its handle could not
 	// be confirmed released. It makes the result non-success while ExitCode
@@ -81,8 +86,8 @@ type Options struct {
 	// OutputLimit bounds the combined output of one check. Every byte counts;
 	// output beyond the limit stops the check, sets Truncated and makes the
 	// result incomplete rather than passed. Whatever the limit, Result.Output
-	// keeps only the head of the output text, one character past
-	// KeptOutputBytes, with secrets and invalid UTF-8 already replaced.
+	// is at most KeptOutputBytes: the whole text, or its head and tail around a
+	// marker, with secrets and invalid UTF-8 already replaced.
 	OutputLimit int64
 	// Redact replaces each literal value in captured output.
 	Redact []string
@@ -191,10 +196,15 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	}
 	result.Duration = time.Since(started)
 	cleanupErr := cleanupAttachedProcess(cmd.Process, owner, wait, interrupted)
-	result.Output = output.text()
+	result.Output, result.OutputGap = output.textAndGap()
 	result.Truncated = output.exceeded()
 	if result.Truncated {
-		result.Output = fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit) + result.Output
+		note := fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit)
+		result.Output = note + result.Output
+		if result.OutputGap.Omitted > 0 {
+			result.OutputGap.Start += len(note)
+			result.OutputGap.End += len(note)
+		}
 	}
 	setExitCode(&result, wait)
 
@@ -376,14 +386,11 @@ func redact(value string, secrets []string) string {
 	return buffer.text()
 }
 
-// boundedBuffer counts every byte written against limit and keeps only the
-// head of the stored text: the output with secrets replaced and invalid UTF-8
-// runs replaced as the evidence builders do, up to just past KeptOutputBytes.
-// It converts as bytes arrive, so a large output limit costs no more memory
-// than the evidence OwnGit stores and output that shrinks when converted keeps
-// the same head as the whole output would. Keeping one character past
-// KeptOutputBytes lets every builder see that later text was dropped.
-// overflow closes when the count first passes limit.
+// boundedBuffer counts every byte written against limit and keeps the head and
+// tail of the stored text: the output with secrets replaced and invalid UTF-8
+// runs replaced as the evidence builders do, within KeptOutputBytes. It
+// converts as bytes arrive, so a large output limit costs no more memory than
+// the evidence OwnGit stores. overflow closes when the count first passes limit.
 type boundedBuffer struct {
 	mu          sync.Mutex
 	limit       int64
@@ -392,9 +399,8 @@ type boundedBuffer struct {
 	secrets     []string
 	pending     []byte // bytes that may start a secret or an unfinished character
 	covered     int    // bytes ahead that belong to a secret already replaced
-	kept        strings.Builder
+	kept        checkapi.LogBuffer
 	lastInvalid bool
-	full        bool
 }
 
 func newBoundedBuffer(limit int64, secrets []string) *boundedBuffer {
@@ -404,7 +410,7 @@ func newBoundedBuffer(limit int64, secrets []string) *boundedBuffer {
 			used = append(used, secret)
 		}
 	}
-	return &boundedBuffer{limit: limit, overflow: make(chan struct{}), secrets: used}
+	return &boundedBuffer{limit: limit, overflow: make(chan struct{}), secrets: used, kept: checkapi.LogBuffer{Limit: KeptOutputBytes}}
 }
 
 func (b *boundedBuffer) Write(p []byte) (int, error) {
@@ -415,7 +421,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	if before <= b.limit && b.written > b.limit {
 		close(b.overflow)
 	}
-	if within := b.limit - before; within > 0 && !b.full {
+	if within := b.limit - before; within > 0 {
 		b.pending = append(b.pending, p[:min(int64(len(p)), within)]...)
 		b.convert(false)
 	}
@@ -429,7 +435,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 // than the longest secret plus three bytes.
 func (b *boundedBuffer) convert(final bool) {
 	index := 0
-	for index < len(b.pending) && !b.full {
+	for index < len(b.pending) {
 		rest := b.pending[index:]
 		if !final && b.mayStartSecret(rest) {
 			break
@@ -470,17 +476,12 @@ func (b *boundedBuffer) convert(final bool) {
 		}
 		index += width
 	}
-	if b.full {
-		b.pending = nil
-		return
-	}
 	b.pending = append(b.pending[:0], b.pending[index:]...)
 }
 
 func (b *boundedBuffer) keep(text string, invalid bool) {
-	b.kept.WriteString(text)
+	b.kept.Add(text)
 	b.lastInvalid = invalid
-	b.full = b.kept.Len() > KeptOutputBytes
 }
 
 // secretAt returns the length of the longest secret that value starts with.
@@ -507,12 +508,19 @@ func (b *boundedBuffer) mayStartSecret(value []byte) bool {
 // unless output past the limit was dropped: then they may be a cut secret and
 // are dropped too.
 func (b *boundedBuffer) text() string {
+	text, _ := b.textAndGap()
+	return text
+}
+
+// textAndGap is text plus the position of the marker it holds, if any.
+func (b *boundedBuffer) textAndGap() (string, checkapi.Gap) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.written <= b.limit {
 		b.convert(true)
 	}
-	return b.kept.String()
+	text, gap, _ := b.kept.ResultWithGap()
+	return text, gap
 }
 
 func (b *boundedBuffer) exceeded() bool {

@@ -4,6 +4,7 @@
 package checkapi
 
 import (
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -76,28 +77,158 @@ func ClipText(value string, limit int) (string, bool) {
 	return strings.ToValidUTF8(value[:end], replacement), end < len(value)
 }
 
-// LogBuffer joins log parts into valid UTF-8 of at most Limit bytes. Every
-// part is clipped with ClipText against the space that remains, so the joined
-// text needs no second cut, and Truncated reports whether any byte of any
-// part was dropped.
+// Gap describes a marker line inside clipped text: text[Start:End] is the
+// marker, and it stands for Omitted bytes of the original output. A later clip
+// of that text uses it to count against the original output instead of the
+// clipped text, and never looks for marker words in the text itself. The zero
+// value means nothing was left out.
+type Gap struct{ Start, End, Omitted int }
+
+// ClipLog returns value as valid UTF-8 of at most limit bytes, for output
+// where the end matters as much as the start: a failing check prints its
+// reason last. Text that fits is returned unchanged, apart from the invalid
+// byte runs that ClipText also replaces. Longer text keeps its beginning and
+// its end around one marker line that counts the bytes left out, and the whole
+// result, marker included, stays within limit. The tail gets three quarters of
+// the space because the final lines are the ones that explain a failure, while
+// the head only has to show how the output began. A cut never splits a
+// character. ClipText stays for short fields where only the start is useful.
+//
+// gap describes a marker that value already holds from an earlier clip (see
+// Gap); pass the zero Gap for plain text. When the new cut removes that marker,
+// the new marker counts the bytes the earlier clip left out too. A marker that
+// stays in view is not counted twice. value must be valid UTF-8 where gap is
+// set. The boolean is true when anything was left out, now or earlier.
+func ClipLog(value string, limit int, gap Gap) (string, bool) {
+	if gap.Omitted == 0 {
+		value = strings.ToValidUTF8(value, "\uFFFD")
+	}
+	if len(value) <= max(limit, 0) {
+		return value, gap.Omitted > 0
+	}
+	text, _ := clipLog(value, value, len(value), limit, gapsOf(gap))
+	return text, true
+}
+
+func gapsOf(gap Gap) []Gap {
+	if gap.Omitted == 0 {
+		return nil
+	}
+	return []Gap{gap}
+}
+
+// clipLog joins the first and last parts of a stream of total bytes, where
+// gaps are the markers the stream already holds, in stream offsets. head must
+// hold at least the first limit/4 bytes and tail at least the last limit
+// bytes, or the whole stream where it is shorter. It also returns the new
+// marker's position.
+func clipLog(head, tail string, total, limit int, gaps []Gap) (string, Gap) {
+	marker := func(omitted int) string { return fmt.Sprintf("\n[... %d bytes omitted ...]\n", omitted) }
+	// whole is the length of the original output the stream stands for.
+	whole := total
+	for _, gap := range gaps {
+		whole += gap.Omitted - (gap.End - gap.Start)
+	}
+	// The marker is sized for the largest count it can show, so its real size
+	// never exceeds the space reserved for it.
+	space := limit - len(marker(whole))
+	if space < 4 {
+		clipped, _ := ClipText(head, limit)
+		return clipped, Gap{}
+	}
+	keepHead := min(space/4, len(head))
+	// A character cut at the end of head is dropped whole.
+	for cut := keepHead - 1; cut >= 0 && cut >= keepHead-utf8.UTFMax; cut-- {
+		if utf8.RuneStart(head[cut]) {
+			if !utf8.FullRuneInString(head[cut:keepHead]) {
+				keepHead = cut
+			}
+			break
+		}
+	}
+	tailStart := total - min(space-space/4, len(tail))
+	for tailStart < total && !utf8.RuneStart(tail[len(tail)-(total-tailStart)]) {
+		tailStart++
+	}
+	// An earlier marker is removed whole or kept whole, never cut through.
+	shown, shownOmitted := 0, 0
+	for _, gap := range gaps {
+		if gap.Start < keepHead && keepHead < gap.End {
+			keepHead = gap.Start
+		}
+		if gap.Start < tailStart && tailStart < gap.End {
+			tailStart = gap.End
+		}
+	}
+	for _, gap := range gaps {
+		if gap.End <= keepHead || gap.Start >= tailStart {
+			shown += gap.End - gap.Start
+			shownOmitted += gap.Omitted
+		}
+	}
+	// A marker that stays in view keeps its own count, so it is not repeated.
+	omitted := whole - (keepHead + total - tailStart - shown) - shownOmitted
+	text := marker(omitted)
+	return head[:keepHead] + text + tail[len(tail)-(total-tailStart):], Gap{Start: keepHead, End: keepHead + len(text), Omitted: omitted}
+}
+
+// LogBuffer joins log parts and keeps the beginning and the end of the joined
+// text within Limit bytes, as ClipLog does for one string. It holds the first
+// Limit/4 bytes and up to about twice Limit of the latest bytes, however much
+// is added. Parts are sanitized like ClipLog input. Result reports whether
+// anything was left out.
 type LogBuffer struct {
-	Limit     int
-	text      strings.Builder
-	truncated bool
+	Limit int
+	total int
+	head  strings.Builder
+	tail  []byte
+	gaps  []Gap
 }
 
-// Add appends as much of part as fits and reports whether all of it was kept.
-// Callers stop at the first false, so the log ends where text was first dropped.
-func (buffer *LogBuffer) Add(part string) bool {
-	clipped, cut := ClipText(part, buffer.Limit-buffer.text.Len())
-	buffer.text.WriteString(clipped)
-	buffer.truncated = buffer.truncated || cut
-	return !cut
+// Add appends part. Nothing is refused: the end of the log must survive, so
+// callers keep adding after the limit is passed.
+func (buffer *LogBuffer) Add(part string) { buffer.AddClipped(part, Gap{}) }
+
+// AddClipped appends part, which holds the marker described by gap from an
+// earlier clip, so a later cut counts the bytes that marker stands for. part
+// must be valid UTF-8 when gap is set.
+func (buffer *LogBuffer) AddClipped(part string, gap Gap) {
+	if gap.Omitted > 0 {
+		buffer.gaps = append(buffer.gaps, Gap{buffer.total + gap.Start, buffer.total + gap.End, gap.Omitted})
+	} else {
+		part = strings.ToValidUTF8(part, "\uFFFD")
+	}
+	buffer.total += len(part)
+	if room := buffer.Limit/4 - buffer.head.Len(); room > 0 {
+		kept := min(room, len(part))
+		buffer.head.WriteString(part[:kept])
+		part = part[kept:]
+	}
+	// A part longer than the tail can use is not copied whole.
+	keep := buffer.Limit - buffer.Limit/4
+	buffer.tail = append(buffer.tail, part[max(0, len(part)-keep):]...)
+	// The tail may grow to twice what the result can use before it is cut, so
+	// trimming costs little per added byte.
+	if len(buffer.tail) > 2*keep {
+		buffer.tail = append(buffer.tail[:0], buffer.tail[len(buffer.tail)-keep:]...)
+	}
 }
 
-// Result returns the joined text and whether anything was dropped.
+// Result returns the joined text and whether anything was left out, now or by
+// an earlier clip.
 func (buffer *LogBuffer) Result() (string, bool) {
-	return buffer.text.String(), buffer.truncated
+	text, _, cut := buffer.ResultWithGap()
+	return text, cut
+}
+
+// ResultWithGap is Result plus the position of the marker it added, or the
+// zero Gap when the text fits whole.
+func (buffer *LogBuffer) ResultWithGap() (string, Gap, bool) {
+	if buffer.total <= buffer.Limit {
+		return buffer.head.String() + string(buffer.tail), Gap{}, len(buffer.gaps) > 0
+	}
+	text, gap := clipLog(buffer.head.String(), string(buffer.tail), buffer.total, buffer.Limit, buffer.gaps)
+	return text, gap, true
 }
 
 // SummaryText returns value as one trimmed line of valid UTF-8 within limit

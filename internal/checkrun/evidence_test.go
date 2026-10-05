@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -70,7 +71,7 @@ func TestAutomaticLogDoesNotCopyWholeOutput(t *testing.T) {
 	runtime.ReadMemStats(&before)
 	log, truncated := buildLog(results)
 	runtime.ReadMemStats(&after)
-	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 2*maximumAutomaticLogSize || len(log) != maximumAutomaticLogSize || !truncated {
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 4*maximumAutomaticLogSize || len(log) > maximumAutomaticLogSize || len(log) < maximumAutomaticLogSize-64 || !truncated {
 		t.Fatalf("allocated %d bytes for a %d-byte log, truncated=%v", allocated, len(log), truncated)
 	}
 }
@@ -100,10 +101,27 @@ func TestEvidenceChild(t *testing.T) {
 	os.Exit(0)
 }
 
-// The reviewer's reproductions: output under the ceiling that shrinks when
-// invalid UTF-8 or secrets are replaced stores the same log and excerpt as
-// the whole output did before only a bounded head was kept.
-func TestUnderCeilingEvidenceMatchesTheWholeOutput(t *testing.T) {
+// requireOmittedCount checks that text holds one marker and that the marker's
+// count plus the real bytes shown equals the size of the original output, even
+// though the output was cut twice on its way here.
+func requireOmittedCount(t *testing.T, name, text string, source int) {
+	t.Helper()
+	start := strings.Index(text, "\n[... ")
+	end := strings.Index(text, "bytes omitted ...]\n") + len("bytes omitted ...]\n")
+	if start < 0 || strings.Count(text, "bytes omitted") != 1 {
+		t.Fatalf("%s: want one marker, got %q", name, text[:min(len(text), 200)])
+	}
+	omitted, _ := strconv.Atoi(strings.Fields(text[start:end])[1])
+	if shown := len(text) - (end - start); omitted+shown != source {
+		t.Fatalf("%s: marker says %d omitted and %d bytes are shown, but the output had %d", name, omitted, shown, source)
+	}
+}
+
+// Output under the ceiling that shrinks when invalid UTF-8 or secrets are
+// replaced stores the same log and excerpt as the whole output does. Output
+// far over the ceiling, such as a check that prints 1.2 MB and then fails,
+// keeps its final line in both the stored log and the excerpt.
+func TestEvidenceOfARealCheckRun(t *testing.T) {
 	for _, mode := range []string{"invalid", "secret", "ordinary"} {
 		t.Run(mode, func(t *testing.T) {
 			results, _ := checkexec.Run(context.Background(), []checkexec.Definition{{Name: "head", Command: "evidence",
@@ -114,20 +132,27 @@ func TestUnderCeilingEvidenceMatchesTheWholeOutput(t *testing.T) {
 			if results[0].Status != checkexec.StatusPassed || results[0].Truncated {
 				t.Fatalf("status=%s truncated=%v", results[0].Status, results[0].Truncated)
 			}
+			gotLog, gotCut := buildLog(results)
+			got := stateResults(results)[0]
+			if mode == "ordinary" {
+				if !gotCut || !got.Truncated || !strings.HasSuffix(gotLog, "TAIL_NOT_IN_THE_HEAD\n") || !strings.HasSuffix(got.OutputExcerpt, "TAIL_NOT_IN_THE_HEAD") {
+					t.Fatalf("the final line is missing: log cut=%v excerpt truncated=%v log end %q", gotCut, got.Truncated, gotLog[len(gotLog)-40:])
+				}
+				original := len(evidenceChildOutput(mode))
+				requireOmittedCount(t, "log", gotLog, len("[passed] evidence\n")+original+1)
+				requireOmittedCount(t, "excerpt", got.OutputExcerpt, original)
+				return
+			}
 			whole := append([]checkexec.Result(nil), results...)
 			whole[0].Output = strings.ReplaceAll(evidenceChildOutput(mode), evidenceSecret, "[redacted]")
 			wantLog, wantCut := buildLog(whole)
-			gotLog, gotCut := buildLog(results)
-			want, got := stateResults(whole)[0], stateResults(results)[0]
+			want := stateResults(whole)[0]
 			if gotLog != wantLog || gotCut != wantCut || got.OutputExcerpt != want.OutputExcerpt || got.Truncated != want.Truncated {
 				t.Fatalf("log %d cut=%v excerpt truncated=%v; whole output gives log %d cut=%v excerpt truncated=%v",
 					len(gotLog), gotCut, got.Truncated, len(wantLog), wantCut, want.Truncated)
 			}
-			if mode != "ordinary" && !strings.Contains(gotLog, "END_MARKER_MUST_BE_KEPT") {
+			if !strings.Contains(gotLog, "END_MARKER_MUST_BE_KEPT") {
 				t.Fatal("the end marker is missing from the log")
-			}
-			if mode == "ordinary" && (!gotCut || !got.Truncated) {
-				t.Fatal("a log cut from longer output must say it was truncated")
 			}
 		})
 	}

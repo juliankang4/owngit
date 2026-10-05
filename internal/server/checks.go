@@ -544,7 +544,7 @@ func completionFromUpload(upload checkapi.AttemptCompletion, repositoryID, taskI
 	// finished evidence, and refusing it would lose the result. The stored bounds
 	// stay the limit, the truncation flags record the cut, and the request body
 	// itself remains bounded by checkapi.MaximumUploadBytes.
-	rawLog, logCut := checkapi.ClipText(upload.Log, state.MaximumCheckLogBytes)
+	rawLog, logCut := checkapi.ClipLog(upload.Log, state.MaximumCheckLogBytes, checkapi.Gap{})
 	results := make([]state.CheckResult, 0, len(upload.Results))
 	for _, result := range upload.Results {
 		if !validCheckText(result.Name, state.MaximumCheckNameBytes) || !validCheckText(result.Command, state.MaximumCheckCommandBytes) {
@@ -556,7 +556,7 @@ func completionFromUpload(upload checkapi.AttemptCompletion, repositoryID, taskI
 		if result.DurationMS < 0 {
 			return state.CheckCompletion{}, pullrequest.NewProblem("invalid_attempt", "A check result has an invalid duration or excerpt.")
 		}
-		excerpt, excerptCut := checkapi.ClipText(result.OutputExcerpt, state.MaximumCheckExcerptBytes)
+		excerpt, excerptCut := checkapi.ClipLog(result.OutputExcerpt, state.MaximumCheckExcerptBytes, checkapi.Gap{})
 		if len(result.CleanupError) > state.MaximumCleanupErrorBytes {
 			return state.CheckCompletion{}, pullrequest.NewProblem("invalid_attempt", "A check result has an oversized cleanup error.")
 		}

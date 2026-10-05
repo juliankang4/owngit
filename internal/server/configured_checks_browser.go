@@ -703,11 +703,7 @@ func (app *App) browserCheckJobLog(ctx context.Context, attempt state.CheckAttem
 		return view
 	}
 	view.Status = webui.LogAvailable
-	if len(content) > maximumBrowserLogBytes {
-		content = content[:maximumBrowserLogBytes]
-		view.DisplayTruncated = true
-	}
-	view.Content = string(content)
+	view.Content, view.DisplayTruncated = checkapi.ClipLog(string(content), maximumBrowserLogBytes, checkapi.Gap{})
 	return view
 }
 

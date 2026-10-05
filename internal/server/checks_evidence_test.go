@@ -15,7 +15,7 @@ import (
 
 // Refusing finished evidence because its text is slightly over a bound loses
 // the result. The server clips to the stored bound on a character boundary and
-// records the cut instead.
+// keeps the end and records the cut instead.
 func TestCompletionClipsOverlongTextInsteadOfRefusing(t *testing.T) {
 	upload := checkapi.AttemptCompletion{
 		FinishedAt: time.Now(), WorktreeState: state.WorktreeClean,
@@ -30,13 +30,13 @@ func TestCompletionClipsOverlongTextInsteadOfRefusing(t *testing.T) {
 		t.Fatalf("completion refused: %+v", problem)
 	}
 	over := completion.Results[0]
-	if over.OutputExcerpt != strings.Repeat("x", state.MaximumCheckExcerptBytes-2) || !over.Truncated {
+	if len(over.OutputExcerpt) > state.MaximumCheckExcerptBytes || !strings.HasSuffix(over.OutputExcerpt, "xx가") || !utf8.ValidString(over.OutputExcerpt) || !over.Truncated {
 		t.Fatalf("over-long excerpt len=%d truncated=%v", len(over.OutputExcerpt), over.Truncated)
 	}
 	if fits := completion.Results[1]; fits.OutputExcerpt != "ok 가" || fits.Truncated {
 		t.Fatalf("fitting excerpt changed: %+v", fits)
 	}
-	if len(completion.Log) != state.MaximumCheckLogBytes-1 || !utf8.ValidString(completion.Log) || !completion.LogTruncated {
+	if len(completion.Log) > state.MaximumCheckLogBytes || !strings.HasSuffix(completion.Log, "xx가") || !utf8.ValidString(completion.Log) || !completion.LogTruncated {
 		t.Fatalf("over-long log len=%d truncated=%v", len(completion.Log), completion.LogTruncated)
 	}
 

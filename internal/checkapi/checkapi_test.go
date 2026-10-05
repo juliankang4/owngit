@@ -2,7 +2,9 @@ package checkapi
 
 import (
 	"encoding/json"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -139,34 +141,110 @@ func TestClipTextReadsOnlyWhatItKeeps(t *testing.T) {
 	}
 }
 
-func TestLogBufferReportsEveryDroppedByte(t *testing.T) {
+// One rule keeps a long output's beginning and end around a marker, whether
+// the output arrives as one string or in parts. Text under the limit is not
+// changed, the result never passes the limit and never splits a character.
+func TestClipLogKeepsHeadAndTail(t *testing.T) {
+	const limit = 100
+	long := strings.Repeat("a", 300) + "FATAL: the reason\n"
+	wide := strings.Repeat("가", 300) + "끝"
 	tests := []struct {
-		name      string
-		parts     []string
-		want      string
-		truncated bool
+		name  string
+		parts []string
+		whole bool
 	}{
-		{name: "fits", parts: []string{"ab", "cd"}, want: "abcd"},
-		{name: "exact fill", parts: []string{"abcdef"}, want: "abcdef"},
-		{name: "full then more", parts: []string{"abcdef", "g"}, want: "abcdef", truncated: true},
-		{name: "full, empty, then more", parts: []string{"abcdef", "", "g"}, want: "abcdef", truncated: true},
-		{name: "cut inside character, first byte", parts: []string{"abcde가"}, want: "abcde", truncated: true},
-		{name: "cut inside character, second byte", parts: []string{"abcd가"}, want: "abcd", truncated: true},
-		{name: "cut inside character, later part", parts: []string{"abc", "가나"}, want: "abc가", truncated: true},
-		{name: "invalid bytes sanitized", parts: []string{"a\xffb"}, want: "a\uFFFDb"},
+		{name: "under the limit", parts: []string{"ok 가\n"}, whole: true},
+		{name: "exactly the limit", parts: []string{strings.Repeat("b", limit)}, whole: true},
+		{name: "one long part", parts: []string{long}},
+		{name: "many small parts", parts: strings.SplitAfter(long, "a")},
+		{name: "multi-byte text", parts: []string{wide}},
+		{name: "multi-byte text in parts", parts: strings.SplitAfter(wide, "가가가")},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			buffer := LogBuffer{Limit: 6}
+			joined := strings.Join(test.parts, "")
+			buffer := LogBuffer{Limit: limit}
 			for _, part := range test.parts {
-				if !buffer.Add(part) {
-					break
+				buffer.Add(part)
+			}
+			streamed, streamedCut := buffer.Result()
+			clipped, cut := ClipLog(joined, limit, Gap{})
+			for name, got := range map[string]string{"ClipLog": clipped, "LogBuffer": streamed} {
+				if len(got) > limit || !utf8.ValidString(got) {
+					t.Fatalf("%s: len=%d valid=%v", name, len(got), utf8.ValidString(got))
+				}
+				if test.whole && got != joined {
+					t.Fatalf("%s changed text under the limit: %q", name, got)
+				}
+				if !test.whole {
+					start := strings.Index(got, "\n[... ")
+					end := strings.Index(got, " bytes omitted ...]\n")
+					if start < 0 || end < 0 || !strings.HasPrefix(joined, got[:start]) ||
+						!strings.HasSuffix(joined, got[end+len(" bytes omitted ...]\n"):]) {
+						t.Fatalf("%s: no head, marker and tail in %q", name, got)
+					}
+					omitted, _ := strconv.Atoi(strings.TrimPrefix(got[start:end], "\n[... "))
+					kept := len(got) - len("\n[...  bytes omitted ...]\n") - len(strconv.Itoa(omitted))
+					if omitted != len(joined)-kept {
+						t.Fatalf("%s: marker says %d omitted, but %d of %d bytes were kept", name, omitted, kept, len(joined))
+					}
 				}
 			}
-			got, truncated := buffer.Result()
-			if got != test.want || truncated != test.truncated {
-				t.Fatalf("got %q, %v; want %q, %v", got, truncated, test.want, test.truncated)
+			if cut != !test.whole || streamedCut != !test.whole {
+				t.Fatalf("cut: ClipLog=%v LogBuffer=%v, want %v", cut, streamedCut, !test.whole)
 			}
 		})
+	}
+	// Text that an earlier clip already cut: every later view states how much
+	// of the original output is missing, not how much of the clipped text.
+	original := strings.Repeat("a", 5000) + "FATAL: the reason\n"
+	first := LogBuffer{Limit: 200}
+	first.Add(original)
+	clipped, gap, _ := first.ResultWithGap()
+	if !strings.Contains(clipped[gap.Start:gap.End], "bytes omitted") || gap.Omitted != len(original)-(len(clipped)-(gap.End-gap.Start)) {
+		t.Fatalf("first clip: gap %+v, len %d", gap, len(clipped))
+	}
+	second := LogBuffer{Limit: limit}
+	second.Add("[failed] cmd\n")
+	second.AddClipped(clipped, gap)
+	second.Add("\n")
+	viaBuffer, _ := second.Result()
+	viaClip, _ := ClipLog(clipped, limit, gap)
+	for name, got := range map[string]struct {
+		text   string
+		source int
+	}{"LogBuffer": {viaBuffer, len("[failed] cmd\n") + len(original) + 1}, "ClipLog": {viaClip, len(original)}} {
+		start := strings.Index(got.text, "\n[... ")
+		end := strings.Index(got.text, "bytes omitted ...]\n") + len("bytes omitted ...]\n")
+		omitted, _ := strconv.Atoi(strings.Fields(got.text[start:end])[1])
+		if len(got.text) > limit || strings.Count(got.text, "bytes omitted") != 1 || omitted != got.source-(len(got.text)-(end-start)) {
+			t.Fatalf("%s: marker says %d omitted of %d, text %q", name, omitted, got.source, got.text)
+		}
+	}
+	// An earlier marker that stays in view keeps its count and is not repeated.
+	inner := LogBuffer{Limit: 1000}
+	inner.Add(strings.Repeat("i", 10000))
+	innerText, innerGap, _ := inner.ResultWithGap()
+	outer := LogBuffer{Limit: 8000}
+	outer.Add(strings.Repeat("p", 20000))
+	outer.AddClipped(innerText, innerGap)
+	text, _ := outer.Result()
+	counts := regexp.MustCompile(`\n\[\.\.\. (\d+) bytes omitted \.\.\.\]\n`).FindAllStringSubmatch(text, -1)
+	if len(counts) != 2 {
+		t.Fatalf("want the earlier marker and a new one, got %d markers", len(counts))
+	}
+	sum := len(text)
+	for _, count := range counts {
+		n, _ := strconv.Atoi(count[1])
+		sum += n - len(count[0])
+	}
+	if sum != 30000 {
+		t.Fatalf("markers and shown bytes add up to %d, want 30000 (original size)", sum)
+	}
+	if got, _ := ClipLog(long, limit, Gap{}); !strings.HasSuffix(got, "FATAL: the reason\n") {
+		t.Fatalf("the final line was lost: %q", got)
+	}
+	if got, cut := ClipLog("a\xffb", limit, Gap{}); got != "a\uFFFDb" || cut {
+		t.Fatalf("invalid bytes: %q, %v", got, cut)
 	}
 }

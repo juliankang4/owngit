@@ -1185,7 +1185,7 @@ func (coordinator *Coordinator) watchLease(ctx context.Context, cancel context.C
 func stateResults(results []checkexec.Result) []state.CheckResult {
 	converted := make([]state.CheckResult, 0, len(results))
 	for index, result := range results {
-		excerpt, cut := checkapi.ClipText(result.Output, state.MaximumCheckExcerptBytes)
+		excerpt, cut := checkapi.ClipLog(result.Output, state.MaximumCheckExcerptBytes, result.OutputGap)
 		truncated := result.Truncated || cut
 		cleanupError := result.CleanupError
 		if cleanupError != "" {
@@ -1205,9 +1205,9 @@ func buildLog(results []checkexec.Result) (string, bool) {
 	for _, result := range results {
 		// Output may be far larger than the log, so it is added as its own part
 		// rather than copied whole into one string before the cut.
-		if !log.Add("["+result.Status+"] "+result.Command+"\n") || !log.Add(result.Output) || !log.Add("\n") {
-			break
-		}
+		log.Add("[" + result.Status + "] " + result.Command + "\n")
+		log.AddClipped(result.Output, result.OutputGap)
+		log.Add("\n")
 	}
 	return log.Result()
 }

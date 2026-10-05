@@ -628,7 +628,7 @@ func cleanupFailed(results []checkexec.Result) bool {
 func checkResultsJSON(results []checkexec.Result) []checkapi.Result {
 	output := make([]checkapi.Result, 0, len(results))
 	for _, result := range results {
-		excerpt, cut := checkapi.ClipText(result.Output, state.MaximumCheckExcerptBytes)
+		excerpt, cut := checkapi.ClipLog(result.Output, state.MaximumCheckExcerptBytes, result.OutputGap)
 		truncated := result.Truncated || cut
 		cleanupError, _ := checkapi.ClipText(result.CleanupError, state.MaximumCleanupErrorBytes)
 		output = append(output, checkapi.Result{
@@ -664,12 +664,10 @@ func checkDefinitionsJSON(definitions []checkexec.Definition) []checkapi.CheckDe
 func buildCheckLog(results []checkexec.Result) (string, bool) {
 	log := checkapi.LogBuffer{Limit: state.MaximumCheckLogBytes}
 	for _, result := range results {
-		part := fmt.Sprintf("== %s: %s (exit %s)\n%s", result.Name, result.Status, exitCodeText(result.ExitCode), result.Output)
+		log.Add(fmt.Sprintf("== %s: %s (exit %s)\n", result.Name, result.Status, exitCodeText(result.ExitCode)))
+		log.AddClipped(result.Output, result.OutputGap)
 		if result.Truncated {
-			part += "\n[output truncated]\n"
-		}
-		if !log.Add(part) {
-			break
+			log.Add("\n[output truncated]\n")
 		}
 	}
 	return log.Result()
