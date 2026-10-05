@@ -10,8 +10,10 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
@@ -720,6 +722,152 @@ func TestStoppingRecordsAWaitingResultOnceMore(t *testing.T) {
 	settled := f.run(t, run.ID)
 	if settled.Status != state.BackupSucceeded || settled.BackupName != run.BackupName || settled.ManifestSHA256 == "" || settled.FinishedAt.IsZero() {
 		t.Fatalf("the result a stop recorded: %+v", settled)
+	}
+}
+
+// The waiting message keeps valid text inside the bytes a stored record
+// holds, even when the cut falls inside a multi-byte character of the run's
+// own message, because the cut walks back to a character boundary.
+func TestPendingMessageKeepsValidTextAtItsBound(t *testing.T) {
+	notice := pendingMessage(state.BackupSucceeded, "")
+	if len(notice) > state.MaxBackupRunMessage/2 {
+		t.Fatalf("the notice takes %d bytes of %d", len(notice), state.MaxBackupRunMessage)
+	}
+	// One byte more than the room the message has, so the cut falls on the
+	// second byte of a three-byte character.
+	room := state.MaxBackupRunMessage - len(notice) - 1
+	message := pendingMessage(state.BackupSucceeded, strings.Repeat("a", room-1)+"한글")
+	if !utf8.ValidString(message) {
+		t.Fatalf("the waiting message is not valid text: %q", message)
+	}
+	if len(message) > state.MaxBackupRunMessage {
+		t.Fatalf("the waiting message is %d bytes", len(message))
+	}
+	if !strings.HasPrefix(message, strings.Repeat("a", room-1)) || !strings.HasSuffix(message, notice) {
+		t.Fatalf("the waiting message lost its text or its notice: %q", message)
+	}
+}
+
+// Removing an older backup holds the one slot: a backup, a verification or
+// an upload starts nothing while a folder is being removed and the record
+// of that run is saved already.
+func TestRemovingOlderBackupsHoldsTheOneSlot(t *testing.T) {
+	f := newFixture(t)
+	off, keep := false, 1
+	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
+	ctx := context.Background()
+	first := f.backUpNow(t)
+	// A state store that refuses to forget the removed run, as one that
+	// cannot write does, so the removal reports it from the removal pass,
+	// where the test holds it.
+	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER keep_backup_name BEFORE UPDATE OF backup_name ON backup_runs WHEN OLD.backup_name <> '' AND NEW.backup_name = '' BEGIN SELECT RAISE(ABORT,'keep the name'); END`))
+	removing := make(chan struct{})
+	release := make(chan struct{})
+	var once, released sync.Once
+	releaseNow := func() { released.Do(func() { close(release) }) }
+	// The hook runs in the backup goroutine, which the fixture's stop waits
+	// for: it must always let go, also when a check here fails.
+	defer releaseNow()
+	f.service.Logf = func(format string, arguments ...any) {
+		t.Logf(format, arguments...)
+		if strings.Contains(fmt.Sprintf(format, arguments...), "could not record that backup") {
+			once.Do(func() {
+				close(removing)
+				<-release
+			})
+		}
+	}
+	second, err := f.service.StartNow()
+	noErr(t, err)
+	select {
+	case <-removing:
+	case <-time.After(time.Minute):
+		t.Fatal("the removal of the older backup never started")
+	}
+	// The record of the second run is saved and the older backup is being
+	// removed: nothing else may look at those folders yet.
+	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a backup started while older backups were removed: %v", err)
+	}
+	if _, err := f.service.StartCheck(ctx, second.ID); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a verification started while older backups were removed: %v", err)
+	}
+	releaseNow()
+	f.service.work.Wait()
+	if present(first) {
+		t.Fatalf("the older backup %s was not removed", first.BackupName)
+	}
+	settled := f.run(t, second.ID)
+	if settled.Status != state.BackupSucceeded || settled.ManifestSHA256 == "" || !present(settled) {
+		t.Fatalf("the run that removed it: %+v", settled)
+	}
+}
+
+// A stop that finds a record attempt running ends it, and leaves one
+// attempt the stop does not end, so the record work OwnGit owns while it
+// stops stays inside the budget its caller gives Stop. The control where
+// that last attempt succeeds is TestStoppingRecordsAWaitingResultOnceMore.
+func TestStoppingIsBoundedWhileARecordAttemptIsBlocked(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the bound of the one attempt a stop allows")
+	}
+	f := newFixture(t)
+	off, keep := false, 1
+	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
+	ctx := context.Background()
+	// A state store whose record write does not finish on its own, as a
+	// stalled one does, made through the seam for breaking one write on
+	// purpose.
+	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER stall_backup_record BEFORE UPDATE ON backup_runs BEGIN SELECT (WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c) SELECT sum(x) FROM c); END`))
+	// The clock holds the run just before it records its result, so the test
+	// can order the stop after the attempt started.
+	var calls atomic.Int64
+	atResult, resume := make(chan struct{}), make(chan struct{})
+	f.service.Now = func() time.Time {
+		if calls.Add(1) == 2 {
+			close(atResult)
+			<-resume
+		}
+		return f.clock.Now()
+	}
+	run, err := f.service.StartNow()
+	noErr(t, err)
+	select {
+	case <-atResult:
+	case <-time.After(time.Minute):
+		t.Fatal("the backup never came to record its result")
+	}
+	close(resume)
+	// Wait until the attempt holds the state store's one connection, so the
+	// stop meets an attempt that is running.
+	for deadline := time.Now().Add(time.Minute); ; time.Sleep(time.Millisecond) {
+		probe, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		_, busyErr := f.store.TableRowCount(probe, "backup_runs")
+		cancel()
+		if busyErr != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the record attempt never took the state store")
+		}
+	}
+	stop, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	started := time.Now()
+	stopErr := f.service.Stop(stop)
+	elapsed := time.Since(started)
+	if stopErr != nil {
+		t.Fatalf("OwnGit did not stop inside the caller's budget: %v after %s", stopErr, elapsed)
+	}
+	if elapsed > 14*time.Second {
+		t.Fatalf("the stop held the record work for %s, more than the one attempt it allows", elapsed)
+	}
+	if elapsed < 9*time.Second {
+		t.Fatalf("the stop ended after %s, so the one attempt did not run to its bound", elapsed)
+	}
+	settled := f.run(t, run.ID)
+	if settled.Status != state.BackupRunning {
+		t.Fatalf("the blocked state store recorded the run: %+v", settled)
 	}
 }
 

@@ -7,30 +7,54 @@ import (
 	"time"
 )
 
-// A running backup shows its own message under "Running now", where the
-// page names the backup that runs: a finished backup whose record the
-// state store has not saved yet says so there. A message is shown escaped
-// and only when there is one.
-func TestRunningBackupShowsItsMessage(t *testing.T) {
+// A running backup shows its own message as its own line below the state
+// list, in the text style and wrapping as text: a finished backup whose
+// record the state store has not saved yet says so there. The message is
+// shown escaped, in either language, and only when there is one.
+func TestRunningBackupShowsItsMessageBelowTheState(t *testing.T) {
 	r := newRenderer(t)
-	render := func(run *BackupRunInfo) string {
+	render := func(lang Lang, run *BackupRunInfo) string {
 		var out bytes.Buffer
 		data := struct {
 			Page   SettingsPage
 			Lang   Lang
 			Chrome Chrome
-		}{Page: SettingsPage{Backups: BackupsInfo{Visible: true, Configured: true, Running: run}}}
+		}{Page: SettingsPage{Backups: BackupsInfo{Visible: true, Configured: true, Running: run}}, Lang: lang}
 		noErr(t, r.templates["settings"].ExecuteTemplate(&out, "setBackups", data))
 		return out.String()
 	}
-	started := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
-	page := render(&BackupRunInfo{Status: "running", StartedAt: started, Message: "The backup finished: succeeded <safe>"})
-	want := `<span class="bkmsg mono" dir="auto">The backup finished: succeeded &lt;safe&gt;</span>`
-	if !strings.Contains(page, want) {
-		t.Fatalf("the running backup's message is missing or unescaped:\n%s", page)
+	// The Running now cell alone, which is narrow: the message must not sit
+	// in it, where a sentence breaks inside a word.
+	runningCell := func(page string) string {
+		at := strings.Index(page, `data-en="Running now"`)
+		if at < 0 {
+			t.Fatalf("the page names no running backup:\n%s", page)
+		}
+		rest := page[at:]
+		return rest[:strings.Index(rest, "</dd>")+len("</dd>")]
 	}
-	if quiet := render(&BackupRunInfo{Status: "running", StartedAt: started}); strings.Contains(quiet, "bkmsg") {
-		t.Fatalf("a running backup without a message shows one:\n%s", quiet)
+	started := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	run := &BackupRunInfo{Status: "running", StartedAt: started, Message: "The backup finished: succeeded <safe>"}
+	want := `<p class="bkmsg" dir="auto">The backup finished: succeeded &lt;safe&gt;</p>`
+	for _, lang := range []Lang{LangEN, LangKO} {
+		page := render(lang, run)
+		if !strings.Contains(page, want) {
+			t.Fatalf("%s: the running backup's message is missing from its own line:\n%s", lang, page)
+		}
+		if cell := runningCell(page); strings.Contains(cell, "finished") {
+			t.Fatalf("%s: the message is inside the running-now cell: %s", lang, cell)
+		}
+		if quiet := render(lang, &BackupRunInfo{Status: "running", StartedAt: started}); strings.Contains(quiet, "bkmsg") {
+			t.Fatalf("%s: a running backup without a message shows one:\n%s", lang, quiet)
+		}
+	}
+	// A message with a language pair keeps both, in the same place and
+	// style.
+	localized := &BackupRunInfo{Status: "running", StartedAt: started, Message: "English <alias>", MessageEN: "English <alias>", MessageKO: "한국어 <별칭>"}
+	page := render(LangKO, localized)
+	localizedWant := `<p class="bkmsg" dir="auto"><span data-en="English &lt;alias&gt;" data-ko="한국어 &lt;별칭&gt;">한국어 &lt;별칭&gt;</span></p>`
+	if !strings.Contains(page, localizedWant) {
+		t.Fatalf("the localized message lacks the escaped language pair:\n%s", page)
 	}
 }
 
