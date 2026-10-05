@@ -53,6 +53,45 @@ func TestExternalRunnerClaimsExactSourceExecutesAndCompletes(t *testing.T) {
 	}
 }
 
+// A claim answer that reaches the runner late leaves little of a short lease.
+// The runner must renew the lease before it ends; waiting its one-second
+// default used to arrive after the lease had expired and turned a check that
+// was running normally into an error.
+func TestExternalRunnerRenewsAShortLeaseBeforeADelayedClaimEnds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a two-second check under a one-second lease")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("the check command uses a POSIX shell")
+	}
+	fixture := newRunnerIntegrationFixtureWithLease(t, "sleep 2", repository.ObjectFormatSHA1, 1000)
+	httpServer, origin := fixture.startHTTPServer(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if !strings.HasSuffix(request.URL.Path, "/claim") {
+				next.ServeHTTP(writer, request)
+				return
+			}
+			// The claim is committed when the handler runs, so holding the
+			// answer for 750 ms leaves the runner about 250 ms of its lease.
+			held := httptest.NewRecorder()
+			next.ServeHTTP(held, request)
+			time.Sleep(750 * time.Millisecond)
+			for name, values := range held.Header() {
+				writer.Header()[name] = values
+			}
+			writer.WriteHeader(held.Code)
+			_, _ = writer.Write(held.Body.Bytes())
+		})
+	})
+	defer httpServer.Close()
+	if err := fixture.runner(fixture.client(origin)).Run(fixture.ctx); err != nil {
+		t.Fatalf("runner stopped: %v (job %s)", err, fixture.readJob().Status)
+	}
+	if completed := fixture.readJob(); completed.Status != state.CheckJobPassed {
+		t.Fatalf("job after a delayed claim answer: %+v", completed)
+	}
+}
+
 // A push holds the repository while the runner fetches the job's source. The
 // server used to refuse the source at once and the runner reported the job
 // unavailable without running it; the server now waits for the push.
@@ -109,6 +148,13 @@ func newRunnerIntegrationFixture(t *testing.T, command string) *runnerIntegratio
 
 func newRunnerIntegrationFixtureWithFormat(t *testing.T, command, objectFormat string) *runnerIntegrationFixture {
 	t.Helper()
+	return newRunnerIntegrationFixtureWithLease(t, command, objectFormat, 60_000)
+}
+
+// newRunnerIntegrationFixtureWithLease builds the fixture under a policy whose
+// claim lease lasts leaseMS milliseconds.
+func newRunnerIntegrationFixtureWithLease(t *testing.T, command, objectFormat string, leaseMS int64) *runnerIntegrationFixture {
+	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("Git is unavailable")
 	}
@@ -145,7 +191,7 @@ func newRunnerIntegrationFixtureWithFormat(t *testing.T, command, objectFormat s
 	if _, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
 		RepositoryID: stored.ID, Executor: state.CheckExecutorExternalRunner,
 		AllowedEvents: []string{checkworkflow.EventPush}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
-		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: leaseMS,
 	}, now); err != nil {
 		t.Fatal(err)
 	}
