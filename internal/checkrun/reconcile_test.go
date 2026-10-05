@@ -562,3 +562,34 @@ func TestPushRetentionIsBoundedAndReportsWhatItDrops(t *testing.T) {
 		t.Fatalf("the dropped push was named %d times, want once: %v", dropped, fixture.logs)
 	}
 }
+
+// A push still holds the repository write lock while a pass tries to admit its
+// event. Admission keeps the event for a later pass instead of waiting for the
+// repository, so the push an update arrived with is never delayed, and the
+// event is admitted once the repository is free.
+func TestPushEventWaitsWhileTheRepositoryIsBusy(t *testing.T) {
+	fixture := newPushFixture(t, 4)
+	oid := fixture.pushWorkflow("main", validWorkflow)
+	coordinator := fixture.coordinator
+	lock := coordinator.Repositories.Locks.For(fixture.repositoryID)
+	lock.Lock()
+	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
+	admitted := make(chan struct{})
+	go func() {
+		defer close(admitted)
+		coordinator.admitPendingPushes(fixture.ctx, state.DefaultCheckCeilings)
+	}()
+	select {
+	case <-admitted:
+	case <-time.After(20 * time.Second):
+		t.Fatal("admission waited for the repository the push holds")
+	}
+	if oids := pushJobOIDs(t, fixture); len(oids) != 0 {
+		t.Fatalf("a busy repository admitted %v", oids)
+	}
+	lock.Unlock()
+	noErr(t, coordinator.reconcile(fixture.ctx))
+	if oids := pushJobOIDs(t, fixture); !oids[oid] {
+		t.Fatalf("the retained push was not admitted after the repository was free: %v", oids)
+	}
+}
