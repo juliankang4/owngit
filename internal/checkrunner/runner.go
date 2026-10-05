@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	leaseHeader       = "X-OwnGit-Runner-Lease"
-	maximumRunnerLog  = checkexec.KeptOutputBytes
-	minimumRenewDelay = 100 * time.Millisecond
+	leaseHeader      = "X-OwnGit-Runner-Lease"
+	maximumRunnerLog = checkexec.KeptOutputBytes
 
 	defaultRetryInitial = time.Second
 	defaultRetryMax     = time.Minute
@@ -373,13 +372,7 @@ func (runner *Runner) reportNotRun(ctx context.Context, base, jobID, leaseID, st
 }
 
 func (runner *Runner) renewLease(ctx context.Context, cancel context.CancelFunc, base string, job *checkapi.Job, done chan<- error) {
-	delay := time.Second
-	if job.LeaseExpiresAt != nil {
-		if candidate := time.Until(*job.LeaseExpiresAt) / 3; candidate > minimumRenewDelay && candidate < delay {
-			delay = candidate
-		}
-	}
-	ticker := time.NewTicker(delay)
+	ticker := time.NewTicker(checkapi.LeaseRenewDelay(time.Now(), job.LeaseExpiresAt))
 	defer ticker.Stop()
 	for {
 		select {
