@@ -171,7 +171,7 @@ func WithoutGateWait(ctx context.Context) context.Context {
 
 func packsInBackground(name string) bool {
 	switch strings.TrimPrefix(name, "git ") {
-	case "bundle", "repack", "gc", "maintenance":
+	case "bundle", "repack":
 		return true
 	}
 	return false

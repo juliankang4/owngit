@@ -128,7 +128,6 @@ func TestMemoryGateHoldsBackEveryTransferUntilAReleasedSlot(t *testing.T) {
 		}
 		got <- err
 	}()
-	time.Sleep(20 * time.Millisecond)
 	first()
 	noErr(t, <-got, "a waiting transfer did not get the released gate slot")
 }

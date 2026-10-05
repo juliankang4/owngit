@@ -241,3 +241,13 @@ func TestRestoreSourceLookupFailureIsNotInvalid(t *testing.T) {
 		}
 	}
 }
+
+// A file whose listed size is above the limit is refused as too large without
+// running Git, which would rebuild a large stored delta in memory.
+func TestBlobAboveTheLimitIsRefusedWithoutRunningGit(t *testing.T) {
+	manager := &Manager{Git: &gitexec.Runner{GitPath: "/nonexistent/git-must-not-run"}}
+	blob, err := manager.BlobAt(context.Background(), "x", TreeEntry{Path: "big", Type: "blob", OID: strings.Repeat("a", 40), Size: 5 << 20}, 1<<20)
+	if err != nil || !blob.Truncated || len(blob.Content) != 0 {
+		t.Fatalf("blob = %+v, err = %v; want truncated, empty, no error", blob, err)
+	}
+}

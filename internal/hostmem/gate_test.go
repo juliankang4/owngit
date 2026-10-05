@@ -2,6 +2,7 @@ package hostmem
 
 import (
 	"context"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -34,7 +35,7 @@ func TestGateServesBackgroundWorkFirstAndCancelHoldsNothing(t *testing.T) {
 		if waiting == 1 {
 			break
 		}
-		time.Sleep(time.Millisecond)
+		runtime.Gosched()
 	}
 	if release, _ := gate.TryAcquire(); release != nil {
 		t.Fatal("a transfer passed a waiting background job")
@@ -71,7 +72,7 @@ func TestGateWakesTheNextWaiterWhileSlotsRemain(t *testing.T) {
 		if waiting == 2 {
 			break
 		}
-		time.Sleep(time.Millisecond)
+		runtime.Gosched()
 	}
 	a()
 	b() // two slots free at once: both waiters must start

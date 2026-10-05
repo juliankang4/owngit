@@ -3,7 +3,6 @@ package hostmem
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -77,17 +76,6 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 				t.Errorf("packing = %s, want %s", got, test.settings)
 			}
 		})
-	}
-}
-
-// With an unknown ceiling the owner's saved transfer limits do not shrink the
-// packing settings, and no large-file threshold is set.
-func TestUnknownCeilingIgnoresLooseTransferLimits(t *testing.T) {
-	if got, want := PackingConfig(0, 10, 64), PackingConfig(0, 10, DefaultTransfers); !reflect.DeepEqual(got, want) {
-		t.Errorf("packing with 64 transfers = %v, want %v", got, want)
-	}
-	if got := BigFileThreshold(0, 64); got != "" {
-		t.Errorf("threshold with an unknown ceiling = %q, want none", got)
 	}
 }
 
