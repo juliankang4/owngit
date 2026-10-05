@@ -35,6 +35,18 @@ func (g *Gate) TryAcquire() (release func(), changed <-chan struct{}) {
 	return nil, g.changed
 }
 
+// TryAcquireBackground takes a slot for a background job that holds a
+// repository lock and so must not wait, or returns nil.
+func (g *Gate) TryAcquireBackground() func() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.used >= g.limit {
+		return nil
+	}
+	g.used++
+	return g.release
+}
+
 // Acquire waits for a slot for a background job, or for ctx to end.
 func (g *Gate) Acquire(ctx context.Context) (func(), error) {
 	g.mu.Lock()
@@ -55,6 +67,9 @@ func (g *Gate) Acquire(ctx context.Context) (func(), error) {
 	}
 	g.waiting--
 	g.used++
+	if g.used < g.limit {
+		g.wake() // another waiter may fit as well
+	}
 	g.mu.Unlock()
 	return g.release, nil
 }

@@ -158,6 +158,17 @@ func (r *Runner) commandConfig(textOutput bool) [][2]string {
 	return config
 }
 
+// ErrMemoryBusy reports that a command run under a lock found no free slot of
+// the memory gate; the caller leaves and tries again later.
+var ErrMemoryBusy = errors.New("Git memory is in use by transfers")
+
+type noGateWait struct{}
+
+// WithoutGateWait marks ctx for a command run while a repository lock is held.
+func WithoutGateWait(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noGateWait{}, true)
+}
+
 func packsInBackground(name string) bool {
 	switch strings.TrimPrefix(name, "git ") {
 	case "bundle", "repack", "gc", "maintenance":
@@ -321,10 +332,19 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	name := commandName(args)
 	// A backup's bundle and maintenance's repack are background work: they
 	// wait for a slot of the memory gate, which transfers share.
+	// A command run under a repository lock never waits for a slot, because a
+	// transfer holding a slot may be waiting for that lock.
 	if gate := hostmem.Shared.Load(); gate != nil && packsInBackground(name) {
-		release, err := gate.Acquire(ctx)
-		if err != nil {
-			return Result{}, err
+		var release func()
+		if ctx.Value(noGateWait{}) != nil {
+			if release = gate.TryAcquireBackground(); release == nil {
+				return Result{}, ErrMemoryBusy
+			}
+		} else {
+			var err error
+			if release, err = gate.Acquire(ctx); err != nil {
+				return Result{}, err
+			}
 		}
 		defer release()
 	}

@@ -693,7 +693,12 @@ func (m *Manager) maintenanceStep(ctx context.Context, id string, lock *gitexec.
 			return err
 		}
 	}
-	if _, err := m.Git.RunWithLimits(ctx, path, nil, limits, append([]string{"--git-dir", "."}, args...)...); err != nil {
+	// The write lock is held, so the command must not wait for the memory
+	// gate; it leaves and the scheduler retries later, as for a busy repository.
+	if _, err := m.Git.RunWithLimits(gitexec.WithoutGateWait(ctx), path, nil, limits, append([]string{"--git-dir", "."}, args...)...); err != nil {
+		if errors.Is(err, gitexec.ErrMemoryBusy) {
+			return errMaintenanceBusy
+		}
 		return err
 	}
 	if !packsRefs {

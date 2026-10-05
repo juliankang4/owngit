@@ -50,3 +50,37 @@ func TestGateServesBackgroundWorkFirstAndCancelHoldsNothing(t *testing.T) {
 		t.Fatal("the gate leaked a slot")
 	}
 }
+
+// A waiter that takes a slot wakes the others when slots remain, so no
+// waiter sleeps while a slot is free.
+func TestGateWakesTheNextWaiterWhileSlotsRemain(t *testing.T) {
+	gate := NewGate(2)
+	a, _ := gate.TryAcquire()
+	b, _ := gate.TryAcquire()
+	got := make(chan func(), 2)
+	for range 2 {
+		go func() {
+			release, _ := gate.Acquire(context.Background())
+			got <- release
+		}()
+	}
+	for {
+		gate.mu.Lock()
+		waiting := gate.waiting
+		gate.mu.Unlock()
+		if waiting == 2 {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	a()
+	b() // two slots free at once: both waiters must start
+	for range 2 {
+		select {
+		case release := <-got:
+			release()
+		case <-time.After(2 * time.Second):
+			t.Fatal("a waiter slept while a slot was free")
+		}
+	}
+}
