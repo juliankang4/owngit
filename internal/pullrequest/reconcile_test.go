@@ -1,12 +1,15 @@
 package pullrequest
 
 import (
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/gitexec"
 )
@@ -66,5 +69,29 @@ func TestReconcileAllReadsPullRequestRefsOnce(t *testing.T) {
 		if subcommand == "rev-parse" {
 			t.Fatal("reconciliation read a ref with its own Git process")
 		}
+	}
+}
+
+// TestReconcileAllNamesATimeoutCause proves that a Git read that exceeds its
+// bound reports the timeout in the message, not only that refs "could not be
+// read", and stays a failure.
+func TestReconcileAllNamesATimeoutCause(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the slow Git wrapper is a Unix test fixture")
+	}
+	fixture, _, _, _ := newMovedHeadFixture(t)
+	_, _, err := fixture.service.ObserveCurrentRevisionsAfter(fixture.ctx, fixture.repositoryID, 0, 10)
+	noErr(t, err)
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "git")
+	noErr(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexec sleep 30\n"), 0o700))
+	runner, err := gitexec.New(wrapper, filepath.Join(dir, "runtime"))
+	noErr(t, err)
+	runner.Timeout = 200 * time.Millisecond
+	fixture.manager.Git = runner
+
+	err = fixture.service.ReconcileAll(fixture.ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("ReconcileAll error = %v, want a failure that names the timeout", err)
 	}
 }

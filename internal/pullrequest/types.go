@@ -1,9 +1,11 @@
 package pullrequest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strconv"
+	"strings"
 	"time"
 
 	"owngit/internal/state"
@@ -75,7 +77,22 @@ func (problem *Problem) Error() string {
 	if problem == nil {
 		return ""
 	}
+	if reason := plainReason(problem.Cause); reason != "" {
+		return strings.TrimSuffix(problem.Message, ".") + ": " + reason + "."
+	}
 	return problem.Message
+}
+
+// plainReason names a cause the owner can act on in a few words. Other causes
+// stay out of the line; Cause still carries them for the log and for callers.
+func plainReason(cause error) string {
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return "Git timed out, so the repository folder or its disk may not be answering"
+	case errors.Is(cause, context.Canceled):
+		return "the operation was canceled"
+	}
+	return ""
 }
 
 func (problem *Problem) Unwrap() error {

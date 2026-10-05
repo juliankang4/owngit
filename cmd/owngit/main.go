@@ -502,7 +502,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// locked until every user of the repositories has stopped. Another
 	// server on the folder, for example one started from a copy of this
 	// state directory, would have its hooks rewritten, so it stops the start.
-	if err := repositories.ClaimStorage(); errors.Is(err, repository.ErrStorageInUse) {
+	claimErr := reportSlowStep(logf, slowStepNotice, "the repository folder "+settings.RepositoryRoot+" to answer", repositories.ClaimStorage)
+	if err := claimErr; errors.Is(err, repository.ErrStorageInUse) {
 		return fmt.Errorf("%w; stop the other server first (a copy of a state directory must not serve the same repository folder)", err)
 	} else if err != nil {
 		logf("could not check that no other OwnGit server uses the repository folder: %v", err)
