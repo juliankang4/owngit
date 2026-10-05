@@ -697,14 +697,7 @@ func (coordinator *Coordinator) materialize(ctx context.Context, job state.Check
 }
 
 func (coordinator *Coordinator) watchLease(ctx context.Context, cancel context.CancelFunc, job state.CheckJob, authority state.CheckJobCompletionAuthority, done chan<- error) {
-	interval := time.Second
-	if job.LeaseExpiresAt != nil {
-		remaining := time.Until(*job.LeaseExpiresAt)
-		if candidate := remaining / 3; candidate > 100*time.Millisecond && candidate < interval {
-			interval = candidate
-		}
-	}
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(checkapi.LeaseRenewDelay(time.Now(), job.LeaseExpiresAt))
 	defer ticker.Stop()
 	for {
 		select {
