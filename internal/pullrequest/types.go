@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"owngit/internal/repository"
 	"owngit/internal/state"
 )
 
@@ -71,6 +72,13 @@ type Problem struct {
 	Message string
 	Details any
 	Cause   error
+	// git marks a cause that is the error of a Git command.
+	git bool
+}
+
+// gitProblem is a repository_unavailable Problem whose cause is a Git command's error.
+func gitProblem(message string, cause error) *Problem {
+	return &Problem{Code: "repository_unavailable", Message: message, Cause: cause, git: true}
 }
 
 func (problem *Problem) Error() string {
@@ -85,15 +93,15 @@ func (problem *Problem) Error() string {
 
 // plainReason names a cause the owner can act on in a few words. Only a
 // timeout or cancellation is named; other causes stay out of the line, and
-// Cause still carries them. The Git and disk hint is for a repository_unavailable
-// Problem, which comes from a Git command or the repository folder; a busy
-// repository already names its cause in the message.
+// Cause still carries them. The Git and disk hint is only for a Git command
+// that ran out of time; a busy repository already names its cause in the
+// message.
 func (problem *Problem) plainReason() string {
 	switch {
-	case problem.Code == "repository_busy":
+	case problem.Code == "repository_busy" || errors.Is(problem.Cause, repository.ErrRepositoryInUse):
 		return ""
 	case errors.Is(problem.Cause, context.DeadlineExceeded):
-		if problem.Code == "repository_unavailable" {
+		if problem.git {
 			return "Git timed out, so the repository folder or its disk may not be answering"
 		}
 		return "it did not finish in time"

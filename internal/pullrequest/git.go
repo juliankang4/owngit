@@ -87,7 +87,7 @@ func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branc
 	}
 	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "cat-file", "-t", oid)
 	if err != nil {
-		return branchHead{}, &Problem{Code: "repository_unavailable", Message: "The branch object could not be inspected.", Cause: err}
+		return branchHead{}, gitProblem("The branch object could not be inspected.", err)
 	}
 	if strings.TrimSpace(string(result.Stdout)) != "commit" {
 		return branchHead{Branch: branch, Ref: ref, OID: oid, Status: "not_commit"}, nil
@@ -102,7 +102,7 @@ func (service *Service) resolveBranch(ctx context.Context, repositoryPath, branc
 func (service *Service) branchHeads(ctx context.Context, repositoryPath string) (map[string]branchHead, error) {
 	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads")
 	if err != nil {
-		return nil, &Problem{Code: "repository_unavailable", Message: "The branch heads could not be read.", Cause: err}
+		return nil, gitProblem("The branch heads could not be read.", err)
 	}
 	heads := make(map[string]branchHead)
 	for _, line := range strings.Split(string(result.Stdout), "\n") {
@@ -137,7 +137,7 @@ func (service *Service) readRef(ctx context.Context, repositoryPath, ref string)
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "", false, nil
 		}
-		return "", false, &Problem{Code: "repository_unavailable", Message: "A Git ref could not be read.", Cause: err}
+		return "", false, gitProblem("A Git ref could not be read.", err)
 	}
 	oid := strings.TrimSpace(string(result.Stdout))
 	if !validOID(oid) {
@@ -156,7 +156,7 @@ type knownRefs map[string]string
 func (service *Service) listPullRequestRefs(ctx context.Context, repositoryPath string) (knownRefs, error) {
 	result, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/owngit/pull-requests")
 	if err != nil {
-		return nil, &Problem{Code: "repository_unavailable", Message: "Pull request refs could not be read.", Cause: err}
+		return nil, gitProblem("Pull request refs could not be read.", err)
 	}
 	known := make(knownRefs)
 	for _, line := range strings.Split(strings.TrimSpace(string(result.Stdout)), "\n") {
@@ -209,7 +209,7 @@ func (service *Service) ensureRevisionRefs(ctx context.Context, repositoryPath s
 		if sourceErr == nil && targetErr == nil && (source.OID != sourceOID || target.OID != targetOID) {
 			return NewProblem("stale_revision", "The source or target branch changed while its pull request revision was retained.")
 		}
-		return &Problem{Code: "repository_unavailable", Message: "The pull request revision could not be retained.", Cause: err}
+		return gitProblem("The pull request revision could not be retained.", err)
 	}
 	return nil
 }
@@ -241,7 +241,7 @@ func (service *Service) ensureStoredRevisionRefs(ctx context.Context, repository
 	}
 	commands = append(commands, "prepare", "commit")
 	if _, err := service.Repositories.Git.Run(ctx, repositoryPath, strings.NewReader(strings.Join(commands, "\n")+"\n"), "--git-dir", ".", "update-ref", "--stdin"); err != nil {
-		return &Problem{Code: "repository_unavailable", Message: "Recorded pull request revision refs could not be repaired.", Cause: err}
+		return gitProblem("Recorded pull request revision refs could not be repaired.", err)
 	}
 	return nil
 }
@@ -284,7 +284,7 @@ func (service *Service) ensureProtectedMergeRef(ctx context.Context, repositoryP
 				return staleRevisionProblem(source.OID, target.OID)
 			}
 		}
-		return &Problem{Code: "repository_unavailable", Message: "The protected merge candidate could not be retained.", Cause: err}
+		return gitProblem("The protected merge candidate could not be retained.", err)
 	}
 	return nil
 }
@@ -337,7 +337,7 @@ func (service *Service) ensureMergeResult(ctx context.Context, repositoryPath st
 func (service *Service) requireMergeCapability(ctx context.Context) error {
 	result, err := service.Repositories.Git.Run(ctx, "", nil, "--version")
 	if err != nil {
-		return &Problem{Code: "repository_unavailable", Message: "The Git version could not be read.", Cause: err}
+		return gitProblem("The Git version could not be read.", err)
 	}
 	if !supportsMergeVersion(string(result.Stdout)) {
 		return NewProblem("unsupported_git", "Pull request merge requires Git 2.38 or newer.")
@@ -407,7 +407,7 @@ func (service *Service) calculateMergeTree(ctx context.Context, repositoryPath, 
 		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 			return "", NewProblem("merge_conflict", "The source and target branches have merge conflicts.")
 		}
-		return "", &Problem{Code: "repository_unavailable", Message: "Git could not calculate the merge tree.", Cause: err}
+		return "", gitProblem("Git could not calculate the merge tree.", err)
 	}
 	firstLine, _, _ := strings.Cut(strings.TrimSpace(string(result.Stdout)), "\n")
 	fields := strings.Fields(firstLine)
@@ -437,7 +437,7 @@ func (service *Service) createMergeCommit(ctx context.Context, repositoryPath st
 	result, err := service.Repositories.Git.RunWithEnvironment(ctx, repositoryPath, strings.NewReader(message), environment,
 		"--git-dir", ".", "commit-tree", intent.TreeOID, "-p", intent.TargetOID, "-p", intent.SourceOID)
 	if err != nil {
-		return "", &Problem{Code: "repository_unavailable", Message: "Git could not create the merge commit.", Cause: err}
+		return "", gitProblem("Git could not create the merge commit.", err)
 	}
 	oid := strings.TrimSpace(string(result.Stdout))
 	if !validOID(oid) {
@@ -656,7 +656,7 @@ func (service *Service) isAncestor(ctx context.Context, repositoryPath, ancestor
 	if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 		return false, nil
 	}
-	return false, &Problem{Code: "repository_unavailable", Message: "Git could not compare commit ancestry.", Cause: err}
+	return false, gitProblem("Git could not compare commit ancestry.", err)
 }
 
 func (service *Service) hasMergeBase(ctx context.Context, repositoryPath, left, right string) (bool, error) {
@@ -667,7 +667,7 @@ func (service *Service) hasMergeBase(ctx context.Context, repositoryPath, left, 
 	if code, ok := gitexec.ExitCode(err); ok && code == 1 {
 		return false, nil
 	}
-	return false, &Problem{Code: "repository_unavailable", Message: "Git could not find the common merge history.", Cause: err}
+	return false, gitProblem("Git could not find the common merge history.", err)
 }
 
 func validOID(value string) bool {

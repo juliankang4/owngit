@@ -163,7 +163,7 @@ func (service *Service) trialMerge(ctx context.Context, repositoryPath, targetOI
 		"--git-dir", ".", "merge-tree", "--write-tree", "--name-only", "-z", "--no-messages", targetOID, sourceOID)
 	if err != nil {
 		if code, ok := gitexec.ExitCode(err); !ok || code != 1 {
-			return nil, false, false, &Problem{Code: "repository_unavailable", Message: "Git could not calculate the merge.", Cause: err}
+			return nil, false, false, gitProblem("Git could not calculate the merge.", err)
 		}
 		conflicted = true
 	}

@@ -96,6 +96,7 @@ func TestReconcileAllNamesATimeoutCause(t *testing.T) {
 	}
 	for _, row := range []struct{ code, message, want string }{
 		{"repository_busy", "Another Git operation is using the repository.", "Another Git operation is using the repository."},
+		{"repository_unavailable", "The repository storage is unavailable.", "The repository storage is unavailable: it did not finish in time."},
 		{"state_unavailable", "Pull request metadata could not be read.", "Pull request metadata could not be read: it did not finish in time."},
 	} {
 		got := (&Problem{Code: row.code, Message: row.message, Cause: context.DeadlineExceeded}).Error()
