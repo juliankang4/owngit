@@ -25,6 +25,7 @@ import (
 	"owngit/internal/bidi"
 	"owngit/internal/checkapi"
 	"owngit/internal/pullrequest"
+	"owngit/internal/state"
 	"owngit/internal/version"
 )
 
@@ -1138,6 +1139,131 @@ func TestMCPCutPullRequestListContinuesAfterTheLastKeptItem(t *testing.T) {
 	kept := len(result.Items)
 	if isError || len(text) > minimumMCPResultLimit || kept == 0 || kept >= 60 || result.Next != result.Items[kept-1].Number || result.Truncated == nil {
 		t.Fatalf("cut list (%d bytes, %d kept): next %d, truncated %v", len(text), kept, result.Next, result.Truncated)
+	}
+}
+
+// A task page cut to the MCP result limit keeps paging exact: the cut sets
+// next to the position of the last task it kept, so following the
+// continuation shows every task exactly once instead of skipping the cut
+// ones.
+func TestMCPCutTaskListContinuesAfterTheLastKeptItem(t *testing.T) {
+	at := time.Date(2026, 10, 5, 0, 0, 0, 0, time.UTC)
+	server := taskPageServer(at, 15)
+	defer server.Close()
+	token := writePrivate(t, filepath.Join(t.TempDir(), "token"), "synthetic-helper-token\n")
+	session := startMCPSession(t, mcpOptions{server: server.URL, repository: "project", credentialFile: token, acceptInsecureHTTP: true, resultLimit: minimumMCPResultLimit})
+
+	seen := make(map[string]int, 15)
+	cuts, before := 0, ""
+	for step := 0; step < 20; step++ {
+		arguments := map[string]any{"limit": 10}
+		if before != "" {
+			arguments["before"] = before
+		}
+		text, isError := session.call("check_task_list", arguments)
+		if isError {
+			t.Fatalf("step %d: %s", step, text)
+		}
+		if len(text) > minimumMCPResultLimit {
+			t.Fatalf("step %d: %d bytes over the result limit", step, len(text))
+		}
+		var page struct {
+			Tasks []struct {
+				ID string `json:"id"`
+			} `json:"tasks"`
+			Next      string         `json:"next"`
+			Truncated map[string]any `json:"result_truncated"`
+		}
+		noErr(t, json.Unmarshal([]byte(text), &page))
+		if len(page.Tasks) == 0 {
+			t.Fatalf("step %d: no tasks in %s", step, text)
+		}
+		if page.Truncated != nil {
+			cuts++
+		}
+		for _, task := range page.Tasks {
+			seen[task.ID]++
+		}
+		before = page.Next
+		if before == "" {
+			break
+		}
+	}
+	if cuts == 0 {
+		t.Fatal("no page was cut, so the continuation after a cut was not tested")
+	}
+	if len(seen) != 15 {
+		t.Fatalf("following the continuation saw %d of 15 tasks", len(seen))
+	}
+	for ID, count := range seen {
+		if count != 1 {
+			t.Fatalf("task %s appeared %d times", ID, count)
+		}
+	}
+}
+
+// taskPageServer answers the helper task route the way the check API does:
+// newest first, one page, and next set to the position of the last task of
+// its own page when older ones remain.
+func taskPageServer(at time.Time, count int) *httptest.Server {
+	tasks := make([]checkapi.Task, 0, count)
+	for index := count; index > 0; index-- {
+		tasks = append(tasks, checkapi.Task{
+			ID: fmt.Sprintf("%032x", index), RepositoryID: "project",
+			Title: strings.Repeat("t", 200), Status: "active",
+			CreatedAt: at, UpdatedAt: at, LastRegisteredSequence: int64(index),
+		})
+	}
+	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		limit := 10
+		if value := request.URL.Query().Get("limit"); value != "" {
+			limit, _ = strconv.Atoi(value)
+		}
+		start := 0
+		if before := request.URL.Query().Get("before"); before != "" {
+			cursor, ok := state.ParseTaskCursor(before)
+			if !ok {
+				http.Error(writer, "bad cursor", http.StatusBadRequest)
+				return
+			}
+			for index, task := range tasks {
+				if task.ID == cursor.ID {
+					start = index + 1
+					break
+				}
+			}
+		}
+		end := min(start+limit, len(tasks))
+		page := tasks[start:end]
+		response := map[string]any{"ok": true, "tasks": page}
+		if end < len(tasks) {
+			last := page[len(page)-1]
+			response["next"] = state.TaskCursor{Sequence: last.LastRegisteredSequence, UpdatedAt: last.UpdatedAt, ID: last.ID}.String()
+		}
+		encoded, err := json.Marshal(response)
+		if err != nil {
+			http.Error(writer, "encode", http.StatusInternalServerError)
+			return
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write(encoded)
+	}))
+}
+
+// A result limit too small for even the first task is an error that names the
+// option, not an empty list that would skip the page.
+func TestMCPTaskListRefusesALimitTooSmallForOneItem(t *testing.T) {
+	page := `{"ok":true,"tasks":[{"id":"` + strings.Repeat("f", 32) + `","title":"` + strings.Repeat("t", 5000) + `"},{"id":"` + strings.Repeat("e", 32) + `","title":"b"}],"next":"1:2:` + strings.Repeat("d", 32) + `"}`
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(page))
+	}))
+	defer server.Close()
+	token := writePrivate(t, filepath.Join(t.TempDir(), "token"), "synthetic-helper-token\n")
+	session := startMCPSession(t, mcpOptions{server: server.URL, repository: "project", credentialFile: token, acceptInsecureHTTP: true, resultLimit: minimumMCPResultLimit})
+	text, isError := session.call("check_task_list", map[string]any{})
+	if !isError || !strings.Contains(text, "result_limit_too_small") || !strings.Contains(text, "--result-limit") || strings.Contains(text, `"next"`) {
+		t.Fatalf("isError=%v, result %.300s; want an error naming --result-limit and no continuation", isError, text)
 	}
 }
 

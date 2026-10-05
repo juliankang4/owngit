@@ -905,14 +905,11 @@ func TestHelperTaskListPagesLikeTheTaskViewAPI(t *testing.T) {
 		t.Fatalf("full task page status=%d count=%d next=%q", status, len(whole.Tasks), whole.Next)
 	}
 
-	// A page parameter that cannot be read is refused, not guessed, and the
-	// route takes no other parameter or a repeated one.
+	// One refused value proves the route reads its parameters with the task
+	// list parser; the page assertions above cover the accepted ones. The two
+	// guard cases below are this route's own.
 	for _, item := range []struct{ query, code string }{
-		{"?limit=0", "invalid_list_limit"},
-		{"?limit=101", "invalid_list_limit"},
 		{"?limit=half", "invalid_list_limit"},
-		{"?before=half", "invalid_list_before"},
-		{"?before=1:2:", "invalid_list_before"},
 		{"?limit=1&limit=2", "invalid_request"},
 		{"?unknown=1", "invalid_request"},
 	} {

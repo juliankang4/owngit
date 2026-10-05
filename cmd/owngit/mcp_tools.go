@@ -9,8 +9,10 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/bidi"
+	"owngit/internal/checkapi"
 	"owngit/internal/checkexec"
 	"owngit/internal/pullrequest"
+	"owngit/internal/state"
 )
 
 // This file lists the tools of owngit mcp. Each tool wraps one shared
@@ -430,7 +432,11 @@ func (server *mcpServer) buildTools() []mcpTool {
 					if err := decodeArguments(raw, &arguments); err != nil {
 						return nil, err
 					}
-					return listTasks(ctx, *server.checks, arguments)
+					content, err := listTasks(ctx, *server.checks, arguments)
+					if err != nil {
+						return nil, err
+					}
+					return server.fitTaskList(content)
 				},
 			},
 			mcpTool{
@@ -671,37 +677,63 @@ func (server *mcpServer) pullRequestDiff(ctx context.Context, raw json.RawMessag
 	return encodeDiffStat(diff)
 }
 
-// fitPullRequestList cuts a list longer than the result limit to the pull
-// requests that fit, and sets next to the last one kept, so the following
-// page continues right after it and skips none. The result says it was cut.
-// When not even the first pull request fits, it is an error, because the
+// fitList cuts a list longer than the result limit to the items that fit and
+// sets next with the cursor cursorOf builds from the last one kept, so the
+// following page continues right after it and skips none. The result says it
+// was cut. When not even the first item fits, it is an error, because the
 // page would otherwise be skipped. A list that cannot be read this way is
 // left to the general cut.
-func (server *mcpServer) fitPullRequestList(content []byte) ([]byte, error) {
+func (server *mcpServer) fitList(content []byte, listKey, itemName string, cursorOf func(json.RawMessage) (any, bool)) ([]byte, error) {
 	content = bytes.TrimRight(content, "\n")
 	if len(content) <= server.resultLimit {
 		return content, nil
 	}
 	var root map[string]any
-	var envelope struct {
-		Items []json.RawMessage `json:"pull_requests"`
-	}
-	if json.Unmarshal(content, &root) != nil || json.Unmarshal(content, &envelope) != nil || len(envelope.Items) == 0 {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(content, &root) != nil || json.Unmarshal(content, &fields) != nil {
 		return content, nil
 	}
-	items := envelope.Items
-	note := map[string]any{"bytes": len(content), "limit": server.resultLimit, "cut": []string{"pull_requests"}}
+	var items []json.RawMessage
+	if json.Unmarshal(fields[listKey], &items) != nil || len(items) == 0 {
+		return content, nil
+	}
+	note := map[string]any{"bytes": len(content), "limit": server.resultLimit, "cut": []string{listKey}}
 	for keep := len(items) - 1; keep > 0; keep-- {
-		var last struct {
-			Number int64 `json:"number"`
-		}
-		if json.Unmarshal(items[keep-1], &last) != nil || last.Number < 1 {
+		next, ok := cursorOf(items[keep-1])
+		if !ok {
 			return content, nil
 		}
-		root["pull_requests"], root["next"], root["result_truncated"] = items[:keep], last.Number, note
+		root[listKey], root["next"], root["result_truncated"] = items[:keep], next, note
 		if encoded, err := bidi.MarshalJSON(root); err == nil && len(encoded) <= server.resultLimit {
 			return encoded, nil
 		}
 	}
-	return nil, cliProblem("result_limit_too_small", "The result limit is too small to show one pull request. Raise it with the --result-limit option of owngit mcp.")
+	return nil, cliProblem("result_limit_too_small", "The result limit is too small to show one "+itemName+". Raise it with the --result-limit option of owngit mcp.")
+}
+
+// fitPullRequestList cuts a pull request list to the requests that fit, so
+// that a continuation below a cut page returns the requests the cut left out.
+func (server *mcpServer) fitPullRequestList(content []byte) ([]byte, error) {
+	return server.fitList(content, "pull_requests", "pull request", func(item json.RawMessage) (any, bool) {
+		var last struct {
+			Number int64 `json:"number"`
+		}
+		if json.Unmarshal(item, &last) != nil || last.Number < 1 {
+			return nil, false
+		}
+		return last.Number, true
+	})
+}
+
+// fitTaskList cuts a task list the same way, with the last kept task's
+// position as next: the check tasks carry the same cursor the server builds,
+// so a continuation below the cut page returns the tasks it left out.
+func (server *mcpServer) fitTaskList(content []byte) ([]byte, error) {
+	return server.fitList(content, "tasks", "task", func(item json.RawMessage) (any, bool) {
+		var last checkapi.Task
+		if json.Unmarshal(item, &last) != nil || last.ID == "" {
+			return nil, false
+		}
+		return state.TaskCursor{Sequence: last.LastRegisteredSequence, UpdatedAt: last.UpdatedAt, ID: last.ID}.String(), true
+	})
 }
