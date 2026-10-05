@@ -163,13 +163,14 @@ owngit check cycle list --task TASK_ID --server URL --repository NAME --credenti
 
 모든 명령은 `--server`, `--repository`, `--credential-file`, `--accept-insecure-http`(원격 플래그)를 받으며 클론 안에서는 `--server`와 `--repository`를 `origin`에서 가져올 수 있습니다.
 
-- `check task new`는 작업을 만들고(`--title`), `check task list`는 저장소의 작업과 각 작업의 수정 라운드 한도를 보여 줍니다.
+- `check task new`는 작업을 만들고(`--title`), `check task list`는 저장소의 작업과 각 작업의 수정 라운드 한도를 최신순으로 한 페이지씩 보여 줍니다. `--limit`로 한 번에 받을 개수를 1부터 100까지 정합니다(기본값 50). 더 오래된 작업이 남아 있으면 결과에 `next`가 있으니 그 값을 `--before`로 넘겨 다음 페이지를 받으세요.
 - `check run`은 체크를 실행하고, `--no-upload`가 없으면 시도를 기록합니다. 플래그는 `--task`(필수), `--cycle`, `--workdir`(기본값 `.`), `--timeout`(기본값 10분), `--output-limit`(기본값 체크당 65536바이트, 둘 다 0보다 커야 하며 어느 쪽이든 넘은 체크는 멈추고 완료되지 않은 것으로 끝납니다), `--no-upload`(이때 원격 플래그는 선택 사항), 여러 번 쓸 수 있는 `--check name=command`입니다.
 - `check cycle reserve`는 수정 라운드 하나를 예약하고(`--task` 필수), `check cycle list`는 예약한 라운드 목록을 보여 줍니다.
 - `check status`는 작업과 가장 최근 시도를 읽고, `check log`는 `--attempt`로 지정한 원본 로그 하나를 읽으며, `check config show`는 브랜치와 관계없이 저장소에 가장 최근에 기록된 구성을 읽습니다. `check run`은 이 구성을 쓰지 않습니다.
 - `helper-credential create`는 토큰을 발급하고(`--label`, `--output` 필수, `--credential-file` 대신 `--password-file`), `helper-credential list`와 `helper-credential revoke --id ID`로 기존 토큰을 관리합니다. `create`의 출력에는 저장소의 지금 주소가 `repository_address`로 나옵니다. `--repository` 없이 `helper-credential list`를 실행하면 모든 저장소의 토큰을 보여 주며, 토큰마다 저장소의 지금 주소가 `repository_address`로 나옵니다(API `GET /api/v1/helper-credentials`).
-- `owngit tasks`는 대시보드에 보이는 대로 체크 작업을 출력합니다. 일반 접근을 쓰므로 체크 에이전트 토큰 없이 공유 비밀번호가 든 `--password-file`로 실행합니다. `--repository`가 없으면 모든 저장소에서 가장 최근에 바뀐 작업 10개와 `truncated`를, `--repository NAME`을 주면 그 저장소의 작업을 체크 탭과 같은 순서로 처음 50개까지, `--task TASK`까지 주면 그 작업과 최신 시도 100개, `attempts_truncated`를 출력합니다. 목록의 각 작업에는 `latest_attempt`(시도가 없으면 null)와 저장소의 지금 주소인 `repository_address`가 들어 있습니다. 오류에는 `repository_not_found`, `repository_moved`(이름을 바꾼 저장소의 예전 이름), `task_not_found`, `invalid_arguments`(`--repository` 없이 `--task`를 준 경우)가 있습니다. API 경로는 `GET /api/v1/tasks`, `GET /api/v1/tasks/NAME`, `GET /api/v1/tasks/NAME/TASK`입니다.
-- 저장소의 작업 목록은 같은 순서로 한 페이지씩 나옵니다. 더 오래된 작업이 남아 있으면 결과에 `next`가 있습니다. API 경로 `GET /api/v1/tasks/NAME`은 선택 쿼리 매개변수로 `limit`(한 페이지 개수, 1부터 100까지, 기본값 50)와 `before`(앞 페이지의 `next` 값)를 받습니다. 받을 수 없는 값에는 400과 함께 `invalid_list_limit`, `invalid_list_before`로 답하고 그 밖의 쿼리 매개변수나 두 번 적은 매개변수에는 `invalid_request`로 답합니다. 나머지 두 작업 경로는 쿼리 매개변수를 받지 않습니다. 저장소의 체크 탭은 첫 페이지를 보여 주고, 목록 아래의 이전 작업 더 보기를 누르면 다음 페이지가 열립니다.
+- `owngit tasks`는 대시보드에 보이는 대로 체크 작업을 출력합니다. 일반 접근을 쓰므로 체크 에이전트 토큰 없이 공유 비밀번호가 든 `--password-file`로 실행합니다. `--repository`가 없으면 모든 저장소에서 가장 최근에 바뀐 작업 10개와 `truncated`를, `--repository NAME`을 주면 그 저장소의 작업을 체크 탭과 같은 순서로 처음 50개까지, `--task TASK`까지 주면 그 작업과 최신 시도 100개, `attempts_truncated`를 출력합니다. 목록의 각 작업에는 `latest_attempt`(시도가 없으면 null)와 저장소의 지금 주소인 `repository_address`가 들어 있습니다. 오류에는 `repository_not_found`, `repository_moved`(이름을 바꾼 저장소의 예전 이름), `task_not_found`, `invalid_arguments`(`--repository` 없이 `--task`, `--limit`, `--before`를 주었거나 `--task`와 함께 `--limit`나 `--before`를 준 경우)가 있습니다. API 경로는 `GET /api/v1/tasks`, `GET /api/v1/tasks/NAME`, `GET /api/v1/tasks/NAME/TASK`입니다.
+- 저장소의 작업 목록은 같은 순서로 한 페이지씩 나옵니다. `owngit tasks --repository NAME`에서는 `--limit`로 한 번에 받을 개수를 1부터 100까지 정합니다(기본값 50). 더 오래된 작업이 남아 있으면 결과에 `next`가 있으니 그 값을 `--before`로 넘겨 다음 페이지를 받으세요. API 경로 `GET /api/v1/tasks/NAME`도 같은 두 선택 쿼리 매개변수 `limit`, `before`를 받습니다. 받을 수 없는 값에는 400과 함께 `invalid_list_limit`, `invalid_list_before`로 답하고 그 밖의 쿼리 매개변수나 두 번 적은 매개변수에는 `invalid_request`로 답합니다. 나머지 두 작업 경로는 쿼리 매개변수를 받지 않습니다. 저장소의 체크 탭은 첫 페이지를 보여 주고, 목록 아래의 이전 작업 더 보기를 누르면 다음 페이지가 열립니다.
+- `check task list`는 체크 에이전트용 경로 `GET /api/v1/repositories/ID/tasks`로 같은 페이지를 읽습니다. 이 경로에는 그 저장소의 체크 에이전트 토큰이 필요합니다. 이 경로도 `limit`와 `before`를 받고 `next`로 답하며 받을 수 없는 값은 `GET /api/v1/tasks/NAME`과 같은 상태 코드와 오류 코드로 거부합니다.
 
 ## 결과 읽기
 
@@ -335,7 +336,7 @@ tool_timeout_sec = 1800
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`. 설명과 리뷰 메모는 show에만 들어 있습니다. 목록은 최신순으로 한 페이지씩 나옵니다. `state`, `limit`, `before`는 `--state`, `--limit`, `--before`에 해당하고 `next`는 다음 페이지의 `before` 값입니다 |
 | `pull_request_diff` | `pr diff`. `patch: false`는 `--stat`과 같고, `source_oid`와 `target_oid`를 함께 넘기면 커밋 쌍을 고정합니다. |
 | `pull_request_mergeability` | `pr mergeability`. `source_oid`와 `target_oid`를 함께 넘기면 그사이 브랜치가 움직였을 때 `stale`로 답합니다. |
-| `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도) |
+| `check_task_list`, `check_status` | `check task list`, `check status`(작업 하나와 가장 최근 시도). 목록은 최신순으로 한 페이지씩 나옵니다. `limit`, `before`는 `--limit`, `--before`에 해당하고 `next`는 다음 페이지의 `before` 값입니다 |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 | `backup_status` | 해당 명령 없음. `backup status`의 요약이며 아래에서 설명합니다 |
 | `activity` | `activity`. `year`와 `date`는 `--year`, `--date`에 해당합니다([전체 활동](OPERATIONS.ko.md#전체-활동)) |
@@ -370,7 +371,7 @@ tool_timeout_sec = 1800
 
 도구 결과는 명령의 JSON을 담은 텍스트 항목 하나입니다. 실패한 호출은 `isError`를 설정하고 명령의 오류 객체 `{"ok":false,"error":{"code":...,"message":...}}`를 담습니다. 시도를 기록하지 못한 `check_run`도 `isError`를 설정하며 이때 텍스트는 `upload_error`가 들어 있는 실행 결과 JSON입니다.
 
-한도를 넘는 결과는 잘라 내고 그 사실을 알립니다. `pull_request_diff`는 API가 응답을 자르는 방식을 따릅니다. 패치는 파일 단위로 남기고, 그다음 파일 목록은 들어가는 만큼만 남기며, `truncated`, 목록에서 빠진 항목이 있으면 `incomplete`, 그리고 이유 `response_limit`를 설정합니다. 다른 결과는 가장 긴 글부터 줄이고, 그래도 넘치면 가장 긴 목록의 끝에서 항목을 뺀 뒤, 원래 크기(`bytes`), 한도(`limit`), 잘라 낸 필드(`cut`)를 담은 `result_truncated` 객체를 붙입니다.
+한도를 넘는 결과는 잘라 내고 그 사실을 알립니다. `pull_request_diff`는 API가 응답을 자르는 방식을 따릅니다. 패치는 파일 단위로 남기고, 그다음 파일 목록은 들어가는 만큼만 남기며, `truncated`, 목록에서 빠진 항목이 있으면 `incomplete`, 그리고 이유 `response_limit`를 설정합니다. 다른 결과는 가장 긴 글부터 줄이고, 그래도 넘치면 가장 긴 목록의 끝에서 항목을 뺀 뒤, 원래 크기(`bytes`), 한도(`limit`), 잘라 낸 필드(`cut`)를 담은 `result_truncated` 객체를 붙입니다. `pull_request_list`와 `check_task_list`는 이와 달리 페이지 앞쪽의 항목을 통째로 남기고 `next`를 마지막으로 남긴 항목에 맞춥니다. 그래서 다음 페이지는 바로 그 뒤에서 시작하고 빠지는 항목이 없습니다. 이때도 `result_truncated`가 붙습니다. 첫 항목조차 들어가지 않으면 `result_limit_too_small`로 실패하니 `owngit mcp`의 `--result-limit` 옵션으로 한도를 올리세요.
 
 프로토콜 오류에는 JSON-RPC 코드를 씁니다. JSON이 아닌 메시지는 `-32700`, 잘못된 요청이나 1 MiB를 넘는 메시지, 아직 진행 중인 호출과 id가 같은 요청은 `-32600`, 알 수 없는 메서드는 `-32601`, 알 수 없는 도구는 `-32602`, 이미 도구 호출 16개가 진행 중이면 `-32000`입니다. `check_run`을 뺀 나머지 호출은 2분이 지나면 멈춥니다.
 

@@ -289,7 +289,10 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
 `--repository` can come from `origin`.
 
 - `check task new` creates a task (`--title`); `check task list` lists the
-  repository's tasks with their correction budgets.
+  repository's tasks with their correction budgets, newest first, one page at
+  a time. `--limit` sets the page size, from 1 to 100 (50 by default). When
+  older tasks remain, the result has `next`; pass it as `--before` to get the
+  following page.
 - `check run` executes checks and, unless `--no-upload` is set, records the
   attempt. Flags: `--task` (required), `--cycle`, `--workdir` (default `.`),
   `--timeout` (default 10 minutes), `--output-limit` (default 65536 bytes per
@@ -317,20 +320,26 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
   repository's tasks in the order of its Checks tab; with `--task TASK` too,
   the task with its newest 100 attempts and `attempts_truncated`. Each listed
   task carries `latest_attempt`, or null when it has none, and its
-  repository's current address in `repository_address`. Errors include `repository_not_found`,
-  `repository_moved` (an earlier name of a renamed repository),
-  `task_not_found`, and `invalid_arguments` (`--task` without
-  `--repository`). The API routes are `GET /api/v1/tasks`,
+  repository's current address in `repository_address`. Errors include
+  `repository_not_found`, `repository_moved` (an earlier name of a renamed
+  repository), `task_not_found`, and `invalid_arguments` (`--task`,
+  `--limit` or `--before` without `--repository`, or `--limit` or `--before`
+  with `--task`). The API routes are `GET /api/v1/tasks`,
   `GET /api/v1/tasks/NAME`, and `GET /api/v1/tasks/NAME/TASK`.
-- A repository's task list comes one page at a time, in the same order. When
-  older tasks remain, the result has `next`. The API route
-  `GET /api/v1/tasks/NAME` takes two optional query parameters: `limit` sets
-  the page size, from 1 to 100 (50 by default), and `before` takes the `next`
-  value of the previous page. It refuses a value it does not accept with status 400 and
-  `invalid_list_limit` or `invalid_list_before`, and any other query
+- A repository's task list comes one page at a time, in the same order. In
+  `owngit tasks --repository NAME`, `--limit` sets the page size, from 1 to
+  100 (50 by default). When older tasks remain, the result has `next`; pass it as
+  `--before` to get the following page. The API route
+  `GET /api/v1/tasks/NAME` takes the same two optional query parameters,
+  `limit` and `before`. It refuses a value it does not accept with status 400
+  and `invalid_list_limit` or `invalid_list_before`, and any other query
   parameter, or one given twice, with `invalid_request`. The other two task
   routes take no query parameters. The repository's Checks tab shows the
   first page, and Show older tasks below the list opens the next one.
+- `check task list` reads the same pages through the helper route
+  `GET /api/v1/repositories/ID/tasks`, which needs a helper credential for
+  that repository. It takes `limit` and `before`, answers with `next`, and
+  refuses values with the same status and codes as `GET /api/v1/tasks/NAME`.
 
 ## Reading the result
 
@@ -709,7 +718,7 @@ Read tools change nothing:
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show`; only show includes the description and review notes. The list is newest first, one page at a time: `state`, `limit` and `before` stand for `--state`, `--limit` and `--before`, and `next` is the `before` value of the following page |
 | `pull_request_diff` | `pr diff`; `patch: false` is `--stat`, and `source_oid` with `target_oid` pins a pair |
 | `pull_request_mergeability` | `pr mergeability`; `source_oid` with `target_oid` answers `stale` when a branch moved away from them |
-| `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt) |
+| `check_task_list`, `check_status` | `check task list`, `check status` (one task with its latest attempt). The list is newest first, one page at a time: `limit` and `before` stand for `--limit` and `--before`, and `next` is the `before` value of the following page |
 | `check_log`, `check_cycle_list`, `check_config_show` | `check log`, `check cycle list`, `check config show` |
 | `backup_status` | No command; a summary of `backup status`, described below |
 | `activity` | `activity`; `year` and `date` stand for `--year` and `--date` ([All activity](OPERATIONS.md#all-activity)) |
@@ -760,7 +769,12 @@ entries as fit, with `truncated`, `incomplete` when entries are missing, and
 the reason `response_limit`. Any other result is shortened, longest text first
 and then entries from the end of the longest lists, and gets a
 `result_truncated` object with the full size (`bytes`), the `limit`, and the
-fields that were `cut`.
+fields that were `cut`. `pull_request_list` and `check_task_list` keep whole
+items from the start of the page instead, and set `next` to the last item they
+kept, so the following page starts right after it and skips nothing. They get
+`result_truncated` too. When not even the first item fits, the call fails with
+`result_limit_too_small`; raise the limit with the
+`--result-limit` option of `owngit mcp`.
 
 Protocol errors use the JSON-RPC codes: `-32700` for a message that is not
 JSON; `-32600` for an invalid request, a message over 1 MiB, or a request whose
