@@ -114,7 +114,8 @@
   <section class="sec">
     <div class="sec__bar">
       <h2>{{bi $lang "tasks.attempts.title"}}</h2>
-      {{if not $p.Unavailable}}<span class="sec__n">{{biCount $lang "item" (len $p.Tasks)}}</span>{{end}}
+      {{/* A count is the whole list only when this page is all of it. */}}
+      {{if and (not $p.Unavailable) $p.Complete}}<span class="sec__n">{{biCount $lang "item" (len $p.Tasks)}}</span>{{end}}
     </div>
 
     {{if $p.Unavailable}}
@@ -142,9 +143,15 @@
       </div>
       {{with $p.MoreURL}}<p><a class="btn" href="{{.}}" rel="next">{{bi $lang "tasks.more"}}</a></p>{{end}}
     {{else}}
+      {{/* An empty page below a task position says only that no older tasks
+           remain. It must not claim the repository has none. */}}
       <div class="empty">
-        <p class="empty__lead">{{bi $lang "tasks.empty"}}</p>
-        <p>{{bi $lang "tasks.empty_help"}}</p>
+        {{if $p.Complete}}
+          <p class="empty__lead">{{bi $lang "tasks.empty"}}</p>
+          <p>{{bi $lang "tasks.empty_help"}}</p>
+        {{else}}
+          <p class="empty__lead">{{bi $lang "tasks.empty_older"}}</p>
+        {{end}}
       </div>
     {{end}}
   </section>

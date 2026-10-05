@@ -72,6 +72,8 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	page.Tasks = app.browserTaskSummaries(request.Context(), views)
+	// A count is the whole list only when this page is all of it.
+	page.Complete = input.before == nil && !more
 	if more {
 		page.MoreURL = taskPageMoreURL(page.ListURL, input.limit, views[len(views)-1].task.Cursor())
 	}

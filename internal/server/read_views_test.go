@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // decodeAPI reads a JSON response into value and returns its status.
@@ -410,6 +411,22 @@ func TestTaskListPagesReadAndContinueOnePage(t *testing.T) {
 	listed := pageTaskTitles(page.body)
 	if page.status != http.StatusOK || len(listed) != defaultTaskPageSize || listed[0] != fmt.Sprintf("Task %02d", count-1) {
 		t.Fatalf("Tasks page status=%d rows=%d first=%q", page.status, len(listed), listed[0])
+	}
+	// A page of a longer list is not the count: only the whole list states
+	// its size.
+	if strings.Contains(page.body, fmt.Sprintf("%d items", defaultTaskPageSize)) {
+		t.Fatalf("Tasks page states one page's size as the list count")
+	}
+	// The largest page is the whole list, so it states the repository's count.
+	wholeList := browserGET(t, client, server.URL+tasksURL("project", "")+"?limit=100")
+	if wholeList.status != http.StatusOK || !strings.Contains(wholeList.body, fmt.Sprintf("%d items", count)) {
+		t.Fatalf("whole Tasks page status=%d, want the repository's count", wholeList.status)
+	}
+	// A continuation below every task, as after those tasks were removed,
+	// says no older tasks remain rather than claiming the repository has none.
+	stale := browserGET(t, client, server.URL+tasksURL("project", "")+"?before="+url.QueryEscape("0:0:00000000000000000000000000000000"))
+	if stale.status != http.StatusOK || !strings.Contains(stale.body, enText(webui.MsgTasksEmptyOlder)) || strings.Contains(stale.body, enText(webui.MsgTasksEmpty)) {
+		t.Fatalf("empty continued Tasks page status=%d, want the older-tasks wording", stale.status)
 	}
 	older := browserGET(t, client, server.URL+taskMoreURL(t, page.body))
 	olderTitles := pageTaskTitles(older.body)

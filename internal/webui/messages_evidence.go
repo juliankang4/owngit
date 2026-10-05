@@ -239,6 +239,7 @@ const (
 	MsgTasksIntro      MessageCode = "tasks.intro"
 	MsgTasksEmpty      MessageCode = "tasks.empty"
 	MsgTasksEmptyHelp  MessageCode = "tasks.empty_help"
+	MsgTasksEmptyOlder MessageCode = "tasks.empty_older"
 	MsgTasksUnavail    MessageCode = "tasks.unavailable"
 	MsgTaskNotFound    MessageCode = "tasks.not_found"
 	MsgTasksBackToList MessageCode = "tasks.back_to_list"
@@ -743,6 +744,7 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Tasks appear here once the check helper reports a run for this repository.",
 		ko: "체크 에이전트가 이 저장소의 실행 결과를 보고하면 여기에 나타납니다.",
 	},
+	MsgTasksEmptyOlder: {en: "No older tasks remain.", ko: "더 이전 작업이 없습니다."},
 	MsgTasksUnavail: {
 		en: "Task records could not be read, so this list is not complete.",
 		ko: "작업 기록을 읽지 못해 목록이 완전하지 않습니다.",

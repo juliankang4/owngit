@@ -294,6 +294,11 @@ type TasksPage struct {
 	// MoreURL opens the next page of an older task list. Empty on the last
 	// page.
 	MoreURL string
+	// Complete is true when Tasks are the whole list: no continuation was
+	// requested and no more tasks exist. Only then does the count name the
+	// repository's total, and an empty list means the repository has no
+	// tasks rather than none below a position.
+	Complete bool
 	// HelperURL opens helper credential management, and ConfiguredChecksURL
 	// the repository's configured-check execution policy. Both are
 	// administrator screens offered to every viewer; the page marks them

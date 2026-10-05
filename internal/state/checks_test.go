@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -1681,6 +1682,32 @@ func TestTaskPageOrdersAndContinuesNewestAttemptFirst(t *testing.T) {
 	noErr(t, err)
 	if more || taskTitles(rest) != "G" {
 		t.Fatalf("last page=%q more=%v", taskTitles(rest), more)
+	}
+	// Tasks created in the same second with no attempt tie on the sequence
+	// and update keys, so only the ID can order them. They follow the last
+	// task that has a registered attempt, and the continuation walks each of
+	// them exactly once.
+	tiedAt := now.Add(40 * time.Minute)
+	tied := make([]Task, 0, 3)
+	for _, title := range []string{"H", "I", "J"} {
+		task, err := store.CreateTask(ctx, "project", title, tiedAt)
+		noErr(t, err)
+		tied = append(tied, task)
+	}
+	sort.Slice(tied, func(left, right int) bool { return tied[left].ID > tied[right].ID })
+	tieBefore := second[0].Cursor()
+	var tieOrder []string
+	for range tied {
+		page, more, err := store.TaskPage(ctx, "project", &tieBefore, 1)
+		noErr(t, err)
+		if !more || len(page) != 1 {
+			t.Fatalf("tie page=%q more=%v", taskTitles(page), more)
+		}
+		tieOrder = append(tieOrder, page[0].Title)
+		tieBefore = page[0].Cursor()
+	}
+	if want := tied[0].Title + "," + tied[1].Title + "," + tied[2].Title; strings.Join(tieOrder, ",") != want {
+		t.Fatalf("tie order=%q, want %q", strings.Join(tieOrder, ","), want)
 	}
 }
 
