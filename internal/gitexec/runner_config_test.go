@@ -25,7 +25,11 @@ func wantCommandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		want = append(want, [2]string{"core.longpaths", "true"})
 	}
-	return append(want, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), hostmem.DefaultPackers(hostmem.Ceiling()))...)
+	want = append(want, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), hostmem.DefaultPackers(hostmem.Ceiling()))...)
+	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), hostmem.DefaultPackers(hostmem.Ceiling())); threshold != "" {
+		want = append(want, [2]string{"core.bigFileThreshold", threshold})
+	}
+	return want
 }
 
 func TestRunnerEnvironmentTurnsOffGitAutomaticMaintenance(t *testing.T) {
