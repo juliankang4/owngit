@@ -527,7 +527,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if settings.Initialized {
 		// Deleted repositories have no rows, so an unfinished deletion never
 		// blocks startup; it is reported and retried at the next start.
-		if err := reportSlowStep(logf, slowStepNotice, "to finish an unfinished deletion in the repository folder "+settings.RepositoryRoot, func() error { return repositories.ReconcileDeletions(ctx) }); err != nil {
+		if err := reportSlowStep(logf, slowStepNotice, "an unfinished deletion in the repository folder "+settings.RepositoryRoot+" to finish", func() error { return repositories.ReconcileDeletions(ctx) }); err != nil {
 			logf("unfinished repository deletion was not completed: %v", err)
 		}
 	}
