@@ -240,6 +240,8 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 
 `add` and `refresh` exit 0 on success, 3 when local refs were kept that differ from the source, 130 when cancelled, and 1 otherwise. Every command takes `--json`.
 
+If another Git operation holds the repository, `import add` or a change to the source, credentials or choices waits for it. When the request runs out of time first, it gets HTTP 409, `another Git operation holds the repository; nothing was changed`, and nothing changes; try again. When the first run of `import add` fails, OwnGit removes the source and credential it saved. Anything that cleanup leaves behind is removed the next time OwnGit starts.
+
 ### Source address and network
 
 The source must use HTTPS. OwnGit refuses some addresses unless you allow them for that source:
@@ -272,7 +274,7 @@ Change limits under Connection and limits, or with `owngit import configure PROJ
 | `response_header_seconds` | 30 seconds | 1 second to 1 hour |
 | `lfs_objects` (objects scanned for LFS) | 200,000 | 1 to 1,000,000 |
 
-The download and verification times must fit in the run time, and the indexing time in the download time.
+The download and verification times must fit in the run time, and the indexing time in the download time. The run time also counts any wait for the repository while another Git operation holds it.
 
 ### How a refresh updates refs
 

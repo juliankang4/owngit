@@ -240,6 +240,8 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 
 `add`와 `refresh`는 성공하면 0, 원본과 다른 로컬 ref를 남겼으면 3, 취소되면 130, 그 밖에는 1로 끝납니다. 모든 명령이 `--json`을 받습니다.
 
+다른 Git 작업이 저장소를 쓰고 있으면 `import add`와 원본, 인증 정보, 설정 변경은 그 작업이 끝나기를 기다립니다. 그 전에 요청 시간이 다 되면 HTTP 409 `another Git operation holds the repository; nothing was changed`를 받고, 아무것도 바뀌지 않습니다. 다시 시도하세요. `import add`의 첫 실행이 실패하면 OwnGit은 저장해 둔 원본과 인증 정보를 지웁니다. 이 정리에서 남은 것은 OwnGit을 다음에 시작할 때 지웁니다.
+
 ### 원본 주소와 네트워크
 
 원본은 HTTPS를 써야 합니다. 다음 주소는 그 원본에 허용해 주어야 연결합니다.
@@ -272,7 +274,7 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 | `response_header_seconds` | 30초 | 1초~1시간 |
 | `lfs_objects`(LFS 검사 객체 수) | 200,000 | 1~1,000,000 |
 
-다운로드 시간과 검증 시간은 실행 시간 안에, 색인 시간은 다운로드 시간 안에 들어가야 합니다.
+다운로드 시간과 검증 시간은 실행 시간 안에, 색인 시간은 다운로드 시간 안에 들어가야 합니다. 다른 Git 작업이 저장소를 쓰는 동안 기다린 시간도 실행 시간에 들어갑니다.
 
 ### 새로고침이 ref를 바꾸는 방식
 

@@ -595,11 +595,15 @@ Each Git request (clone, fetch, push, archive) has these limits. Change them und
 | Extra slots for repositories with no transfer running | 1 | 0 to 32 | `--transfer-extra-slots` |
 | Wait for a free slot | 90 seconds | 5 seconds to 10 minutes | `--transfer-queue` |
 
+A request may also have to wait while another transfer holds the repository, and that wait counts toward the longest transfer time. A push, clone or fetch waits for the repository no longer than the slot wait (`--transfer-queue`), then gets the 503 answer below. If some of your transfers run longer than that wait, raise `--transfer-queue` so that other pushes and fetches wait for them instead of failing.
+
 What a client sees:
 
 - A push over the size limit gets HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`. A clone or fetch over a limit is cut off.
-- A request that finds no free slot within the wait gets HTTP 503, `Git service is busy with other transfers; try again shortly`. Run the command again.
+- A request that does not get a free slot or the repository in time gets HTTP 503, `Git service is busy with other transfers; try again shortly`. When this happens before any data moves, Git shows `remote: Git service is busy with other transfers; try again shortly` and `fatal: unable to access '...': The requested URL returned error: 503`. When it happens at the data transfer, Git shows only `error: RPC failed; HTTP 503`. In both cases, run the command again.
 - OwnGit does not host Git LFS. A repository whose history is larger than the size limit cannot be cloned; keep large binary files out of Git history.
+
+An import can leave a file named `objects/pack/pack-<hash>.keep` in a repository. This happens when another Git operation still holds the repository after the import finishes, or when OwnGit stops during an import; in the first case the log names the file. While the file exists, maintenance does not repack that pack. Remove the file when no import is running.
 
 ### Memory on a small Linux host
 

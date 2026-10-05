@@ -595,11 +595,15 @@ Git 요청(클론, 페치, 푸시, 압축 파일)마다 다음 제한이 걸립�
 | 전송이 없는 저장소용 추가 자리 | 1 | 0 ~ 32 | `--transfer-extra-slots` |
 | 빈 자리를 기다리는 시간 | 90초 | 5초 ~ 10분 | `--transfer-queue` |
 
+다른 전송이 저장소를 쓰고 있으면 요청은 그 저장소가 풀리기를 기다리기도 합니다. 이렇게 기다린 시간도 최대 전송 시간에 들어갑니다. 다만 푸시, 클론, 페치가 저장소를 기다리는 시간은 빈 자리를 기다리는 시간(`--transfer-queue`)을 넘지 않습니다. 그때까지 저장소가 풀리지 않으면 아래의 503 응답을 받습니다. 이 시간보다 오래 걸리는 전송이 있다면 `--transfer-queue`를 늘리세요. 그래야 다른 푸시와 페치가 실패하지 않고 기다립니다.
+
 클라이언트에서는 다음과 같이 보입니다.
 
 - 크기 제한을 넘는 푸시는 HTTP 413을 받습니다. Git은 이를 `fatal: the remote end hung up unexpectedly`로만 보여 줄 수도 있습니다. 제한을 넘는 클론과 페치는 중간에 끊깁니다.
-- 기다리는 시간 안에 빈 자리를 얻지 못한 요청은 HTTP 503 `Git service is busy with other transfers; try again shortly`를 받습니다. 명령을 다시 실행하세요.
+- 기다리는 시간 안에 빈 자리나 저장소를 얻지 못한 요청은 HTTP 503 `Git service is busy with other transfers; try again shortly`를 받습니다. 데이터가 오가기 전에 거부되면 Git은 `remote: Git service is busy with other transfers; try again shortly`와 `fatal: unable to access '...': The requested URL returned error: 503`을 보여 줍니다. 데이터를 주고받는 단계에서 거부되면 `error: RPC failed; HTTP 503`만 보입니다. 어느 쪽이든 명령을 다시 실행하세요.
 - OwnGit은 Git LFS를 제공하지 않습니다. 기록이 크기 제한보다 큰 저장소는 클론할 수 없으니, 큰 바이너리 파일은 Git 기록에 넣지 마세요.
+
+가져오기가 저장소에 `objects/pack/pack-<hash>.keep` 파일을 남길 때가 있습니다. 가져오기가 끝난 뒤에도 다른 Git 작업이 저장소를 계속 쓰고 있었거나, 가져오기 도중 OwnGit이 멈춘 경우입니다. 앞의 경우에는 로그에 그 파일 경로가 남습니다. 이 파일이 있는 동안 유지 관리는 그 팩을 다시 묶지 않습니다. 실행 중인 가져오기가 없을 때 이 파일을 지우세요.
 
 ### 메모리가 작은 Linux 호스트
 
