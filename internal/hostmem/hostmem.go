@@ -146,7 +146,7 @@ const (
 	baseGit = 64 * mib
 	// smallestWindow is the window below which another thread is not worth
 	// splitting the window memory for.
-	smallestWindow = 16 * mib
+	smallestWindow = 10 * mib
 	// smallestPart is the smallest window total and the smallest delta cache.
 	smallestPart = 8 * mib
 	// DefaultTransfers is the number of Git transfers admitted at once
