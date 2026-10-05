@@ -16,6 +16,31 @@ import (
 // client before it reaches the server.
 const MaximumUploadBytes = 2 << 20
 
+// DefaultLeaseRenewDelay and MinimumLeaseRenewDelay bound how long a lease
+// holder waits before extending its claim. A wait longer than the lease itself
+// loses work that is still running, and the minimum one keeps a short lease
+// from renewing in a busy loop.
+const (
+	DefaultLeaseRenewDelay = time.Second
+	MinimumLeaseRenewDelay = 100 * time.Millisecond
+)
+
+// LeaseRenewDelay returns how long to wait, at now, before renewing a lease
+// that expires at expiresAt: a third of the remaining time, capped at the
+// default. With less than three minimum waits left, that third is too small to
+// use and the default would arrive after the lease had ended, so the minimum
+// wait is returned instead. The server still decides whether a renewal arrived
+// in time. A nil expiry means the lease has no known deadline: the default.
+func LeaseRenewDelay(now time.Time, expiresAt *time.Time) time.Duration {
+	if expiresAt == nil {
+		return DefaultLeaseRenewDelay
+	}
+	if candidate := expiresAt.Sub(now) / 3; candidate > MinimumLeaseRenewDelay {
+		return min(candidate, DefaultLeaseRenewDelay)
+	}
+	return MinimumLeaseRenewDelay
+}
+
 // ClipText returns value as valid UTF-8 of at most limit bytes and reports
 // whether text was cut. Each run of invalid bytes becomes one U+FFFD, as with
 // strings.ToValidUTF8, and the cut never splits a character, so a JSON round

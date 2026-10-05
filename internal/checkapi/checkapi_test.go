@@ -5,8 +5,40 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
+
+// The shared renewal cadence must use the small wait when only the small wait
+// is left, and must never pick a wait that reaches past a longer lease.
+func TestLeaseRenewDelayStaysWithinTheLease(t *testing.T) {
+	now := time.Date(2026, 10, 5, 12, 0, 0, 0, time.UTC)
+	expires := func(remaining time.Duration) *time.Time {
+		at := now.Add(remaining)
+		return &at
+	}
+	tests := []struct {
+		name      string
+		expiresAt *time.Time
+		want      time.Duration
+	}{
+		{name: "no deadline", want: DefaultLeaseRenewDelay},
+		{name: "expired", expiresAt: expires(-time.Second), want: MinimumLeaseRenewDelay},
+		{name: "below the floor", expiresAt: expires(200 * time.Millisecond), want: MinimumLeaseRenewDelay},
+		{name: "at the floor", expiresAt: expires(3 * MinimumLeaseRenewDelay), want: MinimumLeaseRenewDelay},
+		{name: "above the floor", expiresAt: expires(900 * time.Millisecond), want: 300 * time.Millisecond},
+		{name: "at the default", expiresAt: expires(3 * DefaultLeaseRenewDelay), want: DefaultLeaseRenewDelay},
+		{name: "above the default", expiresAt: expires(time.Minute), want: DefaultLeaseRenewDelay},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := LeaseRenewDelay(now, test.expiresAt)
+			if got != test.want {
+				t.Fatalf("LeaseRenewDelay with %v left = %s, want %s", test.expiresAt, got, test.want)
+			}
+		})
+	}
+}
 
 func TestClipTextSurvivesJSONRoundTrip(t *testing.T) {
 	tests := []struct {
