@@ -289,7 +289,14 @@ defaults:
 ## Raw check logs
 
 The server keeps the raw log of each check (up to 256 KiB), from jobs and
-from coding tool runs alike, for 30 days. To change that, open Settings, Storage & recovery, Raw check logs, or run:
+from coding tool runs alike, for 30 days. `owngit check-job log` shows this log.
+If a check prints more than the log can hold, the log keeps the beginning and
+the end of the output, with one line between them that says how many bytes
+were left out, so the last lines stay visible. The job page shows at most
+64 KiB of the log, shortened the same way; its line counts what it leaves out
+of the stored log. A check stopped at its output limit has no output after
+that point. To change
+how long logs are kept, open Settings, Storage & recovery, Raw check logs, or run:
 
 ```sh
 owngit settings set --check-logs 90d
