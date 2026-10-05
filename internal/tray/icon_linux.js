@@ -23,7 +23,11 @@
 //   {"type":"error","code":"already_running"|"no_display"|"toolkit","message":TEXT}
 //   {"type":"open"} {"type":"hide"} {"type":"quit"}
 //   {"type":"panel","open":BOOL}
-//   {"type":"notified","id":ID,"message":TEXT}  shown, or why not
+//   {"type":"notified","id":ID,"code":"no_service","message":TEXT}
+//                                     the desktop showed it, or why it did
+//                                     not: code is "no_service" when this
+//                                     desktop has no notification service
+//                                     and message is empty when it showed it
 //   {"type":"notification_clicked","id":ID}
 //   {"type":"notification_setting","setting":NAME,"on":BOOL}
 
@@ -160,7 +164,7 @@ function menuItems() {
     if (!panel)
         return [];
     const labels = panel.labels;
-    return [
+    const items = [
         {id: 1, label: panel.tooltip, enabled: false},
         {id: 2, type: 'separator'},
         {id: 3, label: labels.show_panel, run: () => showPanel()},
@@ -169,6 +173,11 @@ function menuItems() {
         {id: 6, label: labels.hide, run: () => send({type: 'hide'})},
         {id: 7, label: labels.quit, run: () => send({type: 'quit'})},
     ];
+    // The menu says why no notifications appear, as the panel's notification
+    // section does.
+    if (notifications && notifications.unavailable)
+        items.splice(2, 0, {id: 8, label: notifications.unavailable, enabled: false});
+    return items;
 }
 
 function menuProperties(entry) {
@@ -265,9 +274,19 @@ function register(itemName) {
 
 const notifyService = 'org.freedesktop.Notifications';
 const notifyPath = '/org/freedesktop/Notifications';
+// notifyCallTimeout bounds each call to the notification service: the
+// capability question and the notification itself.
+const notifyCallTimeout = 10000;
 let bodyMarkup = null;
 // shownIDs maps the service's notification IDs to owngit's.
 const shownIDs = new Map();
+// sentIDs holds the owngit IDs the desktop was told about, so a request that
+// arrives again is answered as shown instead of showing it twice. sentKept
+// bounds it, as owngit bounds the pages it keeps.
+const sentIDs = new Map();
+const sentKept = 100;
+// askingIDs holds the owngit IDs the desktop has not answered about yet.
+const askingIDs = new Set();
 
 function escapeMarkup(value) {
     return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -279,7 +298,7 @@ function withCapabilities(next) {
         return;
     }
     bus.call(notifyService, notifyPath, notifyService, 'GetCapabilities', null, new GLib.VariantType('(as)'),
-        Gio.DBusCallFlags.NONE, 10000, null, (connection, result) => {
+        Gio.DBusCallFlags.NONE, notifyCallTimeout, null, (connection, result) => {
             try {
                 const [capabilities] = connection.call_finish(result).deepUnpack();
                 bodyMarkup = capabilities.includes('body-markup');
@@ -290,8 +309,49 @@ function withCapabilities(next) {
         });
 }
 
+// notifyOutcome is what a failed Notify call means for the notification it
+// carried:
+//   'sent' is a desktop that did not answer in time (a timeout or a NoReply). It
+//   holds the notification and may show it later, so owngit is never asked to
+//   show it again;
+//   'no_service' is a desktop without a notification service, so nothing can be
+//   shown until one starts and owngit may ask again then;
+//   'failed' is anything else, which owngit asks about again after a wait.
+function notifyOutcome(error) {
+    if (!(error instanceof GLib.Error))
+        return 'failed';
+    if (error.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.TIMED_OUT))
+        return 'sent';
+    switch (Gio.DBusError.get_remote_error(error)) {
+    case 'org.freedesktop.DBus.Error.NoReply':
+    case 'org.freedesktop.DBus.Error.Timeout':
+        return 'sent';
+    case 'org.freedesktop.DBus.Error.ServiceUnknown':
+    case 'org.freedesktop.DBus.Error.NameHasNoOwner':
+        return 'no_service';
+    }
+    return 'failed';
+}
+
+// failureText is why a notification could not be shown. It is never empty,
+// because owngit reads an answer without a reason as a notification the desktop
+// showed, and would not ask again.
+function failureText(error) {
+    return String(error.message || error) || 'the notification was not shown';
+}
+
 function notify(notification) {
     const id = String(notification.id);
+    // A desktop that was told about this notification is not told again: a call
+    // that timed out still holds the notification, and asking again would show
+    // it twice.
+    if (sentIDs.has(id)) {
+        send({type: 'notified', id});
+        return;
+    }
+    if (askingIDs.has(id))
+        return;
+    askingIDs.add(id);
     withCapabilities(() => {
         let body = String(notification.body);
         if (notification.subtitle)
@@ -301,17 +361,46 @@ function notify(notification) {
         const parameters = new GLib.Variant('(susssasa{sv}i)', ['OwnGit', 0, `${icons}/owngit-tile.svg`,
             String(notification.title), body, ['default', String(notification.action)],
             {'urgency': new GLib.Variant('y', 1)}, -1]);
-        bus.call(notifyService, notifyPath, notifyService, 'Notify', parameters, new GLib.VariantType('(u)'),
-            Gio.DBusCallFlags.NONE, 10000, null, (connection, result) => {
-                try {
-                    const [serviceID] = connection.call_finish(result).deepUnpack();
+        try {
+            bus.call(notifyService, notifyPath, notifyService, 'Notify', parameters, new GLib.VariantType('(u)'),
+                Gio.DBusCallFlags.NONE, notifyCallTimeout, null, (connection, result) => {
+                    askingIDs.delete(id);
+                    let serviceID = null;
+                    try {
+                        [serviceID] = connection.call_finish(result).deepUnpack();
+                    } catch (e) {
+                        switch (notifyOutcome(e)) {
+                        case 'sent':
+                            printerr(`The desktop did not answer about the OwnGit notification: ${e.message || e}`);
+                            sent(id);
+                            return;
+                        case 'no_service':
+                            send({type: 'notified', id, code: 'no_service', message: failureText(e)});
+                            return;
+                        default:
+                            send({type: 'notified', id, message: failureText(e)});
+                            return;
+                        }
+                    }
                     shownIDs.set(serviceID, id);
-                    send({type: 'notified', id});
-                } catch (e) {
-                    send({type: 'notified', id, message: e.message || String(e)});
-                }
-            });
+                    sent(id);
+                });
+        } catch (e) {
+            // The call was not made at all, which owngit retries after a wait.
+            askingIDs.delete(id);
+            send({type: 'notified', id, message: failureText(e)});
+        }
     });
+}
+
+// sent records that the desktop was told about a notification, keeps the last
+// sentKept of them and answers owngit that it was shown.
+function sent(id) {
+    sentIDs.delete(id);
+    sentIDs.set(id, true);
+    if (sentIDs.size > sentKept)
+        sentIDs.delete(sentIDs.keys().next().value);
+    send({type: 'notified', id});
 }
 
 function watchNotifications() {
@@ -440,6 +529,8 @@ function panelContent() {
         box.append(text(notifications.heading, ['heading']));
         if (notifications.error)
             box.append(text(notifications.error, ['error']));
+        if (notifications.unavailable)
+            box.append(text(notifications.unavailable, ['dim-label']));
         const list = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 2});
         for (const setting of notifications.settings) {
             const check = new Gtk.CheckButton({label: setting.label, active: setting.on,

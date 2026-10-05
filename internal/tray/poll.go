@@ -28,6 +28,10 @@ type reading struct {
 	// be read (as before the server's first start).
 	show   bool
 	report Report
+	// unavailable is the sentence that says this desktop cannot show
+	// notifications, or "" while it shows them. The poller reads it where it
+	// asked the desktop, so the notifier's state needs no sharing.
+	unavailable string
 }
 
 // poller reads the owner's hidden choice and, while the icon may show, the
@@ -54,7 +58,7 @@ func newPoller(options Options, lang webui.Lang) *poller {
 // poll hands a reading to deliver after each read until ctx ends.
 func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 	for {
-		next := reading{show: p.mayShow()}
+		next := reading{show: p.mayShow(), unavailable: p.notifier.unavailable(p.lang)}
 		wait := pollHidden
 		if next.show {
 			next.report = p.client.Read(ctx, string(p.lang))
@@ -82,7 +86,7 @@ func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 		deliver(next)
 		switch {
 		case next.show && next.report.Status != nil && p.notifier.show != nil:
-			p.notifier.notify(ctx)
+			p.notifier.notify(ctx, time.Now())
 		case !next.show:
 			p.forgetCursor()
 		}

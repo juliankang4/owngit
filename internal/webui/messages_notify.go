@@ -27,6 +27,9 @@ const (
 	MsgNotifyBackupsFailed    MessageCode = "notify.backups_failed"
 	MsgNotifyUpdate           MessageCode = "notify.update"
 	MsgNotifyOpen             MessageCode = "notify.open"
+	MsgNotifyMany             MessageCode = "notify.many"
+	MsgNotifyManyHint         MessageCode = "notify.many_hint"
+	MsgNotifyUnavailable      MessageCode = "notify.unavailable"
 
 	// The notification settings of the icon's panel.
 	MsgNotifySettings       MessageCode = "notify.settings"
@@ -67,7 +70,13 @@ var notifyCatalog = map[MessageCode]message{
 	MsgNotifyBackupsFailed:    {en: "%d backups did not finish", ko: "끝나지 않은 백업 %d건"},
 	MsgNotifyUpdate:           {en: "OwnGit %s is available", ko: "OwnGit %s 버전이 나왔습니다"},
 	MsgNotifyOpen:             {en: "Open", ko: "열기"},
-	MsgNotifySettings:         {en: "Notifications", ko: "알림"},
+	MsgNotifyMany:             {en: "%d new OwnGit notifications", ko: "OwnGit 새 알림 %d개"},
+	MsgNotifyManyHint:         {en: "Open OwnGit to see them.", ko: "OwnGit을 열어 확인하세요."},
+	MsgNotifyUnavailable: {
+		en: "This desktop has no notification service, so OwnGit cannot show notifications. Results still appear on the dashboard.",
+		ko: "이 데스크톱에는 알림 서비스가 없어 OwnGit 알림을 표시할 수 없습니다. 결과는 대시보드에서 계속 볼 수 있습니다.",
+	},
+	MsgNotifySettings: {en: "Notifications", ko: "알림"},
 	MsgNotifySettingsHint: {
 		en: "The notification settings of this computer apply too.",
 		ko: "이 컴퓨터의 알림 설정도 함께 적용됩니다.",

@@ -53,6 +53,14 @@ const (
 	idEdit    = 100
 )
 
+// Events of a notification area balloon (shellapi.h). The balloon is gone when
+// Windows reports it dismissed, timed out or replaced, and the page kept for it
+// is then no longer the one a click belongs to.
+const (
+	ninBalloonHide    = 0x0403
+	ninBalloonTimeout = 0x0404
+)
+
 // palette holds the panel's colors (COLORREF).
 type palette struct {
 	bg, fg, fg2, line, field, button, buttonLine, buttonPressed uint32
@@ -92,8 +100,9 @@ type app struct {
 	// address; openTarget is the proven address, or "".
 	opening    bool
 	openTarget string
-	// clicked is the page a click on a notification opens. Windows says
-	// only that one of the icon's notifications was clicked, not which.
+	// clicked holds the balloons the icon handed to Windows and the pages a
+	// click on them opens. Windows says only that one of the icon's balloons
+	// was clicked, not which one.
 	clicked clickPages
 }
 
@@ -138,7 +147,7 @@ func Run(options Options) error {
 	call(procSetProcessDpiAwarenessContext, perMonitorAwareV2)
 
 	a := &app{poller: newPoller(options, userLanguage()), brushes: map[uint32]uintptr{}, texts: map[uintptr]string{}}
-	a.notifier.show = a.showNotification
+	a.notifier.show = a.showNotifications
 	current = a
 	if err := a.createWindow(); err != nil {
 		return err
@@ -324,9 +333,11 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case wmContextMenu:
 			a.togglePanel()
 		case ninBalloonClick:
-			if a.clicked.page != "" {
-				a.openPage(a.clicked.page)
+			if page := a.clicked.clicked(); page != "" {
+				a.openPage(page)
 			}
+		case ninBalloonHide, ninBalloonTimeout:
+			a.clicked.gone()
 		}
 		return 0
 	case wmCommand:
@@ -588,12 +599,25 @@ func (a *app) notificationMenu() {
 	}
 }
 
-// showNotification shows a notification from the icon's window thread,
-// which owns the icon, and waits until Windows took it.
-func (a *app) showNotification(notification server.TrayNotification) error {
-	shown := call(procSendMessage, a.hwnd, wmNotify, 0, uintptr(unsafe.Pointer(&notification)))
+// showNotifications shows the notifications of one read, which Windows shows
+// as notification area balloons: a balloon replaces or queues behind the one
+// on screen, so the icon hands over one balloon and the next reads show the
+// rest. A read of more than summaryLimit notifications becomes one balloon
+// that counts them, so a backlog is not trickled out balloon by balloon.
+func (a *app) showNotifications(notifications []server.TrayNotification) (int, error) {
+	balloon, taken := balloonFor(notifications, a.lang)
+	if err := a.showBalloon(balloon); err != nil {
+		return 0, err
+	}
+	return taken, nil
+}
+
+// showBalloon shows a notification from the icon's window thread, which owns
+// the icon, and waits until Windows took it.
+func (a *app) showBalloon(notification server.TrayNotification) error {
+	taken := call(procSendMessage, a.hwnd, wmNotify, 0, uintptr(unsafe.Pointer(&notification)))
 	runtime.KeepAlive(&notification)
-	if shown == 0 {
+	if taken == 0 {
 		return errors.New("Windows did not take the notification")
 	}
 	return nil
@@ -611,14 +635,11 @@ func (a *app) notify(notification *server.TrayNotification) bool {
 	// on it shows nothing, and it does not keep the notification in the
 	// notification center.
 	data.flags = nifInfo
-	body := notification.Body
-	if notification.Subtitle != "" {
-		body = notification.Subtitle + "\n" + body
-	}
-	title, _ := windows.UTF16FromString(strings.ReplaceAll(notification.Title, "\x00", ""))
-	text, _ := windows.UTF16FromString(strings.ReplaceAll(body, "\x00", ""))
-	copy(data.infoTitle[:len(data.infoTitle)-1], title)
-	copy(data.info[:len(data.info)-1], text)
+	title, body := balloonText(*notification)
+	title16, _ := windows.UTF16FromString(title)
+	body16, _ := windows.UTF16FromString(body)
+	copy(data.infoTitle[:len(data.infoTitle)-1], title16)
+	copy(data.info[:len(data.info)-1], body16)
 	if call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) == 0 {
 		return false
 	}

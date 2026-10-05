@@ -125,8 +125,30 @@ type notifyRequest struct {
 	shown        chan error
 }
 
-// notifyTimeout bounds the wait for the desktop to show a notification.
-const notifyTimeout = 15 * time.Second
+// notifyTimeout bounds the wait for the desktop to answer about a
+// notification. It is longer than the panel program's own calls (the
+// capability question and the notification itself) take together, so a slow
+// desktop is read as slow instead of as a failure.
+const notifyTimeout = 30 * time.Second
+
+// codeNoNotificationService is what the panel program answers when this
+// desktop has no notification service, so nothing can be shown until one
+// starts.
+const codeNoNotificationService = "no_service"
+
+// notifyFailure is why the panel program did not show a notification, or nil
+// when the desktop showed it. A desktop without a notification service is told
+// apart from the other failures, so the panel can say so.
+func notifyFailure(message panelMessage) error {
+	switch {
+	case message.Message == "":
+		return nil
+	case message.Code == codeNoNotificationService:
+		return fmt.Errorf("%w: %s", errNoNotificationService, message.Message)
+	default:
+		return fmt.Errorf("the desktop did not show the notification: %s", message.Message)
+	}
+}
 
 // pagesKept bounds the pages of shown notifications a click can open.
 const pagesKept = 100
@@ -163,21 +185,13 @@ func Run(options Options) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	requests := make(chan notifyRequest)
-	icon.notifier.show = func(notification server.TrayNotification) error {
-		request := notifyRequest{notification: notification, shown: make(chan error, 1)}
-		select {
-		case requests <- request:
-		case <-ctx.Done():
-			return ctx.Err()
+	icon.notifier.show = func(notifications []server.TrayNotification) (int, error) {
+		for shown, notification := range notifications {
+			if err := icon.askDesktop(ctx, requests, notification); err != nil {
+				return shown, err
+			}
 		}
-		select {
-		case err := <-request.shown:
-			return err
-		case <-time.After(notifyTimeout):
-			return errors.New("the desktop did not show the notification in time")
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		return len(notifications), nil
 	}
 	// pending are the notifications the panel program was asked to show;
 	// pages are the pages of shown ones, in the order they were shown.
@@ -225,7 +239,7 @@ func Run(options Options) error {
 					return err
 				}
 			}
-			current.send(icon.stateMessage(next.report, false))
+			current.send(icon.stateMessage(next.report, next.unavailable, false))
 		case message, ok := <-messages:
 			if !ok {
 				err := <-current.ended
@@ -236,11 +250,7 @@ func Run(options Options) error {
 			case "notified":
 				if shown, found := pending[message.ID]; found {
 					delete(pending, message.ID)
-					if message.Message != "" {
-						shown <- fmt.Errorf("the desktop did not show the notification: %s", message.Message)
-						continue
-					}
-					shown <- nil
+					shown <- notifyFailure(message)
 				}
 			case "notification_clicked":
 				if page, found := pages[message.ID]; found && !opening {
@@ -251,7 +261,7 @@ func Run(options Options) error {
 				if err := setNotification(icon.stateDir, message.Setting, message.On); err != nil {
 					current.send(panelMessage{Type: "notice", Text: fmt.Sprintf(webui.Text(icon.lang, webui.MsgNotifySettingsFailed), err)})
 				}
-				current.send(icon.stateMessage(last.report, false))
+				current.send(icon.stateMessage(last.report, last.unavailable, false))
 			case "open":
 				if !opening {
 					opening = true
@@ -301,7 +311,7 @@ func Run(options Options) error {
 			case errors.Is(err, errNotProven):
 				// Show that at once, as the next reading will, which is
 				// asked for now.
-				current.send(icon.stateMessage(Report{Condition: Unavailable}, true))
+				current.send(icon.stateMessage(Report{Condition: Unavailable}, last.unavailable, true))
 			default:
 				current.send(panelMessage{Type: "notice", Text: fmt.Sprintf(webui.Text(icon.lang, webui.MsgTrayOpenFailed), err)})
 			}
@@ -310,11 +320,33 @@ func Run(options Options) error {
 	}
 }
 
-// stateMessage tells the panel program what to show for report, and to
-// open the panel when open is set.
-func (icon *linuxIcon) stateMessage(report Report, open bool) panelMessage {
+// askDesktop asks the panel program to show one notification and waits until
+// the desktop answered. The answer says whether the desktop showed it, and why
+// not when it did not.
+func (icon *linuxIcon) askDesktop(ctx context.Context, requests chan notifyRequest, notification server.TrayNotification) error {
+	request := notifyRequest{notification: notification, shown: make(chan error, 1)}
+	select {
+	case requests <- request:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case err := <-request.shown:
+		return err
+	case <-time.After(notifyTimeout):
+		return errors.New("the desktop did not answer about the notification in time")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// stateMessage tells the panel program what to show for report, with
+// unavailable saying that this desktop cannot show notifications, and to open
+// the panel when open is set.
+func (icon *linuxIcon) stateMessage(report Report, unavailable string, open bool) panelMessage {
 	panel := NewPanel(report, icon.lang, time.Now())
 	notifications := readNotificationPanel(icon.stateDir, icon.lang)
+	notifications.Unavailable = unavailable
 	name := conditionNames[report.Condition]
 	return panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel, Notifications: &notifications, Open: open}
 }
