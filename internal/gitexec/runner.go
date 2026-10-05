@@ -194,6 +194,12 @@ func readsTextOutput(name string) bool {
 	return false
 }
 
+// ReadBound is the size above which reading one object into memory is not
+// safe for this computer, or 0 when its memory is unknown.
+func (r *Runner) ReadBound() int64 {
+	return int64(hostmem.PartBound(hostmem.Ceiling(), r.packingTransfers()))
+}
+
 // SetTransfers tells the runner how many requests that build a pack the
 // server admits at once, so the packing bounds of later commands share the
 // memory among them.

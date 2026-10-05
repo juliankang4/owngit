@@ -839,9 +839,11 @@ func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit 
 	if limit <= 0 {
 		limit = 2 << 20
 	}
-	// A file known to be larger than the limit is not read: Git would rebuild
-	// a large stored delta in memory before the output limit could stop it.
-	if entry.Size > limit {
+	// A file known to be larger than one Git process may use here is not
+	// read: Git would rebuild a large stored delta in memory before the
+	// output limit could stop it. With an unknown memory ceiling nothing is
+	// refused this way.
+	if bound := m.Git.ReadBound(); bound > 0 && entry.Size > bound {
 		return Blob{Path: entry.Path, OID: entry.OID, Truncated: true}, nil
 	}
 	// A whole file fits in the cache only when its listed size does; a

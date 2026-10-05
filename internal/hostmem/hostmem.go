@@ -260,8 +260,17 @@ func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
 // BigFileThreshold returns the core.bigFileThreshold for a Git process that
 // does not read text output, or "" for Git's default: the ceiling is unknown.
 func BigFileThreshold(ceiling uint64, packers int) string {
-	if ceiling == 0 {
-		return ""
+	if bound := PartBound(ceiling, packers); bound > 0 {
+		return strconv.FormatUint(bound, 10)
 	}
-	return strconv.FormatUint(min(part(ceiling, packers), 512*mib), 10)
+	return ""
+}
+
+// PartBound is the memory part of one Git process (also the large-file
+// threshold), or 0 when the ceiling is unknown.
+func PartBound(ceiling uint64, packers int) uint64 {
+	if ceiling == 0 {
+		return 0
+	}
+	return min(part(ceiling, packers), 512*mib)
 }

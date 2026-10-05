@@ -242,12 +242,27 @@ func TestRestoreSourceLookupFailureIsNotInvalid(t *testing.T) {
 	}
 }
 
-// A file whose listed size is above the limit is refused as too large without
-// running Git, which would rebuild a large stored delta in memory.
-func TestBlobAboveTheLimitIsRefusedWithoutRunningGit(t *testing.T) {
+// A file above what one Git process may use is refused as too large without
+// running Git, which would rebuild a large stored delta in memory; below that
+// bound, or with an unknown memory ceiling, the read is as before.
+func TestBlobAboveTheMemoryBoundIsRefusedWithoutRunningGit(t *testing.T) {
 	manager := &Manager{Git: &gitexec.Runner{GitPath: "/nonexistent/git-must-not-run"}}
-	blob, err := manager.BlobAt(context.Background(), "x", TreeEntry{Path: "big", Type: "blob", OID: strings.Repeat("a", 40), Size: 5 << 20}, 1<<20)
+	bound := manager.Git.ReadBound()
+	entry := TreeEntry{Path: "big", Type: "blob", OID: strings.Repeat("a", 40), Size: bound + 1}
+	if bound == 0 {
+		// Unknown ceiling: the pre-check does not apply, so the read reaches Git.
+		entry.Size = 1 << 30
+		if _, err := manager.BlobAt(context.Background(), "x", entry, 1<<20); err == nil {
+			t.Fatal("an unknown memory ceiling refused a file without reading it")
+		}
+		return
+	}
+	blob, err := manager.BlobAt(context.Background(), "x", entry, 1<<20)
 	if err != nil || !blob.Truncated || len(blob.Content) != 0 {
 		t.Fatalf("blob = %+v, err = %v; want truncated, empty, no error", blob, err)
+	}
+	entry.Size = bound
+	if _, err := manager.BlobAt(context.Background(), "x", entry, 1<<20); err == nil {
+		t.Fatal("a file within the bound was refused without reading it")
 	}
 }
