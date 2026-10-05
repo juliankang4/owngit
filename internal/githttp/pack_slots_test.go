@@ -3,6 +3,10 @@ package githttp
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -67,5 +71,33 @@ func TestNoPackSlotsLeavesTransferSlotsAlone(t *testing.T) {
 	}
 	if _, err := slots.acquirePacking(ctx, "a", limits); !errors.Is(err, errBusy) {
 		t.Fatalf("fifth clone of one repository: %v, want busy", err)
+	}
+}
+
+// A protocol version 2 ref listing is a POST to the upload-pack service but
+// builds no pack, so it does not use a pack slot; a fetch does, and the body
+// still reaches the backend whole.
+func TestBuildsPackTellsAFetchFromARefListing(t *testing.T) {
+	tests := []struct {
+		name, method, body string
+		want               bool
+	}{
+		{"version 2 ref listing", http.MethodPost, "0014command=ls-refs\n0001peel\n0000", false},
+		{"version 2 fetch", http.MethodPost, "0012command=fetch\n0001done\n0000", true},
+		{"version 0 request", http.MethodPost, "0032want 0123456789012345678901234567890123456789\n0000", true},
+		{"ref advertisement", http.MethodGet, "", false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest(test.method, "/git/a.git/git-upload-pack", strings.NewReader(test.body))
+			if got := buildsPack(request, route{service: "git-upload-pack"}); got != test.want {
+				t.Errorf("buildsPack = %v, want %v", got, test.want)
+			}
+			rest, err := io.ReadAll(request.Body)
+			noErr(t, err, "read the body")
+			if string(rest) != test.body {
+				t.Errorf("body after the check = %q, want %q", rest, test.body)
+			}
+		})
 	}
 }

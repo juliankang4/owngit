@@ -1,6 +1,7 @@
 package githttp
 
 import (
+	"bytes"
 	"bufio"
 	"compress/gzip"
 	"context"
@@ -304,7 +305,7 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	h.operationMu.Unlock()
 	defer h.operations.Done()
 	acquire := h.slots.acquire
-	if route.service == "git-upload-pack" && request.Method == http.MethodPost {
+	if buildsPack(request, route) {
 		acquire = h.slots.acquirePacking
 	}
 	release, err := acquire(request.Context(), route.repositoryID, limits)
@@ -808,6 +809,27 @@ func requestKind(route route, method string) string {
 		kind += " ref advertisement"
 	}
 	return kind
+}
+
+// buildsPack reports whether the request makes Git build a pack: a fetch
+// or clone, not the ref listing that protocol version 2 sends as a POST
+// first. It looks at the first 20 bytes of an uncompressed body (Git
+// compresses only a large fetch request) and leaves the body to be read as
+// before.
+func buildsPack(request *http.Request, route route) bool {
+	if route.service != "git-upload-pack" || request.Method != http.MethodPost {
+		return false
+	}
+	if request.Header.Get("Content-Encoding") != "" {
+		return true
+	}
+	head := make([]byte, 20)
+	n, _ := io.ReadFull(request.Body, head)
+	request.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(head[:n]), request.Body), request.Body}
+	return !bytes.HasPrefix(head[:n], []byte("0014command=ls-refs\n"))
 }
 
 func (h *Handler) Active() int64 { return h.active.Load() }
