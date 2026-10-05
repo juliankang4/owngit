@@ -202,10 +202,11 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 			}
 			continue
 		}
-		if result := s.removalResult(run.ID); result != nil {
+		if result := s.removalResult(run.ID); result != nil && run.Status != state.BackupRunning {
 			// A run that removes its older backups holds the one slot, so it
 			// stands in as the running one while it does; its record is
-			// saved, so it counts for the last runs as well.
+			// saved, so it counts for the last runs as well. Until that
+			// record is saved, the stored run shows as it is: running.
 			if status.Running == nil {
 				status.Running = ViewRun(*result)
 			}
@@ -289,7 +290,7 @@ func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	for _, run := range runs {
 		if result := s.pendingResult(run.ID); result != nil {
 			run = *result
-		} else if result := s.removalResult(run.ID); result != nil {
+		} else if result := s.removalResult(run.ID); result != nil && run.Status != state.BackupRunning {
 			run = *result
 		}
 		views = append(views, *ViewRun(run))

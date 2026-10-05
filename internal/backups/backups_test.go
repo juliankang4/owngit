@@ -904,6 +904,35 @@ func TestTheRemovalSlotCountsEveryHolder(t *testing.T) {
 	f.service.work.Wait()
 }
 
+// A run takes the one slot before its final record is written. Until that
+// record is saved, the stored run is still running: both views show it as
+// it is stored, never as a last run without a finish time, and the summary
+// general access reads still answers.
+func TestARunHoldingTheSlotBeforeItsRecordIsSavedStaysRunning(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.configure(t, ScheduleChange{})
+	run := state.BackupRun{ID: fmt.Sprintf("%032x", 7), Kind: state.BackupRunManual, Status: state.BackupRunning, Destination: f.destination,
+		BackupName: "owngit-backup-x", Verification: state.BackupVerifyNotRun, StartedAt: f.clock.Now()}
+	noErr(t, f.store.StartBackupRun(ctx, run))
+	finished := run
+	finished.Status, finished.FinishedAt = state.BackupSucceeded, f.clock.Now()
+	f.service.holdRemoval(&finished)
+	defer f.service.dropRemoval(&finished)
+	status, err := f.service.Status(ctx)
+	noErr(t, err)
+	if status.LastRun != nil || status.Running == nil || status.Running.ID != run.ID || strings.Contains(status.Running.Message, "removing") {
+		t.Fatalf("status before the record is saved: %+v", status)
+	}
+	if summary := Summarize(status); summary.LastRun != nil {
+		t.Fatalf("summary before the record is saved: %+v", summary)
+	}
+	if views, err := f.service.Runs(ctx); err != nil || len(views) != 1 || views[0].Status != state.BackupRunning || views[0].FinishedAt != nil ||
+		strings.Contains(views[0].Message, "removing") {
+		t.Fatalf("runs before the record is saved: %+v, %v", views, err)
+	}
+}
+
 // What removing older backups could not do keeps its place in a recorded
 // run's message, also when the run's own message fills the bytes a record
 // holds.
