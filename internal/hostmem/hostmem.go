@@ -219,7 +219,7 @@ func LimitTransfers(ceiling uint64, perRepository, extra int) (int, int) {
 		// Keep one extra slot when the owner saved one, so a single busy
 		// repository cannot block all the others.
 		extra = min(extra, 1, limit-1)
-		perRepository = limit - extra
+		perRepository = min(perRepository, limit-extra)
 	}
 	return perRepository, extra
 }
