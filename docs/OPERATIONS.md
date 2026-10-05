@@ -383,6 +383,11 @@ owngit tray notifications only_others on
 
 `only_others` hides pushes, pull requests and imports that came from this computer. Other bars and scripts can read the panel with `owngit tray read --json` and open the dashboard with `owngit tray open --json`.
 
+Notifications are a convenience. The dashboard keeps every push, check and backup result, whether or not a notification appeared. Clicking a notification opens the page it names.
+
+- Windows: notifications that arrive together appear one after another, about 10 seconds apart (5 seconds while the panel is open). When more than three arrive at once, one notification says how many there are, for example "4 new OwnGit notifications", and clicking it opens the dashboard. A click after a notification has left the screen opens nothing.
+- Linux: when the desktop has no notification service, the Notifications section of the panel and the icon menu say so. OwnGit keeps trying, waiting longer each time up to five minutes, and writes the reason to its log once until notifications work again. When a service starts, the waiting notifications appear, each one once.
+
 ## Reaching the server from another device
 
 OwnGit serves plain HTTP. Choose one way to reach it from other devices:
