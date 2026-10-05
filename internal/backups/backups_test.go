@@ -700,6 +700,29 @@ func TestRemovingAnOlderBackupWaitsForTheNewRecord(t *testing.T) {
 	})
 }
 
+// A stop that finds a result waiting for the state store makes one last
+// attempt to record it, so a state store that takes writes again just as
+// OwnGit stops does not leave a finished backup recorded as one that never
+// ended.
+func TestStoppingRecordsAWaitingResultOnceMore(t *testing.T) {
+	f := newFixture(t)
+	off, keep := false, 1
+	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
+	ctx := context.Background()
+	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER refuse_backup_record BEFORE UPDATE ON backup_runs BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	run, err := f.service.StartNow()
+	noErr(t, err)
+	waitPending(t, f.service, run.ID)
+	// The state store takes writes again, and OwnGit stops before another
+	// try is due.
+	noErr(t, f.store.Exec(ctx, `DROP TRIGGER refuse_backup_record`))
+	noErr(t, f.service.Stop(ctx))
+	settled := f.run(t, run.ID)
+	if settled.Status != state.BackupSucceeded || settled.BackupName != run.BackupName || settled.ManifestSHA256 == "" || settled.FinishedAt.IsZero() {
+		t.Fatalf("the result a stop recorded: %+v", settled)
+	}
+}
+
 // Status and its summary come from OwnGit's records alone, so a backup
 // folder that is gone, or would hang, does not hold them up.
 func TestStatusReadsNoBackupFolder(t *testing.T) {
