@@ -66,11 +66,17 @@
   {{template "grpNotes" dict "Lang" $lang "Notices" $rn "Focus" $rfocus}}
   <dl class="kv">
     <div><dt>{{bi $lang "backup.scheduled"}}</dt><dd>{{if not $b.Configured}}{{bi $lang "backup.state_not_configured"}}{{else if $b.Scheduled}}{{bi $lang "backup.state_on"}}{{else}}{{bi $lang "backup.state_off"}}{{end}}</dd></div>
-    <div><dt>{{bi $lang "backup.running_now"}}</dt><dd>{{with $run := $b.Running}}{{biWhen $lang "backup.running_since" $run.StartedAt}}{{with $run.Message}} <span class="bkmsg{{if not $run.MessageEN}} mono{{end}}" dir="auto">{{if $run.MessageEN}}{{biText $lang $run.MessageEN $run.MessageKO}}{{else}}{{.}}{{end}}</span>{{end}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
+    <div><dt>{{bi $lang "backup.running_now"}}</dt><dd>{{with $b.Running}}{{biWhen $lang "backup.running_since" .StartedAt}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
     <div><dt>{{bi $lang "backup.last_run"}}</dt><dd>{{with $b.LastRun}}{{template "backupWhat" dict "Lang" $lang "Run" .}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
     <div><dt>{{bi $lang "backup.last_verified"}}</dt><dd>{{with $b.LastVerified}}{{biText $lang (dateTime "en" .FinishedAt) (dateTime "ko" .FinishedAt)}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
     <div><dt>{{bi $lang "backup.next_run"}}</dt><dd>{{if $b.NextRunNow}}{{bi $lang "backup.next_run_soon"}}{{else if not $b.NextRun.IsZero}}{{biText $lang (dateTime "en" $b.NextRun) (dateTime "ko" $b.NextRun)}}{{else}}{{bi $lang "backup.none"}}{{end}}</dd></div>
   </dl>
+  {{/* What the running backup itself says, on its own line like a check or
+       an upload result: the message of a finished backup whose record the
+       state store has not saved yet, or an alias notice. It is prose, so
+       it is not monospaced, and it wraps as text, not inside the narrow
+       definition cell. */}}
+  {{with $run := $b.Running}}{{with $run.Message}}<p class="bkmsg" dir="auto">{{if $run.MessageEN}}{{biText $lang $run.MessageEN $run.MessageKO}}{{else}}{{.}}{{end}}</p>{{end}}{{end}}
   {{with $b.RestoreLimit}}<p class="wn">{{icon "warning"}}<span>{{biF $lang "backup.restore_limit" .}}</span></p>{{end}}
   {{with $b.Check}}
     <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.check_title" .Name}}: {{backupWord $lang "check" .Status}}</span>{{with .Message}} <span class="mono bkmsg" dir="auto">{{.}}</span>{{end}}</p>
