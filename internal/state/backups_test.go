@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -66,5 +67,64 @@ func TestBackupRunsInTheOrderTheyStarted(t *testing.T) {
 	noErr(t, err)
 	if len(runs) != 2 || runs[0].ID != strings.Repeat("0", 32) || runs[1].BackupName != "" || runs[0].BackupName == "" {
 		t.Fatalf("runs: %+v", runs)
+	}
+}
+
+// Every recorded outcome keeps the history bounded: the newest records
+// stay, whether their runs succeeded or failed, and the oldest go, except
+// the newest scheduled run, whose start decides when the next scheduled
+// backup is due, and the record of a backup OwnGit still keeps.
+func TestRecordedBackupRunsKeepTheNewestRecords(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, t.TempDir())
+	noErr(t, err)
+	defer store.Close()
+	start := time.Unix(1800000000, 0)
+	at := func(index int, kind string) BackupRun {
+		return BackupRun{ID: fmt.Sprintf("%032x", index), Kind: kind, Destination: "/backups", StartedAt: start.Add(time.Duration(index) * time.Second)}
+	}
+	finish := func(run BackupRun) BackupRun {
+		noErr(t, store.StartBackupRun(ctx, run))
+		run.Status, run.Verification, run.FinishedAt = BackupFailed, BackupVerifyNotRun, run.StartedAt
+		noErr(t, store.FinishBackupRun(ctx, run))
+		return run
+	}
+	// The oldest records: a scheduled run whose start decides when the next
+	// scheduled backup is due, and a run whose backup is still in its
+	// folder.
+	scheduled := finish(at(1, BackupRunScheduled))
+	kept := at(2, BackupRunManual)
+	kept.BackupName, kept.ManifestSHA256 = "owngit-backup-kept", strings.Repeat("a", 64)
+	kept = finish(kept)
+	for index := 3; index <= 107; index++ {
+		finish(at(index, BackupRunManual))
+	}
+	runs, err := store.BackupRuns(ctx)
+	noErr(t, err)
+	failures := 0
+	present := map[string]bool{}
+	for _, run := range runs {
+		present[run.ID] = true
+		if run.Kind == BackupRunManual && run.Status == BackupFailed && run.BackupName == "" {
+			failures++
+		}
+	}
+	if failures != 100 {
+		t.Fatalf("%d failures of %d records kept", failures, len(runs))
+	}
+	for _, id := range []string{fmt.Sprintf("%032x", 107), kept.ID, scheduled.ID} {
+		if !present[id] {
+			t.Fatalf("record %s was removed: %+v", id, runs)
+		}
+	}
+	for index := 3; index <= 7; index++ {
+		if present[fmt.Sprintf("%032x", index)] {
+			t.Fatalf("the old failure %d was kept: %+v", index, runs)
+		}
+	}
+	// The latest 100 records, the latest scheduled backup and the backup
+	// OwnGit still keeps, as the run history documents them.
+	if len(runs) != 102 {
+		t.Fatalf("%d records kept", len(runs))
 	}
 }

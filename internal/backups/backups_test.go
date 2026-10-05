@@ -513,33 +513,81 @@ func TestRetentionReportsAnUnreadableBackup(t *testing.T) {
 	}
 }
 
-// Forgetting old run records keeps the newest scheduled run, so its slot
-// is not run again.
-func TestForgettingRunsKeepsTheScheduledSlot(t *testing.T) {
+// A backup that finished while the state store refused its final record is
+// not shown as one that is still copying: the run keeps the result, records
+// it when the state store takes writes again, and the backup it wrote stays
+// OwnGit's, so the next backup removes it like any other.
+func TestFinishedBackupRecordsItsResultWhenTheStateStoreRefusesIt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits a second for the retried final record")
+	}
 	f := newFixture(t)
-	f.configure(t, ScheduleChange{})
+	off, keep := false, 1
+	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
 	ctx := context.Background()
-	finish := func(run state.BackupRun) state.BackupRun {
-		noErr(t, f.store.StartBackupRun(ctx, run))
-		run.Status, run.Verification, run.BackupName, run.FinishedAt = state.BackupFailed, state.BackupVerifyNotRun, "", run.StartedAt
-		noErr(t, f.store.FinishBackupRun(ctx, run))
-		return run
+	// A state store that refuses the final record, as a full or read-only
+	// one does, made through the seam for breaking one write on purpose.
+	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER refuse_backup_record BEFORE UPDATE ON backup_runs BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
+	refused := make(chan string, 8)
+	f.service.Logf = func(format string, arguments ...any) {
+		line := fmt.Sprintf(format, arguments...)
+		if strings.Contains(line, "could not be recorded") {
+			select {
+			case refused <- line:
+			default:
+			}
+		}
 	}
-	scheduled := finish(state.BackupRun{ID: fmt.Sprintf("%032x", 1), Kind: state.BackupRunScheduled, Destination: f.destination, StartedAt: f.clock.Now()})
-	var last state.BackupRun
-	for index := 2; index <= runsKept+2; index++ {
-		last = finish(state.BackupRun{ID: fmt.Sprintf("%032x", index), Kind: state.BackupRunManual, Destination: f.destination, StartedAt: f.clock.Now()})
+	run, err := f.service.StartNow()
+	noErr(t, err)
+	select {
+	case <-refused:
+	case <-time.After(time.Minute):
+		t.Fatal("the state store was not asked to record the result")
 	}
-	noErr(t, f.service.forgetOldRuns(ctx, last))
+	// The run has finished, its result waits, and a second backup waits for
+	// the run to settle instead of running beside it.
+	status, err := f.service.Status(ctx)
+	noErr(t, err)
+	if status.Running != nil || status.LastRun == nil || status.LastRun.ID != run.ID ||
+		status.LastRun.Status != state.BackupSucceeded || status.LastRun.FinishedAt == nil ||
+		!strings.Contains(status.LastRun.Message, "could not be saved yet") {
+		t.Fatalf("status while the result waits: %+v", status)
+	}
+	if views, err := f.service.Runs(ctx); err != nil || len(views) != 1 || views[0].Status != state.BackupSucceeded || views[0].Message != status.LastRun.Message {
+		t.Fatalf("runs while the result waits: %+v, %v", views, err)
+	}
+	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a backup started beside the finished run: %v", err)
+	}
+	// The state store takes records again: the result is recorded without a
+	// restart, and the run still owns the folder it wrote.
+	noErr(t, f.store.Exec(ctx, `DROP TRIGGER refuse_backup_record`))
+	f.service.work.Wait()
+	settled := f.run(t, run.ID)
+	if settled.Status != state.BackupSucceeded || settled.Verification != state.BackupVerifyNotRun ||
+		settled.BackupName != run.BackupName || settled.ManifestSHA256 == "" || settled.FinishedAt.IsZero() {
+		t.Fatalf("settled run: %+v", settled)
+	}
+	folder, err := recovery.OpenBackupFolder(f.destination)
+	noErr(t, err)
+	defer folder.Close()
+	backup, err := openOwned(folder, settled)
+	if err != nil {
+		t.Fatalf("the settled run does not own its backup: %v", err)
+	}
+	backup.Close()
+	// The scheduler picks up again, and the backup whose record was delayed
+	// is removed like any other.
+	f.service.tick()
+	f.service.work.Wait()
 	runs, err := f.store.BackupRuns(ctx)
 	noErr(t, err)
-	if len(runs) != runsKept+1 {
-		t.Fatalf("%d runs kept", len(runs))
+	if len(runs) != 2 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded || runs[0].Message != "" {
+		t.Fatalf("runs after the result was recorded: %+v", runs)
 	}
-	next, err := f.service.nextRun(ctx)
-	noErr(t, err)
-	if !next.Equal(scheduled.StartedAt.Add(24 * time.Hour)) {
-		t.Fatalf("next scheduled backup %s, want one interval after %s", next, scheduled.StartedAt)
+	if present(settled) {
+		t.Fatalf("the backup %s whose record was delayed was left behind", settled.BackupName)
 	}
 }
 
