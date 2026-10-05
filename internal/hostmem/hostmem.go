@@ -15,7 +15,7 @@
 // is per thread, so threads x window, plus pack.deltaCacheSize. Its share
 // A = 3C/8/P is therefore spent as baseGit + threads x window + cache, with
 // window memory and cache half of the rest each, and threads chosen so that
-// each window is at least smallestPart. The same cache size bounds the delta
+// each window is at least smallestWindow. The same cache size bounds the delta
 // base cache of index-pack, which receives a push.
 //
 // At a small ceiling the number of requests that build a pack at once
@@ -140,6 +140,9 @@ const (
 	// baseGit is the memory a packing Git process uses before any window
 	// or cache. Measured 50 to 75 MiB.
 	baseGit = 64 * mib
+	// smallestWindow is the window below which another thread is not worth
+	// splitting the window memory for.
+	smallestWindow = 16 * mib
 	// smallestPart is the smallest window total and the smallest delta cache.
 	smallestPart = 8 * mib
 	// DefaultTransfers is the number of Git transfers admitted at once
@@ -197,7 +200,7 @@ func DefaultPackers(ceiling uint64) int { return min(DefaultTransfers, maxPacker
 func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
 	processes := uint64(max(packers, 1) + otherPackers)
 	part := max(gitShare(ceiling)/processes, baseGit+2*smallestPart) - baseGit
-	threads := min(max(part/2/smallestPart, 1), uint64(max(processors, 1)))
+	threads := min(max(part/2/smallestWindow, 1), uint64(max(processors, 1)))
 	window := min(max(part/2/threads, smallestPart), 256*mib)
 	cache := min(max(part/2, smallestPart), 256*mib)
 	return [][2]string{
