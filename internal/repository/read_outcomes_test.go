@@ -244,25 +244,28 @@ func TestRestoreSourceLookupFailureIsNotInvalid(t *testing.T) {
 
 // A file above what one Git process may use is refused as too large without
 // running Git, which would rebuild a large stored delta in memory; below that
-// bound, or with an unknown memory ceiling, the read is as before.
+// bound, or with an unknown memory ceiling, the read is as before and shows
+// the prefix within the display limit.
 func TestBlobAboveTheMemoryBoundIsRefusedWithoutRunningGit(t *testing.T) {
-	manager := &Manager{Git: &gitexec.Runner{GitPath: "/nonexistent/git-must-not-run"}}
+	requirePOSIX(t)
+	manager, _, work := newTestRepository(t)
+	commit := commitTree(t, manager, work, "main", map[string]string{"f.txt": strings.Repeat("x", 3000)})
+	entries, err := manager.TreeAt(context.Background(), "sample", commit, "")
+	noErr(t, err)
+	entry := entries[0]
+	prefix, err := manager.BlobAt(context.Background(), "sample", entry, 1000)
+	if err != nil || len(prefix.Content) != 1000 || !prefix.Truncated {
+		t.Fatalf("prefix view = %d bytes truncated=%v err=%v; want 1000 bytes, truncated", len(prefix.Content), prefix.Truncated, err)
+	}
 	bound := manager.Git.ReadBound()
-	entry := TreeEntry{Path: "big", Type: "blob", OID: strings.Repeat("a", 40), Size: bound + 1}
 	if bound == 0 {
-		// Unknown ceiling: the pre-check does not apply, so the read reaches Git.
-		entry.Size = 1 << 30
-		if _, err := manager.BlobAt(context.Background(), "x", entry, 1<<20); err == nil {
-			t.Fatal("an unknown memory ceiling refused a file without reading it")
-		}
-		return
+		return // unknown ceiling: no pre-check exists
 	}
-	blob, err := manager.BlobAt(context.Background(), "x", entry, 1<<20)
-	if err != nil || !blob.Truncated || len(blob.Content) != 0 {
-		t.Fatalf("blob = %+v, err = %v; want truncated, empty, no error", blob, err)
-	}
-	entry.Size = bound
-	if _, err := manager.BlobAt(context.Background(), "x", entry, 1<<20); err == nil {
-		t.Fatal("a file within the bound was refused without reading it")
+	count, _, _ := countGitProcesses(t, manager, "*")
+	before := count()
+	entry.Size = bound + 1
+	blob, err := manager.BlobAt(context.Background(), "sample", entry, 1000)
+	if err != nil || !blob.Truncated || len(blob.Content) != 0 || count() != before {
+		t.Fatalf("blob = %d bytes truncated=%v err=%v, git runs %d; want truncated, empty, no Git", len(blob.Content), blob.Truncated, err, count()-before)
 	}
 }
