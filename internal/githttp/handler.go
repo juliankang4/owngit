@@ -1,8 +1,8 @@
 package githttp
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
