@@ -50,8 +50,9 @@ type Check struct {
 }
 
 // begin takes the one slot for a verification or an upload, refusing
-// while a backup runs, while a recorded run removes its older backups, or
-// while another one holds it. The caller holds s.mu.
+// while a backup runs, while a finished backup holds the one slot to write
+// its record or to remove its older backups, or while another one holds it.
+// The caller holds s.mu.
 func (s *Service) begin(ctx context.Context, task string) error {
 	if s.ctx == nil || s.ctx.Err() != nil {
 		return errors.New("OwnGit is stopping, so it starts nothing new")
@@ -59,7 +60,7 @@ func (s *Service) begin(ctx context.Context, task string) error {
 	if s.task != "" {
 		return ErrBusy
 	}
-	if s.removing {
+	if s.removing > 0 {
 		return state.ErrBackupRunning
 	}
 	runs, err := s.Store.BackupRuns(ctx)
@@ -122,8 +123,7 @@ func openRun(run state.BackupRun) (*recovery.BackupFolder, *recovery.BackupCopy,
 // this run's. The result is recorded with the run and
 // kept as LastCheck. It fails with ErrNoBackup or ErrBackupGone when there
 // is nothing to verify, with state.ErrBackupRunning while a backup runs or
-// removes its older backups, and with ErrBusy while another verification or
-// an upload runs.
+// finishes, and with ErrBusy while another verification or an upload runs.
 func (s *Service) StartCheck(ctx context.Context, id string) (Check, error) {
 	run, err := s.findRun(ctx, id)
 	if err != nil {

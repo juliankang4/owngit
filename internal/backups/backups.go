@@ -110,11 +110,16 @@ type Service struct {
 	// yet. Its stored record still stands as running, which keeps any other
 	// backup from starting.
 	pending *state.BackupRun
-	// removing is true while a recorded run removes its older backups: no
-	// backup, verification or upload may start until the folders and the
-	// message are done, since they all look at the same folders and a
-	// verification could record a false failure while one is removed.
-	removing bool
+	// removing counts the runs that hold the one slot for removing their
+	// older backups, and removingRun is the one that took it first: while it
+	// is held, no backup, verification or upload starts, since they all look
+	// at the same folders and a verification could record a false failure
+	// while one is removed. A run takes the slot before its final record is
+	// written, so nothing can start between a saved record and the removal
+	// that follows it. It counts, so a run that finishes its removal cannot
+	// release the slot of one that still holds it.
+	removing    int
+	removingRun *state.BackupRun
 }
 
 func (s *Service) now() time.Time {
@@ -252,8 +257,9 @@ func (s *Service) nextRun(ctx context.Context) (time.Time, error) {
 
 // StartNow starts a backup into the configured folder and returns its run
 // at once. It fails with state.ErrBackupRunning while another one runs or
-// removes its older backups, with ErrBusy while OwnGit verifies or receives
-// a backup, and with ErrNotConfigured before a folder is set.
+// finishes (it is writing its record or removing its older backups), with
+// ErrBusy while OwnGit verifies or receives a backup, and with
+// ErrNotConfigured before a folder is set.
 func (s *Service) StartNow() (state.BackupRun, error) {
 	return s.start(state.BackupRunManual)
 }
@@ -267,7 +273,7 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 	if s.task != "" {
 		return state.BackupRun{}, ErrBusy
 	}
-	if s.removing {
+	if s.removing > 0 {
 		return state.BackupRun{}, state.ErrBackupRunning
 	}
 	schedule, configured, err := s.Store.BackupSchedule(s.ctx)
@@ -358,15 +364,22 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		s.noteRestoreLimit(run.Destination)
 	}
 	run.FinishedAt = s.now()
+	// The one slot is taken before the final record is written: a backup, a
+	// verification or an upload admitted between the saved record and the
+	// removal that follows would look at the folders while an older backup is
+	// removed. A stop that saved the result here removes nothing; the next
+	// backup removes then.
+	if run.Status == state.BackupSucceeded && ctx.Err() == nil {
+		s.holdRemoval(&run)
+		defer s.dropRemoval(&run)
+	}
 	if !s.record(ctx, run) {
 		return
 	}
-	// Older backups go only after the record that owns the new one is
-	// saved, and under the one slot: while a folder is removed, no other
-	// backup, verification or upload may look at it. A stop that saved the
-	// result here removes nothing; the next backup removes then.
 	if run.Status == state.BackupSucceeded && ctx.Err() == nil {
-		s.removeOlderBackups(ctx, &run, schedule.Keep)
+		if left := s.removeOld(ctx, run, schedule.Keep); len(left) > 0 {
+			s.noteLeftInPlace(ctx, &run, left)
+		}
 	}
 	line := fmt.Sprintf("backup %s %s", output, run.Status)
 	if run.HoldKnown && run.LongestHoldRepository != "" {
@@ -442,22 +455,27 @@ func (s *Service) recordOnce(ctx context.Context, run state.BackupRun, bound tim
 	return s.Store.FinishBackupRun(write, run)
 }
 
-// removeOlderBackups removes the backups older than run and records what it
-// could not remove, holding the one slot for both: no backup, verification
-// or upload starts until every folder and the message are done. The result
-// of run is recorded already, so this never changes how the run ended, and
-// the message text it adds is used by the log line after it.
-func (s *Service) removeOlderBackups(ctx context.Context, run *state.BackupRun, keep int) {
+// holdRemoval takes the one slot for the run whose result is about to be
+// recorded: no backup, verification or upload starts until every holder has
+// released it. run is the run the views name while the slot is held.
+func (s *Service) holdRemoval(run *state.BackupRun) {
 	s.mu.Lock()
-	s.removing = true
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.removing = false
-		s.mu.Unlock()
-	}()
-	if left := s.removeOld(ctx, *run, keep); len(left) > 0 {
-		s.noteLeftInPlace(ctx, run, left)
+	defer s.mu.Unlock()
+	if s.removing == 0 {
+		result := *run
+		s.removingRun = &result
+	}
+	s.removing++
+}
+
+// dropRemoval releases one hold; the slot is free when the last holder
+// releases it.
+func (s *Service) dropRemoval(run *state.BackupRun) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.removing = max(0, s.removing-1)
+	if s.removing == 0 {
+		s.removingRun = nil
 	}
 }
 
@@ -465,13 +483,14 @@ func (s *Service) removeOlderBackups(ctx context.Context, run *state.BackupRun, 
 // message of the run that is recorded already, so the record says what
 // OwnGit left where it is. The backup itself is saved by now, so a message
 // that cannot be saved is logged and the run stands; the write ends with
-// the service, since nothing depends on it.
+// the service, since nothing depends on it. The note keeps its room in the
+// message, so a long message in front of it cannot cut it away.
 func (s *Service) noteLeftInPlace(ctx context.Context, run *state.BackupRun, left []string) {
+	note := "Also, " + strings.Join(left, "; ")
 	if run.Message == "" {
-		run.Message = "The backup is complete, but " + strings.Join(left, "; ")
-	} else {
-		run.Message += " Also, " + strings.Join(left, "; ")
+		note = "The backup is complete, but " + strings.Join(left, "; ")
 	}
+	run.Message = withNotice(run.Message, note)
 	write, cancel := context.WithTimeout(ctx, recordWrite)
 	defer cancel()
 	if err := s.Store.SetBackupRunMessage(write, run.ID, run.Message); err != nil {

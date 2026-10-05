@@ -154,6 +154,49 @@ func waitPending(t *testing.T, service *Service, id string) {
 	}
 }
 
+// slotHeld says whether a run holds the one slot for removing older
+// backups now.
+func slotHeld(service *Service) bool {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	return service.removing > 0
+}
+
+// seam holds one log line until the test lets it go, so a test can ask
+// questions while the product is inside that line. A seam always lets its
+// line go when the test ends, so a failing check cannot hold the service.
+// wait reports the line and waits; at waits for the line; let lets it go.
+type seam struct {
+	arrived  chan struct{}
+	released chan struct{}
+	signal   sync.Once
+	letOnce  sync.Once
+}
+
+func newSeam() *seam {
+	return &seam{arrived: make(chan struct{}), released: make(chan struct{})}
+}
+
+func (s *seam) wait() {
+	s.signal.Do(func() {
+		close(s.arrived)
+		<-s.released
+	})
+}
+
+func (s *seam) at(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.arrived:
+	case <-time.After(time.Minute):
+		t.Fatal("the seam was never reached")
+	}
+}
+
+func (s *seam) let() {
+	s.letOnce.Do(func() { close(s.released) })
+}
+
 func TestBackUpNowWritesAndVerifiesABackup(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.service.StartNow(); !errors.Is(err, ErrNotConfigured) {
@@ -748,51 +791,74 @@ func TestPendingMessageKeepsValidTextAtItsBound(t *testing.T) {
 	}
 }
 
-// Removing an older backup holds the one slot: a backup, a verification or
-// an upload starts nothing while a folder is being removed and the record
-// of that run is saved already.
+// Removing an older backup holds the one slot from before the record of the
+// run that removes it until every folder and the message are done: a
+// backup, a verification or an upload starts nothing in that time, and the
+// run stands in as the running one, so the page and the refusal agree.
 func TestRemovingOlderBackupsHoldsTheOneSlot(t *testing.T) {
 	f := newFixture(t)
 	off, keep := false, 1
 	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
 	ctx := context.Background()
 	first := f.backUpNow(t)
+	// A state store that refuses the final record first, as one that is full
+	// does, so the test can ask while the record is being written.
+	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER refuse_backup_record BEFORE UPDATE ON backup_runs WHEN NEW.status <> 'running' AND NEW.backup_name <> '' BEGIN SELECT RAISE(ABORT,'recording refused'); END`))
 	// A state store that refuses to forget the removed run, as one that
 	// cannot write does, so the removal reports it from the removal pass,
 	// where the test holds it.
 	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER keep_backup_name BEFORE UPDATE OF backup_name ON backup_runs WHEN OLD.backup_name <> '' AND NEW.backup_name = '' BEGIN SELECT RAISE(ABORT,'keep the name'); END`))
-	removing := make(chan struct{})
-	release := make(chan struct{})
-	var once, released sync.Once
-	releaseNow := func() { released.Do(func() { close(release) }) }
-	// The hook runs in the backup goroutine, which the fixture's stop waits
-	// for: it must always let go, also when a check here fails.
-	defer releaseNow()
+	recorded, removed := newSeam(), newSeam()
+	defer recorded.let()
+	defer removed.let()
 	f.service.Logf = func(format string, arguments ...any) {
 		t.Logf(format, arguments...)
-		if strings.Contains(fmt.Sprintf(format, arguments...), "could not record that backup") {
-			once.Do(func() {
-				close(removing)
-				<-release
-			})
+		line := fmt.Sprintf(format, arguments...)
+		if strings.Contains(line, "could not be recorded") {
+			recorded.wait()
+		}
+		if strings.Contains(line, "could not record that backup") {
+			removed.wait()
 		}
 	}
 	second, err := f.service.StartNow()
 	noErr(t, err)
-	select {
-	case <-removing:
-	case <-time.After(time.Minute):
-		t.Fatal("the removal of the older backup never started")
+	// While the record is written, the slot is held already: nothing can
+	// start between the saved record and the removal that follows it.
+	recorded.at(t)
+	if !slotHeld(f.service) {
+		t.Fatal("the one slot was free while the final record was written")
 	}
+	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a backup started while the record was written: %v", err)
+	}
+	if _, err := f.service.StartCheck(ctx, first.ID); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a verification started while the record was written: %v", err)
+	}
+	// The state store takes records again: the retry saves the record, and
+	// the removal follows it.
+	noErr(t, f.store.Exec(ctx, `DROP TRIGGER refuse_backup_record`))
+	recorded.let()
+	removed.at(t)
 	// The record of the second run is saved and the older backup is being
-	// removed: nothing else may look at those folders yet.
+	// removed: nothing else may look at those folders yet, and both views
+	// name the run that holds the slot.
 	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
 		t.Fatalf("a backup started while older backups were removed: %v", err)
 	}
 	if _, err := f.service.StartCheck(ctx, second.ID); !errors.Is(err, state.ErrBackupRunning) {
 		t.Fatalf("a verification started while older backups were removed: %v", err)
 	}
-	releaseNow()
+	status, err := f.service.Status(ctx)
+	noErr(t, err)
+	if status.Running == nil || status.Running.ID != second.ID || status.Running.Status != state.BackupRunning ||
+		!strings.Contains(status.Running.Message, "removing the older backups") {
+		t.Fatalf("status while older backups are removed: %+v", status)
+	}
+	if views, err := f.service.Runs(ctx); err != nil || len(views) != 2 || views[0].ID != second.ID || views[0].Status != state.BackupRunning {
+		t.Fatalf("runs while older backups are removed: %+v, %v", views, err)
+	}
+	removed.let()
 	f.service.work.Wait()
 	if present(first) {
 		t.Fatalf("the older backup %s was not removed", first.BackupName)
@@ -800,6 +866,67 @@ func TestRemovingOlderBackupsHoldsTheOneSlot(t *testing.T) {
 	settled := f.run(t, second.ID)
 	if settled.Status != state.BackupSucceeded || settled.ManifestSHA256 == "" || !present(settled) {
 		t.Fatalf("the run that removed it: %+v", settled)
+	}
+	// The slot is free again, and the run is finished in both views.
+	if slotHeld(f.service) {
+		t.Fatal("the one slot was still held after the removal")
+	}
+	after, err := f.service.Status(ctx)
+	noErr(t, err)
+	if after.Running != nil || after.LastRun == nil || after.LastRun.ID != second.ID || after.LastRun.Status != state.BackupSucceeded {
+		t.Fatalf("status after the removal: %+v", after)
+	}
+}
+
+// The one slot counts its holders: a run that finishes removing its older
+// backups cannot release the slot of one that still holds it.
+func TestTheRemovalSlotCountsEveryHolder(t *testing.T) {
+	f := newFixture(t)
+	off, keep := false, 1
+	f.configure(t, ScheduleChange{Verify: &off, Keep: &keep})
+	ctx := context.Background()
+	first := f.backUpNow(t)
+	second := f.backUpNow(t)
+	another, other := f.run(t, first.ID), f.run(t, second.ID)
+	f.service.holdRemoval(&another)
+	f.service.holdRemoval(&other)
+	f.service.dropRemoval(&another)
+	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a backup started after the first holder let go: %v", err)
+	}
+	if _, err := f.service.StartCheck(ctx, second.ID); !errors.Is(err, state.ErrBackupRunning) {
+		t.Fatalf("a verification started after the first holder let go: %v", err)
+	}
+	f.service.dropRemoval(&other)
+	if _, err := f.service.StartNow(); err != nil {
+		t.Fatalf("the slot was not free after every holder let go: %v", err)
+	}
+	f.service.work.Wait()
+}
+
+// What removing older backups could not do keeps its place in a recorded
+// run's message, also when the run's own message fills the bytes a record
+// holds.
+func TestTheMessageOfWhatRemovalLeftInPlaceKeepsItsPlace(t *testing.T) {
+	f := newFixture(t)
+	off := false
+	f.configure(t, ScheduleChange{Verify: &off})
+	run := f.backUpNow(t)
+	run.Message = strings.Repeat("alias notice ", 40)
+	if len(run.Message) < state.MaxBackupRunMessage {
+		t.Fatalf("the run's own message is only %d bytes", len(run.Message))
+	}
+	left := []string{"could not remove the older backup owngit-backup-old: it was left in place"}
+	f.service.noteLeftInPlace(context.Background(), &run, left)
+	settled := f.run(t, run.ID)
+	if !strings.Contains(settled.Message, "left in place") {
+		t.Fatalf("the record lost what removal left in place: %q", settled.Message)
+	}
+	if len(settled.Message) > state.MaxBackupRunMessage {
+		t.Fatalf("the recorded message is %d bytes", len(settled.Message))
+	}
+	if !strings.HasPrefix(settled.Message, "alias notice ") {
+		t.Fatalf("the record lost the message of the run: %q", settled.Message)
 	}
 }
 

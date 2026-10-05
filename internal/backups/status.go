@@ -62,9 +62,10 @@ type RunView struct {
 // they found there. Check, Upload and RestoreLimit are what this OwnGit
 // found since it started: the last verification an owner asked for, the
 // uploaded backup, and whether a restore could write into a folder on the
-// disk of the backup folder. A finished backup whose record the state
-// store has not saved yet stands in as the running one, and the last runs
-// stay the ones OwnGit recorded.
+// disk of the backup folder. A run that still holds the one slot, because
+// its record waits for the state store or because it removes its older
+// backups, stands in as the running one, so nothing else may start while
+// the page says a backup runs.
 type Status struct {
 	Schedule     ScheduleView  `json:"schedule"`
 	Running      *RunView      `json:"running"`
@@ -129,6 +130,23 @@ func (s *Service) pendingResult(id string) *state.BackupRun {
 	return &result
 }
 
+// removalResult is how the run that holds the one slot for removing its
+// older backups appears: as the backup that still occupies the folder,
+// since no other may start until the removal ends, saying what it ended
+// with and what it is doing. Its record is saved, so it stays the run
+// OwnGit recorded as well. It is nil for every other run.
+func (s *Service) removalResult(id string) *state.BackupRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.removingRun == nil || s.removingRun.ID != id {
+		return nil
+	}
+	result := *s.removingRun
+	result.Message = removalMessage(result.Status)
+	result.Status = state.BackupRunning
+	return &result
+}
+
 // forgetPending forgets the result held for the run id, if any.
 func (s *Service) forgetPending(id string) {
 	s.mu.Lock()
@@ -140,10 +158,23 @@ func (s *Service) forgetPending(id string) {
 
 // pendingMessage is how a finished backup whose record waits for the
 // state store is described: how it ended, and that its record is not saved
-// yet. It keeps within the bytes a stored record holds, and keeps the
-// notice complete, so the message in front of it is cut first.
+// yet.
 func pendingMessage(status, message string) string {
-	notice := fmt.Sprintf("The backup finished: %s. Its record could not be saved yet; OwnGit keeps trying and saves it as soon as the state is writable again.", status)
+	return withNotice(message, fmt.Sprintf("The backup finished: %s. Its record could not be saved yet; OwnGit keeps trying and saves it as soon as the state is writable again.", status))
+}
+
+// removalMessage is how the run that removes its older backups is
+// described: what it ended with, and what it is doing with the backups it
+// no longer keeps.
+func removalMessage(status string) string {
+	return fmt.Sprintf("The backup finished: %s. OwnGit is removing the older backups it no longer keeps.", status)
+}
+
+// withNotice returns the message a record holds for a run together with a
+// notice about the run itself: the notice keeps its room, and the message
+// in front of it is cut first, so a notice is never the text that is cut
+// away.
+func withNotice(message, notice string) string {
 	if message == "" {
 		return notice
 	}
@@ -164,16 +195,26 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	for _, run := range runs {
 		if result := s.pendingResult(run.ID); result != nil {
 			// The finished run whose record waits stands in as the running
-			// one; the last runs stay the ones OwnGit recorded.
+			// one; the last runs stay the ones OwnGit recorded, since its own
+			// record is not saved yet.
 			if status.Running == nil {
 				status.Running = ViewRun(*result)
 			}
 			continue
 		}
-		switch {
-		case run.Status == state.BackupRunning:
+		if result := s.removalResult(run.ID); result != nil {
+			// A run that removes its older backups holds the one slot, so it
+			// stands in as the running one while it does; its record is
+			// saved, so it counts for the last runs as well.
+			if status.Running == nil {
+				status.Running = ViewRun(*result)
+			}
+			if status.LastRun == nil {
+				status.LastRun = ViewRun(run)
+			}
+		} else if run.Status == state.BackupRunning {
 			status.Running = ViewRun(run)
-		case status.LastRun == nil:
+		} else if status.LastRun == nil {
 			status.LastRun = ViewRun(run)
 		}
 		if status.LastVerified == nil && run.Verification == state.BackupVerifyPassed && run.BackupName != "" {
@@ -236,8 +277,9 @@ func Summarize(status Status) Summary {
 	return summary
 }
 
-// Runs lists every recorded run, the newest first. A finished run whose
-// record waits appears as the running one, as in Status.
+// Runs lists every recorded run, the newest first. A run that holds the
+// one slot (its record waits for the state store, or it is removing its
+// older backups) appears as the running one, as in Status.
 func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	runs, err := s.Store.BackupRuns(ctx)
 	if err != nil {
@@ -246,6 +288,8 @@ func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	views := make([]RunView, 0, len(runs))
 	for _, run := range runs {
 		if result := s.pendingResult(run.ID); result != nil {
+			run = *result
+		} else if result := s.removalResult(run.ID); result != nil {
 			run = *result
 		}
 		views = append(views, *ViewRun(run))
