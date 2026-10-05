@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -138,6 +140,68 @@ func TestRestoreWholeTreeSelectedFilesCASAndNoOp(t *testing.T) {
 	if !errors.Is(err, ErrRestoreConflict) {
 		t.Fatalf("stale branch creation error=%v, want conflict", err)
 	}
+}
+
+// Applying a restore publishes the tree the preview described; it never shows
+// a patch, so it must not read the per-path diffs a preview builds for the
+// page. The wrapper Git records every invocation, which lets this test prove
+// that the preview's diffs are visible to the count and that applying reads
+// none of them.
+func TestRestoreApplyStartsNoPerPathDiff(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the recording Git wrapper is a Unix test fixture")
+	}
+	manager, remote, work := newTestRepository(t)
+	ctx := context.Background()
+	changed := []string{"one.txt", "two.txt"}
+	for _, name := range changed {
+		noErr(t, os.WriteFile(filepath.Join(work, name), []byte("source\n"), 0o600))
+	}
+	runGit(t, work, "add", ".")
+	runGit(t, work, "commit", "-m", "source tree")
+	sourceOID := gitOutput(t, work, "rev-parse", "HEAD")
+	for _, name := range changed {
+		noErr(t, os.WriteFile(filepath.Join(work, name), []byte("target\n"), 0o600))
+	}
+	runGit(t, work, "commit", "-am", "target tree")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+
+	tracePath := recordGitCommands(t, manager)
+	request := RestoreRequest{Source: sourceOID, Target: "main", Mode: RestoreAll}
+	preview, err := manager.PreviewRestore(ctx, "sample", request)
+	noErr(t, err)
+	if len(preview.Changes) != len(changed) || !preview.CanApply {
+		t.Fatalf("preview changed=%d can_apply=%v, want both changed files", len(preview.Changes), preview.CanApply)
+	}
+	if diffs := diffCommands(t, tracePath); diffs == 0 {
+		t.Fatal("the preview read no per-path diff, so a count of zero says nothing")
+	}
+
+	noErr(t, os.WriteFile(tracePath, nil, 0o600))
+	request.ExpectedHead = preview.ExpectedHead
+	applied, err := manager.ApplyRestore(ctx, "sample", request)
+	noErr(t, err)
+	if diffs := diffCommands(t, tracePath); diffs != 0 {
+		t.Fatalf("apply read %d per-path diffs, want none", diffs)
+	}
+	if got := gitOutput(t, "", "--git-dir", remote, "rev-parse", applied.CommitOID+"^{tree}"); got != gitOutput(t, "", "--git-dir", remote, "rev-parse", sourceOID+"^{tree}") {
+		t.Fatalf("restored tree=%s, want the source tree", got)
+	}
+}
+
+// diffCommands returns how many recorded Git commands read a diff, which is
+// how a preview builds one patch per changed path.
+func diffCommands(t *testing.T, tracePath string) int {
+	t.Helper()
+	trace, err := os.ReadFile(tracePath)
+	noErr(t, err)
+	diffs := 0
+	for _, line := range strings.Split(strings.TrimSuffix(string(trace), "\n"), "\n") {
+		if slices.Contains(strings.Fields(line), "diff") {
+			diffs++
+		}
+	}
+	return diffs
 }
 
 func TestRestorePatchPreviewTreatsMagicFilenamesLiterally(t *testing.T) {

@@ -75,6 +75,30 @@ func TestRestoreHTTPPreviewApplyAndStaleConflict(t *testing.T) {
 	if previewStatus != http.StatusOK || !previewContentVisible {
 		t.Fatalf("restore preview status=%d expected_content_visible=%v", previewStatus, previewContentVisible)
 	}
+	// Restoring selected files with none ticked is refused on the Files field,
+	// with the message that says what to do. The commit and the branch are
+	// valid, so the page must not tell the owner to check them.
+	emptyBody, emptyStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore/preview", url.Values{
+		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"files"},
+	}, server.URL)
+	filesNone := webui.Text(webui.LangEN, webui.MsgRestoreFilesNone)
+	commitMessage := webui.Text(webui.LangEN, webui.MsgRestoreInvalid)
+	noteMarker := `id="path-note"`
+	if emptyStatus != http.StatusUnprocessableEntity || !strings.Contains(emptyBody, filesNone) ||
+		strings.Contains(emptyBody, commitMessage) || !strings.Contains(emptyBody, noteMarker) {
+		t.Fatalf("empty file selection status=%d files_message=%v commit_message=%v files_field=%v",
+			emptyStatus, strings.Contains(emptyBody, filesNone), strings.Contains(emptyBody, commitMessage), strings.Contains(emptyBody, noteMarker))
+	}
+	// The file list is a group of checkboxes, so no control carries the message.
+	// The note announces itself and takes the focus, or a reader who cannot see
+	// the page never hears why the preview was refused.
+	note := emptyBody[strings.LastIndex(emptyBody[:strings.Index(emptyBody, noteMarker)], "<"):]
+	note = note[:strings.Index(note, ">")]
+	for _, want := range []string{`role="alert"`, `tabindex="-1"`, "autofocus"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("the empty selection notice reaches the reader without %s: %s", want, note)
+		}
+	}
 	_, applyStatus := restorePOST(t, client, server.URL+"/repositories/restore-http/restore", url.Values{
 		"csrf": {csrf}, "source": {sourceOID}, "target": {"main"}, "mode": {"files"},
 		"path": {"kept.txt", "remove.txt"}, "expected_head": {preview.ExpectedHead}, "confirm": {"restore"},

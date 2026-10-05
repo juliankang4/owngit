@@ -234,6 +234,11 @@ func TestRestoreAPIListsPreviewsAndAppliesKeptHistory(t *testing.T) {
 			if status, body := restoreAPI(t, http.MethodPost, base+"/restore/preview", map[string]any{"source_oid": history.kept[:12], "target_branch": "main", "mode": "all"}, ""); status != http.StatusUnprocessableEntity || restoreErrorCode(body) != "invalid_restore" {
 				t.Fatalf("short source status=%d body=%v", status, body)
 			}
+			// A selected-files restore with no file keeps the refusal code the
+			// API documents for an invalid restore.
+			if status, body := restoreAPI(t, http.MethodPost, base+"/restore/preview", map[string]any{"source_oid": history.kept, "target_branch": "main", "mode": "files"}, ""); status != http.StatusUnprocessableEntity || restoreErrorCode(body) != "invalid_restore" {
+				t.Fatalf("preview with no selected files status=%d body=%v", status, body)
+			}
 			// The kept history's source_ref is a full name; the target is a
 			// branch name, so a full name is refused rather than nested.
 			for _, target := range []string{"refs/heads/main", "HEAD"} {

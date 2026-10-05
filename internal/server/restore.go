@@ -285,9 +285,13 @@ func restoreURL(address, sourceOID, target, filePath string) string {
 }
 
 // restoreMessage is the message for err, a failed step: a refusal's own
-// message, and otherwise the step's failure message.
+// message, and otherwise the step's failure message. An empty file selection
+// wraps ErrRestoreInvalid, so it is checked first: the commit and the branch
+// are fine, and the reader needs to hear what to do instead.
 func restoreMessage(step restoreStep, err error) webui.MessageCode {
 	switch {
+	case errors.Is(err, repository.ErrRestoreFilesNone):
+		return webui.MsgRestoreFilesNone
 	case errors.Is(err, repository.ErrRestoreConflict):
 		return webui.MsgRestoreConflict
 	case errors.Is(err, repository.ErrRestoreNoChanges):
@@ -327,7 +331,7 @@ func restoreField(err error) string {
 	if errors.Is(err, repository.ErrRestoreConflict) {
 		return "target"
 	}
-	if errors.Is(err, repository.ErrRestoreUnsupported) {
+	if errors.Is(err, repository.ErrRestoreUnsupported) || errors.Is(err, repository.ErrRestoreFilesNone) {
 		return "path"
 	}
 	return ""

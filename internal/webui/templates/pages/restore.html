@@ -115,7 +115,11 @@
       <fieldset class="fset">
         <legend>{{bi $lang "restore.files.label"}}</legend>
         <p class="f__help">{{bi $lang "restore.files.help"}}</p>
-        {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "path"}}
+        {{/* The file list is a group of checkboxes, so no single control can
+             carry this notice's description. It announces the refusal and
+             takes the focus itself, as the same notice does on the page after
+             a preview. */}}
+        {{template "fieldNoticeAlone" dict "Lang" $lang "Notices" $n "Field" "path" "Focus" $focus}}
 
         {{if $p.Paths}}
           <ul class="rpaths">

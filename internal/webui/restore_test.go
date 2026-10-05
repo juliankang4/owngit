@@ -510,21 +510,28 @@ func TestRestoreRefusalPutsFocusOnTheBlockingError(t *testing.T) {
 		notices []Notice
 		// want is the message the reader must be placed on, if any.
 		want MessageCode
+		// formFocus is the field whose notice must be the focus target on
+		// step one, where the form is still editable. Only the file list needs
+		// one: it is a group of checkboxes with no single control to carry the
+		// message, so that notice announces itself and takes the focus. The
+		// target field points from its own input. Empty means step one leaves
+		// the reader where the browser put them.
+		formFocus string
 	}{
-		{"conflict", []Notice{Error("target", MsgRestoreConflict)}, MsgRestoreConflict},
-		{"every field", []Notice{Error("target", MsgRestoreConflict), Error("mode", MsgRestoreInvalid), Error("path", MsgRestoreUnsupported)}, MsgRestoreConflict},
-		{"page and field", []Notice{Error("", MsgRestoreFailed), Error("target", MsgRestoreConflict)}, MsgRestoreConflict},
-		{"scope only", []Notice{Error("mode", MsgRestoreInvalid)}, MsgRestoreInvalid},
-		{"paths only", []Notice{Error("path", MsgRestoreUnsupported)}, MsgRestoreUnsupported},
-		{"one field twice", []Notice{Error("target", MsgRestoreConflict), Error("target", MsgRestoreInvalid)}, MsgRestoreConflict},
-		{"info before error", []Notice{{Kind: NoticeInfo, Field: "target", Code: MsgRestoreNoChanges}, Error("target", MsgRestoreConflict)}, MsgRestoreConflict},
-		{"error before info", []Notice{Error("target", MsgRestoreConflict), {Kind: NoticeInfo, Field: "target", Code: MsgRestoreNoChanges}}, MsgRestoreConflict},
+		{"conflict", []Notice{Error("target", MsgRestoreConflict)}, MsgRestoreConflict, ""},
+		{"every field", []Notice{Error("target", MsgRestoreConflict), Error("mode", MsgRestoreInvalid), Error("path", MsgRestoreUnsupported)}, MsgRestoreConflict, ""},
+		{"page and field", []Notice{Error("", MsgRestoreFailed), Error("target", MsgRestoreConflict)}, MsgRestoreConflict, ""},
+		{"scope only", []Notice{Error("mode", MsgRestoreInvalid)}, MsgRestoreInvalid, ""},
+		{"paths only", []Notice{Error("path", MsgRestoreUnsupported)}, MsgRestoreUnsupported, "path"},
+		{"one field twice", []Notice{Error("target", MsgRestoreConflict), Error("target", MsgRestoreInvalid)}, MsgRestoreConflict, ""},
+		{"info before error", []Notice{{Kind: NoticeInfo, Field: "target", Code: MsgRestoreNoChanges}, Error("target", MsgRestoreConflict)}, MsgRestoreConflict, ""},
+		{"error before info", []Notice{Error("target", MsgRestoreConflict), {Kind: NoticeInfo, Field: "target", Code: MsgRestoreNoChanges}}, MsgRestoreConflict, ""},
 		{"two fields twice each", []Notice{
 			Error("mode", MsgRestoreInvalid), Error("mode", MsgRestoreUnsupported),
-			Error("target", MsgRestoreConflict), Error("target", MsgRestoreFailed)}, MsgRestoreConflict},
+			Error("target", MsgRestoreConflict), Error("target", MsgRestoreFailed)}, MsgRestoreConflict, ""},
 		// The destination follows the order the summary renders, not the order
 		// the backend happened to report.
-		{"later field reported first", []Notice{Error("path", MsgRestoreUnsupported), Error("target", MsgRestoreConflict)}, MsgRestoreConflict},
+		{"later field reported first", []Notice{Error("path", MsgRestoreUnsupported), Error("target", MsgRestoreConflict)}, MsgRestoreConflict, ""},
 	}
 	for _, lang := range Langs() {
 		for _, combo := range combinations {
@@ -544,10 +551,18 @@ func TestRestoreRefusalPutsFocusOnTheBlockingError(t *testing.T) {
 				}
 
 				if !previewed {
-					// Step one has its own inputs, which carry the message
-					// through aria-describedby, so it must not move the reader.
-					if strings.Contains(out, "autofocus") {
-						t.Errorf("%s/%s: the editable form moves the reader instead of using its inputs", lang, combo.name)
+					// Step one redraws what the owner entered. A field with one
+					// control points from that control at the message, so the reader
+					// stays where the browser put them. The file list is a group of
+					// checkboxes with no single owner, so its notice announces the
+					// refusal and takes the focus itself.
+					switch {
+					case combo.formFocus == "":
+						if strings.Contains(out, "autofocus") {
+							t.Errorf("%s/%s: the editable form moves the reader instead of using its inputs", lang, combo.name)
+						}
+					case !strings.Contains(alertTag(t, out, combo.formFocus), "autofocus"):
+						t.Errorf("%s/%s: the editable form does not place the reader on the %s refusal", lang, combo.name, combo.formFocus)
 					}
 					continue
 				}

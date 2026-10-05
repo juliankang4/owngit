@@ -14,7 +14,12 @@ import (
 )
 
 var (
-	ErrRestoreInvalid     = errors.New("invalid restore request")
+	ErrRestoreInvalid = errors.New("invalid restore request")
+	// ErrRestoreFilesNone reports a selected-files restore that named no file.
+	// It wraps ErrRestoreInvalid, because the selection is refused like any
+	// other invalid one; its own identity is what lets a page say what to do
+	// about it instead of blaming the commit and the branch.
+	ErrRestoreFilesNone   = fmt.Errorf("%w: select at least one changed path", ErrRestoreInvalid)
 	ErrRestoreConflict    = errors.New("restore target changed")
 	ErrRestoreNoChanges   = errors.New("restore has no changes")
 	ErrRestoreUnsupported = errors.New("restore selection is unsupported")
@@ -53,9 +58,11 @@ type RestoreResult struct {
 
 type restorePlan struct {
 	preview       RestorePreview
-	repository    string
 	currentExists bool
 	currentOID    string
+	// oldTree is the target branch's tree before the restore, the left side
+	// of a preview's per-path patches. Only a preview reads it.
+	oldTree string
 }
 
 type restoreTreeEntry struct {
@@ -64,6 +71,9 @@ type restoreTreeEntry struct {
 	OID  string
 }
 
+// PreviewRestore answers what restoring request would change, with one patch
+// per changed path for the page that shows it. A preview writes nothing, so
+// it takes the read lock.
 func (m *Manager) PreviewRestore(ctx context.Context, id string, request RestoreRequest) (RestorePreview, error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
 	if err != nil {
@@ -81,7 +91,12 @@ func (m *Manager) PreviewRestore(ctx context.Context, id string, request Restore
 	if err != nil {
 		return RestorePreview{}, err
 	}
-	return plan.preview, nil
+	preview := plan.preview
+	preview.Patches, preview.DiffTruncated, err = m.restorePatches(ctx, repositoryPath, plan.oldTree, preview.ResultTree, preview.Changes)
+	if err != nil {
+		return RestorePreview{}, err
+	}
+	return preview, nil
 }
 
 func (m *Manager) ApplyRestore(ctx context.Context, id string, request RestoreRequest) (RestoreResult, error) {
@@ -159,6 +174,11 @@ func (m *Manager) publishRestoreRef(ctx context.Context, repositoryPath, targetR
 	return err
 }
 
+// prepareRestore resolves request into the work a preview and an apply share:
+// the source commit, the compare-and-swap expectation, the tree the restore
+// would publish, and the paths that differ from it. It reads no file contents
+// for display; the per-path patches are built only for a preview, which is the
+// only caller that shows them.
 func (m *Manager) prepareRestore(ctx context.Context, repositoryPath string, request RestoreRequest, enforceExpected bool) (restorePlan, error) {
 	sourceOID, err := m.restoreSourceCommit(ctx, repositoryPath, request.Source)
 	if err != nil {
@@ -226,16 +246,12 @@ func (m *Manager) prepareRestore(ctx context.Context, repositoryPath string, req
 	if err != nil {
 		return restorePlan{}, err
 	}
-	patches, truncated, err := m.restorePatches(ctx, repositoryPath, oldTree, resultTree, changes)
-	if err != nil {
-		return restorePlan{}, err
-	}
 	preview := RestorePreview{
 		SourceOID: sourceOID, TargetRef: targetRef, ExpectedHead: expected, CreatesBranch: !currentExists,
-		ResultTree: resultTree, Changes: changes, Patches: patches, Selected: selected,
-		CanApply: !currentExists || resultTree != oldTree, DiffTruncated: truncated,
+		ResultTree: resultTree, Changes: changes, Selected: selected,
+		CanApply: !currentExists || resultTree != oldTree,
 	}
-	return restorePlan{preview: preview, repository: repositoryPath, currentExists: currentExists, currentOID: currentOID}, nil
+	return restorePlan{preview: preview, currentExists: currentExists, currentOID: currentOID, oldTree: oldTree}, nil
 }
 
 func (m *Manager) restoreSourceCommit(ctx context.Context, repositoryPath, source string) (string, error) {
@@ -314,7 +330,10 @@ func lookAlikeRef(existing []string, name string) string {
 }
 
 func (m *Manager) selectedRestoreTree(ctx context.Context, repositoryPath, sourceOID, targetOID string, paths []string) (string, map[string]bool, error) {
-	if len(paths) == 0 || len(paths) > 10_000 {
+	if len(paths) == 0 {
+		return "", nil, ErrRestoreFilesNone
+	}
+	if len(paths) > 10_000 {
 		return "", nil, fmt.Errorf("%w: select at least one changed path", ErrRestoreInvalid)
 	}
 	source, err := m.restoreTreeEntries(ctx, repositoryPath, sourceOID)
