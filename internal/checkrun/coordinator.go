@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +29,11 @@ const (
 	maximumObservedPRs      = 64
 	maximumAutomaticLogSize = checkexec.KeptOutputBytes
 
+	// maximumPendingPushes bounds the branch updates one repository retains
+	// between passes, like the bounded observation set. A repository that
+	// overflows drops its oldest update, named once in the log.
+	maximumPendingPushes = 64
+
 	// repositoryBusyWait bounds how long a job waits for its exact source
 	// while pushes or other repository writes hold the repository.
 	repositoryBusyWait = 10 * time.Minute
@@ -41,6 +47,20 @@ var ErrRuntimeUnavailable = errors.New("configured check runtime is unavailable"
 // reconciler records it as that revision's outcome and continues with the next
 // one instead of blocking the rest of the repository.
 var errRevisionRejected = errors.New("configured check workflow was rejected")
+
+// PushUpdate is one ref a push updated, as the Git handler reports it. New is
+// empty when the push deleted the ref.
+type PushUpdate struct {
+	Ref string
+	New string
+}
+
+// pushUpdate is one branch update of an accepted push that no pass has decided
+// yet.
+type pushUpdate struct {
+	ref string
+	oid string
+}
 
 // RuntimeUnavailableError identifies a check-specific startup boundary that
 // must disable automatic and external-runner authority without blocking Git.
@@ -82,7 +102,11 @@ type Coordinator struct {
 	skippedRefs       map[string]map[string]string
 	pushChecked       map[string]bool
 	pullRequestCursor map[string]int64
-	mu                sync.Mutex
+	// pendingPushes holds the branch updates of accepted pushes that no pass
+	// has admitted or refused yet, oldest first per repository. The Git
+	// handler writes it and the reconciliation pass drains it, so mu guards it.
+	pendingPushes map[string][]pushUpdate
+	mu            sync.Mutex
 }
 
 func (coordinator *Coordinator) Start(parent context.Context) error {
@@ -167,7 +191,8 @@ func (coordinator *Coordinator) Stop(ctx context.Context) error {
 
 // Wake schedules a bounded reconciliation. repositoryID is accepted by write
 // seams for future narrowing; reconciliation remains global so repeated wakes
-// coalesce without an unbounded repository queue.
+// coalesce without an unbounded repository queue. A push's own ref updates are
+// retained by NotePush instead, which wakes the coordinator the same way.
 func (coordinator *Coordinator) Wake(repositoryID string) {
 	coordinator.mu.Lock()
 	wake := coordinator.wake
@@ -180,6 +205,209 @@ func (coordinator *Coordinator) Wake(repositoryID string) {
 	default:
 	}
 }
+
+// NotePush retains the branch updates of one accepted push, so each of them is
+// admitted as its own job even while another job runs. It only adds to memory
+// and never waits for the state, the repository or the push: the Git response
+// is already complete and cannot be delayed or failed by check admission. A
+// deletion and a ref outside refs/heads carry no push check event. A later
+// pass admits what it retained; if none runs, the next start reconciles each
+// branch head as before, and a commit that is no longer a head keeps no job.
+func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpdate) {
+	if repositoryID == "" || len(updates) == 0 {
+		return
+	}
+	facts := make([]pushUpdate, 0, len(updates))
+	for _, update := range updates {
+		if update.New == "" || !strings.HasPrefix(update.Ref, "refs/heads/") {
+			continue
+		}
+		facts = append(facts, pushUpdate{ref: update.Ref, oid: update.New})
+	}
+	if len(facts) == 0 {
+		return
+	}
+	coordinator.keepPushes(repositoryID, facts)
+	coordinator.Wake(repositoryID)
+}
+
+// keepPushes retains accepted branch updates for a later pass and names every
+// update the repository's bound dropped. It is the one place that changes the
+// retained set, so a push that gets no job of its own is never silent.
+func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUpdate) {
+	if len(updates) == 0 {
+		return
+	}
+	coordinator.mu.Lock()
+	if coordinator.pendingPushes == nil {
+		coordinator.pendingPushes = make(map[string][]pushUpdate)
+	}
+	kept := coordinator.pendingPushes[repositoryID]
+	var dropped []pushUpdate
+	for _, update := range updates {
+		duplicate := false
+		for _, pending := range kept {
+			if pending == update {
+				duplicate = true
+				break
+			}
+		}
+		if duplicate {
+			continue
+		}
+		kept = append(kept, update)
+		if len(kept) > maximumPendingPushes {
+			dropped = append(dropped, kept[0])
+			kept = kept[1:]
+		}
+	}
+	if len(kept) == 0 {
+		delete(coordinator.pendingPushes, repositoryID)
+	} else {
+		coordinator.pendingPushes[repositoryID] = kept
+	}
+	coordinator.mu.Unlock()
+	for _, update := range dropped {
+		coordinator.log("configured check push %s %s at %s was not queued: %d pushes to the repository are already waiting",
+			repositoryID, branchName(update.ref), update.oid, maximumPendingPushes)
+	}
+}
+
+// admitPendingPushes admits the branch updates of pushes that arrived since the
+// last pass, each as its own job, so a push made while a job runs keeps its own
+// event instead of only the head it left. Admission applies the same policy,
+// consent, ceiling, branch, dedup and queue rules the head pass uses; the
+// repository is left exactly as reconciliation leaves it. A repository that is
+// still preparing, or whose updates cannot be decided, keeps them for a later
+// pass. Updates no policy admits now are dropped like the heads reconciliation
+// leaves unobserved until the policy, consent or ceiling admits again.
+func (coordinator *Coordinator) admitPendingPushes(ctx context.Context, ceilings state.CheckCeilings) {
+	coordinator.mu.Lock()
+	pending := coordinator.pendingPushes
+	coordinator.pendingPushes = nil
+	coordinator.mu.Unlock()
+	if len(pending) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(pending))
+	for id := range pending {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, repositoryID := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		facts := pending[repositoryID]
+		if coordinator.Repositories.Preparing(repositoryID) {
+			coordinator.keepPushes(repositoryID, facts)
+			continue
+		}
+		policy, ready, err := coordinator.admissiblePushPolicy(ctx, repositoryID, ceilings)
+		if err != nil {
+			coordinator.log("configured check push admission for %s: %v", repositoryID, err)
+			coordinator.keepPushes(repositoryID, facts)
+			continue
+		}
+		if !ready || !contains(policy.AllowedEvents, checkworkflow.EventPush) {
+			// Nothing admits these pushes now: checks are not configured or
+			// consented, the execution is legacy, the policy is above this
+			// computer's ceilings, or the push event is off. An event type the
+			// policy does not allow is not recorded at all.
+			continue
+		}
+		coordinator.admitPendingEvents(ctx, repositoryID, policy, facts)
+	}
+}
+
+// admitPendingEvents admits one repository's retained push events, oldest
+// first. An event that already has a job, or that admission refuses, is left
+// alone and named in the log where the refusal matters to the owner; an event
+// the repository cannot decide yet waits for a later pass.
+func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate) {
+	events := make([]string, 0, len(facts))
+	for _, fact := range facts {
+		if state.ValidCheckObservationRef(fact.ref) {
+			events = append(events, fact.ref+"@"+fact.oid)
+		}
+	}
+	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, events)
+	if err != nil {
+		if ctx.Err() == nil {
+			coordinator.log("configured check push admission for %s: %v", repositoryID, err)
+		}
+		coordinator.keepPushes(repositoryID, facts)
+		return
+	}
+	var waiting []pushUpdate
+	for _, fact := range facts {
+		if !state.ValidCheckObservationRef(fact.ref) {
+			coordinator.noteSkippedRef(repositoryID, fact.ref, fact.oid)
+			continue
+		}
+		if seen[fact.ref+"@"+fact.oid] {
+			continue
+		}
+		_, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
+			RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
+			EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, TriggerRef: branchName(fact.ref),
+		})
+		switch {
+		case err == nil:
+		case errors.Is(err, repository.ErrPinnedRepositoryBusy):
+			// A push still holds the repository. The event waits for a later
+			// pass instead of delaying or failing anything.
+			waiting = append(waiting, fact)
+		case ctx.Err() != nil:
+			waiting = append(waiting, fact)
+		default:
+			coordinator.log("configured check push %s %s at %s was not admitted: %v",
+				repositoryID, branchName(fact.ref), fact.oid, err)
+		}
+	}
+	coordinator.keepPushes(repositoryID, waiting)
+}
+
+// admissiblePushPolicy returns the policy a repository's push checks may be
+// admitted under now, and false while it may not: when checks are not
+// configured, consent is not current, the execution settings are legacy, or
+// the policy is above this computer's check ceilings. The head pass leaves
+// those branches unobserved, so a later pass admits what arrived meanwhile.
+func (coordinator *Coordinator) admissiblePushPolicy(ctx context.Context, repositoryID string, ceilings state.CheckCeilings) (state.CheckPolicy, bool, error) {
+	policy, exists, err := coordinator.Store.CheckPolicy(ctx, repositoryID)
+	if err != nil {
+		return state.CheckPolicy{}, false, err
+	}
+	if !exists || !policy.ConsentActive || policy.ConsentDigest != policy.Digest || policy.Execution.Legacy {
+		return state.CheckPolicy{}, false, nil
+	}
+	if len(ceilings.Exceeded(policy.CeilingValues())) != 0 {
+		return state.CheckPolicy{}, false, nil
+	}
+	return policy, true, nil
+}
+
+// noteSkippedRef names once per head a branch whose name the check records
+// cannot hold: no observation and no job can carry it, so neither a head pass
+// nor a push event admits it.
+func (coordinator *Coordinator) noteSkippedRef(repositoryID, refName, oid string) {
+	if coordinator.skippedRefs == nil {
+		coordinator.skippedRefs = make(map[string]map[string]string)
+	}
+	skipped := coordinator.skippedRefs[repositoryID]
+	if skipped[refName] == oid {
+		return
+	}
+	if skipped == nil {
+		skipped = make(map[string]string)
+		coordinator.skippedRefs[repositoryID] = skipped
+	}
+	skipped[refName] = oid
+	coordinator.log("configured check push %s %s is skipped: the branch name cannot be recorded", repositoryID, branchName(refName))
+}
+
+// branchName names a branch ref the way the jobs and the messages name it.
+func branchName(refName string) string { return strings.TrimPrefix(refName, "refs/heads/") }
 
 func (coordinator *Coordinator) loop(ctx context.Context, wake <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
@@ -217,6 +445,10 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Retained push events go first, so a push made while a job ran is
+	// admitted from the push itself and not only from the head it left. The
+	// head pass below then finds their jobs and queues nothing twice.
+	coordinator.admitPendingPushes(ctx, ceilings)
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -226,18 +458,14 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 		if coordinator.Repositories.Preparing(id) {
 			continue
 		}
-		policy, exists, err := coordinator.Store.CheckPolicy(ctx, id)
+		policy, ready, err := coordinator.admissiblePushPolicy(ctx, id, ceilings)
 		if err != nil {
 			return err
 		}
-		if !exists || !policy.ConsentActive || policy.ConsentDigest != policy.Digest || policy.Execution.Legacy {
-			continue
-		}
-		// A policy above this computer's check ceilings waits, like one
-		// without consent: its branches stay unobserved, so raising the
-		// ceiling or lowering the policy admits what arrived meanwhile.
-		// Admission refuses it too; this only keeps the log quiet.
-		if len(ceilings.Exceeded(policy.CeilingValues())) != 0 {
+		// A policy that is not admissible now waits, like one without consent:
+		// its branches stay unobserved, so raising the ceiling, giving consent
+		// or lowering the policy admits what arrived meanwhile.
+		if !ready {
 			continue
 		}
 		if err := coordinator.reconcilePushes(ctx, id, policy); err != nil {
@@ -253,9 +481,6 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryID string, policy state.CheckPolicy) error {
 	if coordinator.pushCursor == nil {
 		coordinator.pushCursor = make(map[string]string)
-	}
-	if coordinator.skippedRefs == nil {
-		coordinator.skippedRefs = make(map[string]map[string]string)
 	}
 	if coordinator.pushChecked == nil {
 		coordinator.pushChecked = make(map[string]bool)
@@ -296,10 +521,10 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	for _, branch := range summary.Branches {
 		live["refs/heads/"+branch.Name] = true
 	}
-	skipped := coordinator.skippedRefs[repositoryID]
-	for refName := range skipped {
+	// A skipped branch whose ref is gone needs no further reporting.
+	for refName := range coordinator.skippedRefs[repositoryID] {
 		if !live[refName] {
-			delete(skipped, refName)
+			delete(coordinator.skippedRefs[repositoryID], refName)
 		}
 	}
 	// The observation set is bounded, so in a repository with more branches
@@ -326,14 +551,7 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 		if !state.ValidCheckObservationRef(refName) {
 			// No observation or job can name this branch, so it is skipped
 			// once per head and the rest of the repository continues.
-			if skipped[refName] != branch.OID {
-				if skipped == nil {
-					skipped = make(map[string]string)
-					coordinator.skippedRefs[repositoryID] = skipped
-				}
-				skipped[refName] = branch.OID
-				coordinator.log("configured check push %s %s is skipped: the branch name cannot be recorded", repositoryID, branch.Name)
-			}
+			coordinator.noteSkippedRef(repositoryID, refName, branch.OID)
 			coordinator.pushCursor[repositoryID] = branch.Name
 			continue
 		}
