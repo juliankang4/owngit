@@ -155,11 +155,24 @@ a record of who had access.
 OwnGit notices pushes, pull request updates, and merges, reads the workflow
 file from the exact commit, and admits a job for each matching event; Git
 writes never wait for checks, and the same event never creates a second job.
-When checks are enabled for the first time, each matching branch head that
-never had a job is queued once, within the queue limit. Saving or enabling a
-new policy version queues nothing that already had a job and marks jobs still
-waiting to start `interrupted`; to check an existing head under the new
-policy, rerun its job.
+An event type the policy does not allow is not recorded at all. When push
+checks are turned on, for the first time or after being off, each matching
+branch head without a push job is queued once, within the queue limit. That
+includes heads pushed while push checks were off.
+
+Each time OwnGit starts, it goes once through the branch heads of every
+repository and queues each matching head that never got a job. If a head's
+check file is refused, the server log says so again on that pass. A branch
+whose name cannot be stored with a job, such as a name longer than 255 bytes,
+is skipped and named once in the server log, and the other branches are still
+checked.
+
+Saving or enabling a new policy version queues nothing that already had a job
+and marks jobs still waiting to start `interrupted`; to check an existing head
+under the new policy, rerun its job.
+
+Jobs that run on this computer start oldest first across all repositories,
+so a busy repository does not hold back an older job in another one.
 
 A job moves from `pending` to `claimed`, `started`, and a result: `passed`,
 `failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous`, or
@@ -178,6 +191,17 @@ owngit check-job rerun --server https://git.example.test --repository project --
 `check-job list` returns the newest 100 jobs. `check-job log` reads the raw
 log, which OwnGit keeps for the time chosen in Settings (30 days by default;
 see [Project checks](OPERATIONS.md#project-checks)), while the result stays.
+
+A rerun checks the same commit with the commands the job recorded. Its time
+and output limits are the ones the check file at that commit asks for, cut to
+the maximums the policy has now. If the check file at that commit differs from
+the one the job recorded, the rerun is refused with `check_workflow_changed`,
+and the job page shows "The workflow file at this job's commit differs from
+the one the job recorded, so the job cannot run again." If OwnGit cannot read
+the check file for another reason, the rerun keeps the job's recorded limits,
+again cut to the current maximums. A rerun of a job whose commit is no longer
+in the repository is refused with `check_source_missing`.
+
 `check-job cancel` on a finished job changes nothing and fails with
 `check_job_finished`. A failure before
 start is recorded as `unavailable`, `error`, or `interrupted`. A push that
