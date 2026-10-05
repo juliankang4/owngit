@@ -128,6 +128,8 @@ func TestCoordinatorStartStopAndRestartReturn(t *testing.T) {
 			cancel()
 			t.Fatalf("cycle %d start did not return within %s", cycle, bound)
 		}
+		// A retained push event must not keep Stop waiting for admission.
+		coordinator.NotePush("missing-repository", []PushUpdate{{Ref: "refs/heads/main", New: "0000000000000000000000000000000000000000"}})
 		stopContext, stopCancel := context.WithTimeout(context.Background(), bound)
 		if err := coordinator.Stop(stopContext); err != nil {
 			stopCancel()

@@ -37,6 +37,11 @@ const (
 	// repositoryBusyWait bounds how long a job waits for its exact source
 	// while pushes or other repository writes hold the repository.
 	repositoryBusyWait = 10 * time.Minute
+
+	// admissionRetryWait is how long a retained push event a repository could
+	// not decide waits before the admission goroutine tries it again, at the
+	// cadence of the default reconciliation pass.
+	admissionRetryWait = 30 * time.Second
 )
 
 var ErrRuntimeUnavailable = errors.New("configured check runtime is unavailable")
@@ -77,9 +82,10 @@ func (err *RuntimeUnavailableError) Unwrap() error { return err.Err }
 
 func (err *RuntimeUnavailableError) Is(target error) bool { return target == ErrRuntimeUnavailable }
 
-// Coordinator owns bounded reconciliation and the in-process host/container
-// worker. External-runner jobs are admitted here but claimed only over the
-// separate runner protocol.
+// Coordinator owns bounded reconciliation, the in-process host/container
+// worker and the admission of push events. External-runner jobs are admitted
+// here but claimed only over the separate runner protocol. Admission runs on
+// its own goroutine, so a push made while a job runs does not wait for it.
 //
 // Start requires Store, Repositories and PullRequests, which the serving
 // process always sets. The command and the Checks page that forget a
@@ -95,16 +101,19 @@ type Coordinator struct {
 	Logf          func(string, ...any)
 
 	wake              chan struct{}
+	admits            chan struct{}
 	cancel            context.CancelFunc
 	done              chan struct{}
+	admitDone         chan struct{}
 	workspace         *checksource.WorkspaceRoot
 	pushCursor        map[string]string
 	skippedRefs       map[string]map[string]string
 	pushChecked       map[string]bool
 	pullRequestCursor map[string]int64
-	// pendingPushes holds the branch updates of accepted pushes that no pass
-	// has admitted or refused yet, oldest first per repository. The Git
-	// handler writes it and the reconciliation pass drains it, so mu guards it.
+	// pendingPushes holds the branch updates of accepted pushes that no
+	// attempt has admitted or refused yet, oldest first per repository. The
+	// Git handler writes it and the admission goroutine drains it, so mu
+	// guards it. It is memory only: a stop drops what no attempt admitted yet.
 	pendingPushes map[string][]pushUpdate
 	mu            sync.Mutex
 }
@@ -145,10 +154,14 @@ func (coordinator *Coordinator) Start(parent context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	wake := make(chan struct{}, 1)
+	admits := make(chan struct{}, 1)
 	done := make(chan struct{})
+	admitDone := make(chan struct{})
 	coordinator.cancel = cancel
 	coordinator.wake = wake
+	coordinator.admits = admits
 	coordinator.done = done
+	coordinator.admitDone = admitDone
 	coordinator.workspace = workspace
 	if coordinator.pushCursor == nil {
 		coordinator.pushCursor = make(map[string]string)
@@ -158,35 +171,45 @@ func (coordinator *Coordinator) Start(parent context.Context) error {
 	}
 	keepWorkspace = true
 	go coordinator.loop(ctx, wake, done)
+	go coordinator.admissionLoop(ctx, admits, admitDone)
 	wake <- struct{}{}
+	admits <- struct{}{}
 	return nil
 }
 
 func (coordinator *Coordinator) Stop(ctx context.Context) error {
 	coordinator.mu.Lock()
-	cancel, done := coordinator.cancel, coordinator.done
+	cancel, done, admitDone := coordinator.cancel, coordinator.done, coordinator.admitDone
 	coordinator.mu.Unlock()
 	if cancel == nil {
 		return nil
 	}
 	cancel()
-	select {
-	case <-done:
-		coordinator.mu.Lock()
-		var workspace *checksource.WorkspaceRoot
-		if coordinator.done == done {
-			coordinator.cancel = nil
-			coordinator.wake = nil
-			coordinator.done = nil
-			workspace = coordinator.workspace
-			coordinator.workspace = nil
+	// Both loops must end within the caller's bound. The retained push events
+	// are memory only: a stop drops what no attempt admitted yet, and the next
+	// start reconciles each branch head as before.
+	for _, end := range []<-chan struct{}{done, admitDone} {
+		select {
+		case <-end:
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-		coordinator.mu.Unlock()
-		workspace.Close()
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
 	}
+	coordinator.mu.Lock()
+	var workspace *checksource.WorkspaceRoot
+	if coordinator.done == done {
+		coordinator.cancel = nil
+		coordinator.wake = nil
+		coordinator.admits = nil
+		coordinator.done = nil
+		coordinator.admitDone = nil
+		coordinator.pendingPushes = nil
+		workspace = coordinator.workspace
+		coordinator.workspace = nil
+	}
+	coordinator.mu.Unlock()
+	workspace.Close()
+	return nil
 }
 
 // Wake schedules a bounded reconciliation. repositoryID is accepted by write
@@ -206,13 +229,32 @@ func (coordinator *Coordinator) Wake(repositoryID string) {
 	}
 }
 
+// wakeAdmission asks the admission goroutine to decide the retained push
+// events. A wake is coalesced: one drain covers everything retained before it
+// starts, and a signal that arrives during a drain wakes the next one.
+func (coordinator *Coordinator) wakeAdmission() {
+	coordinator.mu.Lock()
+	admits := coordinator.admits
+	coordinator.mu.Unlock()
+	if admits == nil {
+		return
+	}
+	select {
+	case admits <- struct{}{}:
+	default:
+	}
+}
+
 // NotePush retains the branch updates of one accepted push, so each of them is
 // admitted as its own job even while another job runs. It only adds to memory
 // and never waits for the state, the repository or the push: the Git response
 // is already complete and cannot be delayed or failed by check admission. A
-// deletion and a ref outside refs/heads carry no push check event. A later
-// pass admits what it retained; if none runs, the next start reconciles each
-// branch head as before, and a commit that is no longer a head keeps no job.
+// deletion, a ref outside refs/heads and a branch name the check records
+// cannot hold carry no event, and the admission goroutine is woken here, so an
+// event is decided while a local job and the reconciliation pass continue. A
+// coordinator that has not started keeps nothing; the next start reconciles
+// each branch head as before, and a commit that is no longer a head keeps no
+// job.
 func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpdate) {
 	if repositoryID == "" || len(updates) == 0 {
 		return
@@ -227,38 +269,57 @@ func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpda
 	if len(facts) == 0 {
 		return
 	}
-	coordinator.keepPushes(repositoryID, facts)
+	coordinator.keepPushes(repositoryID, facts, false)
 	coordinator.Wake(repositoryID)
+	coordinator.wakeAdmission()
 }
 
-// keepPushes retains accepted branch updates for a later pass and names every
-// update the repository's bound dropped. It is the one place that changes the
-// retained set, so a push that gets no job of its own is never silent.
-func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUpdate) {
+// keepPushes retains accepted branch updates for a later attempt and names in
+// one summary line what that call dropped. An arrival goes after what is
+// already waiting; an update an attempt could not decide goes in front of it,
+// so admission stays oldest first. A repository at its bound drops the oldest
+// arrival, or the newest update when an older one goes back in front, so a
+// retry never loses the event it was retrying. An update no observation or job
+// can name is not retained; the head pass names such a branch once.
+func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUpdate, front bool) {
 	if len(updates) == 0 {
 		return
 	}
 	coordinator.mu.Lock()
+	// Nothing would admit the updates while the coordinator is not running, and
+	// the next start reconciles each branch head anyway.
+	if coordinator.wake == nil {
+		coordinator.mu.Unlock()
+		return
+	}
 	if coordinator.pendingPushes == nil {
 		coordinator.pendingPushes = make(map[string][]pushUpdate)
 	}
 	kept := coordinator.pendingPushes[repositoryID]
 	var dropped []pushUpdate
-	for _, update := range updates {
-		duplicate := false
-		for _, pending := range kept {
-			if pending == update {
-				duplicate = true
-				break
+	if front {
+		var put []pushUpdate
+		for _, update := range updates {
+			if !state.ValidCheckObservationRef(update.ref) || containsPushUpdate(kept, update) {
+				continue
 			}
+			put = append(put, update)
 		}
-		if duplicate {
-			continue
+		kept = append(put, kept...)
+		for len(kept) > maximumPendingPushes {
+			dropped = append(dropped, kept[len(kept)-1])
+			kept = kept[:len(kept)-1]
 		}
-		kept = append(kept, update)
-		if len(kept) > maximumPendingPushes {
-			dropped = append(dropped, kept[0])
-			kept = kept[1:]
+	} else {
+		for _, update := range updates {
+			if !state.ValidCheckObservationRef(update.ref) || containsPushUpdate(kept, update) {
+				continue
+			}
+			kept = append(kept, update)
+			if len(kept) > maximumPendingPushes {
+				dropped = append(dropped, kept[0])
+				kept = kept[1:]
+			}
 		}
 	}
 	if len(kept) == 0 {
@@ -267,105 +328,199 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 		coordinator.pendingPushes[repositoryID] = kept
 	}
 	coordinator.mu.Unlock()
-	for _, update := range dropped {
-		coordinator.log("configured check push %s %s at %s was not queued: %d pushes to the repository are already waiting",
-			repositoryID, branchName(update.ref), update.oid, maximumPendingPushes)
+	if len(dropped) != 0 {
+		// One line per call, so a push that updates many branches cannot flood
+		// the log or delay the Git response that already finished.
+		coordinator.log("configured check push %s dropped %d of %d updates: %d updates per repository are already waiting (first dropped %s at %s, last dropped %s at %s)",
+			repositoryID, len(dropped), len(updates), maximumPendingPushes,
+			branchName(dropped[0].ref), dropped[0].oid, branchName(dropped[len(dropped)-1].ref), dropped[len(dropped)-1].oid)
 	}
 }
 
-// admitPendingPushes admits the branch updates of pushes that arrived since the
-// last pass, each as its own job, so a push made while a job runs keeps its own
-// event instead of only the head it left. Admission applies the same policy,
-// consent, ceiling, branch, dedup and queue rules the head pass uses; the
-// repository is left exactly as reconciliation leaves it. A repository that is
-// still preparing, or whose updates cannot be decided, keeps them for a later
-// pass. Updates no policy admits now are dropped like the heads reconciliation
-// leaves unobserved until the policy, consent or ceiling admits again.
-func (coordinator *Coordinator) admitPendingPushes(ctx context.Context, ceilings state.CheckCeilings) {
+// containsPushUpdate reports whether an update is already waiting.
+func containsPushUpdate(updates []pushUpdate, update pushUpdate) bool {
+	for _, pending := range updates {
+		if pending == update {
+			return true
+		}
+	}
+	return false
+}
+
+// admitPendingPushes admits the branch updates of pushes that no attempt has
+// decided yet, each as its own job, so a push made while a local job runs
+// keeps its own event instead of only the head it left. It runs on the
+// admission goroutine, independently of the reconciliation pass and of job
+// execution. Admission applies the same policy, consent, legacy, ceiling,
+// branch, dedup and queue rules the head pass uses and leaves the repository
+// exactly as the head pass leaves it. An event a repository cannot decide yet,
+// or one a transient Git or state failure stopped, waits for a later attempt
+// and is named once for the repository; a deterministic refusal is dropped
+// like a head the rules refuse. It reports whether an event waits.
+//
+// An event is decided against the policy as it is at admission time, not as it
+// was at push time. Immediate admission keeps that window to one attempt, and
+// the admitting transaction checks consent again, so the event path cannot
+// widen what a saved policy allows.
+func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 	coordinator.mu.Lock()
 	pending := coordinator.pendingPushes
 	coordinator.pendingPushes = nil
 	coordinator.mu.Unlock()
 	if len(pending) == 0 {
-		return
+		return false
 	}
 	ids := make([]string, 0, len(pending))
 	for id := range pending {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	if ctx.Err() != nil {
+		// The coordinator is stopping. Retained events are memory only, so what
+		// no attempt admitted yet goes away with the process, and the next start
+		// reconciles each branch head as before.
+		return false
+	}
+	ceilings, err := coordinator.Store.CheckCeilings(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			coordinator.log("configured check push admission: %v", err)
+		}
+		for _, id := range ids {
+			coordinator.keepPushes(id, pending[id], true)
+		}
+		return ctx.Err() == nil
+	}
+	waiting := false
 	for _, repositoryID := range ids {
 		if ctx.Err() != nil {
-			return
+			return false
 		}
 		facts := pending[repositoryID]
 		if coordinator.Repositories.Preparing(repositoryID) {
-			coordinator.keepPushes(repositoryID, facts)
+			coordinator.keepPushes(repositoryID, facts, true)
+			waiting = true
 			continue
 		}
 		policy, ready, err := coordinator.admissiblePushPolicy(ctx, repositoryID, ceilings)
 		if err != nil {
-			coordinator.log("configured check push admission for %s: %v", repositoryID, err)
-			coordinator.keepPushes(repositoryID, facts)
+			if ctx.Err() == nil {
+				coordinator.log("configured check push admission for %s: %v", repositoryID, err)
+			}
+			coordinator.keepPushes(repositoryID, facts, true)
+			waiting = true
 			continue
 		}
 		if !ready || !contains(policy.AllowedEvents, checkworkflow.EventPush) {
 			// Nothing admits these pushes now: checks are not configured or
 			// consented, the execution is legacy, the policy is above this
-			// computer's ceilings, or the push event is off. An event type the
-			// policy does not allow is not recorded at all.
+			// computer's ceilings, or the push event is off. The head pass leaves
+			// those branches unobserved, so a later change admits what arrived
+			// meanwhile, and an event type the policy does not allow is not
+			// recorded at all.
 			continue
 		}
-		coordinator.admitPendingEvents(ctx, repositoryID, policy, facts)
+		if coordinator.admitPendingEvents(ctx, repositoryID, policy, facts) {
+			waiting = true
+		}
+	}
+	return waiting
+}
+
+// admissionLoop decides retained push events while the reconciliation loop
+// executes jobs, so a push made during a local job becomes a job during that
+// run instead of after it. It is the only drainer of the retained set. An
+// event a repository could not decide is attempted again at the reconciliation
+// cadence, never in a busy loop, and the loop ends with the coordinator.
+func (coordinator *Coordinator) admissionLoop(ctx context.Context, admits <-chan struct{}, done chan<- struct{}) {
+	defer close(done)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-admits:
+		}
+		for ctx.Err() == nil && coordinator.admitPendingPushes(ctx) {
+			timer := time.NewTimer(admissionRetryWait)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-admits:
+				timer.Stop()
+			case <-timer.C:
+			}
+		}
 	}
 }
 
 // admitPendingEvents admits one repository's retained push events, oldest
-// first. An event that already has a job, or that admission refuses, is left
-// alone and named in the log where the refusal matters to the owner; an event
-// the repository cannot decide yet waits for a later pass.
-func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate) {
+// first, and reports whether any of them waits for a later attempt. An event
+// that already has a job, or that the rules refuse, is left alone and named in
+// the log; an event a Git or state failure stopped waits, like a head the head
+// pass could not decide.
+func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate) bool {
 	events := make([]string, 0, len(facts))
 	for _, fact := range facts {
-		if state.ValidCheckObservationRef(fact.ref) {
-			events = append(events, fact.ref+"@"+fact.oid)
-		}
+		events = append(events, fact.ref+"@"+fact.oid)
 	}
 	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, events)
 	if err != nil {
 		if ctx.Err() == nil {
 			coordinator.log("configured check push admission for %s: %v", repositoryID, err)
 		}
-		coordinator.keepPushes(repositoryID, facts)
-		return
+		coordinator.keepPushes(repositoryID, facts, true)
+		return true
 	}
 	var waiting []pushUpdate
+	var failure error
 	for _, fact := range facts {
-		if !state.ValidCheckObservationRef(fact.ref) {
-			coordinator.noteSkippedRef(repositoryID, fact.ref, fact.oid)
-			continue
-		}
 		if seen[fact.ref+"@"+fact.oid] {
 			continue
 		}
-		_, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
-			RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
-			EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, TriggerRef: branchName(fact.ref),
-		})
-		if err == nil {
-			continue
+		admit := func() error {
+			_, admitErr := coordinator.admit(ctx, policy, state.CheckJobRequest{
+				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
+				EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, TriggerRef: branchName(fact.ref),
+			})
+			return admitErr
 		}
-		if errors.Is(err, repository.ErrPinnedRepositoryBusy) || ctx.Err() != nil {
-			// A push still holds the repository, or the coordinator is stopping:
-			// the event waits for a later pass instead of delaying or failing
-			// anything.
+		// The push that reported this update still holds the repository write
+		// lock while the handler returns, so the wait is expected and bounded
+		// like a job's source copy.
+		err := checksource.RetryWhileRepositoryBusy(ctx, repositoryBusyWait, admit)
+		switch {
+		case err == nil:
+		case ctx.Err() != nil:
+			// The coordinator is stopping: the event stays in memory only.
 			waiting = append(waiting, fact)
-			continue
+		case decidedPushRefusal(err):
+			coordinator.log("configured check push %s %s at %s was not admitted: %v",
+				repositoryID, branchName(fact.ref), fact.oid, err)
+		default:
+			waiting = append(waiting, fact)
+			failure = err
 		}
-		coordinator.log("configured check push %s %s at %s was not admitted: %v",
-			repositoryID, branchName(fact.ref), fact.oid, err)
 	}
-	coordinator.keepPushes(repositoryID, waiting)
+	if len(waiting) != 0 {
+		if failure != nil {
+			coordinator.log("configured check push %s keeps %d updates for a later attempt: %v", repositoryID, len(waiting), failure)
+		}
+		coordinator.keepPushes(repositoryID, waiting, true)
+	}
+	return len(waiting) != 0
+}
+
+// decidedPushRefusal reports whether the admission rules decided an event, so
+// a later attempt would refuse it the same way. Everything else, such as a Git
+// process or state write failure, may pass on a later attempt.
+func decidedPushRefusal(err error) bool {
+	return errors.Is(err, errRevisionRejected) ||
+		errors.Is(err, state.ErrCheckQueueFull) ||
+		errors.Is(err, state.ErrCheckPolicyMissing) ||
+		errors.Is(err, state.ErrCheckConsentRequired) ||
+		errors.Is(err, state.ErrCheckEventNotAllowed) ||
+		errors.Is(err, state.ErrCheckCeilingExceeded)
 }
 
 // admissiblePushPolicy returns the policy a repository's push checks may be
@@ -388,8 +543,8 @@ func (coordinator *Coordinator) admissiblePushPolicy(ctx context.Context, reposi
 }
 
 // noteSkippedRef names once per head a branch whose name the check records
-// cannot hold: no observation and no job can carry it, so neither a head pass
-// nor a push event admits it.
+// cannot hold: no observation and no job can carry it, so the head pass skips
+// it and a push to it retains no event.
 func (coordinator *Coordinator) noteSkippedRef(repositoryID, refName, oid string) {
 	if coordinator.skippedRefs == nil {
 		coordinator.skippedRefs = make(map[string]map[string]string)
@@ -445,10 +600,9 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Retained push events go first, so a push made while a job ran is
-	// admitted from the push itself and not only from the head it left. The
-	// head pass below then finds their jobs and queues nothing twice.
-	coordinator.admitPendingPushes(ctx, ceilings)
+	// Retained push events are decided by the admission goroutine, which does
+	// not wait for this pass or for a running job; the head pass below then
+	// finds their jobs and queues nothing twice.
 	for _, id := range ids {
 		if err := ctx.Err(); err != nil {
 			return err

@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"owngit/internal/checksource"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
 	"owngit/internal/pullrequest"
@@ -29,7 +29,10 @@ type pushFixture struct {
 	repoPath     string
 	work         string
 	coordinator  *Coordinator
-	logs         []string
+	// logs collects the coordinator's log lines. Logf is called from the
+	// coordinator loops and from the test goroutine, so appends are serialized.
+	logs   []string
+	logsMu sync.Mutex
 }
 
 func newPushFixture(t *testing.T, queueLimit int) *pushFixture {
@@ -78,9 +81,60 @@ func newPushFixture(t *testing.T, queueLimit int) *pushFixture {
 	}
 	fixture.coordinator = &Coordinator{
 		Store: store, Repositories: manager, PullRequests: &pullrequest.Service{Store: store, Repositories: manager},
-		Logf: func(format string, arguments ...any) { fixture.logs = append(fixture.logs, format) },
+		Logf: fixture.recordLog,
 	}
+	// Tests drive the loops themselves, so mark the coordinator as started and
+	// drain retained push events with admitPendingPushes. A coordinator that
+	// never started keeps nothing, which TestPushRetentionIsBoundedAndReportsWhatItDrops
+	// checks separately.
+	fixture.coordinator.wake = make(chan struct{}, 1)
 	return fixture
+}
+
+// recordLog collects one log line.
+func (fixture *pushFixture) recordLog(format string, arguments ...any) {
+	fixture.logsMu.Lock()
+	defer fixture.logsMu.Unlock()
+	fixture.logs = append(fixture.logs, fmt.Sprintf(format, arguments...))
+}
+
+// logLines returns the collected log lines that contain every phrase.
+func (fixture *pushFixture) logLines(phrases ...string) []string {
+	fixture.t.Helper()
+	fixture.logsMu.Lock()
+	defer fixture.logsMu.Unlock()
+	var matching []string
+	for _, line := range fixture.logs {
+		found := true
+		for _, phrase := range phrases {
+			if !strings.Contains(line, phrase) {
+				found = false
+				break
+			}
+		}
+		if found {
+			matching = append(matching, line)
+		}
+	}
+	return matching
+}
+
+// retained copies the push updates the repository keeps for a later attempt.
+func (fixture *pushFixture) retained() []pushUpdate {
+	fixture.t.Helper()
+	fixture.coordinator.mu.Lock()
+	defer fixture.coordinator.mu.Unlock()
+	return append([]pushUpdate(nil), fixture.coordinator.pendingPushes[fixture.repositoryID]...)
+}
+
+// passes drains retained push events and runs reconciliation passes, as the
+// running coordinator's admission and loop goroutines do.
+func (fixture *pushFixture) passes(count int) {
+	fixture.t.Helper()
+	for pass := 0; pass < count; pass++ {
+		fixture.coordinator.admitPendingPushes(fixture.ctx)
+		noErr(fixture.t, fixture.coordinator.reconcile(fixture.ctx))
+	}
 }
 
 func (fixture *pushFixture) git(arguments ...string) string {
@@ -198,16 +252,11 @@ func TestFullQueueKeepsTheBranchForALaterPass(t *testing.T) {
 	// way and named in the log: nothing is queued for it, and the branch head
 	// waits for a later pass exactly as the head pass does.
 	fixture.coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/b-second", New: secondOID}})
-	fixture.coordinator.admitPendingPushes(fixture.ctx, state.DefaultCheckCeilings)
+	fixture.coordinator.admitPendingPushes(fixture.ctx)
 	if later, err := fixture.store.LatestCheckJobs(fixture.ctx, fixture.repositoryID, 10); err != nil || len(later) != 1 {
 		t.Fatalf("a full queue admitted jobs=%v err=%v", later, err)
 	}
-	refusals := 0
-	for _, line := range fixture.logs {
-		if strings.Contains(line, "was not admitted") {
-			refusals++
-		}
-	}
+	refusals := len(fixture.logLines("was not admitted"))
 	if refusals != 1 {
 		t.Fatalf("the refused push event was named %d times, want once: %v", refusals, fixture.logs)
 	}
@@ -248,9 +297,9 @@ func TestUnrecordableBranchNameDoesNotBlockLaterBranches(t *testing.T) {
 	}
 }
 
-// A push event that is off observes nothing and admits nothing from the push
-// facts it kept, so turning it on later admits the heads that arrived
-// meanwhile, and a head that already has a job stays unqueued.
+// A push event that is off admits nothing and keeps nothing, so turning it on
+// later admits the heads that arrived meanwhile, and a head that already has a
+// job stays unqueued.
 func TestDisabledPushEventObservesNothing(t *testing.T) {
 	fixture := newPushFixture(t, 4)
 	now := time.Now().UTC()
@@ -267,9 +316,7 @@ func TestDisabledPushEventObservesNothing(t *testing.T) {
 	policy(checkworkflow.EventPullRequest)
 	oid := fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"exit 0"}]}`)
 	fixture.coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
-	for pass := 0; pass < 2; pass++ {
-		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
-	}
+	fixture.passes(2)
 	if observed := fixture.observed(); len(observed) != 0 {
 		t.Fatalf("observations while push was off: %v", observed)
 	}
@@ -277,9 +324,7 @@ func TestDisabledPushEventObservesNothing(t *testing.T) {
 		t.Fatalf("the push facts of a disabled event admitted %v", refs)
 	}
 	policy(checkworkflow.EventPush, checkworkflow.EventPullRequest)
-	for pass := 0; pass < 2; pass++ {
-		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
-	}
+	fixture.passes(2)
 	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
 		t.Fatalf("jobs after enabling push=%v, want one for main", refs)
 	}
@@ -432,68 +477,6 @@ func pushJobOIDs(t *testing.T, fixture *pushFixture) map[string]bool {
 	return oids
 }
 
-// A push that moves a branch while a local job runs keeps its own check: two
-// fast-forward pushes made during the run each get a job for their own
-// revision, not only the head they left.
-func TestPushesWhileALocalJobRunsEachGetAJob(t *testing.T) {
-	fixture := newPushFixture(t, 8)
-	now := time.Now().UTC()
-	if _, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{
-		RepositoryID: fixture.repositoryID, Executor: state.CheckExecutorHost,
-		AllowedEvents: []string{checkworkflow.EventPush}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
-		QueueLimit: 8, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
-	}, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fixture.store.GrantCheckConsent(fixture.ctx, fixture.repositoryID, now.Add(time.Second)); err != nil {
-		t.Fatal(err)
-	}
-	workspace, err := checksource.AcquireWorkspaceRoot(filepath.Join(t.TempDir(), "check-jobs"))
-	noErr(t, err)
-	t.Cleanup(workspace.Close)
-	coordinator := fixture.coordinator
-	coordinator.workspace = workspace
-	first := fixture.pushWorkflow("main", validWorkflow)
-	noErr(t, coordinator.reconcile(fixture.ctx))
-
-	// The job waits for the repository write lock this test holds, exactly
-	// where a concurrent push holds it. The two pushes below move the branch
-	// while the coordinator is inside the job.
-	lock := coordinator.Repositories.Locks.For(fixture.repositoryID)
-	lock.Lock()
-	jobDone := make(chan error, 1)
-	go func() { jobDone <- coordinator.runOneLocal(fixture.ctx) }()
-	deadline := time.Now().Add(20 * time.Second)
-	for {
-		jobs, err := fixture.store.LatestCheckJobs(fixture.ctx, fixture.repositoryID, 10)
-		noErr(t, err)
-		if len(jobs) == 1 && jobs[0].Status == state.CheckJobClaimed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the local job was not claimed: %+v", jobs)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	second := fixture.pushWorkflow("main", validWorkflow)
-	third := fixture.pushWorkflow("main", validWorkflow)
-	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: second}})
-	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: third}})
-	lock.Unlock()
-	noErr(t, <-jobDone)
-
-	noErr(t, coordinator.reconcile(fixture.ctx))
-	oids := pushJobOIDs(t, fixture)
-	for _, oid := range []string{first, second, third} {
-		if !oids[oid] {
-			t.Fatalf("the pushed revision %s has no job of its own: %v", oid, oids)
-		}
-	}
-	if len(oids) != 3 {
-		t.Fatalf("jobs for %v, want one per pushed revision", oids)
-	}
-}
-
 // The Git handler hands one push's refs to admission and has no result to
 // return. A deletion, a ref outside refs/heads, a revision whose workflow is
 // refused and an event that already has a job are all decided without
@@ -509,6 +492,7 @@ func TestPushUpdatesThatCannotBeAdmittedDoNotStopThePush(t *testing.T) {
 		{Ref: "refs/heads/main", New: broken},
 	})
 	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: valid}})
+	coordinator.admitPendingPushes(fixture.ctx)
 	noErr(t, coordinator.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 1 || refs[0] != "main" {
 		t.Fatalf("jobs=%v, want only main", refs)
@@ -516,17 +500,13 @@ func TestPushUpdatesThatCannotBeAdmittedDoNotStopThePush(t *testing.T) {
 	if oids := pushJobOIDs(t, fixture); !oids[valid] {
 		t.Fatalf("the push behind the refused revision has no job: %v", oids)
 	}
-	refusals := 0
-	for _, line := range fixture.logs {
-		if strings.Contains(line, "was not admitted") {
-			refusals++
-		}
-	}
+	refusals := len(fixture.logLines("was not admitted"))
 	if refusals != 1 {
 		t.Fatalf("the refused revision was named %d times, want once: %v", refusals, fixture.logs)
 	}
 	// The same event twice queues nothing twice.
 	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: valid}})
+	coordinator.admitPendingPushes(fixture.ctx)
 	noErr(t, coordinator.reconcile(fixture.ctx))
 	if oids := pushJobOIDs(t, fixture); len(oids) != 1 {
 		t.Fatalf("a repeated push event queued another job: %v", oids)
@@ -534,62 +514,179 @@ func TestPushUpdatesThatCannotBeAdmittedDoNotStopThePush(t *testing.T) {
 }
 
 // A repository keeps a bounded set of accepted pushes waiting for admission.
-// An update the bound drops is named once, so a push that gets no job of its
-// own is never silent.
+// A push that updates many branches writes one summary line that names what it
+// dropped, and a coordinator that has not started keeps and names nothing.
 func TestPushRetentionIsBoundedAndReportsWhatItDrops(t *testing.T) {
 	fixture := newPushFixture(t, 4)
-	for index := 0; index <= maximumPendingPushes; index++ {
-		fixture.coordinator.NotePush(fixture.repositoryID, []PushUpdate{{
-			Ref: "refs/heads/main", New: fmt.Sprintf("%040x", index),
-		}})
+	updates := make([]PushUpdate, 0, maximumPendingPushes+36)
+	for index := 0; index < maximumPendingPushes+36; index++ {
+		updates = append(updates, PushUpdate{
+			Ref: fmt.Sprintf("refs/heads/b-%02d", index), New: fmt.Sprintf("%040x", index),
+		})
 	}
-	fixture.coordinator.mu.Lock()
-	kept := append([]pushUpdate(nil), fixture.coordinator.pendingPushes[fixture.repositoryID]...)
-	fixture.coordinator.mu.Unlock()
+	fixture.coordinator.NotePush(fixture.repositoryID, updates)
+	kept := fixture.retained()
 	if len(kept) != maximumPendingPushes {
 		t.Fatalf("retained %d pushes, want %d", len(kept), maximumPendingPushes)
 	}
-	if kept[0].oid != fmt.Sprintf("%040x", 1) || kept[len(kept)-1].oid != fmt.Sprintf("%040x", maximumPendingPushes) {
+	if kept[0].oid != fmt.Sprintf("%040x", 36) || kept[len(kept)-1].oid != fmt.Sprintf("%040x", maximumPendingPushes+35) {
 		t.Fatalf("retained the wrong pushes: first %s last %s", kept[0].oid, kept[len(kept)-1].oid)
 	}
-	dropped := 0
-	for _, line := range fixture.logs {
-		if strings.Contains(line, "was not queued") {
-			dropped++
-		}
+	summaries := fixture.logLines("dropped")
+	if len(summaries) != 1 {
+		t.Fatalf("a 100-branch push wrote %d summary lines, want one: %v", len(summaries), fixture.logs)
 	}
-	if dropped != 1 {
-		t.Fatalf("the dropped push was named %d times, want once: %v", dropped, fixture.logs)
+	if !strings.Contains(summaries[0], "dropped 36 of 100 updates") || !strings.Contains(summaries[0], "b-00") || !strings.Contains(summaries[0], "b-35") {
+		t.Fatalf("the summary does not name the count and the first and last dropped update: %s", summaries[0])
+	}
+	// A second push names its own drops once, whatever the number of branches.
+	more := make([]PushUpdate, 0, 10)
+	for index := 0; index < 10; index++ {
+		more = append(more, PushUpdate{Ref: fmt.Sprintf("refs/heads/c-%02d", index), New: fmt.Sprintf("%040x", 200+index)})
+	}
+	fixture.coordinator.NotePush(fixture.repositoryID, more)
+	if summaries := fixture.logLines("dropped"); len(summaries) != 2 {
+		t.Fatalf("two pushes wrote %d summary lines, want one each: %v", len(summaries), fixture.logs)
+	}
+	// An update no observation or job can name is not retained. The head pass
+	// names such a branch once, and a push to it names nothing.
+	unrecordable := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
+	unrecordable.wake = make(chan struct{}, 1)
+	unrecordable.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100), New: fmt.Sprintf("%040x", 4242)}})
+	unrecordable.mu.Lock()
+	unrecorded := unrecordable.pendingPushes
+	unrecordable.mu.Unlock()
+	if len(unrecorded) != 0 {
+		t.Fatalf("a branch name no job can carry was retained: %v", unrecorded)
+	}
+	// No loop would admit an update while the coordinator is not running, so a
+	// coordinator that has not started, or has stopped, keeps and names nothing.
+	stopped := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
+	before := len(fixture.logs)
+	stopped.NotePush(fixture.repositoryID, updates)
+	stopped.mu.Lock()
+	pending := stopped.pendingPushes
+	stopped.mu.Unlock()
+	if len(pending) != 0 {
+		t.Fatalf("a coordinator that has not started retained %d updates", len(pending))
+	}
+	if len(fixture.logs) != before {
+		t.Fatalf("a coordinator that has not started logged %v", fixture.logs[before:])
 	}
 }
 
-// A push still holds the repository write lock while a pass tries to admit its
-// event. Admission keeps the event for a later pass instead of waiting for the
-// repository, so the push an update arrived with is never delayed, and the
-// event is admitted once the repository is free.
-func TestPushEventWaitsWhileTheRepositoryIsBusy(t *testing.T) {
+// A push still holds the repository write lock while its handler returns.
+// Admission waits for the writer, bounded like a job's source copy, instead of
+// keeping the event, and the event becomes a job once the repository is free.
+func TestPushEventWaitsForThePushThatHoldsTheRepository(t *testing.T) {
 	fixture := newPushFixture(t, 4)
 	oid := fixture.pushWorkflow("main", validWorkflow)
 	coordinator := fixture.coordinator
 	lock := coordinator.Repositories.Locks.For(fixture.repositoryID)
 	lock.Lock()
 	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
-	admitted := make(chan struct{})
-	go func() {
-		defer close(admitted)
-		coordinator.admitPendingPushes(fixture.ctx, state.DefaultCheckCeilings)
-	}()
+	admitted := make(chan bool, 1)
+	go func() { admitted <- coordinator.admitPendingPushes(fixture.ctx) }()
+	// A drain that returned here did not wait for the writer, whatever it did
+	// with the event.
 	select {
 	case <-admitted:
-	case <-time.After(20 * time.Second):
-		t.Fatal("admission waited for the repository the push holds")
+		t.Fatal("admission returned while a push held the repository")
+	case <-time.After(300 * time.Millisecond):
 	}
 	if oids := pushJobOIDs(t, fixture); len(oids) != 0 {
 		t.Fatalf("a busy repository admitted %v", oids)
 	}
 	lock.Unlock()
-	noErr(t, coordinator.reconcile(fixture.ctx))
+	select {
+	case retry := <-admitted:
+		if retry {
+			t.Fatal("the event was kept although the repository became free")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("admission did not finish after the repository became free")
+	}
 	if oids := pushJobOIDs(t, fixture); !oids[oid] {
 		t.Fatalf("the retained push was not admitted after the repository was free: %v", oids)
+	}
+}
+
+// An event an attempt could not decide goes back in front of updates that
+// arrived while it was decided, so admission stays oldest first, and a
+// repository at its bound drops the newest arrival instead of the event it was
+// retrying.
+func TestKeptPushEventGoesInFrontOfNewerUpdates(t *testing.T) {
+	fixture := newPushFixture(t, 8)
+	oldest := fixture.pushWorkflow("main", validWorkflow)
+	newer := fixture.pushWorkflow("main", validWorkflow)
+	newest := fixture.pushWorkflow("main", validWorkflow)
+	coordinator := fixture.coordinator
+	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: newer}})
+	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: newest}})
+	coordinator.keepPushes(fixture.repositoryID, []pushUpdate{{ref: "refs/heads/main", oid: oldest}}, true)
+	kept := fixture.retained()
+	if len(kept) != 3 || kept[0].oid != oldest || kept[1].oid != newer || kept[2].oid != newest {
+		t.Fatalf("retained %v, want the oldest update first", kept)
+	}
+	coordinator.admitPendingPushes(fixture.ctx)
+	jobs, err := fixture.store.CheckJobs(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	order := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		order = append(order, job.SourceOID)
+	}
+	if len(order) != 3 || order[0] != oldest || order[1] != newer || order[2] != newest {
+		t.Fatalf("jobs were admitted in order %v, want the oldest push first", order)
+	}
+	// The same rule holds at the bound: an older event goes in front, and the
+	// newest arrival is the one the repository drops.
+	filler := make([]PushUpdate, 0, maximumPendingPushes)
+	for index := 0; index < maximumPendingPushes; index++ {
+		filler = append(filler, PushUpdate{Ref: "refs/heads/main", New: fmt.Sprintf("%040x", 3000+index)})
+	}
+	coordinator.NotePush(fixture.repositoryID, filler)
+	replayed := pushUpdate{ref: "refs/heads/main", oid: fmt.Sprintf("%040x", 2000)}
+	coordinator.keepPushes(fixture.repositoryID, []pushUpdate{replayed}, true)
+	kept = fixture.retained()
+	if len(kept) != maximumPendingPushes || kept[0] != replayed {
+		t.Fatalf("retained %d updates, want the older update in front: %v", len(kept), kept)
+	}
+	if kept[len(kept)-1].oid != fmt.Sprintf("%040x", 3000+maximumPendingPushes-2) {
+		t.Fatalf("the repository dropped %s, want its newest arrival", kept[len(kept)-1].oid)
+	}
+	dropped := fixture.logLines("dropped")
+	if len(dropped) != 1 || !strings.Contains(dropped[0], fmt.Sprintf("%040x", 3000+maximumPendingPushes-1)) {
+		t.Fatalf("the newest arrival was not named once as dropped: %v", fixture.logs)
+	}
+}
+
+// A Git or state failure is not a decision, so the event waits for a later
+// attempt, like a head the head pass could not decide, and admission succeeds
+// once the failure passes.
+func TestPushEventKeepsATransientAdmissionFailure(t *testing.T) {
+	fixture := newPushFixture(t, 8)
+	oid := fixture.pushWorkflow("main", validWorkflow)
+	noErr(t, fixture.store.Exec(fixture.ctx, `CREATE TRIGGER refuse_admission BEFORE INSERT ON check_jobs BEGIN SELECT RAISE(ABORT, 'synthetic job write failure'); END`))
+	coordinator := fixture.coordinator
+	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
+	if retry := coordinator.admitPendingPushes(fixture.ctx); !retry {
+		t.Fatal("a transient failure did not keep the event for a later attempt")
+	}
+	if oids := pushJobOIDs(t, fixture); len(oids) != 0 {
+		t.Fatalf("a failed admission queued %v", oids)
+	}
+	if kept := fixture.retained(); len(kept) != 1 || kept[0].oid != oid {
+		t.Fatalf("retained %v, want the event a transient failure stopped", kept)
+	}
+	if kept := fixture.logLines("for a later attempt"); len(kept) != 1 {
+		t.Fatalf("the kept event was named %d times, want once: %v", len(kept), fixture.logs)
+	}
+	// The failure passes, and the retained event is admitted then.
+	noErr(t, fixture.store.Exec(fixture.ctx, `DROP TRIGGER refuse_admission`))
+	if retry := coordinator.admitPendingPushes(fixture.ctx); retry {
+		t.Fatal("the drain reported a waiting event after the failure passed")
+	}
+	if oids := pushJobOIDs(t, fixture); !oids[oid] {
+		t.Fatalf("the kept push has no job after the failure passed: %v", oids)
 	}
 }

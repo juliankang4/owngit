@@ -29,9 +29,7 @@ func (fixture *pushFixture) setPolicyVersion(timeoutMS int64) {
 
 func (fixture *pushFixture) settle() int {
 	fixture.t.Helper()
-	for pass := 0; pass < 4; pass++ {
-		noErr(fixture.t, fixture.coordinator.reconcile(fixture.ctx))
-	}
+	fixture.passes(4)
 	jobs, err := fixture.store.CheckJobs(fixture.ctx, fixture.repositoryID)
 	noErr(fixture.t, err)
 	return len(jobs)
