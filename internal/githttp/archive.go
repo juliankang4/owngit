@@ -108,7 +108,7 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	}
 	deadlines := &transferDeadlines{controller: controller, idle: limits.Idle, overall: deadline}
 	busy := &ArchiveError{Status: http.StatusServiceUnavailable, RetryAfter: 10 * time.Second, Message: "The repository is busy with other Git transfers. Try again shortly."}
-	release, err := h.slots.acquire(ctx, repositoryID, limits)
+	release, err := h.slots.acquirePacking(ctx, repositoryID, limits)
 	if err != nil {
 		logArchiveFailure(repositoryID, err, deadline, "no Git transfer slot became free within "+limits.QueueWait.String())
 		return busy

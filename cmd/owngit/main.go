@@ -305,6 +305,29 @@ func serveWithOpener(arguments []string, opener func(string) error, logf func(st
 	return err
 }
 
+// packLimits adds the memory limit of this computer to the saved transfer
+// limits: at most hostmem.PackSlots requests that build a pack (a clone, a
+// fetch or an archive) run at once, and a further one waits for a slot up to
+// the saved queue wait. Ref advertisements and pushes keep the saved
+// slots. With an unknown ceiling the saved limits stand alone. setPackers
+// receives how many requests may build a pack at once, so Git's packing
+// memory is shared among them.
+func packLimits(saved func(context.Context) (githttp.Limits, error), ceiling uint64, setPackers func(int)) func(context.Context) (githttp.Limits, error) {
+	return func(ctx context.Context) (githttp.Limits, error) {
+		limits, err := saved(ctx)
+		if err != nil {
+			return limits, err
+		}
+		limits.PackSlots = hostmem.PackSlots(ceiling)
+		packers := limits.PerRepository + limits.ExtraSlots
+		if limits.PackSlots > 0 {
+			packers = min(packers, limits.PackSlots)
+		}
+		setPackers(packers)
+		return limits, nil
+	}
+}
+
 // interactiveSetup reports whether first-run setup can ask its questions in
 // this terminal. Tests replace it, so a test run from a terminal never
 // waits for answers.
@@ -552,18 +575,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if err != nil {
 		return err
 	}
-	// The memory of this computer bounds how many Git transfers run at once
-	// (a request over that waits for a slot, up to the queue wait), and the
-	// packing bounds share the memory among the transfers admitted.
-	savedLimits := gitHandler.Limits
-	gitHandler.Limits = func(ctx context.Context) (githttp.Limits, error) {
-		limits, err := savedLimits(ctx)
-		if err == nil {
-			limits.PerRepository, limits.ExtraSlots = hostmem.ClampTransfers(hostmem.Ceiling(), limits.PerRepository, limits.ExtraSlots)
-			runner.SetTransfers(limits.PerRepository + limits.ExtraSlots)
-		}
-		return limits, err
-	}
+	gitHandler.Limits = packLimits(gitHandler.Limits, hostmem.Ceiling(), runner.SetTransfers)
 	authentication := &auth.Manager{Store: store, AdminSessionLife: 15 * time.Minute}
 	listener, err := net.Listen("tcp", network.Listen)
 	if err != nil {

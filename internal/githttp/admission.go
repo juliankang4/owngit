@@ -17,6 +17,12 @@ var errBusy = errors.New("all Git transfer slots stayed busy")
 // keeps all perRepository slots. A request waits for a slot at most for
 // the queue wait.
 //
+// A request that builds a pack (a clone or fetch, an archive) is also
+// limited to PackSlots at once when that limit is set, for a computer whose
+// memory cannot pack more. Such a request waits until it fits both limits and
+// holds nothing while it waits, so a push or a ref advertisement never waits
+// behind queued clones. The queue wait covers the whole wait.
+//
 // Each request brings the limits saved when it started, and they replace
 // the counts under the lock when it asks for a slot, so a new limit applies
 // from the next request on. Lowering one never stops a transfer that holds
@@ -25,6 +31,8 @@ type admission struct {
 	mu            sync.Mutex
 	perRepository int
 	extra         int
+	packSlots     int
+	packing       int
 	active        int
 	byRepository  map[string]int
 	// changed is closed and replaced whenever a slot is released or the
@@ -38,9 +46,9 @@ func newAdmission() *admission {
 
 // admits reports whether repositoryID may start a transfer now. The caller
 // holds mu.
-func (a *admission) admits(repositoryID string) bool {
+func (a *admission) admits(repositoryID string, packs bool) bool {
 	running := a.byRepository[repositoryID]
-	if running >= a.perRepository {
+	if running >= a.perRepository || (packs && a.packSlots > 0 && a.packing >= a.packSlots) {
 		return false
 	}
 	return a.active < a.perRepository || (running == 0 && a.active < a.perRepository+a.extra)
@@ -57,21 +65,33 @@ func (a *admission) wakeLocked() {
 // errBusy after the queue wait, or the context error, and otherwise the
 // function that releases the slot.
 func (a *admission) acquire(ctx context.Context, repositoryID string, limits Limits) (func(), error) {
+	return a.acquireFor(ctx, repositoryID, limits, false)
+}
+
+// acquirePacking is acquire for a request that builds a pack.
+func (a *admission) acquirePacking(ctx context.Context, repositoryID string, limits Limits) (func(), error) {
+	return a.acquireFor(ctx, repositoryID, limits, true)
+}
+
+func (a *admission) acquireFor(ctx context.Context, repositoryID string, limits Limits, packs bool) (func(), error) {
 	timer := time.NewTimer(limits.QueueWait)
 	defer timer.Stop()
 	a.mu.Lock()
-	if a.perRepository != limits.PerRepository || a.extra != limits.ExtraSlots {
-		a.perRepository, a.extra = limits.PerRepository, limits.ExtraSlots
+	if a.perRepository != limits.PerRepository || a.extra != limits.ExtraSlots || a.packSlots != limits.PackSlots {
+		a.perRepository, a.extra, a.packSlots = limits.PerRepository, limits.ExtraSlots, limits.PackSlots
 		a.wakeLocked()
 	}
 	a.mu.Unlock()
 	for {
 		a.mu.Lock()
-		if a.admits(repositoryID) {
+		if a.admits(repositoryID, packs) {
 			a.active++
 			a.byRepository[repositoryID]++
+			if packs {
+				a.packing++
+			}
 			a.mu.Unlock()
-			return func() { a.release(repositoryID) }, nil
+			return func() { a.release(repositoryID, packs) }, nil
 		}
 		changed := a.changed
 		a.mu.Unlock()
@@ -85,10 +105,13 @@ func (a *admission) acquire(ctx context.Context, repositoryID string, limits Lim
 	}
 }
 
-func (a *admission) release(repositoryID string) {
+func (a *admission) release(repositoryID string, packs bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.active--
+	if packs {
+		a.packing--
+	}
 	a.byRepository[repositoryID]--
 	if a.byRepository[repositoryID] == 0 {
 		delete(a.byRepository, repositoryID)

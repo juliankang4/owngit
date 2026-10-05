@@ -5,19 +5,28 @@
 // back. Of the memory ceiling C:
 //
 //   - OwnGit's Go heap may use C/2 (a soft limit, which does not count Git).
-//   - Git packing may use 3C/8, shared by P processes that can pack at once:
-//     the admitted Git transfers plus one backup and one maintenance job.
+//   - Git packing may use 3C/8, shared by P processes that build a pack at
+//     once: the Git transfers that build a pack (clones, fetches, archives)
+//     plus one backup and one maintenance job.
 //   - C/8 stays free for the operating system and file cache.
 //
 // A packing process costs about baseGit of its own (pack maps, object
 // tables; 50 to 75 MiB measured) plus what the settings allow: pack.windowMemory
 // is per thread, so threads x window, plus pack.deltaCacheSize. Its share
 // A = 3C/8/P is therefore spent as baseGit + threads x window + cache, with
-// window memory and cache half of the rest each. At a small ceiling the
-// number of admitted transfers is lowered until every process still gets
-// the smallest useful window and cache, so further transfers wait for a
-// slot instead of the kernel killing OwnGit. A slower successful clone or
-// backup is better than a dead server.
+// window memory and cache half of the rest each, and threads chosen so that
+// each window is at least smallestPart. The same cache size bounds the delta
+// base cache of index-pack, which receives a push.
+//
+// At a small ceiling the number of requests that build a pack at once
+// (PackSlots) is lowered until every process can still have the smallest
+// useful window and cache, so further clones wait for a slot instead of the
+// kernel killing OwnGit. Pushes and ref advertisements are not counted and
+// never wait for that limit. At 512 MiB the three smallest processes (one
+// clone, backup, maintenance: 3 x 80 MiB) exceed the 192 MiB Git share by
+// 48 MiB; measured with a backup, a clone and a repack together, the
+// cgroup stayed about 5% below the ceiling, covered by the C/8 margin. A
+// slower successful clone or backup is better than a dead server.
 package hostmem
 
 import (
@@ -160,37 +169,41 @@ func HeapLimit(ceiling uint64, ownerSetting string) int64 {
 
 func gitShare(ceiling uint64) uint64 { return known(ceiling) / 8 * 3 }
 
-// MaxTransfers is the most Git transfers the ceiling lets run at once, never
-// fewer than one.
-func MaxTransfers(ceiling uint64) int {
+// maxPackers is the most requests that build a pack the ceiling lets run at
+// once, never fewer than one.
+func maxPackers(ceiling uint64) int {
 	processes := gitShare(ceiling) / (baseGit + 2*smallestPart)
 	return int(max(processes, otherPackers+1)) - otherPackers
 }
 
-// DefaultTransfersFor is how many transfers run at once under the default
-// limits on this ceiling.
-func DefaultTransfersFor(ceiling uint64) int { return min(DefaultTransfers, MaxTransfers(ceiling)) }
-
-// ClampTransfers lowers the saved per-repository and extra transfer slots
-// until together they fit MaxTransfers. Slots the owner saved below that stay.
-func ClampTransfers(ceiling uint64, perRepository, extra int) (int, int) {
-	perRepository = min(perRepository, MaxTransfers(ceiling))
-	return perRepository, min(extra, MaxTransfers(ceiling)-perRepository)
+// PackSlots is the limit on requests that build a pack that this ceiling
+// needs, or 0 for no limit: the ceiling is unknown, so OwnGit keeps the
+// owner's saved limits.
+func PackSlots(ceiling uint64) int {
+	if ceiling == 0 {
+		return 0
+	}
+	return maxPackers(ceiling)
 }
 
+// DefaultPackers is how many requests build a pack at once under the default
+// transfer limits on this ceiling.
+func DefaultPackers(ceiling uint64) int { return min(DefaultTransfers, maxPackers(ceiling)) }
+
 // PackingConfig returns the Git settings that bound one packing process
-// when transfers Git transfers are admitted at once (see the package
-// comment for the arithmetic). They change how well Git compresses and how
-// fast, never what a pack contains.
-func PackingConfig(ceiling uint64, processors, transfers int) [][2]string {
-	processes := uint64(max(transfers, 1) + otherPackers)
+// when packers requests build a pack at once (see the package comment for
+// the arithmetic). They change how well Git compresses and how fast, never
+// what a pack contains.
+func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
+	processes := uint64(max(packers, 1) + otherPackers)
 	part := max(gitShare(ceiling)/processes, baseGit+2*smallestPart) - baseGit
-	threads := min(max(known(ceiling)/(2*gib), 1), uint64(max(processors, 1)))
+	threads := min(max(part/2/smallestPart, 1), uint64(max(processors, 1)))
 	window := min(max(part/2/threads, smallestPart), 256*mib)
 	cache := min(max(part/2, smallestPart), 256*mib)
 	return [][2]string{
 		{"pack.threads", strconv.FormatUint(threads, 10)},
 		{"pack.windowMemory", strconv.FormatUint(window, 10)},
 		{"pack.deltaCacheSize", strconv.FormatUint(cache, 10)},
+		{"core.deltaBaseCacheLimit", strconv.FormatUint(cache, 10)},
 	}
 }

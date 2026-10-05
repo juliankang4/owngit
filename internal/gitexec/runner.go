@@ -44,7 +44,7 @@ type Runner struct {
 	// GitSource says how New chose GitPath, for the startup log.
 	GitSource string
 
-	// transfers is how many Git transfers may run at once, which divides the
+	// transfers is how many requests may build a pack at once, which divides the
 	// packing memory (see package hostmem). Zero means the default.
 	transfers atomic.Int32
 
@@ -150,15 +150,15 @@ func (r *Runner) commandConfig() [][2]string {
 	return append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
 }
 
-// SetTransfers tells the runner how many Git transfers the server admits at
-// once, so the packing bounds of later commands share the memory among them.
+// SetTransfers tells the runner how many requests that build a pack the
+// server admits at once, so the packing bounds of later commands share the memory among them.
 func (r *Runner) SetTransfers(n int) { r.transfers.Store(int32(n)) }
 
 func (r *Runner) packingTransfers() int {
 	if n := int(r.transfers.Load()); n > 0 {
 		return n
 	}
-	return hostmem.DefaultTransfersFor(hostmem.Ceiling())
+	return hostmem.DefaultPackers(hostmem.Ceiling())
 }
 
 // Environment returns the complete, intentionally small environment used for

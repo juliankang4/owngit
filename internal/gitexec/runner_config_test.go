@@ -25,7 +25,7 @@ func wantCommandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		want = append(want, [2]string{"core.longpaths", "true"})
 	}
-	return append(want, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), hostmem.DefaultTransfersFor(hostmem.Ceiling()))...)
+	return append(want, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), hostmem.DefaultPackers(hostmem.Ceiling()))...)
 }
 
 func TestRunnerEnvironmentTurnsOffGitAutomaticMaintenance(t *testing.T) {

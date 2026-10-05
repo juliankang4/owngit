@@ -85,6 +85,10 @@ type Limits struct {
 	// refused with 503 and Retry-After.
 	PerRepository, ExtraSlots int
 	QueueWait                 time.Duration
+	// PackSlots, when above zero, also limits how many requests that build
+	// a pack (a clone, a fetch or an archive) run at once. Ref
+	// advertisements and pushes do not count against it and never wait for it.
+	PackSlots int
 }
 
 func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string) (*Handler, error) {
@@ -299,7 +303,11 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	h.operations.Add(1)
 	h.operationMu.Unlock()
 	defer h.operations.Done()
-	release, err := h.slots.acquire(request.Context(), route.repositoryID, limits)
+	acquire := h.slots.acquire
+	if route.service == "git-upload-pack" && request.Method == http.MethodPost {
+		acquire = h.slots.acquirePacking
+	}
+	release, err := acquire(request.Context(), route.repositoryID, limits)
 	if errors.Is(err, errBusy) {
 		logGitFailure(route, request.Method, "no Git transfer slot became free within "+limits.QueueWait.String())
 		writer.Header().Set("Retry-After", "10")
