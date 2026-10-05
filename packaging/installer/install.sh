@@ -232,8 +232,21 @@ main() {
 
 	tmp=$("$mktemp" -d)
 	trap 'rm -f "$tmp/SHA256SUMS" "$tmp/archive.tar.gz" "$tmp/owngit"; rm -rf "$tmp/OwnGit.app"; rmdir "$tmp"' EXIT
+	# A download fails when it moves under 1 byte per second for this many
+	# seconds, however long it has run. OWNGIT_DOWNLOAD_STALL_SECONDS is a
+	# test hook and is not documented.
+	stall=${OWNGIT_DOWNLOAD_STALL_SECONDS:-60}
+	bad=
+	case $stall in
+	"" | *[!0-9]* | 0* | ?????*) bad=1 ;;
+	*) [ "$stall" -le 3600 ] || bad=1 ;;
+	esac
+	[ -z "${bad:-}" ] || fail "OWNGIT_DOWNLOAD_STALL_SECONDS must be a whole number of seconds from 1 to 3600"
+	connect=30
+	[ "$stall" -ge "$connect" ] || connect=$stall
 	fetch() {
-		"$curl" --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 -o "$2" "$1" ||
+		"$curl" --proto '=https' --proto-redir '=https' --tlsv1.2 -fsSL --retry 2 \
+			--connect-timeout "$connect" --speed-limit 1 --speed-time "$stall" -o "$2" "$1" ||
 			fail "could not download $1; nothing was changed"
 	}
 

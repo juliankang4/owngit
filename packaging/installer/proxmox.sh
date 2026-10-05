@@ -279,7 +279,8 @@ main() {
 		url=$1
 		shift
 		file=$(mktemp)
-		/usr/bin/curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL --retry 2 -o "$file" "$url" &&
+		/usr/bin/curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL --retry 2 \
+			--connect-timeout 30 --speed-limit 1 --speed-time 60 -o "$file" "$url" &&
 			/bin/sh "$file" "$@" >"$file.log" 2>&1
 		status=$?
 		[ ! -f "$file.log" ] || cat "$file.log"

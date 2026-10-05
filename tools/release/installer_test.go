@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"owngit/internal/testfixture"
 )
@@ -43,9 +45,11 @@ type syntheticRelease struct {
 	program map[string][]byte // version -> the fake owngit in its archive
 
 	mu       sync.Mutex
-	files    map[string][]byte // "vX.Y.Z/NAME" -> content
-	override map[string][]byte // replaces files; nil content answers 404
-	redirect map[string]string // answers with a redirect to the address
+	files    map[string][]byte        // "vX.Y.Z/NAME" -> content
+	override map[string][]byte        // replaces files; nil content answers 404
+	redirect map[string]string        // answers with a redirect to the address
+	done     chan struct{}            // closed at cleanup, ends handlers that never answer
+	paced    map[string]time.Duration // sends the file in small chunks this far apart; negative never answers
 	requests int
 }
 
@@ -76,7 +80,7 @@ func newSyntheticRelease(t *testing.T, versions ...string) *syntheticRelease {
 	t.Helper()
 	release := &syntheticRelease{
 		latest: versions[len(versions)-1], archive: map[string]string{}, program: map[string][]byte{},
-		files: map[string][]byte{}, override: map[string][]byte{}, redirect: map[string]string{},
+		files: map[string][]byte{}, override: map[string][]byte{}, redirect: map[string]string{}, paced: map[string]time.Duration{}, done: make(chan struct{}),
 	}
 	for _, version := range versions {
 		program := fakeOwngit(t, version)
@@ -107,6 +111,7 @@ func newSyntheticRelease(t *testing.T, versions ...string) *syntheticRelease {
 	}
 	release.server = httptest.NewTLSServer(http.HandlerFunc(release.serve))
 	t.Cleanup(release.server.Close)
+	t.Cleanup(func() { close(release.done) }) // runs before server.Close, which waits for handlers
 	release.caFile = filepath.Join(t.TempDir(), "ca.pem")
 	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: release.server.Certificate().Raw})
 	noErr(t, os.WriteFile(release.caFile, certificate, 0o644))
@@ -126,7 +131,29 @@ func (release *syntheticRelease) serve(writer http.ResponseWriter, request *http
 		data, found = replaced, replaced != nil
 	}
 	target, redirected := release.redirect[path]
+	interval, isPaced := release.paced[path]
 	release.mu.Unlock()
+	if isPaced && interval < 0 {
+		select {
+		case <-request.Context().Done():
+		case <-release.done:
+		}
+		return
+	}
+	if isPaced && found {
+		for len(data) > 0 {
+			n := min(10, len(data))
+			writer.Write(data[:n])
+			writer.(http.Flusher).Flush()
+			data = data[n:]
+			select {
+			case <-time.After(interval):
+			case <-request.Context().Done():
+				return
+			}
+		}
+		return
+	}
 	if redirected {
 		http.Redirect(writer, request, target, http.StatusFound)
 		return
@@ -148,6 +175,25 @@ func (release *syntheticRelease) replace(t *testing.T, path string, content []by
 		delete(release.override, path)
 		release.mu.Unlock()
 	})
+}
+
+// pace serves "vX.Y.Z/NAME" for one test in 10-byte chunks, interval apart,
+// or never answers when interval is negative.
+func (release *syntheticRelease) pace(t *testing.T, path string, interval time.Duration) {
+	release.mu.Lock()
+	release.paced[path] = interval
+	release.mu.Unlock()
+	t.Cleanup(func() {
+		release.mu.Lock()
+		delete(release.paced, path)
+		release.mu.Unlock()
+	})
+}
+
+func (release *syntheticRelease) unpace(path string) {
+	release.mu.Lock()
+	delete(release.paced, path)
+	release.mu.Unlock()
 }
 
 // redirectToHTTP answers "vX.Y.Z/NAME" for one test with a redirect to the
@@ -310,11 +356,18 @@ func (run *shInstall) do(t *testing.T, env []string, arguments ...string) (strin
 	t.Helper()
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "installer", "install.sh"))
 	noErr(t, err)
-	command := exec.Command("sh", append([]string{"-s", "--"}, arguments...)...)
+	// A run that outlasts the longest limit a test sets is a failure, not a hang.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "sh", append([]string{"-s", "--"}, arguments...)...)
+	command.WaitDelay = 2 * time.Second
 	command.Stdin = bytes.NewReader(script)
 	command.Env = append(append([]string{}, run.env...), env...)
 	command.Dir = run.home
 	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("install.sh %s was still running after a minute:\n%s", strings.Join(arguments, " "), output)
+	}
 	return string(output), err
 }
 
@@ -465,6 +518,31 @@ func TestInstallSh(t *testing.T) {
 		if log := readLog(t, run.log); log != "1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
 		}
+	})
+
+	t.Run("a download that stalls fails, and one that is only slow finishes", func(t *testing.T) {
+		// The real wait is the 2 s limit three times, plus the 1 s and 2 s curl waits between tries.
+		run := newShInstall(t, release)
+		target := filepath.Join(run.home, "bin", "owngit")
+		scratch := t.TempDir()
+		env := []string{"OWNGIT_DOWNLOAD_STALL_SECONDS=2", "TMPDIR=" + scratch}
+		run.must(t, env, "--version", "1.0.0", "--to", target)
+		release.pace(t, "v2.0.0/"+release.archive["2.0.0"], -1)
+		run.mustFail(t, env, "could not download "+release.url()+"/download/v2.0.0/"+release.archive["2.0.0"]+"; nothing was changed", "--to", target)
+		if got := release.versionOf(t, target); got != "1.0.0" {
+			t.Fatalf("the program is now %q, want 1.0.0", got)
+		}
+		if names := dirNames(t, scratch); len(names) != 0 {
+			t.Errorf("the failed run left %v", names)
+		}
+		// Five seconds in total, steady progress, longer than the 2 s limit.
+		release.unpace("v2.0.0/" + release.archive["2.0.0"])
+		release.pace(t, "v2.0.0/SHA256SUMS", 250*time.Millisecond)
+		run.must(t, env, "--to", target)
+		if got := release.versionOf(t, target); got != "2.0.0" {
+			t.Fatalf("the program is now %q, want 2.0.0", got)
+		}
+		run.mustFail(t, []string{"OWNGIT_DOWNLOAD_STALL_SECONDS=3601"}, "from 1 to 3600", "--to", target)
 	})
 
 	t.Run("no service installs the program only", func(t *testing.T) {
