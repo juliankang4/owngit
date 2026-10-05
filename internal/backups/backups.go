@@ -28,9 +28,12 @@ const (
 	// recheck bounds how long the scheduler sleeps before it reads the
 	// schedule again, so a changed clock delays a backup at most this long.
 	recheck = time.Hour
-	// runsKept is how many run records OwnGit keeps besides those of the
-	// backups it still keeps.
-	runsKept = 100
+	// recordWait and recordWaitMax bound how long a run's final result
+	// waits before OwnGit records it again after the state store refused
+	// it: the wait doubles from the first value up to the second, so a
+	// state store that becomes writable again is used within recordWaitMax.
+	recordWait    = time.Second
+	recordWaitMax = time.Minute
 	// namePrefix starts the folder name of every backup a run writes.
 	namePrefix = "owngit-backup-"
 )
@@ -93,6 +96,10 @@ type Service struct {
 	inUse map[string]int
 	// limit is what the last test of the backup folder found.
 	limit *RestoreLimit
+	// pending is the finished result of a run whose record the state
+	// store refused, held until the state takes it, so status and the run
+	// list say the backup finished instead of showing it as copying.
+	pending *state.BackupRun
 }
 
 func (s *Service) now() time.Time {
@@ -334,10 +341,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		s.noteRestoreLimit(run.Destination)
 	}
 	run.FinishedAt = s.now()
-	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-	defer cancel()
-	if err := s.Store.FinishBackupRun(record, run); err != nil {
-		s.logf("backup %s ended %s but could not be recorded: %v", output, run.Status, err)
+	if !s.record(ctx, run) {
 		return
 	}
 	line := fmt.Sprintf("backup %s %s", output, run.Status)
@@ -348,6 +352,45 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		line += ": " + run.Message
 	}
 	s.logf("%s", line)
+}
+
+// record writes the final result of run, and says whether it was saved.
+// A state store that refuses the write is tried again with a bounded
+// backoff, so a state store that was full or briefly unavailable does not
+// leave a finished backup looking like one that is still copying: while
+// the result waits, Status and Runs show it and say that it is not saved
+// yet. A run whose stored record is no longer running can never be
+// recorded, so that refusal is reported once. OwnGit stopping ends the
+// waiting; the stored run then stays running, and the next start records
+// it as interrupted.
+func (s *Service) record(ctx context.Context, run state.BackupRun) bool {
+	wait := recordWait
+	for {
+		write, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		err := s.Store.FinishBackupRun(write, run)
+		cancel()
+		if err == nil {
+			s.mu.Lock()
+			if s.pending != nil && s.pending.ID == run.ID {
+				s.pending = nil
+			}
+			s.mu.Unlock()
+			return true
+		}
+		s.logf("backup %s ended %s but could not be recorded: %v", filepath.Join(run.Destination, run.BackupName), run.Status, err)
+		if errors.Is(err, state.ErrBackupRunEnded) {
+			return false
+		}
+		s.mu.Lock()
+		s.pending = &run
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, recordWaitMax)
+	}
 }
 
 // noteAliases keeps complete guidance within the run record's remaining space.
@@ -584,30 +627,5 @@ func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) 
 		}
 		s.forget(ctx, record)
 	}
-	if err := s.forgetOldRuns(ctx, run); err != nil {
-		problems = append(problems, "could not forget old backup records: "+err.Error())
-	}
 	return problems
-}
-
-// forgetOldRuns forgets the records beyond the newest runsKept of runs
-// whose backup is gone, except the newest scheduled run, whose start
-// decides when the next scheduled backup is due.
-func (s *Service) forgetOldRuns(ctx context.Context, current state.BackupRun) error {
-	runs, err := s.Store.BackupRuns(ctx)
-	if err != nil {
-		return err
-	}
-	var forget []string
-	scheduledSeen := current.Kind == state.BackupRunScheduled
-	for index, record := range runs {
-		newestScheduled := record.Kind == state.BackupRunScheduled && !scheduledSeen
-		if record.Kind == state.BackupRunScheduled {
-			scheduledSeen = true
-		}
-		if index >= runsKept && record.ID != current.ID && record.Status != state.BackupRunning && record.BackupName == "" && !newestScheduled {
-			forget = append(forget, record.ID)
-		}
-	}
-	return s.Store.ForgetBackupRuns(ctx, forget)
 }

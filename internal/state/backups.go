@@ -32,6 +32,13 @@ const (
 	MaxBackupKeep     = 1000
 	// MaxBackupRunMessage is the most bytes a run's message holds.
 	MaxBackupRunMessage = 500
+	// MaxBackupRunRecords is how many finished run records OwnGit keeps
+	// besides the records of the backups it still keeps: the newest ones,
+	// whether their runs succeeded or failed, and the newest scheduled run,
+	// whose start decides when the next scheduled backup is due. Every
+	// recorded outcome applies the limit, so backups that keep failing do
+	// not grow the history without bound.
+	MaxBackupRunRecords = 100
 )
 
 // Kinds, states and verification results of a backup run.
@@ -51,6 +58,10 @@ const (
 
 // ErrBackupRunning refuses a backup run while another one runs.
 var ErrBackupRunning = errors.New("a backup is already running")
+
+// ErrBackupRunEnded reports a run that is not running, so its outcome can
+// no longer be recorded.
+var ErrBackupRunEnded = errors.New("the backup run is not running")
 
 // BackupRun is one backup that OwnGit started while serving.
 type BackupRun struct {
@@ -149,7 +160,10 @@ func (s *Store) StartBackupRun(ctx context.Context, run BackupRun) error {
 
 // FinishBackupRun records how a running run ended: its status,
 // verification, message (cut to MaxBackupRunMessage bytes), finish time,
-// hold, and its backup name, empty when the run published no backup.
+// hold, and its backup name, empty when the run published no backup. It
+// also removes the finished records beyond the newest
+// MaxBackupRunRecords, so the history stays bounded however the runs
+// ended.
 func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 	var holdMS, holdRepository, manifest any
 	if run.ManifestSHA256 != "" {
@@ -161,7 +175,12 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 			holdRepository = run.LongestHoldRepository
 		}
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?,backup_name=?,manifest_sha256=?
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE backup_runs SET status=?,verification=?,message=?,finished_at=?,longest_hold_ms=?,longest_hold_repository=?,backup_name=?,manifest_sha256=?
 		WHERE id=? AND status='running'`,
 		run.Status, run.Verification, cutText(run.Message, MaxBackupRunMessage), run.FinishedAt.Unix(), holdMS, holdRepository, run.BackupName, manifest, run.ID)
 	if err != nil {
@@ -170,21 +189,77 @@ func (s *Store) FinishBackupRun(ctx context.Context, run BackupRun) error {
 	if changed, err := result.RowsAffected(); err != nil {
 		return err
 	} else if changed != 1 {
-		return fmt.Errorf("backup run %s is not running", run.ID)
+		return fmt.Errorf("%w: %s", ErrBackupRunEnded, run.ID)
 	}
-	return nil
+	if err := forgetOldBackupRuns(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// InterruptBackupRuns marks every running run interrupted, with message.
-// Only a starting server calls it, before it starts a run: a run recorded
-// as running then belongs to a process that ended.
+// InterruptBackupRuns marks every running run interrupted, with message,
+// and applies the record limit as every recorded outcome does. Only a
+// starting server calls it, before it starts a run: a run recorded as
+// running then belongs to a process that ended.
 func (s *Store) InterruptBackupRuns(ctx context.Context, message string, now time.Time) (int64, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET status='interrupted',message=?,finished_at=? WHERE status='running'`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE backup_runs SET status='interrupted',message=?,finished_at=? WHERE status='running'`,
 		cutText(message, MaxBackupRunMessage), now.Unix())
 	if err != nil {
 		return 0, err
 	}
-	return result.RowsAffected()
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := forgetOldBackupRuns(ctx, tx); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// forgetOldBackupRuns removes the finished records beyond the newest
+// MaxBackupRunRecords that hold no backup, except the newest scheduled
+// run, whose start decides when the next scheduled backup is due. The
+// record of a backup OwnGit still keeps stays.
+func forgetOldBackupRuns(ctx context.Context, tx *sql.Tx) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,kind,status,backup_name FROM backup_runs ORDER BY rowid DESC`)
+	if err != nil {
+		return err
+	}
+	var forget []string
+	scheduledSeen, index := false, -1
+	for rows.Next() {
+		index++
+		var id, kind, status, backupName string
+		if err := rows.Scan(&id, &kind, &status, &backupName); err != nil {
+			rows.Close()
+			return err
+		}
+		newestScheduled := kind == BackupRunScheduled && !scheduledSeen
+		if kind == BackupRunScheduled {
+			scheduledSeen = true
+		}
+		if index >= MaxBackupRunRecords && status != BackupRunning && backupName == "" && !newestScheduled {
+			forget = append(forget, id)
+		}
+	}
+	if err := closeRows(rows); err != nil {
+		return err
+	}
+	for _, id := range forget {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM backup_runs WHERE id=? AND status<>'running'`, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // BackupRuns returns every recorded run, the newest first: in the order
@@ -223,21 +298,6 @@ func (s *Store) BackupRuns(ctx context.Context) ([]BackupRun, error) {
 func (s *Store) ForgetBackup(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET backup_name='' WHERE id=? AND status<>'running'`, id)
 	return err
-}
-
-// ForgetBackupRuns removes the records of finished runs.
-func (s *Store) ForgetBackupRuns(ctx context.Context, ids []string) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, id := range ids {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM backup_runs WHERE id=? AND status<>'running'`, id); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 // cutText cuts text to at most limit bytes without splitting a character.

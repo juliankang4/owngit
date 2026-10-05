@@ -109,6 +109,28 @@ func ViewRun(run state.BackupRun) *RunView {
 	return view
 }
 
+// pendingResult is how a run whose final record the state store refused
+// appears: the result it will record, saying that the result is not saved
+// yet, so a finished backup is never shown as one that is still copying.
+// It is nil for every other run.
+func (s *Service) pendingResult(id string) *state.BackupRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil || s.pending.ID != id {
+		return nil
+	}
+	result := *s.pending
+	if result.Message != "" {
+		result.Message += " "
+	}
+	result.Message += pendingMessage
+	return &result
+}
+
+// pendingMessage says that a finished backup's result waits for the state
+// store that refused it.
+const pendingMessage = "The backup finished, but its result could not be saved yet. OwnGit keeps trying and saves it as soon as the state is writable again."
+
 // Status reads the state of backups.
 func (s *Service) Status(ctx context.Context) (Status, error) {
 	schedule, configured, err := s.Store.BackupSchedule(ctx)
@@ -121,6 +143,9 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	}
 	status := Status{Schedule: ViewSchedule(schedule, configured)}
 	for _, run := range runs {
+		if result := s.pendingResult(run.ID); result != nil {
+			run = *result
+		}
 		switch {
 		case run.Status == state.BackupRunning:
 			status.Running = ViewRun(run)
@@ -195,6 +220,9 @@ func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	}
 	views := make([]RunView, 0, len(runs))
 	for _, run := range runs {
+		if result := s.pendingResult(run.ID); result != nil {
+			run = *result
+		}
 		views = append(views, *ViewRun(run))
 	}
 	return views, nil
