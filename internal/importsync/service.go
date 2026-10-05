@@ -437,6 +437,17 @@ func (s *Service) ChangeOptions(ctx context.Context, repositoryID string, change
 	})
 }
 
+// preWriteLockProblem reports a repository lock wait that ended before a
+// change took the lock, so the change wrote nothing. An expired caller
+// deadline means the repository is busy and the caller can retry; a cancelled
+// caller stays cancelled, or superseded when a newer authority took over.
+func preWriteLockProblem(ctx context.Context, err error) *Problem {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return newProblem(CodeBusy, "another Git operation holds the repository; nothing was changed", err)
+	}
+	return cancellationProblem(ctx, "the change stopped before the repository became free", err)
+}
+
 // configure is the one locked read, change and write of a source. The
 // change sees the saved source. A saved option that cannot be read reaches
 // it as its default, and the change is refused unless it replaces that
@@ -444,7 +455,12 @@ func (s *Service) ChangeOptions(ctx context.Context, repositoryID string, change
 func (s *Service) configure(ctx context.Context, repositoryID string, replaces func(setting string) bool, change func(current state.ImportSource, exists bool) (state.ImportSourceInput, error)) (state.ImportSource, error) {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	// The change waits for the repository lock at most until the caller's
+	// context ends, so a change queued behind another writer is not held past
+	// its deadline.
+	if err := lock.LockContext(ctx); err != nil {
+		return state.ImportSource{}, preWriteLockProblem(ctx, err)
+	}
 	previous, exists, err := s.readSource(ctx, repositoryID)
 	var settingErr *state.ImportSourceSettingError
 	for _, problem := range settingErrors(err) {
@@ -609,7 +625,11 @@ func (s *Service) checkOptions(rawURL string, options state.ImportOptions) (stat
 func (s *Service) SetCredentials(ctx context.Context, repositoryID string, credential *Credentials) error {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	// As in configure, the wait ends at the caller's deadline instead of when
+	// the other writer finishes.
+	if err := lock.LockContext(ctx); err != nil {
+		return preWriteLockProblem(ctx, err)
+	}
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)
 	if err != nil {
 		lock.Unlock()
@@ -772,21 +792,37 @@ func (s *Service) Import(ctx context.Context, input ImportInput) (ImportResult, 
 	}
 	run, runErr := s.execute(ctx, repositoryID, name, input.Description, kind, input.Limits, true, snapshot, written)
 	if runErr != nil {
-		s.forgetFailedNewImport(context.WithoutCancel(ctx), repositoryID, written)
+		s.forgetFailedNewImport(ctx, repositoryID, written)
 	}
 	return ImportResult{RepositoryID: repositoryID, Run: run}, runErr
 }
+
+// failedImportCleanupTimeout bounds the wait for the repository that removing a
+// failed first import's binding and credentials needs, so the answer to the
+// import never waits for an unrelated writer. It is long enough for the short
+// holders such an import meets, and a binding that it leaves behind is removed
+// by the next start (see forgetFailedNewImport).
+const failedImportCleanupTimeout = 5 * time.Second
 
 // forgetFailedNewImport removes the source binding and credentials that a
 // failed first import wrote, so no secret stays behind for a repository that
 // does not exist, and neither a retry nor a later repository with the same
 // name inherits them. The run history stays. It leaves everything in place
 // when another run or change took over the binding. A refusal or failure is
-// not reported: the run's own error is what the caller reports, and the next
-// start sweeps what is left.
+// not reported: the run's own error is what the caller reports.
+//
+// The cleanup ignores the caller's cancellation, so a client that left still
+// does not leave a secret behind, and it waits for the repository with its own
+// bound instead of for as long as a writer holds it. A binding that this bound
+// leaves behind is removed at the next start: Reconcile calls
+// forgetOrphanImports, which lists the bindings of names that have no
+// repository (state.OrphanImportBindings) and removes each through
+// ForgetOrphanImport and state.ForgetUnpublishedImport.
 func (s *Service) forgetFailedNewImport(ctx context.Context, repositoryID string, written state.ImportSource) {
-	_, _ = s.forgetOrphanImport(ctx, repositoryID, func() bool {
-		current, exists, err := s.Store.ImportSource(ctx, repositoryID)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), failedImportCleanupTimeout)
+	defer cancel()
+	_, _ = s.forgetOrphanImport(cleanupCtx, repositoryID, func() bool {
+		current, exists, err := s.Store.ImportSource(cleanupCtx, repositoryID)
 		return err == nil && importBindingStillWritten(exists, current, written)
 	})
 }
@@ -808,7 +844,11 @@ func (s *Service) forgetOrphanImport(ctx context.Context, repositoryID string, s
 	}
 	defer mutex.Unlock()
 	lock := s.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	// The wait for the repository ends at the caller's deadline or
+	// cancellation, before any stored settings are removed.
+	if err := lock.LockContext(ctx); err != nil {
+		return false, preWriteLockProblem(ctx, err)
+	}
 	defer lock.Unlock()
 	binding, err := s.Store.ReadImportBinding(ctx, repositoryID)
 	if err != nil {
@@ -863,7 +903,11 @@ func (s *Service) forgetOrphanImports(ctx context.Context) error {
 func (s *Service) bindNewImport(ctx context.Context, input state.ImportSourceInput, credentials *Credentials) (*state.ImportBindingSnapshot, state.ImportSource, error) {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(input.RepositoryID)
-	lock.Lock()
+	// The wait for the repository ends at the caller's deadline or
+	// cancellation, before any binding is written.
+	if err := lock.LockContext(ctx); err != nil {
+		return nil, state.ImportSource{}, preWriteLockProblem(ctx, err)
+	}
 	snapshot, err := s.Store.ReadImportBinding(ctx, input.RepositoryID)
 	if err != nil {
 		lock.Unlock()

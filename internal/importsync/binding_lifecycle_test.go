@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/importfetch"
 	"owngit/internal/importgit"
@@ -270,6 +271,60 @@ func TestRestartForgetsTheBindingOfAnInterruptedFirstImport(t *testing.T) {
 	if _, err := f.refresh(); problemCode(err) != CodeNotConfigured || f.transport.calls != calls {
 		t.Fatalf("refresh of the new repository err=%v calls=%d", err, f.transport.calls-calls)
 	}
+}
+
+// A first import that fails while another writer holds the repository removes
+// its binding and credentials within its own cleanup bound, even when the caller
+// left first, and a binding that bound leaves behind is swept at the next start.
+func TestFailedFirstImportCleansUpBehindAHeldWriter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 5s failed import cleanup bound behind a writer that stays held")
+	}
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	lock := f.manager.Locks.For("queued")
+	f.service.afterImportBinding = func() error {
+		// The binding is written and its lock is released. Hold the repository
+		// from here, so the run fails and its cleanup finds the writer.
+		lock.Lock()
+		return nil
+	}
+	cancelled := false
+	f.service.afterRunStage = func(string) {
+		if !cancelled {
+			cancelled = true
+			cancel()
+		}
+	}
+	var result ImportResult
+	var err error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		result, err = f.service.Import(ctx, ImportInput{
+			Name: "queued", URL: "https://example.invalid/team/queued.git", Mode: ModeStandalone,
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		// Twice the production cleanup bound of five seconds: a cleanup that waits
+		// for the writer instead of its own bound fails here. Free the writer so
+		// the stuck cleanup can end before the fixture does.
+		lock.Unlock()
+		t.Fatal("the failed import kept waiting for the writer past its cleanup bound")
+	}
+	lock.Unlock()
+	if err == nil || result.Run.Status != state.ImportRunCancelled {
+		t.Fatalf("first import run=%+v err=%v", result.Run, err)
+	}
+	if _, exists, readErr := f.store.ImportSource(context.Background(), "queued"); readErr != nil || !exists {
+		t.Fatalf("the cleanup did not keep the binding for the next start to sweep exists=%v err=%v", exists, readErr)
+	}
+	// The next start removes a binding that the cleanup bound left behind.
+	restartService(t, f)
+	assertNoBinding(t, f, "queued")
 }
 
 // Plain repository creation removes a leftover binding for its name, and

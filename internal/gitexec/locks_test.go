@@ -1,12 +1,6 @@
 package gitexec
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
-	"io/fs"
-	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -88,59 +82,5 @@ func TestRepositoryLockGenerationChangesBeforeReaders(t *testing.T) {
 	lock.Unlock()
 	if generation := <-observed; generation != 1 {
 		t.Fatalf("reader after the writer saw generation %d, want 1", generation)
-	}
-}
-
-// TestNoCodeReachesTheEmbeddedRepositoryMutex scans the module for a selector
-// of RWMutex on anything but the sync package. Unlocking the embedded mutex
-// of a RepositoryLock, or passing its address on, would skip the generation
-// step that keeps cached ref snapshots current.
-func TestNoCodeReachesTheEmbeddedRepositoryMutex(t *testing.T) {
-	moduleRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	self, err := filepath.Abs("locks.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	files := token.NewFileSet()
-	scanned := 0
-	err = filepath.WalkDir(moduleRoot, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			if name := entry.Name(); path != moduleRoot && (strings.HasPrefix(name, ".") || name == "testdata") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || path == self {
-			return nil
-		}
-		parsed, err := parser.ParseFile(files, path, nil, parser.SkipObjectResolution)
-		if err != nil {
-			return err
-		}
-		scanned++
-		ast.Inspect(parsed, func(node ast.Node) bool {
-			selector, ok := node.(*ast.SelectorExpr)
-			if !ok || selector.Sel.Name != "RWMutex" {
-				return true
-			}
-			if pkg, ok := selector.X.(*ast.Ident); ok && pkg.Name == "sync" {
-				return true
-			}
-			t.Errorf("%s: reaches an embedded RWMutex; use the RepositoryLock itself", files.Position(selector.Pos()))
-			return true
-		})
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if scanned < 100 {
-		t.Fatalf("scanned %d Go files, want the whole module", scanned)
 	}
 }

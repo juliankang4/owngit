@@ -526,9 +526,13 @@ func (s *Service) adoptAdvertisement(run *runState, advertisement *importgit.Adv
 
 func (s *Service) requestFor(ctx context.Context, run *runState) (importfetch.Request, error) {
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
-	lock.Lock()
 	// The lock only orders this read of the source and its credentials with
-	// their writers; nothing here changes a ref.
+	// their writers; nothing here changes a ref. The wait ends at the run's own
+	// deadline or cancellation, not when the other writer finishes, so a stopped
+	// run does not stay live behind it.
+	if err := lock.LockContext(ctx); err != nil {
+		return importfetch.Request{}, stoppedProblem(ctx, "before the source transfer", err)
+	}
 	defer lock.UnlockWithoutRefChanges()
 	releaseCredentialAuthority := s.Store.LockImportCredentialAuthority(run.run.RepositoryID)
 	run.credentialAuthorityLocked = true

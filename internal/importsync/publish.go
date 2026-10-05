@@ -525,6 +525,14 @@ func (s *Service) ensureObjects(ctx context.Context, run *runState, repositoryPa
 	return nil
 }
 
+// destinationKeepCleanupTimeout bounds the wait for the repository that the
+// removal of a run's pack keep file needs. It is long enough for the short
+// holders a run usually meets, such as a page read, a small push, or one
+// maintenance step, and short enough that the run's response and terminal
+// record do not wait for an unrelated long transfer. A file that is still
+// there when the wait passes only keeps its own pack out of a later repack.
+const destinationKeepCleanupTimeout = 5 * time.Second
+
 // releaseDestinationKeep removes the .keep file that this run's destination
 // index-pack created, as git receive-pack does after its ref updates. The file
 // only protects the new pack from a concurrent repack until the ref
@@ -532,10 +540,16 @@ func (s *Service) ensureObjects(ctx context.Context, run *runState, repositoryPa
 // later repack. The caller runs this after publication ended or was never
 // reached, whatever its outcome, and never holds the repository lock.
 //
+// The removal takes the read lock, not the write lock: only a repack cares
+// about the file, and only repository maintenance runs repack, under the write
+// lock. A clone, backup or page that holds the read lock never reads the file,
+// so it must not stop the removal. A writer can still make the cleanup wait out
+// its bound.
+//
 // A pre-existing .keep file is never removed: index-pack reports "keep" only
-// for a file it created. A crash between indexing and this step leaves the
-// file behind; its content names the import run, and removing it by hand is
-// safe once no import is running.
+// for a file it created. A crash between indexing and this step, or a cleanup
+// wait that passed, leaves the file behind; its content names the import run,
+// and removing it by hand is safe once no import is running.
 func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 	if run.destinationKeep == "" {
 		return
@@ -543,17 +557,27 @@ func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 	hash := run.destinationKeep
 	run.destinationKeep = ""
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
-	lock.Lock()
 	directory := repositoryPath
 	if dest := run.initialDestination; dest != nil && dest.finalPath != "" {
 		// The unpublished directory was renamed into place.
 		directory = dest.finalPath
 	}
 	path := filepath.Join(directory, "objects", "pack", "pack-"+hash+".keep")
-	// A discarded unpublished directory no longer holds the file. The file
-	// is not a ref, so the cached ref snapshot stays valid.
+	// The cleanup does not follow the run's own context: it removes one file
+	// this run created, and doing it as soon as the run ends keeps the pack
+	// protected only while the ref transaction that needs it may still run. Its
+	// own bound keeps a repository held by another writer from holding this
+	// run's response and terminal record.
+	ctx, cancel := context.WithTimeout(context.Background(), destinationKeepCleanupTimeout)
+	defer cancel()
+	if err := lock.RLockContext(ctx); err != nil {
+		s.logf("import %s left its pack keep file %s: the repository stayed locked for %s; it is safe to remove that file once no import is running", run.run.RepositoryID, path, destinationKeepCleanupTimeout)
+		return
+	}
+	// A discarded unpublished directory no longer holds the file. The file is
+	// not a ref, so the cached ref snapshot stays valid.
 	err := os.Remove(path)
-	lock.UnlockWithoutRefChanges()
+	lock.RUnlock()
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logf("import %s could not remove its pack keep file %s: %v", run.run.RepositoryID, path, err)
 	}
@@ -619,7 +643,13 @@ func (s *Service) publish(ctx context.Context, run *runState, repositoryPath str
 	}
 	var logs []deferredImportLog
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
-	lock.Lock()
+	// Taking the write lock is the last pre-write step, so it waits only until
+	// the run's deadline or cancellation: a stopped run does not stay behind
+	// another writer. Everything after the lock is the publication itself,
+	// whose records and settlement keep their own bounds.
+	if err := lock.LockContext(ctx); err != nil {
+		return publicationPlan{}, stoppedProblem(ctx, "before publication", err)
+	}
 	plan, err := s.publishRepositoryLocked(ctx, run, repositoryPath, now)
 	if err != nil {
 		appendDeferredImportLog(&logs, "import publication for %s remains incomplete: %v", run.run.RepositoryID, err)

@@ -16,46 +16,134 @@ type Locks struct {
 // the write lock advances its generation, so a reader that saw the same
 // generation earlier knows that no OwnGit writer has changed the repository
 // since. Unlock advances it even when nothing changed; only a holder that
-// provably changed no ref releases through UnlockWithoutRefChanges.
+// provably changed no ref releases through UnlockWithoutRefChanges. Release
+// the write lock only through those two methods.
 //
-// Always release the write lock through this type's Unlock or
-// UnlockWithoutRefChanges. Unlocking the embedded RWMutex directly would skip
-// that decision.
+// The lock hands out its turns in arrival order and keeps no goroutine per
+// waiter: a caller that waits with a context waits in its own goroutine and
+// leaves the queue when the context ends, so a request that gives up collects
+// nothing and cannot hold another caller back. A waiting writer keeps new
+// readers out, so a writer cannot starve behind a stream of readers.
 type RepositoryLock struct {
-	sync.RWMutex
+	mu sync.Mutex
+	// readers counts the readers that hold the lock.
+	readers int
+	// writing reports that a writer holds the lock.
+	writing bool
+	// writersWaiting counts the queued writers. A waiting writer keeps new
+	// readers out, as Go's RWMutex does.
+	writersWaiting int
+	// queue holds the waiters in arrival order. A granted waiter has left the
+	// queue and its ready channel is closed.
+	queue []*lockWaiter
+
 	generation  atomic.Uint64
 	incarnation atomic.Uint64
 	// waiters counts callers blocked in Lock, RLock or a context wait.
 	waiters atomic.Int32
 }
 
-// Lock takes the write lock, counting the caller as waiting while the lock
-// is held by someone else.
+// lockWaiter is one queued caller. ready is closed when it holds the lock.
+type lockWaiter struct {
+	write bool
+	ready chan struct{}
+}
+
+// Lock takes the write lock, counting the caller as waiting while the lock is
+// held by someone else.
 func (l *RepositoryLock) Lock() {
-	if l.RWMutex.TryLock() {
+	l.mu.Lock()
+	if l.writeLockFreeLocked() {
+		l.writing = true
+		l.mu.Unlock()
 		return
 	}
-	l.waiters.Add(1)
-	defer l.waiters.Add(-1)
-	l.RWMutex.Lock()
+	waiter := l.enqueueLocked(true)
+	l.mu.Unlock()
+	<-waiter.ready
+	l.waiters.Add(-1)
 }
 
 // RLock takes the read lock, counting the caller as waiting while a writer
 // holds or waits for the lock.
 func (l *RepositoryLock) RLock() {
-	if l.RWMutex.TryRLock() {
+	l.mu.Lock()
+	if l.readLockFreeLocked() {
+		l.readers++
+		l.mu.Unlock()
 		return
 	}
-	l.waiters.Add(1)
-	defer l.waiters.Add(-1)
-	l.RWMutex.RLock()
+	waiter := l.enqueueLocked(false)
+	l.mu.Unlock()
+	<-waiter.ready
+	l.waiters.Add(-1)
 }
 
-// Waiting reports whether a caller is blocked waiting for this lock.
-// Go's RWMutex lets a holder that releases the write lock and immediately
-// calls TryLock again win over a blocked writer, so a holder that works in
-// steps, such as repository maintenance, checks this between its steps and
-// stops to let the waiting caller in.
+// LockContext takes the write lock unless ctx ends first. It then returns
+// ctx's error and does not hold the lock. Release a lock it took through
+// Unlock or UnlockWithoutRefChanges.
+func (l *RepositoryLock) LockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	if l.writeLockFreeLocked() {
+		l.writing = true
+		l.mu.Unlock()
+		return nil
+	}
+	waiter := l.enqueueLocked(true)
+	l.mu.Unlock()
+	return l.waitForTurn(ctx, waiter)
+}
+
+// RLockContext takes the read lock unless ctx ends first. It then returns
+// ctx's error and does not hold the lock. Request handlers use it, so a
+// repository held by a long clone and a queued push cannot keep a page
+// waiting past its deadline.
+func (l *RepositoryLock) RLockContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	if l.readLockFreeLocked() {
+		l.readers++
+		l.mu.Unlock()
+		return nil
+	}
+	waiter := l.enqueueLocked(false)
+	l.mu.Unlock()
+	return l.waitForTurn(ctx, waiter)
+}
+
+// TryLock takes the write lock and reports whether it is free for this caller.
+// It fails while a reader or another writer holds the lock, or while any
+// waiter is queued.
+func (l *RepositoryLock) TryLock() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.writeLockFreeLocked() {
+		return false
+	}
+	l.writing = true
+	return true
+}
+
+// TryRLock takes the read lock and reports whether it is free for this caller.
+// It fails while a writer holds or waits for the lock, as Go's RWMutex does.
+func (l *RepositoryLock) TryRLock() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.readLockFreeLocked() {
+		return false
+	}
+	l.readers++
+	return true
+}
+
+// Waiting reports whether a caller is blocked waiting for this lock. A holder
+// that works in steps, such as repository maintenance, checks this between its
+// steps and stops to let the waiting caller in.
 func (l *RepositoryLock) Waiting() bool {
 	return l.waiters.Load() > 0
 }
@@ -65,7 +153,7 @@ func (l *RepositoryLock) Waiting() bool {
 // acquires the lock afterwards observes the new generation.
 func (l *RepositoryLock) Unlock() {
 	l.generation.Add(1)
-	l.RWMutex.Unlock()
+	l.releaseWriteLock()
 }
 
 // UnlockWithoutRefChanges releases the write lock without advancing the
@@ -75,65 +163,135 @@ func (l *RepositoryLock) Unlock() {
 // commit-graph do, or adding objects that no ref reaches, as a refused push
 // does, leaves every snapshot as it was. When in doubt, use Unlock.
 func (l *RepositoryLock) UnlockWithoutRefChanges() {
-	l.RWMutex.Unlock()
+	l.releaseWriteLock()
 }
 
-// RLockContext takes the read lock unless ctx ends first. It then returns
-// ctx's error and does not hold the lock. Request handlers use it, so a
-// repository held by a long clone and a queued push cannot keep a page
-// waiting past its deadline.
-func (l *RepositoryLock) RLockContext(ctx context.Context) error {
-	return lockContext(ctx, l.RWMutex.TryRLock, l.RLock, l.RWMutex.RUnlock)
-}
-
-// LockContext takes the write lock unless ctx ends first. It then returns
-// ctx's error and does not hold the lock. Release a lock it took through
-// Unlock or UnlockWithoutRefChanges.
-func (l *RepositoryLock) LockContext(ctx context.Context) error {
-	return lockContext(ctx, l.RWMutex.TryLock, l.Lock, l.RWMutex.Unlock)
-}
-
-// lockContext waits for lock in a goroutine. If ctx ends first, the goroutine
-// still takes the lock when it becomes free and releases it at once. That
-// release changes nothing, so it does not advance the generation.
-func lockContext(ctx context.Context, try func() bool, lock, release func()) error {
-	if err := ctx.Err(); err != nil {
-		return err
+// RUnlock releases the read lock.
+func (l *RepositoryLock) RUnlock() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.readers == 0 {
+		panic("gitexec: RUnlock of unlocked RepositoryLock")
 	}
-	if try() {
-		return nil
+	l.readers--
+	l.dispatchLocked()
+}
+
+// releaseWriteLock releases the write lock and lets the waiters that may run
+// now take it.
+func (l *RepositoryLock) releaseWriteLock() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.writing {
+		panic("gitexec: Unlock of unlocked RepositoryLock")
 	}
-	const (
-		waiting = iota
-		handedOver
-		abandoned
-	)
-	var claim atomic.Int32
-	acquired := make(chan struct{})
-	go func() {
-		lock()
-		if claim.CompareAndSwap(waiting, handedOver) {
-			close(acquired)
-			return
-		}
-		release()
-	}()
+	l.writing = false
+	l.dispatchLocked()
+}
+
+// writeLockFreeLocked reports whether a caller may take the write lock now. A
+// queued waiter implies a held lock, so it also blocks, which keeps this
+// caller behind the waiters that arrived first.
+func (l *RepositoryLock) writeLockFreeLocked() bool {
+	return !l.writing && l.readers == 0 && len(l.queue) == 0
+}
+
+// readLockFreeLocked reports whether a caller may take the read lock now: a
+// writer holds the lock, or a writer waits and would starve otherwise.
+func (l *RepositoryLock) readLockFreeLocked() bool {
+	return !l.writing && l.writersWaiting == 0
+}
+
+// enqueueLocked puts a waiter at the end of the queue, where Waiting sees it
+// before it blocks. The caller holds mu and must not hold the lock in a way
+// that the waiter wants.
+func (l *RepositoryLock) enqueueLocked(write bool) *lockWaiter {
+	waiter := &lockWaiter{write: write, ready: make(chan struct{})}
+	l.queue = append(l.queue, waiter)
+	if write {
+		l.writersWaiting++
+	}
+	l.waiters.Add(1)
+	return waiter
+}
+
+// waitForTurn waits for the waiter's turn unless ctx ends first, in which case
+// it leaves the queue. It returns nil when the caller holds the lock, which
+// can happen when the lock arrives at the moment the context ends.
+func (l *RepositoryLock) waitForTurn(ctx context.Context, waiter *lockWaiter) error {
 	select {
-	case <-acquired:
+	case <-waiter.ready:
+		l.waiters.Add(-1)
 		return nil
 	case <-ctx.Done():
-		if claim.CompareAndSwap(waiting, abandoned) {
-			return ctx.Err()
-		}
-		// The lock arrived at the same moment; the caller owns it.
-		<-acquired
-		return nil
 	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	select {
+	case <-waiter.ready:
+		// The lock arrived at the same moment; the caller owns it.
+		l.waiters.Add(-1)
+		return nil
+	default:
+	}
+	l.dequeueLocked(waiter)
+	l.waiters.Add(-1)
+	return ctx.Err()
+}
+
+// dequeueLocked takes a waiter that gave up out of the queue, so the callers
+// behind it move up. The caller holds mu.
+func (l *RepositoryLock) dequeueLocked(waiter *lockWaiter) {
+	index := -1
+	for at, queued := range l.queue {
+		if queued == waiter {
+			index = at
+			break
+		}
+	}
+	if index < 0 {
+		return
+	}
+	copy(l.queue[index:], l.queue[index+1:])
+	l.queue[len(l.queue)-1] = nil
+	l.queue = l.queue[:len(l.queue)-1]
+	if waiter.write {
+		l.writersWaiting--
+	}
+	l.dispatchLocked()
+}
+
+// dispatchLocked hands the free lock to the waiters at the front of the queue:
+// first every reader that arrived before the first queued writer, then that
+// writer once the readers that hold the lock are done. The caller holds mu.
+func (l *RepositoryLock) dispatchLocked() {
+	for len(l.queue) > 0 && !l.writing {
+		next := l.queue[0]
+		if !next.write {
+			l.popLocked()
+			l.readers++
+			close(next.ready)
+			continue
+		}
+		if l.readers > 0 {
+			return
+		}
+		l.popLocked()
+		l.writersWaiting--
+		l.writing = true
+		close(next.ready)
+		return
+	}
+}
+
+// popLocked removes the waiter at the front of the queue. The caller holds mu.
+func (l *RepositoryLock) popLocked() {
+	l.queue[0] = nil
+	l.queue = l.queue[1:]
 }
 
 // Generation reports how many times the write lock has been released through
-// Unlock. It is
-// stable while the caller holds the read lock.
+// Unlock. It is stable while the caller holds the read lock.
 func (l *RepositoryLock) Generation() uint64 {
 	return l.generation.Load()
 }

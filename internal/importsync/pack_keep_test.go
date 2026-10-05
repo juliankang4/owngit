@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 )
@@ -95,6 +96,46 @@ func TestFailedPublicationRemovesItsDestinationPackKeep(t *testing.T) {
 	}
 	if want := "owngit import " + f.lastRun().ID + "\n"; len(preparedKeeps) != 1 || preparedContent != want {
 		t.Fatalf("keep files while prepared=%v content=%q want one with %q", preparedKeeps, preparedContent, want)
+	}
+}
+
+// A successful refresh removes its pack keep file while a reader holds the
+// repository. The removal only has to keep out of the way of repack, which runs
+// as repository maintenance under the write lock, and a clone that starts as the
+// publication ends must not make the cleanup wait out its bound and leave the
+// pack out of every later repack.
+func TestSuccessfulRefreshRemovesItsPackKeepBehindAReader(t *testing.T) {
+	f := newFixture(t)
+	f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	f.commit("two", "two\n")
+	reader := f.manager.Locks.For("project")
+	holding := make(chan struct{})
+	release := make(chan struct{})
+	defer close(release)
+	// OnChange runs after publication released the write lock and before the keep
+	// cleanup, so a reader that holds the lock from here is a clone that started
+	// in that window.
+	f.manager.OnChange = func(string) {
+		go func() {
+			reader.RLock()
+			close(holding)
+			<-release
+			reader.RUnlock()
+		}()
+		<-holding
+	}
+	started := time.Now()
+	run, err := f.refresh()
+	elapsed := time.Since(started)
+	if err != nil || run.Status != state.ImportRunComplete {
+		t.Fatalf("refresh run=%+v err=%v", run, err)
+	}
+	if elapsed >= destinationKeepCleanupTimeout {
+		t.Fatalf("the refresh took %s with a reader holding the repository, so its keep cleanup waited out the %s bound", elapsed, destinationKeepCleanupTimeout)
+	}
+	if keeps := destinationKeepFiles(t, f.destinationPath()); len(keeps) != 0 {
+		t.Fatalf("the refresh left keep files %v while a reader held the repository", keeps)
 	}
 }
 

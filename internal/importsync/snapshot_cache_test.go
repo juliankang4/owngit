@@ -138,28 +138,29 @@ func TestPublicationPlanChangesRefs(t *testing.T) {
 // A publication that fails, even before it plans any write, does not prove
 // that the refs are as cached: reconciliation can fail precisely because the
 // destination differs from the record. The next page therefore reads the
-// refs again.
+// refs again. A run that stops while it waits for the repository lock never
+// enters publication and says nothing about the destination, so it leaves the
+// cached refs alone.
 func TestFailedImportPublicationInvalidatesTheRefSnapshot(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the Git process counter is a POSIX shell wrapper")
 	}
 	f := newFixture(t)
 	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
+	f.mustImport(ImportInput{Options: OptionsChange{OverwriteDiverged: boolPointer(true)}})
 	reads := countSnapshotReads(t, f.manager)
 	ctx := context.Background()
 	_, err := f.manager.RefSnapshot(ctx, "project")
 	noErr(t, err, "snapshot")
-	// Cancel the run just before publication takes the repository lock, so
-	// its authority check fails inside publication, before planning.
-	f.service.beforeFinalAuthorityCheck = func() {
-		f.service.beforeFinalAuthorityCheck = nil
-		if cancelled, err := f.service.Cancel(ctx, "project"); err != nil || !cancelled {
-			t.Errorf("cancel during publication cancelled=%v err=%v", cancelled, err)
-		}
-	}
-	if run, err := f.service.RefreshScheduled(ctx, "project", Limits{}); err == nil || run.Status == state.ImportRunComplete {
-		t.Fatalf("cancelled scheduled import run=%+v err=%v", run, err)
+	// A diverged protected default branch refuses the run inside publication,
+	// after it took the repository lock and before it planned a write.
+	f.localWork("main", "local main\n")
+	protect := true
+	_, err = f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
+	noErr(t, err)
+	f.commit("source main", "source main\n")
+	if run, err := f.refresh(); problemCode(err) != CodeProtectedBranch || run.Status == state.ImportRunComplete {
+		t.Fatalf("refused refresh run=%+v err=%v", run, err)
 	}
 	_, err = f.manager.RefSnapshot(ctx, "project")
 	noErr(t, err, "snapshot after a failed publication")

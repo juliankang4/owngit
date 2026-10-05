@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/state/statetest"
@@ -210,6 +212,222 @@ func TestPushReleasesTheRepositoryBeforeTheClientFinishes(t *testing.T) {
 		t.Fatal("the repository is still locked after the push returned")
 	}
 	lock.Unlock()
+}
+
+// A request that waits for a repository held by another writer ends at its own
+// bound instead of waiting for the writer, and gives its transfer slot and its
+// memory gate slot back at once. A fetch holds the read lock, a push the write
+// lock.
+//
+// The bound differs by request kind. A fetch advertisement is a GET with no
+// body, so Go's HTTP server watches the connection and cancels the request as
+// soon as the client closes it, and the operation limit is the only bound it
+// needs. A POST is a fetch or push body that the handler has not read while it
+// waits, and the server starts that watch only after the body is consumed, so
+// such a request waits for the repository at most for the transfer queue wait
+// and then gets the busy answer, instead of holding its slots for the whole
+// operation limit after a peer disconnects. Once the lock is held, a transfer
+// keeps the operation limit.
+func TestServeLockWaitEndsAtTheOperationLimitAndOnClientLeave(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		operation    time.Duration
+		queueWait    time.Duration
+		cancelClient bool
+		// service is empty for the GET fetch advertisement and names the Smart
+		// HTTP POST service otherwise.
+		service string
+		// wantBound is the bound the server log names, empty when the client left
+		// and there is nothing to report.
+		wantBound string
+	}{
+		{name: "operation limit", operation: 150 * time.Millisecond, wantBound: "operation limit"},
+		{name: "client cancellation", operation: 30 * time.Second, cancelClient: true},
+		{name: "operation limit on a push", operation: 150 * time.Millisecond, service: "git-receive-pack", wantBound: "operation limit"},
+		{name: "queue wait on a push", operation: 30 * time.Second, queueWait: 500 * time.Millisecond, service: "git-receive-pack", wantBound: "transfer queue wait"},
+		{name: "queue wait on a fetch POST", operation: 30 * time.Second, queueWait: 500 * time.Millisecond, service: "git-upload-pack", wantBound: "transfer queue wait"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			manager, runner := newHTTPTestRepository(t)
+			handler, err := New(runner, manager, "")
+			noErr(t, err)
+			useLimits(t, handler, func(limits *Limits) {
+				limits.PerRepository, limits.ExtraSlots = 1, 0
+				limits.QueueWait = 5 * time.Second
+				if test.queueWait > 0 {
+					limits.QueueWait = test.queueWait
+				}
+				limits.Operation = test.operation
+				// One memory slot, so a transfer that starts afterwards proves that
+				// this request gave both of its slots back.
+				limits.Memory = hostmem.NewGate(1)
+			})
+			server := httptest.NewServer(handler)
+			defer server.Close()
+			lock := manager.Locks.For("sample")
+			lock.Lock()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// A push or a fetch body is a POST to the service path with that
+			// service's content type; without it the path is not a Git route and is
+			// refused before admission, so the request never reaches the lock.
+			var request *http.Request
+			if test.service == "" {
+				request, err = http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/git/sample.git/info/refs?service=git-upload-pack", nil)
+				noErr(t, err)
+			} else {
+				request, err = http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/git/sample.git/"+test.service, strings.NewReader("0000"))
+				noErr(t, err)
+				request.Header.Set("Content-Type", "application/x-"+test.service+"-request")
+			}
+			var status int
+			var retryAfter string
+			var requestErr error
+			// The log names the bound that ended the wait: the shorter of the
+			// operation limit and the transfer queue wait that a POST also gets.
+			logBuffer := &bytes.Buffer{}
+			previousLog := log.Writer()
+			log.SetOutput(logBuffer)
+			defer log.SetOutput(previousLog)
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				response, err := http.DefaultClient.Do(request)
+				if err != nil {
+					requestErr = err
+					return
+				}
+				defer response.Body.Close()
+				status, retryAfter = response.StatusCode, response.Header.Get("Retry-After")
+			}()
+			released := false
+			release := func() {
+				if released {
+					return
+				}
+				released = true
+				lock.Unlock()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+				}
+			}
+			defer release()
+			waitFor(t, 5*time.Second, "the request to wait for the repository writer", lock.Waiting)
+			if test.cancelClient {
+				cancel()
+			}
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the request still waits for the writer")
+			}
+			if test.cancelClient {
+				if requestErr == nil {
+					t.Fatalf("the request ended as %d after its client left", status)
+				}
+			} else if requestErr != nil || status != http.StatusServiceUnavailable || retryAfter == "" {
+				t.Fatalf("the request ended as status=%d retry-after=%q err=%v, want the busy answer", status, retryAfter, requestErr)
+			}
+			waitFor(t, 5*time.Second, "the handler to release its slots", func() bool { return handler.Active() == 0 })
+			if test.wantBound == "" {
+				if logged := logBuffer.String(); logged != "" {
+					t.Fatalf("the server logged %q for a client that left, want nothing", logged)
+				}
+			} else if !strings.Contains(logBuffer.String(), "stayed locked for the whole "+test.wantBound) {
+				t.Fatalf("the server logged %q, want the bound %q", logBuffer.String(), test.wantBound)
+			}
+			release()
+			httpGitOutput(t, "", "ls-remote", server.URL+"/git/sample.git")
+		})
+	}
+}
+
+// A Git request that ran out its repository wait is answered with the plain
+// busy message. A Git client shows it for a refused ref advertisement:
+//
+//	remote: Git service is busy with other transfers; try again shortly
+//	fatal: unable to access '.../git/sample.git/': The requested URL returned error: 503
+//
+// A refused transfer POST shows the status only, because Git prints the body of
+// an advertisement refusal and not of an RPC refusal:
+//
+//	error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503
+func TestGitClientSeesTheBusyRepositoryAnswer(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "")
+	noErr(t, err)
+	lock := manager.Locks.For("sample")
+	// The transfer POST meets the held repository, while the advertisement of the
+	// same client is served normally, so the client reaches the POST path.
+	var postHeld atomic.Bool
+	handler.Authorize = func(request *http.Request) (bool, error) {
+		// Only the first POST takes the lock, so a client that sends a second
+		// POST cannot wait on the test's own hold.
+		if request.Method == http.MethodPost && postHeld.CompareAndSwap(false, true) {
+			lock.Lock()
+		}
+		return true, nil
+	}
+	useLimits(t, handler, func(limits *Limits) {
+		limits.PerRepository, limits.ExtraSlots = 1, 0
+		limits.QueueWait = 5 * time.Second
+		limits.Operation = 150 * time.Millisecond
+	})
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	// The message is asserted as text, so a change to it shows up here.
+	const busy = "Git service is busy with other transfers; try again shortly"
+	lock.Lock()
+	advertisement, advertisementErr := httpGitCombined("", "ls-remote", server.URL+"/git/sample.git")
+	lock.Unlock()
+	if advertisementErr == nil || !strings.Contains(advertisement, busy) || !strings.Contains(advertisement, "503") {
+		t.Fatalf("git ls-remote reported %v:\n%s", advertisementErr, advertisement)
+	}
+	clientRepository := t.TempDir()
+	httpGitOutput(t, clientRepository, "init", "--quiet", "--initial-branch=main")
+	transfer, transferErr := httpGitCombined(clientRepository, "fetch", "--no-tags", server.URL+"/git/sample.git", "+refs/heads/main:refs/remotes/probe/main")
+	if postHeld.Load() {
+		lock.Unlock()
+	}
+	if transferErr == nil || !strings.Contains(transfer, "503") {
+		t.Fatalf("git fetch reported %v:\n%s", transferErr, transfer)
+	}
+}
+
+// The busy answer names the limit that ended the wait, and a client that left
+// before it is not reported as a failure. A connection deadline that passes at
+// the same instant as the limit cancels the request, so an expired limit can
+// reach the answer as a cancellation.
+func TestBusyAnswerNamesTheLimitThatEndedTheWait(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		limit  time.Time
+		err    error
+		logged bool
+	}{
+		{name: "expired limit reported as a cancellation", limit: time.Now().Add(-time.Second), err: context.Canceled, logged: true},
+		{name: "expired limit", limit: time.Now().Add(-time.Second), err: context.DeadlineExceeded, logged: true},
+		{name: "client left before the limit", limit: time.Now().Add(time.Minute), err: context.Canceled},
+		{name: "client left with no limit", err: context.Canceled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			logBuffer := &bytes.Buffer{}
+			previousLog := log.Writer()
+			log.SetOutput(logBuffer)
+			defer log.SetOutput(previousLog)
+			writer := httptest.NewRecorder()
+			answerBusyLocked(writer, route{repositoryID: "sample", service: "git-upload-pack"}, http.MethodGet, "operation limit", test.limit, test.err)
+			if writer.Code != http.StatusServiceUnavailable || writer.Header().Get("Retry-After") == "" {
+				t.Fatalf("answer=%d retry-after=%q, want the busy answer", writer.Code, writer.Header().Get("Retry-After"))
+			}
+			logged := strings.Contains(logBuffer.String(), "stayed locked for the whole operation limit")
+			if logged != test.logged {
+				t.Fatalf("the server logged %q, want logged=%v", logBuffer.String(), test.logged)
+			}
+		})
+	}
 }
 
 // useLimits makes every transfer of handler run under its current limits

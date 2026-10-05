@@ -3,6 +3,7 @@ package importsync
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -849,5 +850,230 @@ func TestBusyRefusalDoesNotRecordASecondRun(t *testing.T) {
 	f.transport.gate <- struct{}{}
 	if run := <-done; run.Status != state.ImportRunComplete {
 		t.Fatalf("first run=%+v", run)
+	}
+}
+
+// Every pre-write wait for a repository held by another writer ends at the
+// caller's own deadline or cancellation: a source change, a credential change,
+// a refresh, an import add and an orphan cleanup report that end instead of
+// waiting for the writer, and they record, publish or remove nothing. An
+// expired deadline is a busy repository; a cancelled caller stays cancelled.
+func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("each case waits out a 500ms caller deadline behind a held repository writer")
+	}
+	const deadline = 500 * time.Millisecond
+
+	// run starts one operation behind the repository writer the caller holds,
+	// waits until the operation is parked in the lock wait, and returns the
+	// error it ended with while the writer is still held. With cancelInstead the
+	// caller's context has no deadline and is cancelled instead.
+	run := func(t *testing.T, lock *gitexec.RepositoryLock, cancelInstead bool, start func(context.Context) error) error {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), deadline)
+		if cancelInstead {
+			ctx, cancel = context.WithCancel(context.Background())
+		}
+		defer cancel()
+		var result error
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			result = start(ctx)
+		}()
+		defer func() {
+			// Free the writer and let the operation drain before the fixture ends.
+			lock.Unlock()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+			}
+		}()
+		waitUntil(t, "the operation to wait for another repository writer", lock.Waiting)
+		if cancelInstead {
+			cancel()
+		}
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the operation kept waiting for the writer past its deadline")
+		}
+		return result
+	}
+
+	t.Run("source change", func(t *testing.T) {
+		f := newFixture(t)
+		f.commit("one", "one\n")
+		f.mustImport(ImportInput{})
+		lock := f.manager.Locks.For("project")
+		lock.Lock()
+		err := run(t, lock, false, func(ctx context.Context) error {
+			_, err := f.service.ConfigureSource(ctx, ConfigureInput{
+				RepositoryID: "project", URL: "https://example.invalid/moved/project.git", Mode: ModeStandalone,
+			})
+			return err
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeBusy {
+			t.Fatalf("a source change queued behind a writer ended with %v", err)
+		}
+		source, exists, readErr := f.store.ImportSource(context.Background(), "project")
+		if readErr != nil || !exists || source.URL != "https://example.invalid/team/project.git" {
+			t.Fatalf("the stopped source change stored %+v (exists=%v err=%v)", source, exists, readErr)
+		}
+	})
+
+	t.Run("source change whose caller leaves", func(t *testing.T) {
+		f := newFixture(t)
+		f.commit("one", "one\n")
+		f.mustImport(ImportInput{})
+		lock := f.manager.Locks.For("project")
+		lock.Lock()
+		err := run(t, lock, true, func(ctx context.Context) error {
+			_, err := f.service.ConfigureSource(ctx, ConfigureInput{
+				RepositoryID: "project", URL: "https://example.invalid/moved/project.git", Mode: ModeStandalone,
+			})
+			return err
+		})
+		if !errors.Is(err, context.Canceled) || problemCode(err) != CodeCancelled {
+			t.Fatalf("a source change whose caller left ended with %v", err)
+		}
+		source, exists, readErr := f.store.ImportSource(context.Background(), "project")
+		if readErr != nil || !exists || source.URL != "https://example.invalid/team/project.git" {
+			t.Fatalf("the abandoned source change stored %+v (exists=%v err=%v)", source, exists, readErr)
+		}
+	})
+
+	t.Run("credential change", func(t *testing.T) {
+		f := newFixture(t)
+		f.commit("one", "one\n")
+		f.mustImport(ImportInput{})
+		noErr(t, f.service.SetCredentials(context.Background(), "project", &Credentials{BearerToken: "synthetic-token"}))
+		lock := f.manager.Locks.For("project")
+		lock.Lock()
+		err := run(t, lock, false, func(ctx context.Context) error {
+			return f.service.SetCredentials(ctx, "project", nil)
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeBusy {
+			t.Fatalf("a credential change queued behind a writer ended with %v", err)
+		}
+		if _, stored, readErr := f.store.LoadImportCredentials(context.Background(), "project"); readErr != nil || !stored {
+			t.Fatalf("the stopped credential change removed the stored credential (stored=%v err=%v)", stored, readErr)
+		}
+	})
+
+	t.Run("import add", func(t *testing.T) {
+		f := newFixture(t)
+		lock := f.manager.Locks.For("queued")
+		lock.Lock()
+		err := run(t, lock, false, func(ctx context.Context) error {
+			_, err := f.service.Import(ctx, ImportInput{
+				Name: "queued", URL: "https://example.invalid/team/queued.git", Mode: ModeStandalone,
+			})
+			return err
+		})
+		if problemCode(err) != CodeBusy {
+			t.Fatalf("an import add queued behind a writer ended with %v", err)
+		}
+		assertNoBinding(t, f, "queued")
+	})
+
+	t.Run("orphan cleanup", func(t *testing.T) {
+		f := newFixture(t)
+		bindOrphan(t, f, "orphan")
+		lock := f.manager.Locks.For("orphan")
+		lock.Lock()
+		var forgotten bool
+		err := run(t, lock, false, func(ctx context.Context) error {
+			var err error
+			forgotten, err = f.service.ForgetOrphanImport(ctx, "orphan")
+			return err
+		})
+		if problemCode(err) != CodeBusy || forgotten {
+			t.Fatalf("an orphan cleanup queued behind a writer ended with forgotten=%v err=%v", forgotten, err)
+		}
+		if _, exists, readErr := f.store.ImportSource(context.Background(), "orphan"); readErr != nil || !exists {
+			t.Fatalf("the stopped orphan cleanup removed the binding (exists=%v err=%v)", exists, readErr)
+		}
+	})
+
+	t.Run("refresh", func(t *testing.T) {
+		f := newFixture(t)
+		first := f.commit("one", "one\n")
+		f.mustImport(ImportInput{})
+		f.commit("two", "two\n")
+		lock := f.manager.Locks.For("project")
+		lock.Lock()
+		err := run(t, lock, false, func(ctx context.Context) error {
+			_, err := f.service.Refresh(ctx, "project", Limits{})
+			return err
+		})
+		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeLimit {
+			t.Fatalf("a refresh queued behind a writer ended with %v", err)
+		}
+		if run := f.lastRun(); run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit {
+			t.Fatalf("the stopped refresh recorded %+v", run)
+		}
+		if refs := f.destinationRefs(); refs["refs/heads/main"] != first {
+			t.Fatalf("the stopped refresh published: %v", refs)
+		}
+	})
+}
+
+// A refresh that waits for a repository held by another writer stops with its
+// run context before publication instead of waiting for the writer, publishes
+// nothing, and its pack keep cleanup gives up on the held repository within
+// its own bound instead of following the stopped run forever.
+func TestRefreshWaitingForTheRepositoryAtPublicationStopsWithTheRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 5s pack keep cleanup bound behind a writer that stays held")
+	}
+	f := newFixture(t)
+	first := f.commit("one", "one\n")
+	f.mustImport(ImportInput{})
+	f.commit("two", "two\n")
+	// The refresh indexes a destination pack before it waits for the writer, so
+	// the keep file of that pack exists while the writer is held and the cleanup
+	// that follows the publication wait must take the same lock.
+
+	f.transport.gate = make(chan struct{}, 1)
+	fetched := make(chan struct{})
+	f.transport.before = func() { close(fetched) }
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var run state.ImportRun
+	var runErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		run, runErr = f.service.Refresh(ctx, "project", Limits{})
+	}()
+	<-fetched
+	lock := f.manager.Locks.For("project")
+	lock.Lock()
+	defer lock.Unlock()
+	f.transport.gate <- struct{}{}
+	waitUntil(t, "the refresh to wait for the repository writer at publication", lock.Waiting)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the refresh kept waiting for the writer instead of stopping with its run")
+	}
+	if problemCode(runErr) != CodeCancelled || run.Status != state.ImportRunCancelled {
+		t.Fatalf("run=%+v err=%v", run, runErr)
+	}
+	if refs := f.destinationRefs(); refs["refs/heads/main"] != first {
+		t.Fatalf("the stopped refresh published: %v", refs)
+	}
+	// The cleanup waited for the same writer, gave up within its bound, and left
+	// the keep file that names the run which created it.
+	keeps := destinationKeepFiles(t, f.destinationPath())
+	if len(keeps) != 1 {
+		t.Fatalf("keep files after the stopped refresh=%v, want the one it left", keeps)
+	}
+	content, err := os.ReadFile(filepath.Join(f.destinationPath(), "objects", "pack", keeps[0]))
+	noErr(t, err)
+	if want := "owngit import " + run.ID + "\n"; string(content) != want {
+		t.Fatalf("left keep file content=%q want %q", content, want)
 	}
 }

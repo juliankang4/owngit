@@ -316,7 +316,7 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	if errors.Is(err, errBusy) {
 		logGitFailure(route, request.Method, "no Git transfer slot became free within "+limits.QueueWait.String())
 		writer.Header().Set("Retry-After", "10")
-		http.Error(writer, "Git service is busy with other transfers; try again shortly", http.StatusServiceUnavailable)
+		http.Error(writer, busyMessage, http.StatusServiceUnavailable)
 		return
 	}
 	if err != nil {
@@ -326,6 +326,47 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	h.active.Add(1)
 	defer h.active.Add(-1)
 
+	// The operation bound starts when the request got its slots, so time spent
+	// waiting for a repository held by another transfer counts against the
+	// same bound as the transfer itself.
+	controller := http.NewResponseController(writer)
+	operationContext := request.Context()
+	cancel := func() {}
+	var deadline time.Time
+	if limits.Operation > 0 {
+		deadline = time.Now().Add(limits.Operation)
+		operationContext, cancel = context.WithDeadline(operationContext, deadline)
+	}
+	defer cancel()
+	deadlines := &transferDeadlines{controller: controller, idle: limits.Idle, overall: deadline}
+	// Everything after admission runs under the operation bound, including the
+	// lock wait, the ref settings read that a push needs, and the transfer
+	// itself. The admitted request keeps its own context for admission only.
+	request = request.WithContext(operationContext)
+	// A request without a body ends its wait as soon as its client leaves, so
+	// the operation limit is the only bound it needs. Go's HTTP server starts
+	// its watch for a closed connection only after the body has been consumed
+	// (net/http server.go), so a POST whose body the handler still has to read
+	// cannot notice a client that leaves. Its wait for the repository is capped
+	// by the same queue wait that admission uses, and it then gets the busy
+	// answer, so a disconnected peer cannot hold its slots for the whole
+	// operation limit. Once the lock is held, the transfer keeps that limit.
+	// The shorter of the two bounds ends the wait and names the busy answer.
+	// lockWaitLimit is the moment that bound ends, which tells an ended wait
+	// from a client that left (see answerBusyLocked).
+	lockWait, lockWaitBound, lockWaitLimit := operationContext, "operation limit", deadline
+	if request.Method == http.MethodPost && limits.QueueWait > 0 &&
+		(limits.Operation <= 0 || limits.QueueWait < limits.Operation) {
+		lockWaitLimit = time.Now().Add(limits.QueueWait)
+		var cancelLockWait context.CancelFunc
+		lockWait, cancelLockWait = context.WithDeadline(operationContext, lockWaitLimit)
+		defer cancelLockWait()
+		lockWaitBound = "transfer queue wait"
+	}
+
+	// The repository lock is taken with the lock wait context, so the wait ends
+	// at that bound or when the client leaves instead of when the writer
+	// finishes, and the request gives its slots back at once.
 	lock := h.Repositories.Locks.For(route.repositoryID)
 	// Releasing the write lock invalidates the cached ref snapshot unless the
 	// request provably changed no ref: the ref advertisement never writes, and
@@ -333,7 +374,10 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	// write.
 	refsUnchanged := request.Method == http.MethodGet
 	if route.service == "git-receive-pack" {
-		lock.Lock()
+		if err := lock.LockContext(lockWait); err != nil {
+			answerBusyLocked(writer, route, request.Method, lockWaitBound, lockWaitLimit, err)
+			return
+		}
 		defer func() {
 			if refsUnchanged {
 				lock.UnlockWithoutRefChanges()
@@ -342,39 +386,21 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 			}
 		}()
 	} else {
-		lock.RLock()
-		defer lock.RUnlock()
-	}
-	// A push follows the repository's kept history and default branch
-	// protection as they are when it starts; the update hook applies them.
-	// Its ref advertisement reads them too, so a Git client shows the
-	// refusal of an unreadable choice, which it does not show for the push
-	// request itself.
-	var refWrites []string
-	if route.service == "git-receive-pack" {
-		var err error
-		if refWrites, err = h.Repositories.RefWriteEnvironment(request.Context(), route.repositoryID); err != nil {
-			what := fmt.Sprintf("Git push to repository %q failed: its ref settings could not be read", route.repositoryID)
-			logCause(request.Context(), what, err)
-			if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
-				http.Error(writer, policyErr.Advice(), http.StatusConflict)
-			} else {
-				http.Error(writer, "The repository's kept history, default branch protection and extra ref namespaces could not be read. The OwnGit log says why.", http.StatusServiceUnavailable)
-			}
+		if err := lock.RLockContext(lockWait); err != nil {
+			answerBusyLocked(writer, route, request.Method, lockWaitBound, lockWaitLimit, err)
 			return
 		}
+		defer lock.RUnlock()
 	}
-
-	controller := http.NewResponseController(writer)
-	operationContext := request.Context()
-	cancel := func() {}
-	var deadline time.Time
+	// The connection deadlines are armed only now, with the repository lock
+	// held. No socket read or write happens while the request waits, and a read
+	// deadline that passes on a request without a body makes net/http cancel
+	// the request (see answerBusyLocked), which would report a wait that ended
+	// at its bound as a client that left. Context cancellation alone does not
+	// interrupt a blocked socket Read or Write, so both directions keep their
+	// deadlines for the transfer without buffering a pack request or response
+	// in memory.
 	if limits.Operation > 0 {
-		deadline = time.Now().Add(limits.Operation)
-		operationContext, cancel = context.WithDeadline(operationContext, deadline)
-		// Context cancellation alone does not interrupt a blocked socket Read or
-		// Write. Connection deadlines bound both directions without buffering a
-		// pack request or response in memory.
 		_ = controller.SetReadDeadline(deadline)
 		_ = controller.SetWriteDeadline(deadline)
 	}
@@ -384,9 +410,25 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 			_ = controller.SetWriteDeadline(time.Time{})
 		}()
 	}
-	defer cancel()
-	deadlines := &transferDeadlines{controller: controller, idle: limits.Idle, overall: deadline}
-	request = request.WithContext(operationContext)
+	// A push follows the repository's kept history and default branch
+	// protection as they are when it starts; the update hook applies them.
+	// Its ref advertisement reads them too, so a Git client shows the
+	// refusal of an unreadable choice, which it does not show for the push
+	// request itself.
+	var refWrites []string
+	if route.service == "git-receive-pack" {
+		var err error
+		if refWrites, err = h.Repositories.RefWriteEnvironment(operationContext, route.repositoryID); err != nil {
+			what := fmt.Sprintf("Git push to repository %q failed: its ref settings could not be read", route.repositoryID)
+			logCause(operationContext, what, err)
+			if policyErr := (*state.PolicyError)(nil); errors.As(err, &policyErr) {
+				http.Error(writer, policyErr.Advice(), http.StatusConflict)
+			} else {
+				http.Error(writer, "The repository's kept history, default branch protection and extra ref namespaces could not be read. The OwnGit log says why.", http.StatusServiceUnavailable)
+			}
+			return
+		}
+	}
 
 	contentLength := request.ContentLength
 	streamContext, cancelStream := context.WithCancelCause(request.Context())
@@ -788,6 +830,28 @@ func failureReason(err error, stderr []byte, tooLarge, invalidGzip, timedOut boo
 // text, such as a limit that was reached.
 func logGitFailure(route route, method string, reason string) {
 	log.Printf("Git %s request for repository %q failed: %s", requestKind(route, method), route.repositoryID, reason)
+}
+
+// busyMessage is the answer of a Git request that found no free transfer slot
+// or no repository within its bound. A Git client shows it for a refused ref
+// advertisement, and shows only the status for a refused transfer POST.
+const busyMessage = "Git service is busy with other transfers; try again shortly"
+
+// answerBusyLocked answers a request that could not take its repository lock
+// within its own bound, or whose client left while it waited, with the same
+// busy answer as a request that found no transfer slot. bound names the limit
+// that ended the wait and limit is the moment it ends. The caller has already
+// given its slots back. A client that left does not read the answer, and its
+// leaving is not a failure of the Git service to log, unless the limit had
+// already passed: a connection read deadline that passes at the same instant
+// cancels the request, so a wait that ended at its bound can reach this point
+// as a cancellation.
+func answerBusyLocked(writer http.ResponseWriter, route route, method, bound string, limit time.Time, err error) {
+	if !errors.Is(err, context.Canceled) || (!limit.IsZero() && !time.Now().Before(limit)) {
+		logGitFailure(route, method, "the repository stayed locked for the whole "+bound)
+	}
+	writer.Header().Set("Retry-After", "10")
+	http.Error(writer, busyMessage, http.StatusServiceUnavailable)
 }
 
 // logCause logs line followed by err, the error that explains it, quoted
