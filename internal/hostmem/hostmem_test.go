@@ -53,11 +53,11 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 		packers  int
 		settings string
 	}{
-		{"unknown", 0, 0, 0, 5, "threads=4 window=20372333 cache=81489334 base=81489334"},
-		{"512 MiB", 512 << 20, 256 << 20, 1, 1, "threads=1 window=8388608 cache=8388608 base=8388608"},
-		{"1 GiB", 1 << 30, 512 << 20, 2, 2, "threads=1 window=16777216 cache=16777216 base=16777216"},
-		{"8 GiB", 8 << 30, 4 << 30, 36, 5, "threads=4 window=49133275 cache=196533101 base=196533101"},
-		{"64 GiB", 64 << 30, 32 << 30, 305, 5, "threads=4 window=268435456 cache=268435456 base=268435456"},
+		{"unknown", 0, 0, 0, 5, "threads=4 window=20372333 cache=81489334 base=81489334 big=162978669"},
+		{"512 MiB", 512 << 20, 256 << 20, 1, 1, "threads=1 window=8388608 cache=8388608 base=8388608 big=16777216"},
+		{"1 GiB", 1 << 30, 512 << 20, 2, 2, "threads=1 window=16777216 cache=16777216 base=16777216 big=33554432"},
+		{"8 GiB", 8 << 30, 4 << 30, 36, 5, "threads=4 window=49133275 cache=196533101 base=196533101 big=393066203"},
+		{"64 GiB", 64 << 30, 32 << 30, 305, 5, "threads=4 window=268435456 cache=268435456 base=268435456 big=536870912"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -71,7 +71,7 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 				t.Errorf("default packers = %d, want %d", got, test.packers)
 			}
 			config := PackingConfig(test.ceiling, 4, test.packers)
-			got := "threads=" + config[0][1] + " window=" + config[1][1] + " cache=" + config[2][1] + " base=" + config[3][1]
+			got := "threads=" + config[0][1] + " window=" + config[1][1] + " cache=" + config[2][1] + " base=" + config[3][1] + " big=" + config[4][1]
 			if got != test.settings {
 				t.Errorf("packing = %s, want %s", got, test.settings)
 			}

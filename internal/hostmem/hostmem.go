@@ -16,7 +16,11 @@
 // A = 3C/8/P is therefore spent as baseGit + threads x window + cache, with
 // window memory and cache half of the rest each, and threads chosen so that
 // each window is at least smallestWindow. The same cache size bounds the delta
-// base cache of index-pack, which receives a push.
+// base cache of index-pack, which receives a push, and core.bigFileThreshold
+// is the rest of the share, so a large object is streamed instead of held in
+// memory (a single 300 MiB blob pushed to a 512 MiB host would otherwise
+// take 300 MiB). Objects past the threshold are not delta-compressed, but
+// the window memory could not hold them for a search anyway.
 //
 // At a small ceiling the number of requests that build a pack at once
 // (PackSlots) is lowered until every process can still have the smallest
@@ -208,5 +212,6 @@ func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
 		{"pack.windowMemory", strconv.FormatUint(window, 10)},
 		{"pack.deltaCacheSize", strconv.FormatUint(cache, 10)},
 		{"core.deltaBaseCacheLimit", strconv.FormatUint(cache, 10)},
+		{"core.bigFileThreshold", strconv.FormatUint(min(part, 512*mib), 10)},
 	}
 }
