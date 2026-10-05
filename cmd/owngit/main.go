@@ -308,8 +308,10 @@ func serveWithOpener(arguments []string, opener func(string) error, logf func(st
 // packLimits adds the memory limit of this computer to the saved transfer
 // limits: at most hostmem.PackSlots requests that build a pack (a clone, a
 // fetch or an archive) run at once, and a further one waits for a slot up to
-// the saved queue wait. Ref advertisements and pushes keep the saved
-// slots. With an unknown ceiling the saved limits stand alone. setPackers
+// the saved queue wait. Ref advertisements and pushes keep the saved slots,
+// except that all transfers together are lowered to hostmem.MaxTransfers
+// when the saved slots exceed it. With an unknown ceiling the saved limits
+// stand alone. setPackers
 // receives how many requests may build a pack at once, so Git's packing
 // memory is shared among them.
 func packLimits(saved func(context.Context) (githttp.Limits, error), ceiling uint64, setPackers func(int)) func(context.Context) (githttp.Limits, error) {
@@ -318,6 +320,7 @@ func packLimits(saved func(context.Context) (githttp.Limits, error), ceiling uin
 		if err != nil {
 			return limits, err
 		}
+		limits.PerRepository, limits.ExtraSlots = hostmem.LimitTransfers(ceiling, limits.PerRepository, limits.ExtraSlots)
 		limits.PackSlots = hostmem.PackSlots(ceiling)
 		packers := limits.PerRepository + limits.ExtraSlots
 		if limits.PackSlots > 0 {

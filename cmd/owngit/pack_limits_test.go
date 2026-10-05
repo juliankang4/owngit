@@ -13,29 +13,31 @@ import (
 // the packing memory is shared among them; an unknown ceiling leaves the saved
 // limits alone.
 func TestPackLimitsFollowTheMemoryCeiling(t *testing.T) {
-	saved := func(context.Context) (githttp.Limits, error) {
-		return githttp.Limits{PerRepository: 4, ExtraSlots: 1}, nil
-	}
 	tests := []struct {
-		name              string
-		ceiling           uint64
-		wantSlots, wantAt int
+		name                                  string
+		ceiling                               uint64
+		savedPer, savedExtra                  int
+		wantSlots, wantPackers, wantPer, want int
 	}{
-		{"512 MiB", 512 << 20, 1, 1},
-		{"1 GiB", 1 << 30, 2, 2},
-		{"8 GiB", 8 << 30, 36, 5},
-		{"unknown", 0, 0, 5},
+		{"512 MiB default limits", 512 << 20, 4, 1, 1, 1, 3, 0},
+		{"512 MiB loose owner limits", 512 << 20, 32, 32, 1, 1, 3, 0},
+		{"1 GiB default limits stay", 1 << 30, 4, 1, 2, 2, 4, 1},
+		{"1 GiB loose owner limits", 1 << 30, 32, 32, 2, 2, 6, 0},
+		{"8 GiB default limits stay", 8 << 30, 4, 1, 36, 5, 4, 1},
+		{"8 GiB loose owner limits", 8 << 30, 32, 32, 36, 36, 32, 16},
+		{"unknown keeps the owner's limits", 0, 4, 1, 0, 5, 4, 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			saved := func(context.Context) (githttp.Limits, error) {
+				return githttp.Limits{PerRepository: test.savedPer, ExtraSlots: test.savedExtra}, nil
+			}
 			var packers int
 			limits, err := packLimits(saved, test.ceiling, func(n int) { packers = n })(context.Background())
 			noErr(t, err)
-			if limits.PackSlots != test.wantSlots || packers != test.wantAt {
-				t.Errorf("pack slots %d, packing shared by %d; want %d and %d", limits.PackSlots, packers, test.wantSlots, test.wantAt)
-			}
-			if limits.PerRepository != 4 || limits.ExtraSlots != 1 {
-				t.Errorf("saved slots became %d + %d, want 4 + 1", limits.PerRepository, limits.ExtraSlots)
+			if limits.PackSlots != test.wantSlots || packers != test.wantPackers || limits.PerRepository != test.wantPer || limits.ExtraSlots != test.want {
+				t.Errorf("pack slots %d, packing shared by %d, transfers %d + %d; want %d, %d, %d + %d",
+					limits.PackSlots, packers, limits.PerRepository, limits.ExtraSlots, test.wantSlots, test.wantPackers, test.wantPer, test.want)
 			}
 		})
 	}

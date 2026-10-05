@@ -32,7 +32,8 @@
 // (PackSlots) is lowered until every process can still have the smallest
 // useful window and cache, so further clones wait for a slot instead of the
 // kernel killing OwnGit. Pushes and ref advertisements are not counted and
-// never wait for that limit. At 512 MiB the three smallest processes (one
+// never wait for that limit, but every transfer, pushes included, counts
+// against MaxTransfers. At 512 MiB the three smallest processes (one
 // clone, backup, maintenance: 3 x 80 MiB) exceed the 192 MiB Git share by
 // 48 MiB; measured with a backup, a clone and a repack together, the
 // cgroup stayed about 5% below the ceiling, covered by the C/8 margin. A
@@ -197,6 +198,28 @@ func PackSlots(ceiling uint64) int {
 		return 0
 	}
 	return maxPackers(ceiling)
+}
+
+// MaxTransfers is the most Git transfers of any kind (clone, fetch, push,
+// archive) the ceiling lets run at once, or 0 for no limit: the ceiling is
+// unknown. A push costs a receiving process of about baseGit (60 MiB measured
+// for 300 and 450 MiB blobs with the settings above), so the Git share is
+// divided by baseGit. It is never below one.
+func MaxTransfers(ceiling uint64) int {
+	if ceiling == 0 {
+		return 0
+	}
+	return int(max(gitShare(ceiling)/baseGit, 1))
+}
+
+// LimitTransfers lowers the saved per-repository and extra transfer slots
+// until together they fit MaxTransfers. Saved values that already fit stay.
+func LimitTransfers(ceiling uint64, perRepository, extra int) (int, int) {
+	if limit := MaxTransfers(ceiling); limit > 0 {
+		perRepository = min(perRepository, limit)
+		extra = min(extra, limit-perRepository)
+	}
+	return perRepository, extra
 }
 
 // DefaultPackers is how many requests build a pack at once under the default
