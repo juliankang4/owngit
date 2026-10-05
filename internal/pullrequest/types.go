@@ -77,20 +77,28 @@ func (problem *Problem) Error() string {
 	if problem == nil {
 		return ""
 	}
-	if reason := plainReason(problem.Cause); reason != "" {
+	if reason := problem.plainReason(); reason != "" {
 		return strings.TrimSuffix(problem.Message, ".") + ": " + reason + "."
 	}
 	return problem.Message
 }
 
-// plainReason names a cause the owner can act on in a few words. Other causes
-// stay out of the line; Cause still carries them for the log and for callers.
-func plainReason(cause error) string {
+// plainReason names a cause the owner can act on in a few words. Only a
+// timeout or cancellation is named; other causes stay out of the line, and
+// Cause still carries them. The Git and disk hint is for a repository_unavailable
+// Problem, which comes from a Git command or the repository folder; a busy
+// repository already names its cause in the message.
+func (problem *Problem) plainReason() string {
 	switch {
-	case errors.Is(cause, context.DeadlineExceeded):
-		return "Git timed out, so the repository folder or its disk may not be answering"
-	case errors.Is(cause, context.Canceled):
-		return "the operation was canceled"
+	case problem.Code == "repository_busy":
+		return ""
+	case errors.Is(problem.Cause, context.DeadlineExceeded):
+		if problem.Code == "repository_unavailable" {
+			return "Git timed out, so the repository folder or its disk may not be answering"
+		}
+		return "it did not finish in time"
+	case errors.Is(problem.Cause, context.Canceled):
+		return "the operation was cancelled"
 	}
 	return ""
 }

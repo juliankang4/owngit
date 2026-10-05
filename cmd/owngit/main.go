@@ -502,8 +502,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// locked until every user of the repositories has stopped. Another
 	// server on the folder, for example one started from a copy of this
 	// state directory, would have its hooks rewritten, so it stops the start.
-	claimErr := reportSlowStep(logf, slowStepNotice, "the repository folder "+settings.RepositoryRoot+" to answer", repositories.ClaimStorage)
-	if err := claimErr; errors.Is(err, repository.ErrStorageInUse) {
+	err = reportSlowStep(logf, slowStepNotice, "the repository folder "+settings.RepositoryRoot+" to answer", repositories.ClaimStorage)
+	if errors.Is(err, repository.ErrStorageInUse) {
 		return fmt.Errorf("%w; stop the other server first (a copy of a state directory must not serve the same repository folder)", err)
 	} else if err != nil {
 		logf("could not check that no other OwnGit server uses the repository folder: %v", err)
@@ -527,7 +527,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	if settings.Initialized {
 		// Deleted repositories have no rows, so an unfinished deletion never
 		// blocks startup; it is reported and retried at the next start.
-		if err := repositories.ReconcileDeletions(ctx); err != nil {
+		if err := reportSlowStep(logf, slowStepNotice, "the repository folder "+settings.RepositoryRoot+" to finish an unfinished deletion", func() error { return repositories.ReconcileDeletions(ctx) }); err != nil {
 			logf("unfinished repository deletion was not completed: %v", err)
 		}
 	}

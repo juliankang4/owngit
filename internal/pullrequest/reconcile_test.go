@@ -94,4 +94,13 @@ func TestReconcileAllNamesATimeoutCause(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "timed out") {
 		t.Fatalf("ReconcileAll error = %v, want a failure that names the timeout", err)
 	}
+	for _, row := range []struct{ code, message, want string }{
+		{"repository_busy", "Another Git operation is using the repository.", "Another Git operation is using the repository."},
+		{"state_unavailable", "Pull request metadata could not be read.", "Pull request metadata could not be read: it did not finish in time."},
+	} {
+		got := (&Problem{Code: row.code, Message: row.message, Cause: context.DeadlineExceeded}).Error()
+		if got != row.want {
+			t.Fatalf("%s deadline error = %q, want %q", row.code, got, row.want)
+		}
+	}
 }
