@@ -313,15 +313,24 @@ Every command takes `--server`, `--repository`, `--credential-file`, and
 - `owngit tasks` prints check tasks as the dashboard shows them, with general
   access (`--password-file` with the shared password, no helper credential):
   without `--repository`, the 10 tasks that changed most recently across all
-  repositories and `truncated`; with `--repository NAME`, that repository's
-  tasks in the order of its Checks tab; with `--task TASK` too, the task with
-  its newest 100 attempts and `attempts_truncated`. Each listed task carries
-  `latest_attempt`, or null when it has none, and its repository's current
-  address in `repository_address`. Errors include `repository_not_found`,
+  repositories and `truncated`; with `--repository NAME`, the first 50 of that
+  repository's tasks in the order of its Checks tab; with `--task TASK` too,
+  the task with its newest 100 attempts and `attempts_truncated`. Each listed
+  task carries `latest_attempt`, or null when it has none, and its
+  repository's current address in `repository_address`. Errors include `repository_not_found`,
   `repository_moved` (an earlier name of a renamed repository),
   `task_not_found`, and `invalid_arguments` (`--task` without
   `--repository`). The API routes are `GET /api/v1/tasks`,
   `GET /api/v1/tasks/NAME`, and `GET /api/v1/tasks/NAME/TASK`.
+- A repository's task list comes one page at a time, in the same order. When
+  older tasks remain, the result has `next`. The API route
+  `GET /api/v1/tasks/NAME` takes two optional query parameters: `limit` sets
+  the page size, from 1 to 100 (50 by default), and `before` takes the `next`
+  value of the previous page. It refuses a value it does not accept with status 400 and
+  `invalid_list_limit` or `invalid_list_before`, and any other query
+  parameter, or one given twice, with `invalid_request`. The other two task
+  routes take no query parameters. The repository's Checks tab shows the
+  first page, and Show older tasks below the list opens the next one.
 
 ## Reading the result
 
