@@ -15,6 +15,7 @@ import (
 	"net/textproto"
 	"os"
 	"os/exec"
+	"owngit/internal/hostmem"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -90,6 +91,9 @@ type Limits struct {
 	// a pack (a clone, a fetch or an archive) run at once. Ref
 	// advertisements and pushes do not count against it and never wait for it.
 	PackSlots int
+	// Memory, when set, is the gate that every Git process using memory
+	// shares, and each request takes a slot of it as well.
+	Memory *hostmem.Gate
 }
 
 func New(git *gitexec.Runner, repositories *repository.Manager, backendPath string) (*Handler, error) {

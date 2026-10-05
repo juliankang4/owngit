@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/hostmem"
 )
 
 // With a pack limit, a further clone waits for the one running, while a push
@@ -100,4 +102,33 @@ func TestBuildsPackTellsAFetchFromARefListing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// With a memory gate every request, a push included, needs a gate slot as well
+// as its transfer slot; it waits for one and starts when it is released.
+func TestMemoryGateHoldsBackEveryTransferUntilAReleasedSlot(t *testing.T) {
+	slots := newAdmission()
+	ctx := context.Background()
+	limits := func(wait time.Duration) Limits {
+		return Limits{PerRepository: 4, ExtraSlots: 1, QueueWait: wait, Memory: hostmem.NewGate(1)}
+	}
+	shared := limits(0)
+	first, err := slots.acquire(ctx, "a", shared)
+	noErr(t, err, "first transfer")
+	shared.QueueWait = 50 * time.Millisecond
+	if _, err := slots.acquire(ctx, "b", shared); !errors.Is(err, errBusy) {
+		t.Fatalf("second transfer with a full gate: %v, want busy", err)
+	}
+	shared.QueueWait = 5 * time.Second
+	got := make(chan error, 1)
+	go func() {
+		release, err := slots.acquire(ctx, "b", shared)
+		if err == nil {
+			release()
+		}
+		got <- err
+	}()
+	time.Sleep(20 * time.Millisecond)
+	first()
+	noErr(t, <-got, "a waiting transfer did not get the released gate slot")
 }

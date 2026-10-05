@@ -322,6 +322,7 @@ func packLimits(saved func(context.Context) (githttp.Limits, error), ceiling uin
 		}
 		limits.PerRepository, limits.ExtraSlots = hostmem.LimitTransfers(ceiling, limits.PerRepository, limits.ExtraSlots)
 		limits.PackSlots = hostmem.PackSlots(ceiling)
+		limits.Memory = hostmem.Shared.Load()
 		packers := limits.PerRepository + limits.ExtraSlots
 		if limits.PackSlots > 0 {
 			packers = min(packers, limits.PackSlots)
@@ -577,6 +578,10 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitHandler, err := githttp.New(runner, repositories, backendPath)
 	if err != nil {
 		return err
+	}
+	if ceiling := hostmem.Ceiling(); ceiling > 0 {
+		hostmem.Shared.Store(hostmem.NewGate(hostmem.MaxTransfers(ceiling)))
+		defer hostmem.Shared.Store(nil)
 	}
 	gitHandler.Limits = packLimits(gitHandler.Limits, hostmem.Ceiling(), runner.SetTransfers)
 	authentication := &auth.Manager{Store: store, AdminSessionLife: 15 * time.Minute}

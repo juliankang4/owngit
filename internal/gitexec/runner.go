@@ -158,6 +158,14 @@ func (r *Runner) commandConfig(textOutput bool) [][2]string {
 	return config
 }
 
+func packsInBackground(name string) bool {
+	switch strings.TrimPrefix(name, "git ") {
+	case "bundle", "repack", "gc", "maintenance":
+		return true
+	}
+	return false
+}
+
 // readsTextOutput reports whether the Git command named by commandName
 // produces output that depends on telling text from binary files or on
 // merging text: diff, diff-tree, diff-index, log, show, blame, format-patch,
@@ -311,6 +319,15 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 		limit = defaultOutputLimit
 	}
 	name := commandName(args)
+	// A backup's bundle and maintenance's repack are background work: they
+	// wait for a slot of the memory gate, which transfers share.
+	if gate := hostmem.Shared.Load(); gate != nil && packsInBackground(name) {
+		release, err := gate.Acquire(ctx)
+		if err != nil {
+			return Result{}, err
+		}
+		defer release()
+	}
 	var stdout, stderr limitedBuffer
 	stdout.limit = limit
 	stderr.limit = stderrLimit

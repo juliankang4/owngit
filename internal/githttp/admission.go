@@ -3,6 +3,7 @@ package githttp
 import (
 	"context"
 	"errors"
+	"owngit/internal/hostmem"
 	"sync"
 	"time"
 )
@@ -54,6 +55,17 @@ func (a *admission) admits(repositoryID string, packs bool) bool {
 	return a.active < a.perRepository || (running == 0 && a.active < a.perRepository+a.extra)
 }
 
+// admitsMemory takes a slot of the memory gate, if the limits name one, as the
+// last condition of a request. It returns the function that gives it back,
+// whether the request may start, and a channel that wakes a waiter.
+func admitsMemory(gate *hostmem.Gate) (func(), bool, <-chan struct{}) {
+	if gate == nil {
+		return func() {}, true, nil
+	}
+	release, changed := gate.TryAcquire()
+	return release, release != nil, changed
+}
+
 // wakeLocked wakes every waiting request to look again. The caller holds
 // mu.
 func (a *admission) wakeLocked() {
@@ -84,18 +96,25 @@ func (a *admission) acquireFor(ctx context.Context, repositoryID string, limits 
 	a.mu.Unlock()
 	for {
 		a.mu.Lock()
-		if a.admits(repositoryID, packs) {
+		giveBack, gated, memoryChanged := func() (func(), bool, <-chan struct{}) {
+			if !a.admits(repositoryID, packs) {
+				return nil, false, nil
+			}
+			return admitsMemory(limits.Memory)
+		}()
+		if gated {
 			a.active++
 			a.byRepository[repositoryID]++
 			if packs {
 				a.packing++
 			}
 			a.mu.Unlock()
-			return func() { a.release(repositoryID, packs) }, nil
+			return func() { a.release(repositoryID, packs); giveBack() }, nil
 		}
 		changed := a.changed
 		a.mu.Unlock()
 		select {
+		case <-memoryChanged:
 		case <-changed:
 		case <-timer.C:
 			return nil, errBusy
