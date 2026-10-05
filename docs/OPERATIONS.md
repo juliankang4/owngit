@@ -2048,7 +2048,7 @@ A secret that was ever pushed stays in the repository's Git data, even after a f
 The administrator manages backups in Settings, on the Storage & recovery tab (`/settings/storage`). Only a browser confirmed as administrator sees the backup parts; anyone else sees what backups do and a button to confirm as administrator.
 
 - **Backups** holds the schedule and has its own Save: the backup folder, Scheduled backups on or off, Back up every (12 hours, Day or 7 days), Backups to keep (1 to 1000) and Verify each new backup on or off. They mean the same as the options of [`owngit backup schedule set`](#scheduled-backups). Turning scheduled backups or verification off shows a warning at once that says what you give up, and the warning shows again after you save. Until a folder is saved, the part says that OwnGit makes no backups.
-- **Current state** shows whether scheduled backups are on, off or not configured, the backup running now, the last backup with its result and time, the last verified backup and the next scheduled backup. It also shows the result of the last [verification you asked for](#verifying-a-kept-backup-again), and a warning when a restore cannot write to the backup folder's disk (see [Where backups can be written](#where-backups-can-be-written)). Back up now is here and works as [`owngit backup now`](#backing-up-now) does.
+- **Current state** shows whether scheduled backups are on, off or not configured, the backup running now (with its message on its own line below the list), the last backup with its result and time, the last verified backup and the next scheduled backup. It also shows the result of the last [verification you asked for](#verifying-a-kept-backup-again), and a warning when a restore cannot write to the backup folder's disk (see [Where backups can be written](#where-backups-can-be-written)). Back up now is here and works as [`owngit backup now`](#backing-up-now) does.
 - **Recorded backups** lists every recorded backup, newest first, with its result, start time, kind (Scheduled or Back up now), verification (Passed, Failed or Not verified), longest Git write wait, message and folder. The message of a successful backup names any [alias branches](#what-a-backup-holds) the backup turned into ordinary branches or left out. A backup that OwnGit still keeps has three actions: Verify again, Download and Restore this backup. For a run whose backup is gone, the list says that OwnGit keeps no backup of it.
 - **Restore from a backup file** takes back a backup file that OwnGit downloaded; see [Restoring from a backup file](#restoring-from-a-backup-file).
 
@@ -2090,15 +2090,15 @@ owngit backup now
 The command starts a backup into the folder of the schedule, also while scheduled backups are off, and returns without waiting for it. Follow it with `owngit backup status`. The backup is verified and older backups are removed as for a scheduled one.
 
 - Before a folder is set, the command answers `Choose a backup folder first.`
-- OwnGit runs one backup, verification or upload at a time. While a backup runs, starting another backup, a verification or an upload answers `A backup is already running. Wait for it to finish.` While a verification or an upload runs, starting any of them answers `A backup, a verification or an upload is running. Wait for it to finish.` A scheduled backup that falls due during a verification or an upload starts as soon as it ends.
+- OwnGit runs one backup, verification or upload at a time. A backup counts as running until OwnGit has saved its record and removed the older backups it no longer keeps; see [Checking backups](#checking-backups). While a backup runs, starting another backup, a verification or an upload answers `A backup is already running. Wait for it to finish.` While a verification or an upload runs, starting any of them answers `A backup, a verification or an upload is running. Wait for it to finish.` A scheduled backup that falls due during a verification or an upload starts as soon as it ends.
 
 ### Checking backups
 
 `owngit backup status` shows the state of backups, as Current state in the dashboard does:
 
 - `schedule`: its `state` is `not_configured` before a folder is set, then `on` or `off`, with the folder, interval, keep count and verification choice.
-- `running`: the backup that runs now, or null.
-- `last_run`: the last backup that ended.
+- `running`: the backup that runs now, or null. A finished backup stays here until OwnGit has saved its record and removed its older backups, as described below.
+- `last_run`: the last backup whose end OwnGit has recorded.
 - `last_verified`: the newest backup that passed verification and that OwnGit still keeps.
 - `next_run`: when the next scheduled backup is due. A time already past means as soon as the running backup ends.
 - `check`: the last [verification you asked for](#verifying-a-kept-backup-again), or null.
@@ -2111,12 +2111,19 @@ The command starts a backup into the folder of the schedule, also while schedule
 - `status`: `running`, `succeeded`, `failed` or `interrupted`. `interrupted` means that OwnGit stopped, or its process was killed, before the backup finished. Such a run is never a finished backup, even when a complete folder was left behind; see [When a backup or restore is interrupted](#when-a-backup-or-restore-is-interrupted).
 - `verification`: `passed`, `failed` or `not_run`. Only `passed` makes a backup verified.
 - `backup_name` and `path`: the backup's folder. Both are empty when the run wrote no backup, or when OwnGit removed the backup or found it gone or replaced.
-- `started_at`, `finished_at`, and a `message` that says why the backup failed or what OwnGit left in place.
+- `started_at`, `finished_at`, and a `message` that says why the backup failed or what OwnGit left in place. OwnGit adds what removing older backups left in place after it saves the record. If the state store refuses that change, the message lacks it, but the server log has it.
 - `longest_hold_ms` and `longest_hold_repository`: see [Backups while OwnGit runs](#backups-while-owngit-runs).
 
 Both commands show what OwnGit's records hold and read nothing in the backup folder, so a slow or missing folder never holds them up. OwnGit looks at the folder when it makes the next backup. A backup that you remove by hand is still listed until then.
 
-The server log has one line for each backup that ends, with its folder and result. OwnGit keeps the records of the latest 100 backups, of every backup it still keeps, and of the latest scheduled backup, whose start sets when the next one is due.
+A backup that has finished still shows as running, in both commands and in the dashboard, while OwnGit completes two steps:
+
+- OwnGit saves the backup's record. When the state store refuses the record, for example because its disk is full, `status` stays `running` and the `message` says how the backup ended and that its record is not saved yet. `last_run` and `last_verified` stay the backups OwnGit has recorded. OwnGit tries again after 1 second, doubling the wait up to 1 minute, and saves the record as soon as the state store takes writes again. You do not need to restart OwnGit.
+- After a successful backup, OwnGit removes the older backups it no longer keeps. While it does, the message reads "The backup finished: succeeded. OwnGit is removing the older backups it no longer keeps." `last_run` is already this backup.
+
+Until both steps end, the dashboard's Back up now, Verify again and upload buttons are off, and a backup, verification or upload that you start answers that a backup is already running. The messages for both steps are in English, like the other backup messages.
+
+The server log has one line for each backup that ends, with its folder, result and message. While the state store refuses a backup's record, the log has a line for each refused attempt instead, with how the backup ended and why it could not be recorded. OwnGit keeps the records of the latest 100 backups, of every backup it still keeps, and of the latest scheduled backup, whose start sets when the next one is due. It applies this limit each time it records how a backup ended, whether the backup succeeded, failed or was interrupted.
 
 ### Verification of new backups
 
@@ -2138,7 +2145,7 @@ When the backup is already gone from its folder, or its folder holds something e
 
 ### Which backups OwnGit keeps
 
-Each backup is a new folder in the destination named `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX`, where the time is the start in UTC. After a backup succeeds, and passes verification when verification is on, OwnGit keeps its newest backups in that folder, as many as `--keep` says, and also the newest verified one. Newest means the latest to start, also within one second. OwnGit removes its older backups there.
+Each backup is a new folder in the destination named `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX`, where the time is the start in UTC. After a backup succeeds, and passes verification when verification is on, OwnGit keeps its newest backups in that folder, as many as `--keep` says, and also the newest verified one. Newest means the latest to start, also within one second. OwnGit removes its older backups there, but only after it has saved the new backup's record, so no older backup is removed while that record waits. When OwnGit stops before it removes them, they stay until the next successful backup.
 
 OwnGit records the SHA-256 hash of each backup's manifest with the backup. A folder counts as its backup only when it holds exactly that manifest; the name alone never counts. OwnGit never touches other files or folders in the destination, and it leaves the following in place and names them in the new backup's message:
 
@@ -2327,6 +2334,8 @@ A backup that stops before it finishes is not a finished backup, whatever it lef
 - A backup that stopped after its folder was complete, for example during verification, leaves a complete folder. Its run stays `interrupted` and the backup is not verified, so check it with `owngit backup verify` before you rely on it.
 
 When OwnGit stops during a scheduled backup or back up now, the backup is recorded as `interrupted`. When its process was killed instead, OwnGit records the backup as `interrupted` the next time it starts, and says so in the server log.
+
+When OwnGit stops after a backup finished but while the state store still refuses its record, OwnGit tries once more to save the record. If that attempt also fails, OwnGit records the backup as `interrupted` the next time it starts. The new backup folder stays in the destination, and OwnGit never removes it, because it has no saved record of that backup. The next successful backup into that folder names it in its message as left in place. Check it with `owngit backup verify` if you want to keep it, or remove it by hand.
 
 ### Where backups can be written
 
