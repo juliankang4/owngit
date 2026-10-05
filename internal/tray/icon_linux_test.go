@@ -83,6 +83,9 @@ func newStateDir(t *testing.T) string {
 // writes the owner's choice, ends the panel program, and keeps running
 // without an icon until it is stopped.
 func TestLinuxIconKeepsTheHideChoice(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls the panel program until it ends")
+	}
 	fakeDir := useFakeGJS(t, "hide")
 	stateDir := newStateDir(t)
 	stop := make(chan struct{})
@@ -137,6 +140,9 @@ func TestLinuxIconKeepsTheHideChoice(t *testing.T) {
 
 // An icon that starts hidden starts no panel program until it is shown.
 func TestLinuxIconStartsHidden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls the panel program until it ends")
+	}
 	fakeDir := useFakeGJS(t, "hide")
 	stateDir := newStateDir(t)
 	held, err := state.OpenStateDirectory(stateDir)

@@ -14,6 +14,9 @@ import (
 )
 
 func TestRunReapsRedirectedBackgroundDescendantsOnUnix(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for real background descendants of a command")
+	}
 	directory := t.TempDir()
 	positiveMarker := filepath.Join(directory, "positive")
 	positiveCommand := backgroundMarkerCommand(positiveMarker, "exit 0")

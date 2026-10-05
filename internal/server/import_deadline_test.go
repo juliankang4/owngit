@@ -18,6 +18,9 @@ import (
 // so it leaves admission a margin that only a hang uses up; a deadline during
 // admission is TestImportDeadlineDuringAdmissionReachesTheClientAsTheLimit.
 func TestImportRunDeadlineResultReachesTheClient(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for the 5 second import run deadline")
+	}
 	fixture := newAPIFixture(t, false)
 	fixture.app.ImportRunTimeout = 5 * time.Second
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {

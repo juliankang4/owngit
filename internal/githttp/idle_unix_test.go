@@ -99,6 +99,9 @@ func throttledProxy(t *testing.T, target string, rate int) string {
 // read waits much less than the idle limit, while the transfer as a whole
 // takes about twice as long.
 func TestIdleLimitKeepsSlowSteadyTransfers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("paces a transfer past twice the 1 second idle limit")
+	}
 	const idle = time.Second
 	const size = 4 << 20
 	const rate = 2 << 20
@@ -162,6 +165,9 @@ func TestIdleLimitKeepsSlowSteadyTransfers(t *testing.T) {
 // whose update hook runs after the whole pack arrived, with and without
 // Git's own keepalive packets.
 func TestIdleLimitSparesQuietGit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out a quiet Git phase longer than the idle limit")
+	}
 	const idle = 300 * time.Millisecond
 	handler, work, _ := idleFixture(t, 64<<10, idle)
 	logs := captureLog(t)

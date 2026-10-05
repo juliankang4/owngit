@@ -13,6 +13,9 @@ import (
 // repository or a backup reads it, and for a name another repository has or
 // that is not a valid name. The storage folder keeps its ID.
 func TestRenameRefusesBusyRepositoriesAndTakenNames(t *testing.T) {
+	if testing.Short() {
+		t.Skip("creates and renames real repositories on disk")
+	}
 	ctx := context.Background()
 	manager, remote, _ := newTestRepository(t)
 	if _, err := manager.Create(ctx, "Other", ""); err != nil {

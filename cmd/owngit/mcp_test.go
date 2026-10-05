@@ -939,6 +939,9 @@ func startMCPBinary(t *testing.T, binary, dir string, arguments ...string) (*mcp
 // output: the server and repository come from the launch directory's
 // origin, and a read, a write, and a check run work.
 func TestMCPBinaryRoundTrip(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the program and runs a whole MCP session")
+	}
 	binary := buildOwngit(t)
 	remoteFlags, _, work := startMCPCheckFixture(t)
 	serverURL := remoteFlags[1]

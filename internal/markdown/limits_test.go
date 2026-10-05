@@ -129,6 +129,9 @@ func growingFences(line string) string {
 // holds on a machine busy with other tests and on a slower one.
 // Containment does not depend on it.
 func TestShapesAtTheBudgetRenderInTime(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders each costly shape up to the estimate budget")
+	}
 	if budgetScale > 1 {
 		t.Skip("timing against renderBudget means nothing under the race detector")
 	}

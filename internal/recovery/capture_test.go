@@ -190,6 +190,9 @@ func TestBackupWaitsForAWriteInProgress(t *testing.T) {
 // A repository that stays busy for the whole lock window is given up for
 // this attempt, and nothing stays locked.
 func TestCaptureGivesUpABusyRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 5 second capture lock window")
+	}
 	root := t.TempDir()
 	_, manager := newBackupStore(t, root)
 	if _, err := manager.Create(context.Background(), "zeta", ""); err != nil {
@@ -590,6 +593,9 @@ func (runner *deletingRunner) Run(ctx context.Context, directory string, stdin i
 // of failing or copying it before its recovery ran, and starts once the
 // preparation succeeded.
 func TestBackupWaitsForARepositoryBeingPrepared(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits a second for a repository being prepared")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	root := t.TempDir()

@@ -327,6 +327,9 @@ func TestTailscaleChangeThatWasNotKeptIsUnavailable(t *testing.T) {
 // already be in Tailscale, keeping the pending record so the next change
 // finishes or undoes it. A fast write still succeeds.
 func TestTailscaleWriteHeldPastThePageDeadlineStillGetsAnAnswer(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out a Tailscale write held past the page deadline")
+	}
 	post := func(t *testing.T, delay time.Duration) (*App, *tailscaletest.Fake, browserHTTPResult, time.Duration) {
 		t.Helper()
 		app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), WriteDelay: int(delay / time.Millisecond)})

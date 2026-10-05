@@ -68,6 +68,9 @@ func TestCreationRecordSurvivesClientCancellation(t *testing.T) {
 }
 
 func TestCreationRecordTimeoutLeavesNoLateRecord(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 5 second creation record timeout")
+	}
 	manager, _, _ := newTestRepository(t)
 	database, err := sql.Open("sqlite", filepath.Join(manager.Store.Dir(), "owngit.sqlite"))
 	noErr(t, err)

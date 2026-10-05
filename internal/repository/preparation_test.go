@@ -212,6 +212,9 @@ func TestDeletingAPreparingRepositoryStopsItsPreparation(t *testing.T) {
 }
 
 func TestDeletionWaitsForARunningPreparationAttempt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a running preparation attempt")
+	}
 	manager, _, _ := newTestRepository(t)
 	probe := newPreparationProbe()
 	release := make(chan struct{})

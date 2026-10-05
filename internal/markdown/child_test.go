@@ -268,6 +268,9 @@ func TestMemoryStopComesNearTheLimit(t *testing.T) {
 // The tables never reach a child in the product, because the estimate
 // refuses them first.
 func TestAmplifyingDocumentsStayWithinTheChildLimits(t *testing.T) {
+	if testing.Short() {
+		t.Skip("renders amplifying documents in children until a limit stops them")
+	}
 	cases := map[string]string{
 		"padded table, 2000 short rows (20 KB)":      tableRows(4000, 2000),
 		"padded table, 400 short rows, text (24 KB)": tableRows(4000, 400) + strings.Repeat("a\n", 4000),
@@ -358,6 +361,9 @@ func TestBadgesKeepTheirLinks(t *testing.T) {
 // The child sleeps, so it uses almost no processor time however busy the
 // machine is; one second leaves its start-up far below half of the limit.
 func TestTimeoutOnABusyMachineIsRetriedOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("kills a child past its one second limit and retries")
+	}
 	withChild(t, "hang")
 	withKillAfter(t, time.Second)
 	source := []byte(fmt.Sprintf("# starved %d\n", time.Now().UnixNano()))

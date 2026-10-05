@@ -400,6 +400,9 @@ func TestLaunchAgentInstallFromTheAppNamesTheApp(t *testing.T) {
 // login, for a service that is not headless, when the icon is not hidden
 // and when the icon did not run the command itself.
 func TestLaunchAgentOpensTheIcon(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls for the icon to exit at 300 ms intervals")
+	}
 	fake := recordLaunchctl(t)
 	host, out := testLaunchAgentHost(t, macDesktop(), "")
 	app := filepath.Join(filepath.Dir(host.agentExecutable), "OwnGit.app")
@@ -483,6 +486,9 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 // service uninstall quits the icon of the removed service and turns off its
 // opening at sign-in, as the Windows uninstall removes the icon's task.
 func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
+	if testing.Short() {
+		t.Skip("polls for the icon to exit at 300 ms intervals")
+	}
 	fake := recordLaunchctl(t)
 	host, out := testLaunchAgentHost(t, macDesktop(), "")
 	// Like Homebrew's opt link: the program's folder is a link, and macOS

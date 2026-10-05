@@ -144,6 +144,9 @@ func TestRepositoryReadsRefuseACleanupFailure(t *testing.T) {
 // A language count keeps a timed-out count and unreadable attributes as
 // results. A cleanup failure on the same paths is returned and not kept.
 func TestLanguageCountRefusesACleanupFailure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second language count limit twice")
+	}
 	ctx := context.Background()
 
 	t.Run("attributes", func(t *testing.T) {

@@ -129,6 +129,9 @@ func TestServeRetriesAnUnstableStateOpen(t *testing.T) {
 // so they cannot use up serve's retries on their own; with serve's retry
 // turned off this test fails within a few starts.
 func TestServeStartsWhileACommandPollsItsState(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts the server repeatedly while a command polls its state")
+	}
 	stateDir := filepath.Join(t.TempDir(), "state")
 	store, err := state.Open(context.Background(), stateDir)
 	noErr(t, err)

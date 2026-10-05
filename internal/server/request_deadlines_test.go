@@ -190,6 +190,9 @@ func slowSourceFetch(wait time.Duration) func(context.Context, importfetch.Reque
 // API, the new import page and the refresh action, and the API connection
 // then serves the next request under its own page deadline.
 func TestAuthorizedImportOutlivesThePageDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs three imports that each wait out the 3 second page deadline")
+	}
 	const page = verifiedPage
 	fixture := newAPIFixture(t, false)
 	fixture.app.HTTPTimeout = page

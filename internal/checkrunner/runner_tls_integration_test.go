@@ -32,6 +32,9 @@ import (
 )
 
 func TestExternalRunnerTLSAndLifecycleBoundaries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the external runner through each lifecycle boundary")
+	}
 	t.Run("private CA succeeds and untrusted CA stops before HTTP or command", func(t *testing.T) {
 		t.Run("trusted", func(t *testing.T) {
 			fixture := newRunnerIntegrationFixture(t, "echo private-ca-ok")

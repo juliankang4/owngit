@@ -8,6 +8,9 @@ import (
 )
 
 func TestParentPreparedValidationHandlesRefsBeyondArgvBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("publishes 5000 refs in one import")
+	}
 	f := newFixture(t)
 	oid := f.commit("source", "source bytes\n")
 	// Long ref names keep the argument-budget pressure. Windows needs long

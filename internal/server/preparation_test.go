@@ -258,6 +258,9 @@ func TestPreparingRepositoryCredentialScreensRevokeWithoutGit(t *testing.T) {
 // A deletion refused because a preparation attempt holds the repository says
 // so, instead of naming a push or a clone.
 func TestDeletionDuringAPreparationAttemptExplainsTheWait(t *testing.T) {
+	if testing.Short() {
+		t.Skip("posts password-checked forms while a preparation holds the repository")
+	}
 	fixture := newAPIFixture(t, false)
 	app := fixture.app
 	server, client, jar := openBrowser(t, fixture)
@@ -410,6 +413,9 @@ func TestUnreadableRepositoryAtRuntimeKeepsTheDashboard(t *testing.T) {
 // that name is served at once. Slow repositories are
 // simulated by holding their locks, so the deleted one is read last.
 func TestDashboardDuringDeletionStartsNoPreparation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("races dashboard rounds with 300 ms waits against a deletion")
+	}
 	app := newConfiguredApp(t)
 	var blockers []string
 	for index := 0; index < 5*snapshotConcurrency; index++ {

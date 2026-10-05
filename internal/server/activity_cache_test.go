@@ -68,6 +68,9 @@ func TestActivityCacheFollowsRefChanges(t *testing.T) {
 // never holds the page: it renders at once with an explicit counting state and
 // shows the complete count once counting finishes.
 func TestDashboardRendersWhileActivityIsStillCounting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a paced background activity count")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the delaying wrapper is a Unix test fixture")
 	}

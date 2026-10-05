@@ -109,6 +109,9 @@ func TestOverLimitChild(t *testing.T) {
 // The reviewer's reproduction: output past the limit stops the command as a
 // timeout does, on either stream.
 func TestRunStopsACheckWhoseOutputPassesTheLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits 1.5 seconds to show the stopped command left nothing")
+	}
 	for _, stderr := range []string{"", "1"} {
 		marker := filepath.Join(t.TempDir(), "after-output-limit")
 		started := time.Now()

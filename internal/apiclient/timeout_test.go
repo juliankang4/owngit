@@ -54,6 +54,9 @@ func answerOK(writer http.ResponseWriter, _ *http.Request) {
 // was longer than the limit; the limit leaves the request itself a full
 // second on a slow machine.
 func TestTheRequestLimitStartsWhenTheConnectionIsReady(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits for a handshake three times the request limit")
+	}
 	const limit = time.Second
 	var accepted time.Time
 	var waited time.Duration

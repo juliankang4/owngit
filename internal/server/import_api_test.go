@@ -326,6 +326,9 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 // busy machine) and the state reads around it. The import then outlives that
 // deadline: its fetch takes twice as long.
 func TestImportRunRouteOutlivesOrdinaryDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the fetch takes twice the 2 second page deadline")
+	}
 	fixture := newAPIFixture(t, false)
 	fixture.app.HTTPTimeout = 2 * time.Second
 	fixture.app.Imports.Fetch = func(ctx context.Context, _ importfetch.Request, _ importfetch.PackConsumer) (*importfetch.Result, error) {

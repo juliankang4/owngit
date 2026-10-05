@@ -95,6 +95,9 @@ func TestArchiveIdleLimitStopsAStalledDownload(t *testing.T) {
 // Git that writes nothing for longer than the idle limit before the first
 // archive byte still completes the download on both routes.
 func TestArchiveIdleLimitSparesAQuietStart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("starts a quiet archive past the 300 ms idle limit")
+	}
 	fixture := newAPIFixture(t, false)
 	stallAfter(fixture, 300*time.Millisecond)
 	slowArchiveStart(t, fixture, "1")

@@ -135,6 +135,9 @@ func TestImportRefusesCommitDatesOwnGitCannotShow(t *testing.T) {
 // longer than one batch imports, and an unreadable commit is found in the
 // first batch and in the last.
 func TestCommitDateCheckCoversEveryBatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("imports a history past one 10000 commit batch")
+	}
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	tree := f.git(f.source, "rev-parse", "HEAD^{tree}")

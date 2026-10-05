@@ -14,6 +14,9 @@ import (
 // cause. A wait that is still pending at the bound is honest, not a failure
 // that includes a future wait result.
 func TestProcessCleanupUnattachedStartedProcess(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second cleanup grace")
+	}
 	attachErr := errors.New("injected attach failure")
 	killErr := errors.New("injected kill failure")
 	waitErr := errors.New("injected wait failure")

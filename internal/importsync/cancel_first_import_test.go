@@ -16,6 +16,9 @@ import (
 // import completes instead of reporting a cancellation. Each case cancels at
 // one point, from the stage hooks inside the run, so the timing is exact.
 func TestCancellingAFirstImportLeavesNothingBehindOrCompletes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs a whole first import for each cancellation point")
+	}
 	cases := []struct {
 		name      string
 		arm       func(f *fixture, cancel func())

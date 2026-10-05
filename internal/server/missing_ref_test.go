@@ -132,6 +132,9 @@ func TestMissingRefOrCommitAnswersNotFound(t *testing.T) {
 // A read that runs out of time while an operation holds the repository is a
 // wait, not a missing commit: the page answers 503 before any 404.
 func TestBusyRepositoryIsNotReportedAsMissing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 3 second page deadline")
+	}
 	app := newConfiguredApp(t)
 	app.HTTPTimeout = 3 * time.Second
 	seedRepository(t, app, "busy", map[string]string{"README.md": "# Busy\n"}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))

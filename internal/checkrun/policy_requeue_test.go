@@ -40,6 +40,9 @@ func (fixture *pushFixture) settle() int {
 // queued them again, and every open pull request revision too, which filled
 // the queue ahead of new pushes. A head or revision is now queued once.
 func TestPolicyChangeDoesNotRequeueHeadsThatAlreadyHadAJob(t *testing.T) {
+	if testing.Short() {
+		t.Skip("pushes more than a thousand branch heads through real Git")
+	}
 	fixture := newPushFixture(t, 1000)
 	fixture.setPolicyVersion(60_000)
 	fixture.pushWorkflow("main", `{"version":1,"events":{"push":{},"pull_request":{}},"checks":[{"name":"n","command":"exit 0"}]}`)

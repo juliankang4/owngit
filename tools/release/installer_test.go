@@ -340,6 +340,9 @@ func (run *shInstall) mustFail(t *testing.T, env []string, want string, argument
 }
 
 func TestInstallSh(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the installer script for each install case")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("install.sh is for Linux and macOS; TestInstallPs1 covers Windows")
 	}

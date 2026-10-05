@@ -34,6 +34,9 @@ func slowArchiveStart(t *testing.T, fixture apiFixture, wait string) {
 // Archives are Git transfers: the page time limit does not cut them, while
 // pages keep it.
 func TestArchiveOutlivesThePageDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the archive start waits 2 seconds past a 1 second page deadline")
+	}
 	fixture := newAPIFixture(t, false)
 	fixture.app.HTTPTimeout = time.Second
 	slowArchiveStart(t, fixture, "2")
@@ -69,6 +72,9 @@ func TestArchiveOutlivesThePageDeadline(t *testing.T) {
 // A request that fails before the first archive byte answers an error status
 // in its route's format, never an empty success.
 func TestArchiveFailureBeforeTheFirstByteAnswersAnError(t *testing.T) {
+	if testing.Short() {
+		t.Skip("holds the repository and delays the archive start")
+	}
 	fixture := newAPIFixture(t, false)
 	fixture.app.GitHTTP.Limits = func(context.Context) (githttp.Limits, error) {
 		return githttp.Limits{

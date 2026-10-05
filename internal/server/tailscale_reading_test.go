@@ -18,6 +18,9 @@ import (
 // was, and the new reading runs after that one, so Tailscale's commands
 // never overlap.
 func TestReadingAfterAChangeIsNewAndRunsAfterTheEarlierOne(t *testing.T) {
+	if testing.Short() {
+		t.Skip("reads Tailscale with a one second delay per call")
+	}
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	sharing := app.Tailscale
 	fake.Update(func(s *tailscaletest.State) { s.ReadDelay, s.Calls, s.MaxRunning = 1000, nil, 0 })

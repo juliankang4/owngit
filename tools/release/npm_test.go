@@ -63,6 +63,9 @@ func TestNPMFormatSelection(t *testing.T) {
 // TestNPMPackages renders the npm packages from a full portable output and
 // checks their metadata, contents, modes, and determinism.
 func TestNPMPackages(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	root := repoRoot(t)
 	manifestPath := filepath.Join(sharedDist(t), "manifest.json")
 	document, err := readManifest(manifestPath)

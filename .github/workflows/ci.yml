@@ -20,9 +20,11 @@ name: CI
 # workflow, tests every package. gofmt and go vet always cover every package.
 # The packages a change touches directly run in full; a package selected only
 # because its tests depend on a changed package, or read a changed file, runs
-# with -short, which skips the tests that wait on the real clock. A change to
-# a test helper package, whose code other test binaries contain, and a change
-# that selects every package run every selected package in full.
+# with -short, which skips the tests that spend their time on a long real wait,
+# such as a transfer deadline, or on long fixture work, such as a full release
+# build. A change to a test helper package, whose code other test binaries
+# contain, and a change that selects every package run every selected package
+# in full.
 #
 # Full runs test every package: once a day at an off-peak hour, which catches
 # tests that fail only now and then, and when started by hand, which a release

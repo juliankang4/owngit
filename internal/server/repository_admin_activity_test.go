@@ -21,6 +21,9 @@ import (
 // and that a new repository with the same name never shows the removed one's
 // activity.
 func TestDeleteStopsActivityCountingAndLeavesNothingCached(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stops a history walk that sleeps for 20 seconds")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the delaying wrapper is a Unix test fixture")
 	}
@@ -183,6 +186,9 @@ func TestAutomaticChecksPageLinksBackToSettings(t *testing.T) {
 // briefly for a Git operation holding the repository and then reports it in
 // use, instead of outliving the request.
 func TestDefaultBranchChangeWhileInUseIsRefused(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the lock wait before refusing")
+	}
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
 	signInAdmin(t, fixture, server.URL, jar)
@@ -252,6 +258,9 @@ func waitForActivity(t *testing.T, app *App, id string, ready func(*activityEntr
 // TestDefaultBranchChangeStopsActivityCounting proves that a slow background
 // count does not make a default-branch change report the repository in use.
 func TestDefaultBranchChangeStopsActivityCounting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stops a history walk that sleeps for 20 seconds")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the delaying wrapper is a Unix test fixture")
 	}
@@ -287,6 +296,9 @@ func TestDefaultBranchChangeStopsActivityCounting(t *testing.T) {
 // change took the write lock, does not start a new count whose read lock would
 // make the change report the repository in use.
 func TestPageDuringDefaultBranchChangeStartsNoCount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the gated history walk")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the gating wrapper is a Unix test fixture")
 	}

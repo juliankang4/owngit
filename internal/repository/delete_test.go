@@ -265,6 +265,9 @@ func TestDeleteRefusesBusyRepository(t *testing.T) {
 
 // A clone, push, restore or merge holds the repository lock.
 func TestDeleteReportsInUseAfterBoundedLockWait(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second deletion lock wait")
+	}
 	manager, remote := newDeletionRepository(t)
 	lock := manager.Locks.For("sample")
 	lock.RLock()
@@ -665,6 +668,9 @@ func TestSetDefaultBranchReportsGitFailuresAsFailures(t *testing.T) {
 // A Git operation that holds the repository makes the change wait only
 // briefly, then report the repository in use with HEAD unchanged.
 func TestSetDefaultBranchWaitsOnlyBrieflyForTheRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second deletion lock wait")
+	}
 	ctx := context.Background()
 	manager, remote, work := newTestRepository(t)
 	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")

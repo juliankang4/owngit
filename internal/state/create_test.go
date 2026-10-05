@@ -24,6 +24,9 @@ import (
 // moment, makes a concurrent opener fail and would block every later start if
 // the creating process died at that point.
 func TestCreatingADatabaseNeverShowsARollbackJournal(t *testing.T) {
+	if testing.Short() {
+		t.Skip("watches the state directory while the database is created")
+	}
 	ctx := context.Background()
 	for attempt := 0; attempt < 40; attempt++ {
 		directory := filepath.Join(t.TempDir(), "state")

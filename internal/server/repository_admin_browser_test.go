@@ -278,6 +278,9 @@ func TestRepositoryDeleteRefusalsNeverReachTheBackend(t *testing.T) {
 }
 
 func TestRepositoryDeleteWhileInUseIsRefusedAndKeepsTheChoice(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second deletion lock wait")
+	}
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
 	signInAdmin(t, fixture, server.URL, jar)

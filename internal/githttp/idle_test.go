@@ -65,6 +65,9 @@ func uploadPackRequest(commitOID string) string {
 // before the operation limit, and the push that waited for the repository
 // then runs.
 func TestIdleLimitStopsAStalledReaderAndFreesTheRepository(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stalls a 24 MiB clone past the 500 ms idle limit")
+	}
 	const idle = 500 * time.Millisecond
 	handler, work, commitOID := idleFixture(t, 24<<20, idle)
 	logs := captureLog(t)
@@ -114,6 +117,9 @@ func TestIdleLimitStopsAStalledReaderAndFreesTheRepository(t *testing.T) {
 // A request body that stops arriving is stopped at the idle limit with 408
 // Request Timeout, and the repository is free again.
 func TestIdleLimitStopsAStalledRequestBody(t *testing.T) {
+	if testing.Short() {
+		t.Skip("stalls a request body past the 400 ms idle limit")
+	}
 	const idle = 400 * time.Millisecond
 	var gzipped bytes.Buffer
 	compressor := gzip.NewWriter(&gzipped)

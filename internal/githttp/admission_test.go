@@ -189,6 +189,9 @@ func TestAdmissionFollowsChangedLimitsWithoutStoppingTransfers(t *testing.T) {
 // the busy one and is refused after the queue wait; with one extra slot it
 // runs at once.
 func TestSavedTransferLimitsDecideWhenACloneRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 5 second transfer queue wait")
+	}
 	manager, runner := newHTTPTestRepository(t)
 	ctx := context.Background()
 	_, err := manager.Create(ctx, "other", "")

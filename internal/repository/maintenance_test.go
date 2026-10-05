@@ -262,6 +262,9 @@ func shiftedClock(hour int) func() time.Time {
 }
 
 func TestMaintenanceWaitsUntilTheRepositoryIsIdle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out three idle windows of 200 ms")
+	}
 	fixture := newMaintenanceFixture(t)
 	manager := fixture.manager
 	idle := 200 * time.Millisecond

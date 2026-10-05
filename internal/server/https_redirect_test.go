@@ -46,6 +46,9 @@ func movedTo(response *httptest.ResponseRecorder) string {
 // health, assets, setup, downloads, forms, passwords, other addresses and
 // requests that came through the HTTPS address stay where they are.
 func TestBrowserPagesMoveToTheTailnetAddressWhileItIsReady(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 2 second redirect wait")
+	}
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	ctx := context.Background()
 	// The name is an allowed Host of its own, so it is still accepted after

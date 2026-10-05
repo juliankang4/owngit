@@ -954,6 +954,9 @@ func TestHomebrewServicePriority(t *testing.T) {
 // TestPackagingRendering builds every target and exercises the ready, unready,
 // per-format, and rejected publication inputs.
 func TestPackagingRendering(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	root := repoRoot(t)
 	dir := sharedDist(t)
 	manifestPath := filepath.Join(dir, "manifest.json")

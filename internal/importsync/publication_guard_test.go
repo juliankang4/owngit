@@ -388,6 +388,9 @@ var publicationHoldDeadlines = []time.Duration{time.Second, 4 * time.Second, 16 
 // happens and the run does not complete. Once the callback finishes the run
 // reports the deadline honestly with the transaction aborted.
 func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out publication deadlines plus a 5 second grace")
+	}
 	f := newFixture(t)
 	old := f.commit("initial", "initial\n")
 	f.git(f.source, "branch", "dev")

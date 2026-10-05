@@ -714,6 +714,9 @@ func TestABaseURLOptionIsNamedInsteadOfTheHTTPSCloneAddress(t *testing.T) {
 // within the page limit, and the Tailscale block says that Tailscale did not
 // answer in time instead of waiting for the reading.
 func TestSharingPageDoesNotWaitForTailscaleBeyondItsDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("holds a Tailscale read past the page deadline")
+	}
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	app.HTTPTimeout = verifiedPage
 	client, base, csrf, _ := networkSettingsClient(t, app)

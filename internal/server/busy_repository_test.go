@@ -20,6 +20,9 @@ import (
 // of the busy repository answers with an explanation before its deadline
 // instead of a dropped connection.
 func TestBusyRepositoryDoesNotStallPagesPastTheirDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits out the 3 second page deadline")
+	}
 	app := newConfiguredApp(t)
 	app.HTTPTimeout = 3 * time.Second
 	addActivityRepository(t, app, "busy", 2)
@@ -121,6 +124,9 @@ func TestBusyRepositoryDoesNotStallPagesPastTheirDeadline(t *testing.T) {
 // deleted while the page waited, whether from its last listing or as in use,
 // nor an older listing of a repository whose last read failed.
 func TestBusyDashboardFallbackKeepsDeletionsAndUnreadableRepositories(t *testing.T) {
+	if testing.Short() {
+		t.Skip("holds locks while the dashboard waits out its page timeout")
+	}
 	app := newConfiguredApp(t)
 	app.HTTPTimeout = 5 * time.Second
 	for _, name := range []string{"listed", "unlisted", "broken"} {

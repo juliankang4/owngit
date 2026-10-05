@@ -18,6 +18,9 @@ import (
 // while the state directory's name is switched between that directory and
 // a folder of another account (root's /tmp, which this account may write).
 func TestServeErrorStaysInTheDirectoryThatWasChecked(t *testing.T) {
+	if testing.Short() {
+		t.Skip("writes for 5 seconds while the state directory is swapped")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("needs an account that /tmp does not belong to")
 	}

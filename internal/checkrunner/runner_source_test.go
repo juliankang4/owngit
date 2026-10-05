@@ -22,6 +22,9 @@ import (
 // verifies its hash before writing it. A blob or manifest the server changed
 // in transit stops the job before any check starts, in both object formats.
 func TestExternalRunnerRefusesChangedSourceBeforeStart(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs the external runner once per object format")
+	}
 	manifestFormat := func(format string) func(http.Header, []byte) []byte {
 		return func(_ http.Header, body []byte) []byte {
 			var manifest map[string]any

@@ -199,6 +199,9 @@ func (probe *keepaliveProbe) observe(content []byte) error {
 // still waits for the end of the request body, which a half-duplex proxy
 // stops forwarding once it passes response headers on.
 func TestKeepalivePacketsReachTheClientAtOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits through a 2.5 second proxy read timeout")
+	}
 	const proxyTimeout = 2500 * time.Millisecond
 	handler, work, _ := idleFixture(t, 64<<10, time.Minute)
 	server := httptest.NewServer(handler)

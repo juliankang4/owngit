@@ -186,6 +186,9 @@ func TestRawLogRetentionAppliesToTheLogsKept(t *testing.T) {
 // logs kept, a backlog is then removed in full and a cleanup with nothing due
 // removes nothing. Times are logged, not checked: they depend on the machine.
 func TestPruneReadsOnlyTheLogsItRemoves(t *testing.T) {
+	if testing.Short() {
+		t.Skip("inserts many attempts and raw logs before the cleanup")
+	}
 	store, ctx, now := newProjectStore(t)
 	rows, err := store.db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+pruneCheckLogBatch, now.Unix(), checkLogPruneBatch)
 	noErr(t, err)

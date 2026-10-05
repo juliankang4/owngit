@@ -278,6 +278,9 @@ func TestNotarizeSubmitFailures(t *testing.T) {
 // release build signs and notarizes the darwin binary before running,
 // archiving or recording it, and records the signature in the manifest.
 func TestBuildTargetSignsDarwinBinary(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the darwin binary with a real Go build for each case")
+	}
 	requireGoToolchain(t)
 	root := repoRoot(t)
 	darwin, err := targetFor("darwin/arm64")
@@ -331,6 +334,9 @@ func TestBuildTargetSignsDarwinBinary(t *testing.T) {
 // A failed final verification of build, which runs after the checksums and
 // manifest are written, says that they exist and how to check them again.
 func TestFinalVerifyFailureNamesTheWrittenRecords(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	dir := sharedDist(t)
 	err := verifyBuilt(dir, repoRoot(t), "false")
 	for _, want := range []string{"the checksums and manifest in " + dir + " are written", "check them again with: release verify -dir " + dir} {

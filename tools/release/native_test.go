@@ -42,6 +42,9 @@ func TestSelectNativeFormats(t *testing.T) {
 }
 
 func TestNativeDebPrototypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds two native deb prototypes from the shared dist")
+	}
 	root := repoRoot(t)
 	portable := sharedDist(t)
 	first := filepath.Join(t.TempDir(), "native-first")
@@ -232,6 +235,9 @@ func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 }
 
 func TestNativePinsPortableInputsBeforeVerification(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the scheduling wrapper is a POSIX shell script")
 	}
@@ -299,6 +305,9 @@ exit "$status"
 }
 
 func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	portable := copyDist(t, sharedDist(t))
 	snapshot, err := snapshotPortableInputs(filepath.Join(portable, "manifest.json"))
 	noErr(t, err)

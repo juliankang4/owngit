@@ -468,6 +468,9 @@ func TestFirstPassAfterStartAdmitsAnObservedHeadWithoutAJob(t *testing.T) {
 // the last branch without wrapping, so it ends after two pages and evaluates
 // each unchanged head once.
 func TestFirstPassCheckSweepsToTheLastBranchWithoutWrapping(t *testing.T) {
+	if testing.Short() {
+		t.Skip("pushes 65 branches through real Git")
+	}
 	fixture := newPushFixture(t, 4)
 	fixture.pushWorkflow("main", validWorkflow)
 	broken := fixture.pushWorkflow("a-broken", `{`)

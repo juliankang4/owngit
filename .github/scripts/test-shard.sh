@@ -8,8 +8,10 @@
 # can see.
 #
 # FULL holds the packages that run with the flags as given; every other
-# package runs with -short added, which skips the tests that wait on the real
-# clock. "./..." anywhere in FULL means every package runs as given. An empty
+# package runs with -short added, which skips the tests that spend their time
+# on a long real wait, such as a transfer deadline, or on long fixture work,
+# such as a full release build. "./..." anywhere in FULL means every package
+# runs as given. An empty
 # FULL, a change that only readers of a Markdown file see, runs every selected
 # package with -short. The listing and the shard assignment do not depend on
 # this option, because -short changes only what a test does at run time, not

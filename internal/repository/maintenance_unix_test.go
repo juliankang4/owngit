@@ -124,6 +124,9 @@ func TestStopMaintenanceTerminatesItsGitProcess(t *testing.T) {
 }
 
 func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs real repacks that time out and retry")
+	}
 	fixture := newMaintenanceFixture(t)
 	manager := fixture.manager
 	before := inventory(t, fixture.remote)

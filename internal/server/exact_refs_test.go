@@ -250,6 +250,9 @@ func TestDefaultBranchRefCollision(t *testing.T) {
 }
 
 func TestSharedSelectionPinsUncachedSnapshot(t *testing.T) {
+	if testing.Short() {
+		t.Skip("lists 12000 refs through real Git")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("the tracing wrapper is a POSIX-shell fixture")
 	}

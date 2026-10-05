@@ -190,6 +190,9 @@ func TestObjectCacheReturnsCopies(t *testing.T) {
 // Concurrent misses for one result start one Git process. A waiting caller
 // whose request ends stops waiting at once.
 func TestObjectCacheRunsConcurrentMissesOnce(t *testing.T) {
+	if testing.Short() {
+		t.Skip("holds one real cat-file while eight callers wait")
+	}
 	requirePOSIX(t)
 	manager, _, work := newTestRepository(t)
 	commit := commitTree(t, manager, work, "main", map[string]string{"file.txt": "shared\n"})
