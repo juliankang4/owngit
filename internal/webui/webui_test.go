@@ -223,7 +223,7 @@ func allPages(lang Lang) map[string]Page {
 		"tasks":                  tasksPage(c, false),
 		"tasks-detail":           tasksPage(c, true),
 		"pull-request-pending":   pullRequestPage(c, prFixturePending),
-		"tasks-empty":            TasksPage{Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks), ListURL: "/repositories/r1/tasks", HelperURL: "/repositories/r1/helper-credentials"},
+		"tasks-empty":            TasksPage{Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks), ListURL: "/repositories/r1/tasks", HelperURL: "/repositories/r1/helper-credentials", Complete: true},
 		"tasks-unclean":          uncleanTasksPage(c),
 		"pull-request-unclean":   uncleanPullRequestPage(c),
 		"helper-credentials":     helperPage(c, false),
@@ -520,6 +520,7 @@ func tasksPage(c Chrome, detail bool) TasksPage {
 		Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTabChecks),
 		ListURL:   "/repositories/r1/tasks",
 		HelperURL: "/repositories/r1/helper-credentials",
+		Complete:  true,
 		Configuration: CheckConfigurationView{
 			Configured: true, Version: 4, RecordedAt: testNow.AddDate(0, 0, -3),
 			Checks: []CheckDefinitionLine{
