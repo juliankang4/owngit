@@ -160,6 +160,19 @@ checks are turned on, for the first time or after being off, each matching
 branch head without a push job is queued once, within the queue limit. That
 includes heads pushed while push checks were off.
 
+Each matching branch update in an accepted push gets its own job, even while
+another job runs. OwnGit keeps these updates in memory until it admits them,
+at most 64 per repository and 4,096 across all repositories. A repository that
+already has 64 waiting drops its oldest update, and once 4,096 are waiting in
+total, a new update is dropped. If another write holds a repository for more
+than a few seconds, that repository's updates wait for the next push to any
+repository or for a new attempt about 30 seconds later. Other repositories go
+on in the meantime, but a push that arrives during that wait can be admitted
+up to about 5 seconds later. Updates not admitted yet are lost when OwnGit
+stops, and the next start goes through the branch heads as described below. A
+dropped update, or a push update that the rules or the queue limit refuse, is
+named only in the server log.
+
 Each time OwnGit starts, it goes once through the branch heads of every
 repository and queues each matching head that never got a job. If a head's
 check file is refused, the server log says so again on that pass. A branch
