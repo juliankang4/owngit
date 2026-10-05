@@ -2,6 +2,7 @@ package backups
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"time"
 
@@ -61,7 +62,9 @@ type RunView struct {
 // they found there. Check, Upload and RestoreLimit are what this OwnGit
 // found since it started: the last verification an owner asked for, the
 // uploaded backup, and whether a restore could write into a folder on the
-// disk of the backup folder.
+// disk of the backup folder. A finished backup whose record the state
+// store has not saved yet stands in as the running one, and the last runs
+// stay the ones OwnGit recorded.
 type Status struct {
 	Schedule     ScheduleView  `json:"schedule"`
 	Running      *RunView      `json:"running"`
@@ -110,9 +113,10 @@ func ViewRun(run state.BackupRun) *RunView {
 }
 
 // pendingResult is how a run whose final record the state store refused
-// appears: the result it will record, saying that the result is not saved
-// yet, so a finished backup is never shown as one that is still copying.
-// It is nil for every other run.
+// appears: as the backup that still occupies the folder, since no other
+// may start while its record stands as running, saying how it ended and
+// that its record waits for the state store. It is nil for every other
+// run.
 func (s *Service) pendingResult(id string) *state.BackupRun {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -120,16 +124,31 @@ func (s *Service) pendingResult(id string) *state.BackupRun {
 		return nil
 	}
 	result := *s.pending
-	if result.Message != "" {
-		result.Message += " "
-	}
-	result.Message += pendingMessage
+	result.Message = pendingMessage(result.Status, result.Message)
+	result.Status = state.BackupRunning
 	return &result
 }
 
-// pendingMessage says that a finished backup's result waits for the state
-// store that refused it.
-const pendingMessage = "The backup finished, but its result could not be saved yet. OwnGit keeps trying and saves it as soon as the state is writable again."
+// forgetPending forgets the result held for the run id, if any.
+func (s *Service) forgetPending(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending != nil && s.pending.ID == id {
+		s.pending = nil
+	}
+}
+
+// pendingMessage is how a finished backup whose record waits for the
+// state store is described: how it ended, and that its record is not saved
+// yet. It keeps within the bytes a stored record holds, and keeps the
+// notice complete, so the message in front of it is cut first.
+func pendingMessage(status, message string) string {
+	notice := fmt.Sprintf("The backup finished: %s. Its record could not be saved yet; OwnGit keeps trying and saves it as soon as the state is writable again.", status)
+	if message == "" {
+		return notice
+	}
+	return state.CutBackupRunMessage(message, state.MaxBackupRunMessage-len(notice)-1) + " " + notice
+}
 
 // Status reads the state of backups.
 func (s *Service) Status(ctx context.Context) (Status, error) {
@@ -144,7 +163,12 @@ func (s *Service) Status(ctx context.Context) (Status, error) {
 	status := Status{Schedule: ViewSchedule(schedule, configured)}
 	for _, run := range runs {
 		if result := s.pendingResult(run.ID); result != nil {
-			run = *result
+			// The finished run whose record waits stands in as the running
+			// one; the last runs stay the ones OwnGit recorded.
+			if status.Running == nil {
+				status.Running = ViewRun(*result)
+			}
+			continue
 		}
 		switch {
 		case run.Status == state.BackupRunning:
@@ -212,7 +236,8 @@ func Summarize(status Status) Summary {
 	return summary
 }
 
-// Runs lists every recorded run, the newest first.
+// Runs lists every recorded run, the newest first. A finished run whose
+// record waits appears as the running one, as in Status.
 func (s *Service) Runs(ctx context.Context) ([]RunView, error) {
 	runs, err := s.Store.BackupRuns(ctx)
 	if err != nil {

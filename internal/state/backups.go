@@ -300,6 +300,14 @@ func (s *Store) ForgetBackup(ctx context.Context, id string) error {
 	return err
 }
 
+// CutBackupRunMessage cuts text to what a run's stored message holds at
+// most, or to limit when that is smaller, without splitting a character: a
+// message OwnGit shows without a record obeys the same bound as one it
+// recorded. A limit below zero means no room.
+func CutBackupRunMessage(text string, limit int) string {
+	return cutText(text, max(0, min(limit, MaxBackupRunMessage)))
+}
+
 // cutText cuts text to at most limit bytes without splitting a character.
 func cutText(text string, limit int) string {
 	if len(text) <= limit {
@@ -310,6 +318,24 @@ func cutText(text string, limit int) string {
 		cut--
 	}
 	return text[:cut]
+}
+
+// SetBackupRunMessage replaces the message of the finished run id, cut to
+// MaxBackupRunMessage bytes, so a pass that reads the backup folder after
+// the run was recorded can add what it found there. A run whose record is
+// still running keeps no message that would say it ended.
+func (s *Store) SetBackupRunMessage(ctx context.Context, id, message string) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE backup_runs SET message=? WHERE id=? AND status<>'running'`,
+		cutText(message, MaxBackupRunMessage), id)
+	if err != nil {
+		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil {
+		return err
+	} else if changed != 1 {
+		return fmt.Errorf("backup run %s has no finished record", id)
+	}
+	return nil
 }
 
 // RecordBackupVerification records the result of verifying the backup of

@@ -34,6 +34,12 @@ const (
 	// state store that becomes writable again is used within recordWaitMax.
 	recordWait    = time.Second
 	recordWaitMax = time.Minute
+	// recordWrite bounds one attempt to write a run's final record.
+	recordWrite = 30 * time.Second
+	// recordEndWrite bounds the last attempt to record a result that waits
+	// when OwnGit stops: short enough to fit the stop's own budget, and
+	// longer than the state store's busy wait.
+	recordEndWrite = 10 * time.Second
 	// namePrefix starts the folder name of every backup a run writes.
 	namePrefix = "owngit-backup-"
 )
@@ -96,9 +102,11 @@ type Service struct {
 	inUse map[string]int
 	// limit is what the last test of the backup folder found.
 	limit *RestoreLimit
-	// pending is the finished result of a run whose record the state
-	// store refused, held until the state takes it, so status and the run
-	// list say the backup finished instead of showing it as copying.
+	// pending is the finished run whose record the state store refused,
+	// held until the state takes it, so Status and Runs show it as the
+	// running backup, saying how it ended and that its record is not saved
+	// yet. Its stored record still stands as running, which keeps any other
+	// backup from starting.
 	pending *state.BackupRun
 }
 
@@ -281,8 +289,8 @@ func (s *Service) start(kind string) (state.BackupRun, error) {
 	return run, nil
 }
 
-// execute makes the backup of run, verifies it when schedule asks, removes
-// older backups after a good one, and records how it ended.
+// execute makes the backup of run, verifies it when schedule asks, records
+// how it ended, and removes older backups once that record is saved.
 func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule state.BackupSchedule) {
 	output := filepath.Join(run.Destination, run.BackupName)
 	note, err := s.checkRoom(ctx, run)
@@ -313,7 +321,6 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		run.Status, run.Message = state.BackupFailed, err.Error()
 	default:
 		run.Status = state.BackupSucceeded
-		problems = s.removeOld(ctx, run, schedule.Keep)
 	}
 	// A backup that failed after it was published, or was stopped then,
 	// is still there, and is kept as OwnGit's; one never published is not.
@@ -344,6 +351,16 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	if !s.record(ctx, run) {
 		return
 	}
+	// Older backups go only after the record that owns the new one is
+	// saved: while the new result waits for the state store, the backup
+	// OwnGit still keeps is the older one, and removing it would leave a
+	// folder nothing says OwnGit made. A stop that saved the result here
+	// removes nothing; the next backup removes then.
+	if run.Status == state.BackupSucceeded && ctx.Err() == nil {
+		if left := s.removeOld(ctx, run, schedule.Keep); len(left) > 0 {
+			s.noteLeftInPlace(ctx, &run, left)
+		}
+	}
 	line := fmt.Sprintf("backup %s %s", output, run.Status)
 	if run.HoldKnown && run.LongestHoldRepository != "" {
 		line += fmt.Sprintf("; Git writes waited at most %s (repository %s)", run.LongestHold.Round(time.Millisecond), run.LongestHoldRepository)
@@ -358,38 +375,66 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 // A state store that refuses the write is tried again with a bounded
 // backoff, so a state store that was full or briefly unavailable does not
 // leave a finished backup looking like one that is still copying: while
-// the result waits, Status and Runs show it and say that it is not saved
-// yet. A run whose stored record is no longer running can never be
-// recorded, so that refusal is reported once. OwnGit stopping ends the
-// waiting; the stored run then stays running, and the next start records
-// it as interrupted.
+// the result waits, Status and Runs show it as the running backup and say
+// how it ended and that its record is not saved yet. A run whose stored
+// record is no longer running can never be recorded, so that refusal is
+// reported once. OwnGit stopping ends the waiting with one last bounded
+// attempt, so a state store that takes writes again while OwnGit stops
+// records the result it has; otherwise the stored run stays running, and
+// the next start records it as interrupted.
 func (s *Service) record(ctx context.Context, run state.BackupRun) bool {
 	wait := recordWait
 	for {
-		write, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
-		err := s.Store.FinishBackupRun(write, run)
-		cancel()
+		err := s.recordOnce(ctx, run, recordWrite)
 		if err == nil {
-			s.mu.Lock()
-			if s.pending != nil && s.pending.ID == run.ID {
-				s.pending = nil
-			}
-			s.mu.Unlock()
+			s.forgetPending(run.ID)
 			return true
 		}
-		s.logf("backup %s ended %s but could not be recorded: %v", filepath.Join(run.Destination, run.BackupName), run.Status, err)
-		if errors.Is(err, state.ErrBackupRunEnded) {
-			return false
-		}
+		// The result is held before the refusal is reported, so a reader
+		// that sees the report sees the result too.
 		s.mu.Lock()
 		s.pending = &run
 		s.mu.Unlock()
+		s.logf("backup %s ended %s but could not be recorded: %v", filepath.Join(run.Destination, run.BackupName), run.Status, err)
+		if errors.Is(err, state.ErrBackupRunEnded) {
+			s.forgetPending(run.ID)
+			return false
+		}
 		select {
 		case <-ctx.Done():
+			if s.recordOnce(ctx, run, recordEndWrite) == nil {
+				s.forgetPending(run.ID)
+				return true
+			}
 			return false
 		case <-time.After(wait):
 		}
 		wait = min(wait*2, recordWaitMax)
+	}
+}
+
+// recordOnce makes one attempt to record the final result of run, within
+// bound, on a clock that keeps running while OwnGit stops.
+func (s *Service) recordOnce(ctx context.Context, run state.BackupRun, bound time.Duration) error {
+	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), bound)
+	defer cancel()
+	return s.Store.FinishBackupRun(write, run)
+}
+
+// noteLeftInPlace adds what removing older backups did not do to the
+// message of the run that is recorded already, so the record says what
+// OwnGit left where it is. The backup itself is saved by now, so a message
+// that cannot be saved is logged and the run stands.
+func (s *Service) noteLeftInPlace(ctx context.Context, run *state.BackupRun, left []string) {
+	if run.Message == "" {
+		run.Message = "The backup is complete, but " + strings.Join(left, "; ")
+	} else {
+		run.Message += " Also, " + strings.Join(left, "; ")
+	}
+	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWrite)
+	defer cancel()
+	if err := s.Store.SetBackupRunMessage(write, run.ID, run.Message); err != nil {
+		s.logf("backup %s could not record what removing older backups did: %v", filepath.Join(run.Destination, run.BackupName), err)
 	}
 }
 
