@@ -120,32 +120,57 @@ func environmentGitConfig(t *testing.T, environment []string) [][2]string {
 	return config
 }
 
-// A large-file threshold changes what a diff shows, so only Git commands that
-// build or receive a pack get one, and only where the memory ceiling is known.
-func TestOnlyPackProcessesGetTheLargeFileThreshold(t *testing.T) {
+// A large-file threshold changes what a diff or merge shows, so Git commands
+// that read text output get none; every other command, archive included,
+// gets one where the memory ceiling is known.
+func TestLargeFileThresholdSkipsOnlyTextReadingCommands(t *testing.T) {
 	runner, err := New("", filepath.Join(t.TempDir(), "runtime"))
 	noErr(t, err)
 	for _, test := range []struct {
-		name  string
-		packs bool
+		args []string
+		text bool
 	}{
-		{commandName([]string{"diff", "--numstat"}), false},
-		{commandName([]string{"--git-dir", ".", "log"}), false},
-		{commandName([]string{"blame", "file"}), false},
-		{commandName([]string{"archive", "HEAD"}), false},
-		{commandName([]string{"bundle", "create", "x", "--all"}), true},
-		{commandName([]string{"-C", ".", "repack", "-d"}), true},
-		{commandName([]string{"index-pack", "x.pack"}), true},
+		{[]string{"diff", "--numstat"}, true}, {[]string{"--git-dir", ".", "diff-tree", "x"}, true},
+		{[]string{"log"}, true}, {[]string{"show", "x"}, true}, {[]string{"blame", "f"}, true},
+		{[]string{"format-patch", "x"}, true}, {[]string{"merge-tree", "a", "b"}, true},
+		{[]string{"merge-file", "a", "b", "c"}, true}, {[]string{"apply", "p"}, true},
+		{[]string{"archive", "HEAD"}, false}, {[]string{"cat-file", "blob", "x"}, false},
+		{[]string{"bundle", "create", "x", "--all"}, false}, {[]string{"-C", ".", "repack", "-d"}, false},
+		{[]string{"index-pack", "x.pack"}, false},
 	} {
-		if got := buildsPacks(test.name); got != test.packs {
-			t.Errorf("buildsPacks(%q) = %v, want %v", test.name, got, test.packs)
+		name := commandName(test.args)
+		if got := readsTextOutput(name); got != test.text {
+			t.Errorf("readsTextOutput(%q) = %v, want %v", name, got, test.text)
 		}
 		has := false
-		for _, setting := range environmentGitConfig(t, runner.environment(buildsPacks(test.name))) {
+		for _, setting := range environmentGitConfig(t, runner.environment(readsTextOutput(name))) {
 			has = has || setting[0] == "core.bigFileThreshold"
 		}
-		if want := test.packs && hostmem.Ceiling() > 0; has != want {
-			t.Errorf("%s: core.bigFileThreshold set = %v, want %v", test.name, has, want)
+		if want := !test.text && hostmem.Ceiling() > 0; has != want {
+			t.Errorf("%s: core.bigFileThreshold set = %v, want %v", name, has, want)
 		}
+	}
+}
+
+// An archive has the same file contents with and without the threshold.
+func TestArchiveIsTheSameWithTheLargeFileThreshold(t *testing.T) {
+	ctx := context.Background()
+	runner, err := New("", filepath.Join(t.TempDir(), "runtime"))
+	noErr(t, err)
+	dir := filepath.Join(t.TempDir(), "r.git")
+	_, err = runner.Run(ctx, "", nil, "init", "--bare", "-q", "--initial-branch=main", dir)
+	noErr(t, err)
+	blob, err := runner.Run(ctx, dir, strings.NewReader(strings.Repeat("line of text\n", 1000)), "--git-dir", ".", "hash-object", "-w", "--stdin")
+	noErr(t, err)
+	tree, err := runner.Run(ctx, dir, strings.NewReader("100644 blob "+strings.TrimSpace(string(blob.Stdout))+"\tf.txt\n"), "--git-dir", ".", "mktree")
+	noErr(t, err)
+	archive := func(extra ...string) string {
+		result, err := runner.RunWithEnvironment(ctx, dir, nil, extra, "--git-dir", ".", "archive", "--format=tar", strings.TrimSpace(string(tree.Stdout)))
+		noErr(t, err)
+		return string(result.Stdout)
+	}
+	small := []string{"GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=core.bigFileThreshold", "GIT_CONFIG_VALUE_0=1024"}
+	if archive() != archive(small...) {
+		t.Error("archive differs with core.bigFileThreshold set")
 	}
 }

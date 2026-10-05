@@ -215,9 +215,11 @@ func MaxTransfers(ceiling uint64) int {
 // LimitTransfers lowers the saved per-repository and extra transfer slots
 // until together they fit MaxTransfers. Saved values that already fit stay.
 func LimitTransfers(ceiling uint64, perRepository, extra int) (int, int) {
-	if limit := MaxTransfers(ceiling); limit > 0 {
-		perRepository = min(perRepository, limit)
-		extra = min(extra, limit-perRepository)
+	if limit := MaxTransfers(ceiling); limit > 0 && perRepository+extra > limit {
+		// Keep one extra slot when the owner saved one, so a single busy
+		// repository cannot block all the others.
+		extra = min(extra, 1, limit-1)
+		perRepository = limit - extra
 	}
 	return perRepository, extra
 }
@@ -256,7 +258,7 @@ func PackingConfig(ceiling uint64, processors, packers int) [][2]string {
 }
 
 // BigFileThreshold returns the core.bigFileThreshold for a Git process that
-// builds or receives a pack, or "" for Git's default: the ceiling is unknown.
+// does not read text output, or "" for Git's default: the ceiling is unknown.
 func BigFileThreshold(ceiling uint64, packers int) string {
 	if ceiling == 0 {
 		return ""

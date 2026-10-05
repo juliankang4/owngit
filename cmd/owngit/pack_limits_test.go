@@ -19,12 +19,12 @@ func TestPackLimitsFollowTheMemoryCeiling(t *testing.T) {
 		savedPer, savedExtra                  int
 		wantSlots, wantPackers, wantPer, want int
 	}{
-		{"512 MiB default limits", 512 << 20, 4, 1, 1, 1, 3, 0},
-		{"512 MiB loose owner limits", 512 << 20, 32, 32, 1, 1, 3, 0},
+		{"512 MiB default limits", 512 << 20, 4, 1, 1, 1, 2, 1},
+		{"512 MiB loose owner limits", 512 << 20, 32, 32, 1, 1, 2, 1},
 		{"1 GiB default limits stay", 1 << 30, 4, 1, 2, 2, 4, 1},
-		{"1 GiB loose owner limits", 1 << 30, 32, 32, 2, 2, 6, 0},
+		{"1 GiB loose owner limits", 1 << 30, 32, 32, 2, 2, 5, 1},
 		{"8 GiB default limits stay", 8 << 30, 4, 1, 36, 5, 4, 1},
-		{"8 GiB loose owner limits", 8 << 30, 32, 32, 36, 36, 32, 16},
+		{"8 GiB loose owner limits", 8 << 30, 32, 32, 36, 36, 32, 1},
 		{"unknown keeps the owner's limits", 0, 4, 1, 0, 5, 4, 1},
 	}
 	for _, test := range tests {

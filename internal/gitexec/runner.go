@@ -139,7 +139,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 // commands are unaffected. Packing is bounded by the memory the computer
 // allows OwnGit (see package hostmem), so clones, fetches and backups finish
 // on a small host instead of being killed.
-func (r *Runner) commandConfig(packs bool) [][2]string {
+func (r *Runner) commandConfig(textOutput bool) [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
@@ -150,19 +150,26 @@ func (r *Runner) commandConfig(packs bool) [][2]string {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}
 	config = append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
-	// A large-file threshold changes what a diff shows, so only a process
-	// that builds or receives a pack gets one.
-	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), r.packingTransfers()); packs && threshold != "" {
+	// A large-file threshold changes what a diff or merge shows, so commands
+	// that read text output (see readsTextOutput) do not get one.
+	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), r.packingTransfers()); !textOutput && threshold != "" {
 		config = append(config, [2]string{"core.bigFileThreshold", threshold})
 	}
 	return config
 }
 
-// buildsPacks reports whether the Git command named by commandName builds or
-// receives a pack.
-func buildsPacks(name string) bool {
+// readsTextOutput reports whether the Git command named by commandName
+// produces output that depends on telling text from binary files or on
+// merging text: diff, diff-tree, diff-index, log, show, blame, format-patch,
+// range-diff, grep (all show a file above core.bigFileThreshold as binary),
+// and merge-tree, merge-file, merge, apply, rebase, cherry-pick (a text merge
+// or patch above it is refused or treated as binary). Every other command,
+// archive, cat-file, hash-object, pack and ref commands included, gives the
+// same bytes with or without the threshold and gets it, which bounds memory.
+func readsTextOutput(name string) bool {
 	switch strings.TrimPrefix(name, "git ") {
-	case "bundle", "repack", "gc", "maintenance", "pack-objects", "index-pack", "unpack-objects", "receive-pack", "upload-pack", "fetch", "clone":
+	case "diff", "diff-tree", "diff-index", "log", "show", "blame", "format-patch", "range-diff", "grep",
+		"merge-tree", "merge-file", "merge", "apply", "rebase", "cherry-pick":
 		return true
 	}
 	return false
@@ -192,9 +199,9 @@ func (r *Runner) packingTransfers() int {
 // that Git sees both.
 func (r *Runner) Environment(extra ...string) []string { return r.environment(false, extra...) }
 
-// environment is Environment for a command that builds or receives a pack
-// when packs is true.
-func (r *Runner) environment(packs bool, extra ...string) []string {
+// environment is Environment for a command that reads text output when
+// textOutput is true.
+func (r *Runner) environment(textOutput bool, extra ...string) []string {
 	path := filepath.Dir(r.GitPath)
 	if runtime.GOOS != "windows" {
 		path += string(os.PathListSeparator) + "/usr/bin:/bin"
@@ -221,7 +228,7 @@ func (r *Runner) environment(packs bool, extra ...string) []string {
 			}
 		}
 	}
-	config := r.commandConfig(packs)
+	config := r.commandConfig(textOutput)
 	for i, setting := range config {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting[1]))
 	}
@@ -309,7 +316,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	stderr.limit = stderrLimit
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
-	cmd.Env = r.environment(buildsPacks(name), extraEnv...)
+	cmd.Env = r.environment(readsTextOutput(name), extraEnv...)
 	cmd.Stdout = observedCommandWriter(&stdout, r.stdoutCopyTap)
 	cmd.Stderr = observedCommandWriter(&stderr, r.stderrCopyTap)
 	// Copy caller stdin only after attachment succeeds. Assigning cmd.Stdin
@@ -463,7 +470,7 @@ func isGitCommandToken(s string) bool {
 // process never sees a clean end of its input. A stdin reader that must not
 // end the input cleanly can cancel ctx and block in Read until Close.
 func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
-	return r.stream(ctx, "Git backend", exec.Command(executable), true, dir, stdin, extraEnv, consume)
+	return r.stream(ctx, "Git backend", exec.Command(executable), false, dir, stdin, extraEnv, consume)
 }
 
 // StreamGit runs Git with args as Stream runs a backend, with no input: its
@@ -471,21 +478,21 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 // and the output in consume; returning an error from consume, or cancelling
 // ctx, stops Git and its owned descendants before StreamGit returns.
 func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
-	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), buildsPacks(commandName(args)), dir, nil, nil, consume)
+	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), readsTextOutput(commandName(args)), dir, nil, nil, consume)
 }
 
 // stream runs cmd for Stream and StreamGit; name names it in error text. Its
 // stderr keeps the runner's output limit, not stderrLimit, because a Smart
 // HTTP caller reads receive-pack's messages there, and passing that limit is
 // an error, so the caller knows it did not read all of them.
-func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, packs bool, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
+func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, textOutput bool, dir string, stdin io.ReadCloser, extraEnv []string, consume func(io.Reader) error) ([]byte, error) {
 	var stderr limitedBuffer
 	stderr.limit = r.OutputLimit
 	if stderr.limit <= 0 {
 		stderr.limit = defaultOutputLimit
 	}
 	cmd.Dir = dir
-	cmd.Env = r.environment(packs, extraEnv...)
+	cmd.Env = r.environment(textOutput, extraEnv...)
 	cmd.Stderr = &stderr
 	stdinPipe, err := cmd.StdinPipe()
 	if err != nil {
