@@ -2,11 +2,22 @@
 // OwnGit's own heap and the Git processes it starts.
 //
 // One rule, so a small computer keeps working and a large one is not held
-// back. Of the memory ceiling, OwnGit's Go heap may use five eighths (a soft
-// limit that Go does not apply to Git) and Git packing a quarter, shared by
-// the Git processes that can pack at once. The rest is left for the
-// operating system and file cache. A slower successful clone or backup is
-// better than a process the kernel kills.
+// back. Of the memory ceiling C:
+//
+//   - OwnGit's Go heap may use C/2 (a soft limit, which does not count Git).
+//   - Git packing may use 3C/8, shared by P processes that can pack at once:
+//     the admitted Git transfers plus one backup and one maintenance job.
+//   - C/8 stays free for the operating system and file cache.
+//
+// A packing process costs about baseGit of its own (pack maps, object
+// tables; 50 to 75 MiB measured) plus what the settings allow: pack.windowMemory
+// is per thread, so threads x window, plus pack.deltaCacheSize. Its share
+// A = 3C/8/P is therefore spent as baseGit + threads x window + cache, with
+// window memory and cache half of the rest each. At a small ceiling the
+// number of admitted transfers is lowered until every process still gets
+// the smallest useful window and cache, so further transfers wait for a
+// slot instead of the kernel killing OwnGit. A slower successful clone or
+// backup is better than a dead server.
 package hostmem
 
 import (
@@ -114,13 +125,28 @@ func physicalMemory(path string) uint64 {
 const (
 	mib = 1 << 20
 	gib = 1 << 30
-	// unknownCeiling is what an unreadable ceiling is treated as for Git
-	// packing: an ordinary computer, with settings that are safe and fast.
+	// unknownCeiling is what an unreadable ceiling is treated as: an
+	// ordinary computer, with settings that are safe and fast.
 	unknownCeiling = 4 * gib
-	// packingProcesses is how many Git processes that can pack run at once:
-	// the default five transfers and one backup.
-	packingProcesses = 6
+	// baseGit is the memory a packing Git process uses before any window
+	// or cache. Measured 50 to 75 MiB.
+	baseGit = 64 * mib
+	// smallestPart is the smallest window total and the smallest delta cache.
+	smallestPart = 8 * mib
+	// DefaultTransfers is the number of Git transfers admitted at once
+	// while the owner has not saved other limits (4 per repository + 1).
+	DefaultTransfers = 5
+	// otherPackers are the backup and the maintenance job, which pack
+	// outside transfer admission.
+	otherPackers = 2
 )
+
+func known(ceiling uint64) uint64 {
+	if ceiling == 0 {
+		return unknownCeiling
+	}
+	return ceiling
+}
 
 // HeapLimit returns the Go memory limit for the serving process, or 0 when
 // nothing should be set: the ceiling is unknown, or the owner chose a limit
@@ -129,22 +155,39 @@ func HeapLimit(ceiling uint64, ownerSetting string) int64 {
 	if ownerSetting != "" {
 		return 0
 	}
-	return int64(ceiling / 8 * 5)
+	return int64(ceiling / 2)
 }
 
-// PackingConfig returns the Git settings that bound one packing process:
-// one thread per gibibyte of ceiling up to the processor count, and window
-// and delta cache memory that keeps six processes inside a quarter of the
-// ceiling. They change how well Git compresses and how fast, never what a
-// pack contains.
-func PackingConfig(ceiling uint64, processors int) [][2]string {
-	if ceiling == 0 {
-		ceiling = unknownCeiling
-	}
-	threads := min(max(ceiling/gib, 1), uint64(max(processors, 1)))
-	share := ceiling / 4 / packingProcesses
-	window := min(max(share/threads, 8*mib), 256*mib)
-	cache := min(max(share, 8*mib), 256*mib)
+func gitShare(ceiling uint64) uint64 { return known(ceiling) / 8 * 3 }
+
+// MaxTransfers is the most Git transfers the ceiling lets run at once, never
+// fewer than one.
+func MaxTransfers(ceiling uint64) int {
+	processes := gitShare(ceiling) / (baseGit + 2*smallestPart)
+	return int(max(processes, otherPackers+1)) - otherPackers
+}
+
+// DefaultTransfersFor is how many transfers run at once under the default
+// limits on this ceiling.
+func DefaultTransfersFor(ceiling uint64) int { return min(DefaultTransfers, MaxTransfers(ceiling)) }
+
+// ClampTransfers lowers the saved per-repository and extra transfer slots
+// until together they fit MaxTransfers. Slots the owner saved below that stay.
+func ClampTransfers(ceiling uint64, perRepository, extra int) (int, int) {
+	perRepository = min(perRepository, MaxTransfers(ceiling))
+	return perRepository, min(extra, MaxTransfers(ceiling)-perRepository)
+}
+
+// PackingConfig returns the Git settings that bound one packing process
+// when transfers Git transfers are admitted at once (see the package
+// comment for the arithmetic). They change how well Git compresses and how
+// fast, never what a pack contains.
+func PackingConfig(ceiling uint64, processors, transfers int) [][2]string {
+	processes := uint64(max(transfers, 1) + otherPackers)
+	part := max(gitShare(ceiling)/processes, baseGit+2*smallestPart) - baseGit
+	threads := min(max(known(ceiling)/(2*gib), 1), uint64(max(processors, 1)))
+	window := min(max(part/2/threads, smallestPart), 256*mib)
+	cache := min(max(part/2, smallestPart), 256*mib)
 	return [][2]string{
 		{"pack.threads", strconv.FormatUint(threads, 10)},
 		{"pack.windowMemory", strconv.FormatUint(window, 10)},

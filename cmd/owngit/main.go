@@ -367,9 +367,13 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	// Go does not limit its heap to a container's or small computer's memory
 	// by itself. An owner's GOMEMLIMIT is left alone.
-	if limit := hostmem.HeapLimit(hostmem.Ceiling(), os.Getenv("GOMEMLIMIT")); limit > 0 {
-		defer debug.SetMemoryLimit(debug.SetMemoryLimit(limit))
-		logf("this computer gives OwnGit about %d MiB of memory, so OwnGit keeps its own use near %d MiB and bounds Git packing to fit; set GOMEMLIMIT to choose another limit", hostmem.Ceiling()>>20, limit>>20)
+	if ceiling := hostmem.Ceiling(); ceiling > 0 {
+		if limit := hostmem.HeapLimit(ceiling, os.Getenv("GOMEMLIMIT")); limit > 0 {
+			defer debug.SetMemoryLimit(debug.SetMemoryLimit(limit))
+			logf("this computer gives OwnGit about %d MiB of memory, so OwnGit keeps its own use near %d MiB (GOMEMLIMIT sets this limit instead) and limits Git packing and simultaneous Git transfers to fit", ceiling>>20, limit>>20)
+		} else {
+			logf("this computer gives OwnGit about %d MiB of memory; OwnGit's own limit is your GOMEMLIMIT, and Git packing and simultaneous Git transfers are limited to fit", ceiling>>20)
+		}
 	}
 	// Without a screen that a person sees in this session (a service, a
 	// scheduled task, SSH), a browser would run where nobody can see or
@@ -547,6 +551,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	gitHandler, err := githttp.New(runner, repositories, backendPath)
 	if err != nil {
 		return err
+	}
+	// The memory of this computer bounds how many Git transfers run at once
+	// (a request over that waits for a slot, up to the queue wait), and the
+	// packing bounds share the memory among the transfers admitted.
+	savedLimits := gitHandler.Limits
+	gitHandler.Limits = func(ctx context.Context) (githttp.Limits, error) {
+		limits, err := savedLimits(ctx)
+		if err == nil {
+			limits.PerRepository, limits.ExtraSlots = hostmem.ClampTransfers(hostmem.Ceiling(), limits.PerRepository, limits.ExtraSlots)
+			runner.SetTransfers(limits.PerRepository + limits.ExtraSlots)
+		}
+		return limits, err
 	}
 	authentication := &auth.Manager{Store: store, AdminSessionLife: 15 * time.Minute}
 	listener, err := net.Listen("tcp", network.Listen)

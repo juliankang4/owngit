@@ -14,13 +14,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"owngit/internal/hostmem"
 )
-
-var packingConfig = hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU())
 
 const defaultOutputLimit = 8 << 20
 
@@ -44,6 +43,10 @@ type Runner struct {
 	TerminationGrace time.Duration
 	// GitSource says how New chose GitPath, for the startup log.
 	GitSource string
+
+	// transfers is how many Git transfers may run at once, which divides the
+	// packing memory (see package hostmem). Zero means the default.
+	transfers atomic.Int32
 
 	// processSeam optionally injects the owned-process cleanup operations.
 	// Tests set it; production leaves it nil for the real operations.
@@ -134,7 +137,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 // commands are unaffected. Packing is bounded by the memory the computer
 // allows OwnGit (see package hostmem), so clones, fetches and backups finish
 // on a small host instead of being killed.
-func commandConfig() [][2]string {
+func (r *Runner) commandConfig() [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
@@ -144,7 +147,18 @@ func commandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}
-	return append(config, packingConfig...)
+	return append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
+}
+
+// SetTransfers tells the runner how many Git transfers the server admits at
+// once, so the packing bounds of later commands share the memory among them.
+func (r *Runner) SetTransfers(n int) { r.transfers.Store(int32(n)) }
+
+func (r *Runner) packingTransfers() int {
+	if n := int(r.transfers.Load()); n > 0 {
+		return n
+	}
+	return hostmem.DefaultTransfersFor(hostmem.Ceiling())
 }
 
 // Environment returns the complete, intentionally small environment used for
@@ -178,7 +192,7 @@ func (r *Runner) Environment(extra ...string) []string {
 			}
 		}
 	}
-	config := commandConfig()
+	config := r.commandConfig()
 	for i, setting := range config {
 		env = append(env, fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, setting[0]), fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, setting[1]))
 	}
