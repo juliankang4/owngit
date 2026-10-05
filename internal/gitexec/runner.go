@@ -16,7 +16,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"owngit/internal/hostmem"
 )
+
+var packingConfig = hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU())
 
 const defaultOutputLimit = 8 << 20
 
@@ -127,7 +131,9 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 // scope, which overrides the system, global and repository files. It preserves
 // exact Git name bytes and disables automatic maintenance, including before
 // OwnGit prepares a repository or finishes restoring one. Explicit maintenance
-// commands are unaffected.
+// commands are unaffected. Packing is bounded by the memory the computer
+// allows OwnGit (see package hostmem), so clones, fetches and backups finish
+// on a small host instead of being killed.
 func commandConfig() [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
@@ -138,7 +144,7 @@ func commandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}
-	return config
+	return append(config, packingConfig...)
 }
 
 // Environment returns the complete, intentionally small environment used for

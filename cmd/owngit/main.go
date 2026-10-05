@@ -18,6 +18,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -33,6 +34,7 @@ import (
 	"owngit/internal/firstrun"
 	"owngit/internal/gitexec"
 	"owngit/internal/githttp"
+	"owngit/internal/hostmem"
 	"owngit/internal/importsync"
 	"owngit/internal/markdown"
 	"owngit/internal/pullrequest"
@@ -362,6 +364,12 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		if status := os.Getenv(restartedVariable); *asService && status != "" {
 			logf("started again after the server exited with status %s", status)
 		}
+	}
+	// Go does not limit its heap to a container's or small computer's memory
+	// by itself. An owner's GOMEMLIMIT is left alone.
+	if limit := hostmem.HeapLimit(hostmem.Ceiling(), os.Getenv("GOMEMLIMIT")); limit > 0 {
+		defer debug.SetMemoryLimit(debug.SetMemoryLimit(limit))
+		logf("this computer gives OwnGit about %d MiB of memory, so OwnGit keeps its own use near %d MiB and bounds Git packing to fit; set GOMEMLIMIT to choose another limit", hostmem.Ceiling()>>20, limit>>20)
 	}
 	// Without a screen that a person sees in this session (a service, a
 	// scheduled task, SSH), a browser would run where nobody can see or

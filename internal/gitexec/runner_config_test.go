@@ -9,9 +9,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"owngit/internal/hostmem"
 )
 
-// wantCommandConfig is the configuration every Git command must receive.
+// wantCommandConfig is the configuration every Git command must receive,
+// including the packing bounds for this computer's memory.
 func wantCommandConfig() [][2]string {
 	want := [][2]string{
 		{"maintenance.auto", "false"},
@@ -22,7 +25,7 @@ func wantCommandConfig() [][2]string {
 	if runtime.GOOS == "windows" {
 		want = append(want, [2]string{"core.longpaths", "true"})
 	}
-	return want
+	return append(want, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU())...)
 }
 
 func TestRunnerEnvironmentTurnsOffGitAutomaticMaintenance(t *testing.T) {
