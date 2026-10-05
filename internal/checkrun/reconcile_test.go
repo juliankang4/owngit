@@ -548,6 +548,28 @@ func TestPushRetentionIsBoundedAndReportsWhatItDrops(t *testing.T) {
 	if summaries := fixture.logLines("dropped"); len(summaries) != 2 {
 		t.Fatalf("two pushes wrote %d summary lines, want one each: %v", len(summaries), fixture.logs)
 	}
+	// All repositories together keep a bounded set too: at the total, an
+	// arrival that would grow the set is dropped and named once.
+	crowded := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
+	crowded.wake = make(chan struct{}, 1)
+	for index := 0; index < maximumPendingPushTotal; index++ {
+		crowded.NotePush(fmt.Sprintf("repository-%04d", index/maximumPendingPushes), []PushUpdate{
+			{Ref: "refs/heads/main", New: fmt.Sprintf("%040x", 10_000+index)},
+		})
+	}
+	crowded.NotePush(fixture.repositoryID, more[:2])
+	crowded.mu.Lock()
+	total := 0
+	for _, waiting := range crowded.pendingPushes {
+		total += len(waiting)
+	}
+	crowded.mu.Unlock()
+	if total != maximumPendingPushTotal {
+		t.Fatalf("all repositories retained %d updates, want %d", total, maximumPendingPushTotal)
+	}
+	if summaries := fixture.logLines("dropped 2 of 2 updates", "across repositories", "c-00", "c-01"); len(summaries) != 1 {
+		t.Fatalf("the arrival beyond the total was not named once: %v", fixture.logs)
+	}
 	// An update no observation or job can name is not retained. The head pass
 	// names such a branch once, and a push to it names nothing.
 	unrecordable := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
@@ -576,38 +598,80 @@ func TestPushRetentionIsBoundedAndReportsWhatItDrops(t *testing.T) {
 }
 
 // A push still holds the repository write lock while its handler returns.
-// Admission waits for the writer, bounded like a job's source copy, instead of
-// keeping the event, and the event becomes a job once the repository is free.
+// Admission waits briefly for the writer instead of keeping the event, and the
+// events become jobs in order once the repository is free. The wait never
+// delays another repository: its event is admitted while the writer still
+// holds the first one.
 func TestPushEventWaitsForThePushThatHoldsTheRepository(t *testing.T) {
 	fixture := newPushFixture(t, 4)
+	older := fixture.pushWorkflow("main", validWorkflow)
 	oid := fixture.pushWorkflow("main", validWorkflow)
 	coordinator := fixture.coordinator
-	lock := coordinator.Repositories.Locks.For(fixture.repositoryID)
+	other, err := coordinator.Repositories.Create(fixture.ctx, "other", "")
+	noErr(t, err)
+	otherPath, err := coordinator.Repositories.Path(other.ID)
+	noErr(t, err)
+	fixture.git("-C", fixture.work, "push", otherPath, "HEAD:refs/heads/main")
+	now := time.Now().UTC()
+	_, err = fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{
+		RepositoryID: other.ID, Executor: state.CheckExecutorHost,
+		AllowedEvents: []string{checkworkflow.EventPush}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, now)
+	noErr(t, err)
+	_, err = fixture.store.GrantCheckConsent(fixture.ctx, other.ID, now.Add(time.Second))
+	noErr(t, err)
+	// Hold the repository the drain reaches first, so a drain that waited for
+	// it would delay the other one.
+	held, free := fixture.repositoryID, other.ID
+	if free < held {
+		held, free = free, held
+	}
+	lock := coordinator.Repositories.Locks.For(held)
 	lock.Lock()
-	coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
+	unlock := sync.OnceFunc(lock.Unlock)
+	defer unlock()
+	coordinator.NotePush(held, []PushUpdate{{Ref: "refs/heads/main", New: older}})
+	coordinator.NotePush(held, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
+	coordinator.NotePush(free, []PushUpdate{{Ref: "refs/heads/main", New: oid}})
 	admitted := make(chan bool, 1)
 	go func() { admitted <- coordinator.admitPendingPushes(fixture.ctx) }()
+	jobOIDs := func(repositoryID string) []string {
+		jobs, err := fixture.store.CheckJobs(fixture.ctx, repositoryID)
+		noErr(t, err)
+		oids := make([]string, 0, len(jobs))
+		for _, job := range jobs {
+			oids = append(oids, job.SourceOID)
+		}
+		return oids
+	}
+	for deadline := time.Now().Add(10 * time.Second); len(jobOIDs(free)) == 0; {
+		if time.Now().After(deadline) {
+			t.Fatal("a repository a push held delayed the event of another repository")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	// A drain that returned here did not wait for the writer, whatever it did
-	// with the event.
+	// with the held repository's events.
 	select {
 	case <-admitted:
 		t.Fatal("admission returned while a push held the repository")
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
-	if oids := pushJobOIDs(t, fixture); len(oids) != 0 {
+	if oids := jobOIDs(held); len(oids) != 0 {
 		t.Fatalf("a busy repository admitted %v", oids)
 	}
-	lock.Unlock()
+	unlock()
 	select {
 	case retry := <-admitted:
 		if retry {
-			t.Fatal("the event was kept although the repository became free")
+			t.Fatal("the events were kept although the repository became free")
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("admission did not finish after the repository became free")
 	}
-	if oids := pushJobOIDs(t, fixture); !oids[oid] {
-		t.Fatalf("the retained push was not admitted after the repository was free: %v", oids)
+	if oids := jobOIDs(held); len(oids) != 2 || oids[0] != older || oids[1] != oid {
+		t.Fatalf("the held repository admitted %v, want %s then %s", oids, older, oid)
 	}
 }
 

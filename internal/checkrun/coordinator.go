@@ -34,9 +34,24 @@ const (
 	// overflows drops its oldest update, named once in the log.
 	maximumPendingPushes = 64
 
+	// maximumPendingPushTotal bounds the retained branch updates across all
+	// repositories, so many repositories cannot multiply the per-repository
+	// bound. An update holds a ref of at most 500 bytes (the observation ref
+	// bound), a 40- or 64-character object ID and two string headers, about
+	// 600 bytes at most, so the retained set stays under 2.5 MB.
+	maximumPendingPushTotal = 4096
+
 	// repositoryBusyWait bounds how long a job waits for its exact source
 	// while pushes or other repository writes hold the repository.
 	repositoryBusyWait = 10 * time.Minute
+
+	// admissionBusyWait bounds how long one admission drain waits, in total,
+	// for repositories that writers hold. The writer is usually the push that
+	// reported the events, which releases the repository milliseconds after its
+	// handler returns. A repository still held after that keeps its events, in
+	// order, for the next push or the retry after admissionRetryWait, so a long
+	// write cannot hold back the events of other repositories.
+	admissionBusyWait = 5 * time.Second
 
 	// admissionRetryWait is how long a retained push event a repository could
 	// not decide waits before the admission goroutine tries it again, at the
@@ -115,7 +130,12 @@ type Coordinator struct {
 	// Git handler writes it and the admission goroutine drains it, so mu
 	// guards it. It is memory only: a stop drops what no attempt admitted yet.
 	pendingPushes map[string][]pushUpdate
-	mu            sync.Mutex
+	// draining counts the updates the running drain took out of pendingPushes,
+	// so the bound across repositories still counts them while they are
+	// decided. An update the drain keeps is counted twice until the drain ends,
+	// which only refuses an arrival early, never retains more than the bound.
+	draining int
+	mu       sync.Mutex
 }
 
 func (coordinator *Coordinator) Start(parent context.Context) error {
@@ -204,6 +224,7 @@ func (coordinator *Coordinator) Stop(ctx context.Context) error {
 		coordinator.done = nil
 		coordinator.admitDone = nil
 		coordinator.pendingPushes = nil
+		coordinator.draining = 0
 		workspace = coordinator.workspace
 		coordinator.workspace = nil
 	}
@@ -279,8 +300,10 @@ func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpda
 // already waiting; an update an attempt could not decide goes in front of it,
 // so admission stays oldest first. A repository at its bound drops the oldest
 // arrival, or the newest update when an older one goes back in front, so a
-// retry never loses the event it was retrying. An update no observation or job
-// can name is not retained; the head pass names such a branch once.
+// retry never loses the event it was retrying. When all repositories together
+// retain maximumPendingPushTotal updates, an arrival that would grow the set
+// is dropped instead. An update no observation or job can name is not
+// retained; the head pass names such a branch once.
 func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUpdate, front bool) {
 	if len(updates) == 0 {
 		return
@@ -297,6 +320,7 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 	}
 	kept := coordinator.pendingPushes[repositoryID]
 	var dropped []pushUpdate
+	acrossRepositories := false
 	if front {
 		var put []pushUpdate
 		for _, update := range updates {
@@ -311,8 +335,20 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 			kept = kept[:len(kept)-1]
 		}
 	} else {
+		// total counts what every other repository keeps and what the running
+		// drain took, so the bound leaves room for the retries it puts back in
+		// front.
+		total := coordinator.draining - len(kept)
+		for _, waiting := range coordinator.pendingPushes {
+			total += len(waiting)
+		}
 		for _, update := range updates {
 			if !state.ValidCheckObservationRef(update.ref) || containsPushUpdate(kept, update) {
+				continue
+			}
+			if len(kept) < maximumPendingPushes && total+len(kept) >= maximumPendingPushTotal {
+				acrossRepositories = true
+				dropped = append(dropped, update)
 				continue
 			}
 			kept = append(kept, update)
@@ -331,8 +367,14 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 	if len(dropped) != 0 {
 		// One line per call, so a push that updates many branches cannot flood
 		// the log or delay the Git response that already finished.
-		coordinator.log("configured check push %s dropped %d of %d updates: %d updates per repository are already waiting (first dropped %s at %s, last dropped %s at %s)",
-			repositoryID, len(dropped), len(updates), maximumPendingPushes,
+		// A call drops by one bound only: the total refuses growth only while the
+		// repository is below its own bound, and it cannot grow to it then.
+		bound := fmt.Sprintf("%d updates per repository are already waiting", maximumPendingPushes)
+		if acrossRepositories {
+			bound = fmt.Sprintf("%d updates across repositories are already waiting", maximumPendingPushTotal)
+		}
+		coordinator.log("configured check push %s dropped %d of %d updates: %s (first dropped %s at %s, last dropped %s at %s)",
+			repositoryID, len(dropped), len(updates), bound,
 			branchName(dropped[0].ref), dropped[0].oid, branchName(dropped[len(dropped)-1].ref), dropped[len(dropped)-1].oid)
 	}
 }
@@ -358,6 +400,10 @@ func containsPushUpdate(updates []pushUpdate, update pushUpdate) bool {
 // and is named once for the repository; a deterministic refusal is dropped
 // like a head the rules refuse. It reports whether an event waits.
 //
+// Each repository is tried first without waiting for a writer, so a repository
+// another write holds never delays the events of the others. The drain then
+// waits for the held repositories, at most admissionBusyWait in total.
+//
 // An event is decided against the policy as it is at admission time, not as it
 // was at push time. Immediate admission keeps that window to one attempt, and
 // the admitting transaction checks consent again, so the event path cannot
@@ -366,10 +412,18 @@ func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 	coordinator.mu.Lock()
 	pending := coordinator.pendingPushes
 	coordinator.pendingPushes = nil
+	for _, facts := range pending {
+		coordinator.draining += len(facts)
+	}
 	coordinator.mu.Unlock()
 	if len(pending) == 0 {
 		return false
 	}
+	defer func() {
+		coordinator.mu.Lock()
+		coordinator.draining = 0
+		coordinator.mu.Unlock()
+	}()
 	ids := make([]string, 0, len(pending))
 	for id := range pending {
 		ids = append(ids, id)
@@ -391,6 +445,12 @@ func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 		}
 		return ctx.Err() == nil
 	}
+	type heldRepository struct {
+		id     string
+		policy state.CheckPolicy
+		facts  []pushUpdate
+	}
+	var held []heldRepository
 	waiting := false
 	for _, repositoryID := range ids {
 		if ctx.Err() != nil {
@@ -420,11 +480,37 @@ func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 			// recorded at all.
 			continue
 		}
-		if coordinator.admitPendingEvents(ctx, repositoryID, policy, facts) {
+		undecided, busy, failure := coordinator.admitPendingEvents(ctx, repositoryID, policy, facts, time.Time{})
+		if busy {
+			held = append(held, heldRepository{id: repositoryID, policy: policy, facts: undecided})
+			continue
+		}
+		if coordinator.keepUndecided(repositoryID, undecided, failure) {
+			waiting = true
+		}
+	}
+	deadline := time.Now().Add(admissionBusyWait)
+	for _, entry := range held {
+		undecided, _, failure := coordinator.admitPendingEvents(ctx, entry.id, entry.policy, entry.facts, deadline)
+		if coordinator.keepUndecided(entry.id, undecided, failure) {
 			waiting = true
 		}
 	}
 	return waiting
+}
+
+// keepUndecided puts a repository's undecided events back in front of newer
+// arrivals, names the failure that stopped them once, and reports whether any
+// event waits.
+func (coordinator *Coordinator) keepUndecided(repositoryID string, undecided []pushUpdate, failure error) bool {
+	if len(undecided) == 0 {
+		return false
+	}
+	if failure != nil {
+		coordinator.log("configured check push %s keeps %d updates for a later attempt: %v", repositoryID, len(undecided), failure)
+	}
+	coordinator.keepPushes(repositoryID, undecided, true)
+	return true
 }
 
 // admissionLoop decides retained push events while the reconciliation loop
@@ -455,26 +541,26 @@ func (coordinator *Coordinator) admissionLoop(ctx context.Context, admits <-chan
 }
 
 // admitPendingEvents admits one repository's retained push events, oldest
-// first, and reports whether any of them waits for a later attempt. An event
-// that already has a job, or that the rules refuse, is left alone and named in
-// the log; an event a Git or state failure stopped waits, like a head the head
-// pass could not decide.
-func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate) bool {
+// first, and returns the events that wait for a later attempt with the failure
+// that stopped them. An event that already has a job, or that the rules
+// refuse, is left alone and named in the log; an event a Git or state failure
+// stopped waits, like a head the head pass could not decide. A writer that
+// still holds the repository at deadline stops the repository: that event and
+// every later one wait, in order, and busy is true. A zero deadline tries once
+// without waiting.
+func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate, deadline time.Time) (undecided []pushUpdate, busy bool, failure error) {
 	events := make([]string, 0, len(facts))
 	for _, fact := range facts {
 		events = append(events, fact.ref+"@"+fact.oid)
 	}
 	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, events)
 	if err != nil {
-		if ctx.Err() == nil {
-			coordinator.log("configured check push admission for %s: %v", repositoryID, err)
+		if ctx.Err() != nil {
+			return facts, false, nil
 		}
-		coordinator.keepPushes(repositoryID, facts, true)
-		return true
+		return facts, false, err
 	}
-	var waiting []pushUpdate
-	var failure error
-	for _, fact := range facts {
+	for index, fact := range facts {
 		if seen[fact.ref+"@"+fact.oid] {
 			continue
 		}
@@ -485,30 +571,25 @@ func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, reposito
 			})
 			return admitErr
 		}
-		// The push that reported this update still holds the repository write
-		// lock while the handler returns, so the wait is expected and bounded
-		// like a job's source copy.
-		err := checksource.RetryWhileRepositoryBusy(ctx, repositoryBusyWait, admit)
+		// The push that reported this update usually still holds the repository
+		// write lock while its handler returns, so a short wait is expected.
+		err := checksource.RetryWhileRepositoryBusy(ctx, max(time.Until(deadline), 0), admit)
 		switch {
 		case err == nil:
 		case ctx.Err() != nil:
 			// The coordinator is stopping: the event stays in memory only.
-			waiting = append(waiting, fact)
+			undecided = append(undecided, fact)
+		case errors.Is(err, repository.ErrPinnedRepositoryBusy):
+			return append(undecided, facts[index:]...), true, repository.ErrPinnedRepositoryBusy
 		case decidedPushRefusal(err):
 			coordinator.log("configured check push %s %s at %s was not admitted: %v",
 				repositoryID, branchName(fact.ref), fact.oid, err)
 		default:
-			waiting = append(waiting, fact)
+			undecided = append(undecided, fact)
 			failure = err
 		}
 	}
-	if len(waiting) != 0 {
-		if failure != nil {
-			coordinator.log("configured check push %s keeps %d updates for a later attempt: %v", repositoryID, len(waiting), failure)
-		}
-		coordinator.keepPushes(repositoryID, waiting, true)
-	}
-	return len(waiting) != 0
+	return undecided, false, failure
 }
 
 // decidedPushRefusal reports whether the admission rules decided an event, so
