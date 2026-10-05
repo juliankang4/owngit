@@ -43,6 +43,7 @@ package hostmem
 import (
 	"bufio"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -80,19 +81,23 @@ func ceilingIn(root string) uint64 {
 		if len(fields) != 3 {
 			continue
 		}
+		// The path in every line of the file above is a Linux cgroup path, so
+		// clean it with the path package. filepath.Clean("//a") is the Windows
+		// UNC name \\a, whose Dir never moves up, and then the version 2 walk
+		// reads one file forever instead of reaching the root.
 		switch controllers := strings.Split(fields[1], ","); {
 		case fields[1] == "":
 			// Version 2: the limit may sit on any ancestor.
 			base := filepath.Join(root, "sys/fs/cgroup")
-			for path := filepath.Clean("/" + fields[2]); ; path = filepath.Dir(path) {
-				consider(readNumber(filepath.Join(base, path, "memory.max")))
-				if path == "/" {
+			for cgroup := path.Clean("/" + fields[2]); ; cgroup = path.Dir(cgroup) {
+				consider(readNumber(filepath.Join(base, cgroup, "memory.max")))
+				if cgroup == "/" {
 					break
 				}
 			}
 		case contains(controllers, "memory"):
 			base := filepath.Join(root, "sys/fs/cgroup/memory")
-			consider(readNumber(filepath.Join(base, filepath.Clean("/"+fields[2]), "memory.limit_in_bytes")))
+			consider(readNumber(filepath.Join(base, path.Clean("/"+fields[2]), "memory.limit_in_bytes")))
 			consider(readNumber(filepath.Join(base, "memory.limit_in_bytes")))
 		}
 	}
