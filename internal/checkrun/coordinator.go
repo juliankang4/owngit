@@ -940,7 +940,8 @@ func ReadPinnedWorkflow(ctx context.Context, pinned *repository.PinnedRepository
 	if errors.Is(err, repository.ErrPinnedPathNotFound) {
 		return blob, checkworkflow.Document{}, err
 	}
-	if errors.Is(err, repository.ErrPinnedUnsupportedObject) || errors.Is(err, repository.ErrPinnedOutputLimit) {
+	if errors.Is(err, repository.ErrPinnedUnsupportedObject) || errors.Is(err, repository.ErrPinnedOutputLimit) ||
+		errors.Is(err, repository.ErrPinnedBlobTooLarge) {
 		return blob, checkworkflow.Document{}, fmt.Errorf("%w: read configured check workflow: %w", errRevisionRejected, err)
 	}
 	if err != nil {

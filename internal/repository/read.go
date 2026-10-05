@@ -831,7 +831,8 @@ func (m *Manager) FileAt(ctx context.Context, id, commitOID, filePath string, li
 
 // BlobAt reads the file entry, as listed by TreeAt, by its object ID. A file
 // no larger than one cache entry is read whole and cached; the caller gets at
-// most limit bytes of it.
+// most limit bytes of it. A file above what one Git process may use here is
+// refused with TooLarge set and no content.
 func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit int64) (Blob, error) {
 	if !isOID(entry.OID) || entry.Type != "blob" {
 		return Blob{}, errFileNotFound
@@ -841,10 +842,11 @@ func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit 
 	}
 	// A file known to be larger than one Git process may use here is not
 	// read: Git would rebuild a large stored delta in memory before the
-	// output limit could stop it. With an unknown memory ceiling nothing is
-	// refused this way.
+	// output limit could stop it. The result says so explicitly instead of
+	// looking like an empty prefix. With an unknown memory ceiling nothing
+	// is refused this way.
 	if bound := m.Git.ReadBound(); bound > 0 && entry.Size > bound {
-		return Blob{Path: entry.Path, OID: entry.OID, Truncated: true}, nil
+		return Blob{Path: entry.Path, OID: entry.OID, TooLarge: true}, nil
 	}
 	// A whole file fits in the cache only when its listed size does; a
 	// larger one is read up to limit and not kept.

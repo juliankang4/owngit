@@ -405,6 +405,10 @@ type CheckFileView struct {
 	Events []string
 	// Problem is the parser's untranslated reason for refusing the file.
 	Problem string
+	// TooLarge is true when the file is present but above what this server
+	// can read into memory. The page then shows the same too-large notice as
+	// the file page instead of a parser reason.
+	TooLarge bool
 }
 
 // Found reports an accepted check file.

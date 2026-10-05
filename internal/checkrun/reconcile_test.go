@@ -15,6 +15,7 @@ import (
 
 	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -224,6 +225,34 @@ func TestInvalidWorkflowOnOneBranchDoesNotBlockLaterBranches(t *testing.T) {
 	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 2 {
 		t.Fatalf("admitted jobs after the fix=%v", refs)
+	}
+}
+
+// A checks file above the read bound is refused before Git reconstructs it,
+// and the refusal names that reason where other workflow refusals appear.
+func TestWorkflowAboveTheReadBoundIsRefusedWithItsReason(t *testing.T) {
+	saved := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	defer func() { hostmem.Ceiling = saved }()
+
+	fixture := newPushFixture(t, 4)
+	bound := fixture.coordinator.Repositories.Git.ReadBound()
+	if bound == 0 {
+		t.Fatal("the forced ceiling gave no read bound")
+	}
+	fixture.pushWorkflow("main", strings.Repeat("a", int(bound)+1))
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 0 {
+		t.Fatalf("admitted jobs for %v, want none", refs)
+	}
+	reported := false
+	for _, line := range fixture.logs {
+		if strings.Contains(line, "was not admitted") && strings.Contains(line, "above the server read bound") {
+			reported = true
+		}
+	}
+	if !reported {
+		t.Fatalf("the refusal reason is not in the log: %v", fixture.logs)
 	}
 }
 

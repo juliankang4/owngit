@@ -18,6 +18,7 @@ var (
 	ErrPinnedRepositoryChanged = errors.New("pinned repository storage changed")
 	ErrPinnedRepositoryBusy    = errors.New("pinned repository is busy")
 	ErrPinnedOutputLimit       = errors.New("pinned Git output exceeded its limit")
+	ErrPinnedBlobTooLarge      = errors.New("pinned Git blob is above the server read bound")
 	ErrPinnedUnsupportedObject = errors.New("pinned Git object type is unsupported")
 	ErrPinnedOffset            = errors.New("pinned blob offset is invalid")
 	// ErrPinnedPathNotFound reports that the exact commit has no requested
@@ -269,13 +270,19 @@ func (p *PinnedRepository) ListTreeRecursive(ctx context.Context, side PinnedSid
 // path lookup and follows no reference. It returns ErrPinnedObjectUnavailable
 // when Git produces a different byte count than the tree recorded, so a
 // truncated or replaced object cannot be mistaken for exact content. The blob
-// is held in memory, so callers bound size before calling.
+// is held in memory, so callers bound size before calling; a size above the
+// server read bound is refused with ErrPinnedBlobTooLarge before Git runs.
 func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size int64) ([]byte, error) {
 	if !isOID(oid) {
 		return nil, errors.New("invalid pinned blob ID")
 	}
 	if size < 0 || !validPinnedLimit(size+1) {
 		return nil, ErrPinnedOffset
+	}
+	// Git rebuilds a large stored delta in memory before the output limit
+	// can stop it, so a blob above the bound is refused before it is read.
+	if bound := p.manager.Git.ReadBound(); bound > 0 && size > bound {
+		return nil, ErrPinnedBlobTooLarge
 	}
 	var content []byte
 	err := p.withReadLock(ctx, func(repositoryPath string) error {
@@ -302,7 +309,8 @@ func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size 
 // OwnGit captures or returns. Git cat-file may still read and decompress the
 // complete blob while the runner drains output, so maxPrefix is not a Git I/O
 // or subprocess memory bound. The caller's context and runner timeout bound
-// operation time.
+// operation time. A listed size above the server read bound is refused with
+// ErrPinnedBlobTooLarge before Git runs.
 func (p *PinnedRepository) ReadBlob(ctx context.Context, side PinnedSide, filePath string, offset, metadataLimit, chunkLimit, maxPrefix int64) (PinnedBlobChunk, error) {
 	if err := ValidatePinnedPath(filePath, false); err != nil {
 		return PinnedBlobChunk{}, err
@@ -328,6 +336,11 @@ func (p *PinnedRepository) ReadBlob(ctx context.Context, side PinnedSide, filePa
 		}
 		if entry.Type != "blob" || entry.Size < 0 {
 			return errTreeEntryNotFound
+		}
+		// The same rule as the ordinary blob read: a listed size above the
+		// server read bound is refused before Git rebuilds the object.
+		if bound := p.manager.Git.ReadBound(); bound > 0 && entry.Size > bound {
+			return ErrPinnedBlobTooLarge
 		}
 		if offset > entry.Size {
 			return ErrPinnedOffset

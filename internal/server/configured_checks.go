@@ -529,6 +529,15 @@ func (app *App) runnerSourceBlob(writer http.ResponseWriter, request *http.Reque
 		err = errSourceBlobMismatch
 	}
 	if err != nil {
+		if errors.Is(err, repository.ErrPinnedBlobTooLarge) {
+			// The exact source is present, but this server cannot read the
+			// file without a Git process that may not fit in memory. Every
+			// retry would repeat the same read, so the runner is told the
+			// source does not satisfy the materialization bounds.
+			writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused",
+				"The exact source contains a file above the size this server can read.", nil)
+			return
+		}
 		writeAPIError(writer, unavailable(request, "configured check source blob read", err), "check_source_unavailable", "The authorized exact source blob is unavailable.", nil)
 		return
 	}

@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 
 	"owngit/internal/apiclient"
 	"owngit/internal/checkapi"
+	"owngit/internal/hostmem"
 	"owngit/internal/state"
 )
 
@@ -231,4 +234,73 @@ func mustJSON(t *testing.T, value any) string {
 	encoded, err := json.Marshal(value)
 	noErr(t, err)
 	return string(encoded)
+}
+
+// A runner source read of a file above the server read bound is refused before
+// Git reconstructs the object, with the stable refusal code the runner reports
+// as the job's reason. The same request for a small file is served unchanged.
+func TestRunnerSourceBlobAboveTheReadBoundIsRefused(t *testing.T) {
+	saved := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	defer func() { hostmem.Ceiling = saved }()
+
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	bound := fixture.app.Repositories.Git.ReadBound()
+	if bound == 0 {
+		t.Fatal("the forced ceiling gave no read bound")
+	}
+	apiRunGit(t, fixture.work, "checkout", "main")
+	noErr(t, os.WriteFile(filepath.Join(fixture.work, "big.txt"), []byte(strings.Repeat("x", int(bound)+1)), 0o600))
+	apiRunGit(t, fixture.work, "add", ".")
+	apiRunGit(t, fixture.work, "commit", "-m", "big file")
+	apiRunGit(t, fixture.work, "push", "-q", "origin", "HEAD:refs/heads/main")
+	commit := apiGitOutput(t, fixture.work, "rev-parse", "HEAD")
+	bigOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:big.txt")
+	smallOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:file.txt")
+
+	now := fixture.app.now()
+	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
+		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, now)
+	noErr(t, err)
+	_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
+	noErr(t, err)
+	_, token, created, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
+	if err != nil || !created {
+		t.Fatalf("issue runner token created=%v err=%v", created, err)
+	}
+	job, deduped, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
+		RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/main@" + commit,
+		SourceOID: commit, TriggerRef: "main", WorkflowDigest: strings.Repeat("b", 64),
+		Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
+	}, now)
+	if err != nil || deduped {
+		t.Fatalf("admit job deduped=%v err=%v", deduped, err)
+	}
+
+	server := serve(t, fixture.app.Handler())
+	serverURL, err := url.Parse(server.URL)
+	noErr(t, err)
+	runner := apiclient.NewBearer(serverURL, token)
+	content, err := runner.Do(ctx, http.MethodPost, "/api/v1/repositories/project/runner/claim", nil)
+	noErr(t, err)
+	var claimed checkapi.JobResponse
+	noErr(t, json.Unmarshal(content, &claimed))
+	if claimed.Job == nil || claimed.Job.ID != job.ID || claimed.Job.LeaseID == "" {
+		t.Fatalf("claim job=%+v", claimed.Job)
+	}
+	lease := claimed.Job.LeaseID
+	blobURL := func(path, oid string) string {
+		return "/api/v1/repositories/project/runner/jobs/" + job.ID + "/files/" + base64.RawURLEncoding.EncodeToString([]byte(path)) + "/" + oid
+	}
+	_, _, err = runner.GetBytes(ctx, blobURL("big.txt", bigOID), map[string]string{runnerLeaseHeader: lease}, bound+1)
+	requireAPIError(t, "source blob above the read bound", err, http.StatusUnprocessableEntity, "check_source_refused")
+
+	small, headers, err := runner.GetBytes(ctx, blobURL("file.txt", smallOID), map[string]string{runnerLeaseHeader: lease}, 1<<10)
+	if err != nil || string(small) != "base\n" || headers.Get("X-OwnGit-Blob-OID") != smallOID {
+		t.Fatalf("small source blob = %q oid=%q err=%v", small, headers.Get("X-OwnGit-Blob-OID"), err)
+	}
 }

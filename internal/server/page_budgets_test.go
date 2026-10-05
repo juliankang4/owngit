@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/hostmem"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -106,6 +108,63 @@ func TestByteLimitedLinePagesDoNotClaimTheWholeFileCount(t *testing.T) {
 	body, status = dashboardGET(t, &http.Client{}, server.URL+"/repositories/byte-limited/code?path=lines.txt&line=1050000")
 	if status != http.StatusBadRequest || strings.Contains(body, "This line is not in the file.") {
 		t.Fatalf("an unloaded line was claimed absent from the file: status=%d", status)
+	}
+}
+
+// A file above the memory bound of one Git read is shown as too large, not as
+// the beginning of a text file: no lines, no line address refusal, and no
+// download link even when the saved download limit would allow the download.
+func TestFileAboveTheReadBoundShowsOneTooLargeNotice(t *testing.T) {
+	saved := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	defer func() { hostmem.Ceiling = saved }()
+
+	app := newConfiguredApp(t)
+	// The download limit is raised above the bound, so only the read bound
+	// refuses a download the page must not offer.
+	limits := state.DefaultBrowseLimits
+	limits.RawBytes = state.MaximumRawBytes
+	noErr(t, app.Store.SavePolicies(context.Background(), state.PolicyChange{Browse: &limits}))
+	bound := app.Repositories.Git.ReadBound()
+	if bound == 0 {
+		t.Fatal("the forced ceiling gave no read bound")
+	}
+	seedRepository(t, app, "bound-page", map[string]string{
+		"big.txt":   strings.Repeat("x", int(bound)+1),
+		"small.txt": "small file\n",
+	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	server := serve(t, app.Handler())
+	client := &http.Client{}
+	base := server.URL + "/repositories/bound-page/code?ref=refs%2Fheads%2Fmain&path="
+	notice := browserText(webui.MsgCodeTooLarge)
+
+	body, status := dashboardGET(t, client, base+"big.txt")
+	if status != http.StatusOK || !strings.Contains(body, notice) || !strings.Contains(body, webui.Text(webui.LangKO, webui.MsgCodeTooLarge)) {
+		t.Fatalf("a file above the read bound: status=%d", status)
+	}
+	for _, unwanted := range []string{
+		"Only the beginning of this file is shown", "This file is not text", `class="codetable"`,
+		"larger than the raw file download limit", "/raw?", strings.Repeat("x", 64),
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("the too-large page contains %q", unwanted)
+		}
+	}
+	// A line address names no line, and the page still says the file is too
+	// large instead of refusing the address.
+	line, status := dashboardGET(t, client, base+"big.txt&line=5")
+	if status != http.StatusOK || !strings.Contains(line, notice) {
+		t.Fatalf("a line address to a too-large file: status=%d", status)
+	}
+	// The raw address is refused for the same reason, not by the saved limit.
+	raw := browserGET(t, client, server.URL+"/repositories/bound-page/raw?ref=refs%2Fheads%2Fmain&path=big.txt")
+	if raw.status != http.StatusForbidden || !strings.Contains(raw.body, notice) || strings.Contains(raw.body, "raw file download limit") {
+		t.Fatalf("raw download of a too-large file: status=%d", raw.status)
+	}
+	// A small file is unchanged.
+	small, status := dashboardGET(t, client, base+"small.txt")
+	if status != http.StatusOK || !strings.Contains(small, "small file") || !strings.Contains(small, "/raw?") || strings.Contains(small, notice) {
+		t.Fatalf("the small control file changed: status=%d", status)
 	}
 }
 

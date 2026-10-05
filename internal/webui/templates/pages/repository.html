@@ -227,7 +227,7 @@
     {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
     {{with $f}}
     <div class="codebar__tools">
-      {{if not .Binary}}<span class="codebar__fact">{{$lines := .Continuation.Total}}{{if not $lines}}{{$lines = len .Lines}}{{end}}{{if .Truncated}}{{biN $lang "code.loaded_lines" $lines}}{{else}}{{biCount $lang "line" $lines}}{{end}}</span>{{end}}
+      {{if and (not .Binary) (not .TooLarge)}}<span class="codebar__fact">{{$lines := .Continuation.Total}}{{if not $lines}}{{$lines = len .Lines}}{{end}}{{if .Truncated}}{{biN $lang "code.loaded_lines" $lines}}{{else}}{{biCount $lang "line" $lines}}{{end}}</span>{{end}}
       {{if and .Image .ImageWidth}}<span class="codebar__fact">{{.ImageWidth}} &times; {{.ImageHeight}} px</span>{{end}}
       <span class="codebar__fact">{{bytes .Size}}</span>
       {{/* The source view renders nothing, so it offers the switch unless the
@@ -238,7 +238,7 @@
         <a class="seg__btn" href="{{.SourceURL}}"{{if .ShowSource}} aria-current="true"{{end}}>{{bi $lang "code.source"}}</a>
       </nav>
       {{end}}
-      {{if and (not .Binary) (or (not .Document) .ShowSource (not .Rendered))}}
+      {{if and (not .Binary) (not .TooLarge) (or (not .Document) .ShowSource (not .Rendered))}}
       <button type="button" class="seg__btn seg__btn--solo" data-wrap-toggle aria-pressed="false" hidden>{{icon "wrap"}}<span>{{bi $lang "code.wrap"}}</span></button>
       {{end}}
       {{if not .RawTooLarge}}{{with .RawURL}}<a class="codebar__link" href="{{.}}">{{if $f.RawCurrentRef}}{{bi $lang "code.raw_current_ref"}}{{else}}{{bi $lang "code.raw_link"}}{{end}}</a>{{end}}{{end}}
@@ -260,7 +260,12 @@
     </div>
   {{else if $f}}
     {{with $f}}
-    {{if .Image}}
+    {{if .TooLarge}}
+      {{/* The read was refused before Git ran, so there are no lines to
+           show. Only this notice is shown: the file is not a text prefix
+           and its kind is unknown. */}}
+      <p class="hm__note">{{bi $lang "code.too_large"}}</p>
+    {{else if .Image}}
       {{/* A raster picture loads through the raw endpoint, which sends it as
            an attachment with a sandboxing policy. An img element never runs
            script, and SVG is never marked as an image here. The size keeps
@@ -295,7 +300,7 @@
       {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
     {{end}}
-    {{if .RawTooLarge}}<p class="hm__note">{{bi $lang "code.raw_too_large"}}</p>{{end}}
+    {{if and .RawTooLarge (not .TooLarge)}}<p class="hm__note">{{bi $lang "code.raw_too_large"}}</p>{{end}}
     {{end}}
   {{else}}
     {{/* A folder: its listing between its page links, then its README. */}}

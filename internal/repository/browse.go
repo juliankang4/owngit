@@ -35,11 +35,16 @@ type TreeEntry struct {
 }
 
 type Blob struct {
-	Path      string
-	OID       string
-	Content   []byte
-	Binary    bool
+	Path    string
+	OID     string
+	Content []byte
+	Binary  bool
+	// Truncated is true when a longer file was cut at the read limit.
 	Truncated bool
+	// TooLarge is true when a known memory bound refused the read before
+	// Git ran. The result has no content and is not a prefix, so callers
+	// show their own too-large state instead of an empty file.
+	TooLarge bool
 }
 
 const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b"

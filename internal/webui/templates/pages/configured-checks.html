@@ -163,6 +163,7 @@
           {{template "stateChip" dict "Lang" $lang "S" (checkFileState .)}}
           {{if .Branch}}<span class="mono ccstatus__sub" dir="auto">{{.Branch}}</span>{{end}}
           {{if .Found}}<span class="ccstatus__sub">{{checkFileCount $lang .Checks}}</span>{{end}}
+          {{if .TooLarge}}<span class="ccstatus__problem">{{bi $lang "code.too_large"}}</span>{{end}}
           {{with .Problem}}<span class="ccstatus__problem mono">{{.}}</span>{{end}}
         </dd>
       </div>

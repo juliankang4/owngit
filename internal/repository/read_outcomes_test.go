@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 )
 
 // readOutcomeRepository is a repository of the given object format with a
@@ -242,30 +243,46 @@ func TestRestoreSourceLookupFailureIsNotInvalid(t *testing.T) {
 	}
 }
 
-// A file above what one Git process may use is refused as too large without
-// running Git, which would rebuild a large stored delta in memory; below that
-// bound, or with an unknown memory ceiling, the read is as before and shows
-// the prefix within the display limit.
+// A file above what one Git process may use is refused with an explicit
+// too-large state and without running Git, which would rebuild a large stored
+// delta in memory; below that bound, or with an unknown memory ceiling, the
+// read is as before and shows the prefix within the display limit. The
+// ceiling is forced so the refusal runs on every platform.
 func TestBlobAboveTheMemoryBoundIsRefusedWithoutRunningGit(t *testing.T) {
 	requirePOSIX(t)
+	saved := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	defer func() { hostmem.Ceiling = saved }()
+
 	manager, _, work := newTestRepository(t)
 	commit := commitTree(t, manager, work, "main", map[string]string{"f.txt": strings.Repeat("x", 3000)})
 	entries, err := manager.TreeAt(context.Background(), "sample", commit, "")
 	noErr(t, err)
 	entry := entries[0]
-	prefix, err := manager.BlobAt(context.Background(), "sample", entry, 1000)
-	if err != nil || len(prefix.Content) != 1000 || !prefix.Truncated {
-		t.Fatalf("prefix view = %d bytes truncated=%v err=%v; want 1000 bytes, truncated", len(prefix.Content), prefix.Truncated, err)
-	}
 	bound := manager.Git.ReadBound()
 	if bound == 0 {
-		return // unknown ceiling: no pre-check exists
+		t.Fatal("the forced ceiling gave no read bound")
+	}
+	prefix, err := manager.BlobAt(context.Background(), "sample", entry, 1000)
+	if err != nil || len(prefix.Content) != 1000 || !prefix.Truncated || prefix.TooLarge {
+		t.Fatalf("prefix view = %d bytes truncated=%v tooLarge=%v err=%v; want 1000 bytes, truncated",
+			len(prefix.Content), prefix.Truncated, prefix.TooLarge, err)
 	}
 	count, _, _ := countGitProcesses(t, manager, "*")
 	before := count()
-	entry.Size = bound + 1
-	blob, err := manager.BlobAt(context.Background(), "sample", entry, 1000)
-	if err != nil || !blob.Truncated || len(blob.Content) != 0 || count() != before {
-		t.Fatalf("blob = %d bytes truncated=%v err=%v, git runs %d; want truncated, empty, no Git", len(blob.Content), blob.Truncated, err, count()-before)
+	large := entry
+	large.Size = bound + 1
+	blob, err := manager.BlobAt(context.Background(), "sample", large, 1000)
+	if err != nil || !blob.TooLarge || blob.Truncated || len(blob.Content) != 0 || count() != before {
+		t.Fatalf("blob = %d bytes truncated=%v tooLarge=%v err=%v, git runs %d; want too large, empty, no Git",
+			len(blob.Content), blob.Truncated, blob.TooLarge, err, count()-before)
+	}
+	// An unknown ceiling cannot be compared, so the large listed size is read
+	// and cut at the display limit as before.
+	hostmem.Ceiling = func() uint64 { return 0 }
+	blob, err = manager.BlobAt(context.Background(), "sample", large, 1000)
+	if err != nil || blob.TooLarge || !blob.Truncated || len(blob.Content) != 1000 {
+		t.Fatalf("unknown ceiling: %d bytes truncated=%v tooLarge=%v err=%v; want the 1000 byte prefix",
+			len(blob.Content), blob.Truncated, blob.TooLarge, err)
 	}
 }

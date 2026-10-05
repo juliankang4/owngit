@@ -1091,6 +1091,10 @@ type FileView struct {
 	Binary bool
 	// Truncated is true when only the first Lines were loaded.
 	Truncated bool
+	// TooLarge is true when the file is above what this server can read into
+	// memory. The page then shows one notice instead of lines, a kind guess
+	// or a download link.
+	TooLarge bool
 	// RawURL downloads the file. Empty when the backend does not offer it.
 	RawURL string
 	// RawCurrentRef distinguishes a moving-ref download from a pinned page.

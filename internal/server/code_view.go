@@ -97,7 +97,7 @@ func (app *App) folderReadme(request *http.Request, repo webui.RepositoryHeader,
 	if blob.Binary {
 		return nil
 	}
-	if blob.Truncated {
+	if blob.Truncated || blob.TooLarge {
 		return view
 	}
 	rendered, reason := app.renderMarkdown(request.Context(), repo.URL, ref, dir, blob.Content)
@@ -217,6 +217,13 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 		}
 		writer.Header().Set("Retry-After", "10")
 		app.renderError(writer, request, unavailable(request, "file read", err), webui.MsgErrUnavailable, "")
+		return
+	}
+	if blob.TooLarge {
+		// The file view never links here, so this answers an address kept from
+		// before or typed by hand. The download is refused because the server
+		// cannot read the file, not by the saved download limit.
+		app.renderError(writer, request, http.StatusForbidden, webui.MsgCodeTooLarge, "")
 		return
 	}
 	if blob.Truncated {

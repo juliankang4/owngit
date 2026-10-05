@@ -571,6 +571,11 @@ func (app *App) browserCheckFile(request *http.Request, repositoryID string, sum
 	case errors.Is(err, repository.ErrPinnedPathNotFound):
 		view.State = webui.CheckFileMissing
 		return view
+	case errors.Is(err, repository.ErrPinnedBlobTooLarge):
+		// The file is present but this server cannot read it, so it is
+		// refused with the same notice as the file page.
+		view.State, view.TooLarge = webui.CheckFileInvalid, true
+		return view
 	case errors.Is(err, repository.ErrPinnedUnsupportedObject), errors.Is(err, repository.ErrPinnedOutputLimit):
 		view.State, view.Problem = webui.CheckFileInvalid, err.Error()
 		return view

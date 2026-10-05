@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/hostmem"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 	"owngit/internal/webui"
@@ -1404,6 +1405,12 @@ func TestBrowserNewPolicyStartsFromWorkingValuesAndStatesDefaults(t *testing.T) 
 }
 
 func TestBrowserCheckFileStatusReadsTheDefaultBranch(t *testing.T) {
+	// A known ceiling makes the read bound real, so a check file above it is
+	// refused on every platform.
+	saved := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	defer func() { hostmem.Ceiling = saved }()
+
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
 	browserAdminSessionFor(t, fixture, server.URL, jar, "cc-file")
@@ -1437,6 +1444,22 @@ func TestBrowserCheckFileStatusReadsTheDefaultBranch(t *testing.T) {
 	}
 	if !regexp.MustCompile(`class="ccstatus__problem mono">[^<]*version`).MatchString(invalid.body) {
 		t.Fatal("the parser's reason is not shown")
+	}
+
+	// A check file above the read bound is refused with the file page's
+	// too-large notice, not with the parser's reason and not as a missing or
+	// unreadable file.
+	bound := fixture.app.Repositories.Git.ReadBound()
+	if bound == 0 {
+		t.Fatal("the forced ceiling gave no read bound")
+	}
+	push(strings.Repeat("a", int(bound)+1))
+	above := browserGET(t, client, policyURL)
+	if !strings.Contains(above.body, browserText(webui.MsgCodeTooLarge)) || !strings.Contains(above.body, browserText(webui.MsgCCFileInvalid)) {
+		t.Fatal("a check file above the read bound is not reported as too large")
+	}
+	if strings.Contains(above.body, "regular file of at most 64 KiB") {
+		t.Fatal("a check file above the read bound is reported as a size rule, not as a read refusal")
 	}
 }
 

@@ -1195,7 +1195,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snap
 			parent = ""
 		}
 		file := &webui.FileView{
-			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
+			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated, TooLarge: blob.TooLarge,
 			RawURL:     rawURL(page.Repo.URL, selectedRef, requestedPath),
 			RestoreURL: ownerRestoreURL(page, commitOID, target, requestedPath),
 		}
@@ -1213,7 +1213,7 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snap
 		}
 		fileAddress := pinnedPageURL(codeURL(page.Repo.URL, selectedRef, requestedPath), commitOID, blob.OID)
 		firstAddress := fileAddress
-		if !binary {
+		if !binary && !blob.TooLarge {
 			file.Lines, file.Continuation.Total = sourceLinePage(blob.Content, pagination.First)
 			file.FirstLine = pagination.First
 			file.LineURL = fileAddress
@@ -1224,10 +1224,14 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snap
 			file.Continuation = lineContinuation(file.LineURL, pagination.First, len(file.Lines), file.Continuation.Total)
 			file.Continuation.Incomplete = blob.Truncated
 		}
-		if err := pagination.check(file.Continuation.Total, blob.Truncated, firstAddress); err != nil {
-			return err
+		// A refused read has no lines, so a line or continuation address adds
+		// nothing and is answered with the same notice instead of an error.
+		if !blob.TooLarge {
+			if err := pagination.check(file.Continuation.Total, blob.Truncated, firstAddress); err != nil {
+				return err
+			}
 		}
-		if !binary && markdown.IsDocument(requestedPath) {
+		if !binary && !blob.TooLarge && markdown.IsDocument(requestedPath) {
 			file.Document = true
 			file.ShowSource = address.View == "source" || pagination.Line != 0 || pagination.From != 0
 			file.PreviewURL = fileAddress
@@ -1246,7 +1250,10 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snap
 		if parent != "" {
 			view.UpURL = codeURL(page.Repo.URL, selectedRef, path.Dir(parent))
 		}
-		file.RawTooLarge = file.Size > limits.RawBytes
+		// A download the raw endpoint would refuse is not offered: the saved
+		// download limit and the server read bound both bound it. A refused
+		// read is never served as a download, whatever the saved limit is.
+		file.RawTooLarge = file.Size > limits.RawBytes || blob.TooLarge
 		// A picture loads through the raw endpoint, so it is shown only
 		// when that endpoint would serve it.
 		if binary && !file.RawTooLarge && !file.RawCurrentRef && file.RawURL != "" {
