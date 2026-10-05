@@ -352,18 +352,18 @@ func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, reposito
 			RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
 			EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, TriggerRef: branchName(fact.ref),
 		})
-		switch {
-		case err == nil:
-		case errors.Is(err, repository.ErrPinnedRepositoryBusy):
-			// A push still holds the repository. The event waits for a later
-			// pass instead of delaying or failing anything.
-			waiting = append(waiting, fact)
-		case ctx.Err() != nil:
-			waiting = append(waiting, fact)
-		default:
-			coordinator.log("configured check push %s %s at %s was not admitted: %v",
-				repositoryID, branchName(fact.ref), fact.oid, err)
+		if err == nil {
+			continue
 		}
+		if errors.Is(err, repository.ErrPinnedRepositoryBusy) || ctx.Err() != nil {
+			// A push still holds the repository, or the coordinator is stopping:
+			// the event waits for a later pass instead of delaying or failing
+			// anything.
+			waiting = append(waiting, fact)
+			continue
+		}
+		coordinator.log("configured check push %s %s at %s was not admitted: %v",
+			repositoryID, branchName(fact.ref), fact.oid, err)
 	}
 	coordinator.keepPushes(repositoryID, waiting)
 }
