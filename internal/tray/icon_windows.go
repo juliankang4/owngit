@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"path/filepath"
 	"reflect"
@@ -48,18 +49,152 @@ const (
 	idHide        = 13
 	idQuit        = 14
 	idNotify      = 15
+	// idBalloon is the timer that ends a pending balloon or a displayed one.
+	idBalloon = 16
 	// The notification settings menu's items are idSetting and after.
 	idSetting = 200
 	idEdit    = 100
 )
 
 // Events of a notification area balloon (shellapi.h). The balloon is gone when
-// Windows reports it dismissed, timed out or replaced, and the page kept for it
-// is then no longer the one a click belongs to.
+// Windows reports it dismissed or timed out, and the page kept for it is then
+// no longer the one a click belongs to.
 const (
+	ninBalloonShow    = 0x0402
 	ninBalloonHide    = 0x0403
 	ninBalloonTimeout = 0x0404
 )
+
+// balloonMargin is added to the owner's notification display time before the
+// icon removes a balloon that Windows still shows, so Windows ends a balloon
+// itself whenever it reports the end. balloonFallback is used only when the
+// display time cannot be read.
+const (
+	balloonMargin   = 5 * time.Second
+	balloonFallback = 10 * time.Second
+)
+
+// balloonLife is how long the icon lets a balloon stay: the display time of
+// the owner's accessibility setting (SPI_GETMESSAGEDURATION, in seconds) plus
+// balloonMargin. Windows 11 may keep a balloon for minutes without reporting a
+// timeout, and a balloon that stays hides the ones after it.
+func balloonLife(seconds uint32, ok bool) time.Duration {
+	if !ok || seconds == 0 {
+		return balloonFallback + balloonMargin
+	}
+	return time.Duration(seconds)*time.Second + balloonMargin
+}
+
+// messageDuration reads the owner's notification display time.
+func messageDuration() time.Duration {
+	var seconds uint32
+	ok := call(procSystemParametersInfo, spiGetMessageDuration, 0, uintptr(unsafe.Pointer(&seconds)), 0) != 0
+	return balloonLife(seconds, ok)
+}
+
+// balloonNoShow is how long a balloon that Windows took may wait for its
+// NIN_BALLOONSHOW, for example behind another application's notification,
+// before the icon gives it up. It is separate from the display time, which
+// starts at the balloon's own SHOW. Do not disturb may never show it.
+const balloonNoShow = 30 * time.Second
+
+// balloonDrain is the fixed time after every end of a balloon during which
+// Windows may still send callbacks of it, and the retry time after a failure.
+const balloonDrain = 2 * time.Second
+
+type balloonPhase int
+
+const (
+	balloonIdle     balloonPhase = iota
+	balloonPending               // handed to Windows, SHOW not reported yet
+	balloonShown                 // on screen, with its display time
+	balloonDraining              // ended, the drain runs
+)
+
+// balloonState is the icon's rule for balloons. Windows callbacks carry no
+// balloon identity, so at most one balloon is active (pending or shown) and
+// every end of it goes through the same drain: removal for a replacement,
+// expiry, the pending timeout and the Windows events hide, timeout and click
+// all start a drain of balloonDrain. During the drain every callback is
+// ignored except a click, which opens the ended balloon's page once. The next
+// notification waits in a one-slot queue (a newer one replaces it) and is
+// handed over when the drain has ended, so every callback while a balloon is
+// active is that balloon's. The display time starts at SHOW, and balloonPending
+// bounds a balloon that never shows (Focus, Do not disturb). deadline ends the
+// current phase; a timer message before it is a stale one.
+type balloonState struct {
+	phase    balloonPhase
+	pages    clickPages
+	queued   *server.TrayNotification
+	deadline time.Time
+	// failing is true after a failed removal or hand over, until one works,
+	// so a streak of failures logs once.
+	failing bool
+	// timerFailing is the same for the balloon timer.
+	timerFailing bool
+}
+
+func (s *balloonState) active() bool { return s.phase == balloonPending || s.phase == balloonShown }
+
+// queue holds notification for the hand over, replacing an older one.
+func (s *balloonState) queue(notification server.TrayNotification) { s.queued = &notification }
+
+// hand records the queued notification as handed to Windows.
+func (s *balloonState) hand(now time.Time) {
+	s.pages.add(*s.queued)
+	s.queued = nil
+	s.phase, s.deadline = balloonPending, now.Add(balloonNoShow)
+}
+
+// reported handles NIN_BALLOONSHOW of the pending balloon.
+func (s *balloonState) reported(now time.Time, life time.Duration) bool {
+	if s.phase != balloonPending {
+		return false
+	}
+	s.phase, s.deadline = balloonShown, now.Add(life)
+	return true
+}
+
+// end starts the drain of the active balloon; its page stays for a click.
+func (s *balloonState) end(now time.Time) {
+	if s.active() {
+		s.phase, s.deadline = balloonDraining, now.Add(balloonDrain)
+	}
+}
+
+// click returns the page of the clicked balloon, and ends it if it is active.
+func (s *balloonState) click(now time.Time) string {
+	if s.phase == balloonIdle {
+		return ""
+	}
+	s.end(now)
+	return s.pages.clicked()
+}
+
+// finishDrain ends the drain.
+func (s *balloonState) finishDrain() {
+	s.pages.gone()
+	s.phase, s.deadline = balloonIdle, time.Time{}
+}
+
+// retry schedules the next try after a failure and says whether it is the
+// first of a streak, which is the one to log.
+func (s *balloonState) retry(now time.Time) (first bool) {
+	first = !s.failing
+	s.failing, s.deadline = true, now.Add(balloonDrain)
+	return first
+}
+
+// wait is the time to the deadline, at least a millisecond, which Windows
+// takes as the timer period.
+func (s *balloonState) wait(now time.Time) time.Duration {
+	return max(s.deadline.Sub(now), time.Millisecond)
+}
+
+// due says whether the deadline has passed.
+func (s *balloonState) due(now time.Time) bool {
+	return !s.deadline.IsZero() && !now.Before(s.deadline)
+}
 
 // palette holds the panel's colors (COLORREF).
 type palette struct {
@@ -100,10 +235,7 @@ type app struct {
 	// address; openTarget is the proven address, or "".
 	opening    bool
 	openTarget string
-	// clicked holds the balloons the icon handed to Windows and the pages a
-	// click on them opens. Windows says only that one of the icon's balloons
-	// was clicked, not which one.
-	clicked clickPages
+	balloon    balloonState
 }
 
 type panelControls struct {
@@ -333,11 +465,20 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 		case wmContextMenu:
 			a.togglePanel()
 		case ninBalloonClick:
-			if page := a.clicked.clicked(); page != "" {
+			now := time.Now()
+			page := a.balloon.click(now)
+			a.settle(now, false)
+			if page != "" {
 				a.openPage(page)
 			}
+		case ninBalloonShow:
+			now := time.Now()
+			a.balloon.reported(now, messageDuration())
+			a.settle(now, false)
 		case ninBalloonHide, ninBalloonTimeout:
-			a.clicked.gone()
+			now := time.Now()
+			a.balloon.end(now)
+			a.settle(now, false)
 		}
 		return 0
 	case wmCommand:
@@ -349,6 +490,21 @@ func (a *app) handle(hwnd uintptr, msg uint32, wParam, lParam uintptr) uintptr {
 			return 0
 		}
 	case wmTimer:
+		if wParam == idBalloon {
+			// A timer message of an earlier balloon can arrive after the
+			// timer was reset; the deadline of the current one rules.
+			if now := time.Now(); a.balloon.due(now) {
+				if a.balloon.phase == balloonDraining {
+					a.balloon.finishDrain()
+				}
+				a.settle(now, true)
+			} else {
+				// An early tick of the repeating timer: arm it for the time
+				// left, or the deadline slips by one period.
+				a.armBalloon(now)
+			}
+			return 0
+		}
 		call(procKillTimer, hwnd, wParam)
 		switch wParam {
 		case idCopyCommand:
@@ -623,13 +779,87 @@ func (a *app) showBalloon(notification server.TrayNotification) error {
 	return nil
 }
 
-// notify shows notification as the icon's notification, which Windows
-// shows as a toast, and keeps its page for a click (see clickPages). Its
-// title and text are cut to the lengths Windows takes.
+// clearBalloon removes the balloon on screen: a notification with empty text
+// ends the one shown (Shell_NotifyIcon, NIF_INFO). It says whether Windows
+// took the request.
+func (a *app) clearBalloon() bool {
+	data := a.iconData()
+	data.flags = nifInfo
+	return call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) != 0
+}
+
+// settle applies the balloon rule after an event: it removes the active
+// balloon when a notification waits or expired is true, hands the queued
+// notification over when the balloon before it is fully ended, and sets the
+// timer for the deadline. A failure keeps the notification queued and retries
+// on the next tick.
+func (a *app) settle(now time.Time, expired bool) {
+	s := &a.balloon
+	switch {
+	case s.active() && (s.queued != nil || expired && s.due(now)):
+		if a.clearBalloon() {
+			s.failing = false
+			s.end(now)
+		} else {
+			a.failed(now, "remove a notification balloon")
+		}
+	case s.phase == balloonIdle && s.queued != nil:
+		// The timer runs before the hand over, so a balloon always has its
+		// bound; without a timer the notification stays queued.
+		if !a.setTimer(balloonNoShow) {
+			break
+		}
+		if a.handOver(s.queued) {
+			s.failing = false
+			s.hand(now)
+		} else {
+			a.failed(now, "show a notification balloon")
+		}
+	}
+	a.armBalloon(now)
+}
+
+func (a *app) failed(now time.Time, what string) {
+	if a.balloon.retry(now) {
+		log.Printf("OwnGit icon could not %s; it tries again", what)
+	}
+}
+
+// armBalloon runs the timer for the balloon's deadline, or stops it.
+func (a *app) armBalloon(now time.Time) {
+	if a.balloon.deadline.IsZero() {
+		call(procKillTimer, a.hwnd, idBalloon)
+		return
+	}
+	a.setTimer(a.balloon.wait(now))
+}
+
+// setTimer starts the balloon timer and says whether Windows created it. The
+// first failure of a streak is logged.
+func (a *app) setTimer(d time.Duration) bool {
+	ok := call(procSetTimer, a.hwnd, idBalloon, uintptr(d/time.Millisecond), 0) != 0
+	if !ok && !a.balloon.timerFailing {
+		log.Printf("OwnGit icon could not start the notification balloon timer")
+	}
+	a.balloon.timerFailing = !ok
+	return ok
+}
+
+// notify queues notification as the icon's balloon (see balloonState). It
+// replaces the notification queued before it. It says false when the balloon
+// timer cannot run, so the feed offers the notification again.
 func (a *app) notify(notification *server.TrayNotification) bool {
 	if !a.iconAdded {
 		return false
 	}
+	a.balloon.queue(*notification)
+	a.settle(time.Now(), false)
+	return !a.balloon.timerFailing
+}
+
+// handOver gives notification to Windows as a balloon. Its title and text are
+// cut to the lengths Windows takes.
+func (a *app) handOver(notification *server.TrayNotification) bool {
 	data := a.iconData()
 	// Windows applies its own notification settings: with Do not disturb
 	// on it shows nothing, and it does not keep the notification in the
@@ -640,11 +870,7 @@ func (a *app) notify(notification *server.TrayNotification) bool {
 	body16, _ := windows.UTF16FromString(body)
 	copy(data.infoTitle[:len(data.infoTitle)-1], title16)
 	copy(data.info[:len(data.info)-1], body16)
-	if call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) == 0 {
-		return false
-	}
-	a.clicked.add(*notification)
-	return true
+	return call(procShellNotifyIcon, nimModify, uintptr(unsafe.Pointer(&data))) != 0
 }
 
 // copy puts text on the clipboard and says on the button whether it did.
