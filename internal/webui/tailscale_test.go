@@ -40,7 +40,7 @@ func TestTailscaleBlockSaysWhatSharingDoes(t *testing.T) {
 
 		on := render(t, r, allPages(lang)["settings-tailscale"])
 		for _, want := range []string{
-			text(MsgTSWaiting), text(MsgTSAddress), text(MsgTSOffNote), text(MsgTSChanged),
+			text(MsgTSWaiting), text(MsgTSAddress), text(MsgTSOffNote), text(MsgTSOffUnready), text(MsgTSChanged),
 			text(TailscaleProblemCode("logged_out")), text(TailscaleWaitCode("restart")), text(TailscaleWaitCode("endpoint")),
 			`id="ts-url"`, `value="https://owngit.tail0000.ts.net/"`, `data-copy="ts-url"`, "https://owngit.tail0000.ts.net/git/project.git",
 			"https://owngit.tail0000.ts.net:443/ to http://localhost:3000", `name="action" value="save_tailscale"`,

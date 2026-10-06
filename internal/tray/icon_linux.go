@@ -11,10 +11,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync/atomic"
 	"time"
 
 	"owngit/internal/bootstrap"
@@ -47,7 +47,7 @@ var ErrUnsafeToolkit = errors.New("the OwnGit icon does not start gjs")
 // IconProblem says why the icon cannot show on this computer, or "" when it
 // can: gjs must be on PATH, safe from other accounts, and load GTK 4.
 func IconProblem() string {
-	if _, err := toolkit(); err != nil {
+	if _, err := toolkit(context.Background()); err != nil {
 		return err.Error()
 	}
 	return ""
@@ -56,8 +56,10 @@ func IconProblem() string {
 // toolkit finds gjs on PATH and checks that it loads GTK 4. It returns the
 // file the links lead to, and runs nothing that another account could
 // change: that file and every folder and link on the way to it must pass
-// state.RequireProtectedPath, as the system's /usr/bin/gjs does.
-func toolkit() (string, error) {
+// state.RequireProtectedPath, as the system's /usr/bin/gjs does. The check
+// ends at 30 seconds, and when parent ends, which it reports as parent's
+// error.
+func toolkit(parent context.Context) (string, error) {
 	found, err := exec.LookPath("gjs")
 	if err != nil {
 		return "", ErrNoToolkit
@@ -66,9 +68,12 @@ func toolkit() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 	if err := exec.CommandContext(ctx, gjs, "-c", toolkitCheck).Run(); err != nil {
+		if parent.Err() != nil {
+			return "", parent.Err()
+		}
 		return "", ErrNoToolkit
 	}
 	return gjs, nil
@@ -157,9 +162,11 @@ const pagesKept = 100
 // program ends, and ended then holds why.
 type panelProcess struct {
 	command  *exec.Cmd
-	input    io.WriteCloser
+	input    *os.File
 	messages chan panelMessage
 	ended    chan error
+	// writeErr is the first failure to write to the program, which ends it.
+	writeErr atomic.Pointer[error]
 }
 
 type linuxIcon struct {
@@ -173,7 +180,20 @@ type linuxIcon struct {
 // ErrNoToolkit when gjs or GTK 4 is missing, and ErrUnsafeToolkit when
 // another account could replace gjs.
 func Run(options Options) error {
-	gjs, err := toolkit()
+	// Stop cancels everything below, including the toolkit check.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-options.Stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	gjs, err := toolkit(ctx)
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -182,8 +202,6 @@ func Run(options Options) error {
 		return fmt.Errorf("start the OwnGit icon: %w", err)
 	}
 	icon := &linuxIcon{poller: newPoller(options, DesktopLanguage()), icons: icons}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	requests := make(chan notifyRequest)
 	icon.notifier.show = func(notifications []server.TrayNotification) (int, error) {
 		for shown, notification := range notifications {
@@ -235,16 +253,20 @@ func Run(options Options) error {
 				continue
 			}
 			if current == nil {
-				if current, err = icon.startPanel(gjs); err != nil {
+				if current, err = icon.startPanel(gjs, options.Stop); err != nil {
+					if errors.Is(err, errPanelStopped) {
+						return nil
+					}
 					return err
 				}
 			}
 			current.send(icon.stateMessage(next.report, next.unavailable, false))
 		case message, ok := <-messages:
 			if !ok {
-				err := <-current.ended
+				err := fmt.Errorf("the OwnGit icon's panel program ended: %w", <-current.ended)
 				current = nil
-				return fmt.Errorf("the OwnGit icon's panel program ended: %w", err)
+				failPending(err)
+				return err
 			}
 			switch message.Type {
 			case "notified":
@@ -351,20 +373,39 @@ func (icon *linuxIcon) stateMessage(report Report, unavailable string, open bool
 	return panelMessage{Type: "state", Icon: "owngit-" + name + "-symbolic", Symbol: "owngit-state-" + name + "-symbolic", Panel: &panel, Notifications: &notifications, Open: open}
 }
 
+// panelStartTimeout bounds the wait for the panel program's first message.
+// A desktop session that does not answer would otherwise hold the icon
+// forever.
+const panelStartTimeout = 30 * time.Second
+
+// panelWriteTimeout bounds one write to the panel program, which a program
+// that stopped reading would otherwise block.
+const panelWriteTimeout = 5 * time.Second
+
+// errPanelStopped is returned by startPanel when stop closed while it waited.
+var errPanelStopped = errors.New("the OwnGit icon was stopped while it started")
+
 // startPanel starts the panel program and waits until its item is on the
-// session bus.
-func (icon *linuxIcon) startPanel(gjs string) (*panelProcess, error) {
+// session bus, until panelStartTimeout, or until stop closes. The program
+// it started is ended when it does not get that far.
+func (icon *linuxIcon) startPanel(gjs string, stop <-chan struct{}) (*panelProcess, error) {
 	command := exec.Command(gjs, "-c", panelProgram)
 	command.Stderr = os.Stderr
-	input, err := command.StdinPipe()
+	read, input, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
+	command.Stdin = read
 	output, err := command.StdoutPipe()
 	if err != nil {
+		read.Close()
+		input.Close()
 		return nil, err
 	}
-	if err := command.Start(); err != nil {
+	err = command.Start()
+	read.Close()
+	if err != nil {
+		input.Close()
 		return nil, fmt.Errorf("start the OwnGit icon's panel program: %w", err)
 	}
 	process := &panelProcess{command: command, input: input, messages: make(chan panelMessage), ended: make(chan error, 1)}
@@ -377,15 +418,31 @@ func (icon *linuxIcon) startPanel(gjs string) (*panelProcess, error) {
 			}
 		}
 		err := command.Wait()
+		input.Close()
 		if err == nil {
 			err = errors.New("it closed")
+		}
+		if failure := process.writeErr.Load(); failure != nil {
+			err = fmt.Errorf("a message to it could not be written (%w), so OwnGit ended it: %w", *failure, err)
 		}
 		process.ended <- err
 		close(process.messages)
 	}()
 	sum := sha256.Sum256([]byte(icon.stateDir))
 	process.send(panelMessage{Type: "init", Name: "app.owngit.Icon.S" + hex.EncodeToString(sum[:8]), Icons: icon.icons})
-	first, ok := <-process.messages
+	timeout := time.NewTimer(panelStartTimeout)
+	defer timeout.Stop()
+	var first panelMessage
+	var ok bool
+	select {
+	case first, ok = <-process.messages:
+	case <-stop:
+		process.stop()
+		return nil, errPanelStopped
+	case <-timeout.C:
+		process.stop()
+		return nil, fmt.Errorf("the OwnGit icon could not start: the desktop's panel program did not answer within %s, so the desktop session may not be responding", panelStartTimeout)
+	}
 	switch {
 	case !ok:
 		return nil, fmt.Errorf("the OwnGit icon's panel program ended: %w", <-process.ended)
@@ -404,11 +461,20 @@ func (icon *linuxIcon) startPanel(gjs string) (*panelProcess, error) {
 	return nil, errors.New("the OwnGit icon's panel program did not start")
 }
 
+// send writes message to the panel program within panelWriteTimeout. A write
+// that fails leaves the program without a message it needs, so the program
+// is killed; its end, with this reason, arrives on messages and ended.
 func (process *panelProcess) send(message panelMessage) {
 	line, err := json.Marshal(message)
-	if err == nil {
-		// A panel program that stopped reading reports its end on ended.
-		_, _ = process.input.Write(append(line, '\n'))
+	if err != nil {
+		return
+	}
+	if err = process.input.SetWriteDeadline(time.Now().Add(panelWriteTimeout)); err == nil {
+		_, err = process.input.Write(append(line, '\n'))
+	}
+	if err != nil && !errors.Is(err, os.ErrClosed) {
+		process.writeErr.CompareAndSwap(nil, &err)
+		_ = process.command.Process.Kill()
 	}
 }
 

@@ -182,6 +182,16 @@ func TestTrayEventsReportPushesOnceAMinuteLater(t *testing.T) {
 	if got := onlyNotification(t, feedRead(t, app, deleted.Cursor, nil)); got.Title != "New tag v1 in site" || got.Path != "/repositories/site/commits?ref=v1" {
 		t.Fatalf("new tag %+v", got)
 	}
+
+	// Pushes grouped in one repository link to the repository when the
+	// latest one deleted its branch, which has no commit list.
+	gone := feedRead(t, app, deleted.Cursor, nil).Cursor
+	apiRunGit(t, work, "push", address+"/git/site.git", "HEAD:refs/heads/gone-a")
+	apiRunGit(t, work, "push", address+"/git/site.git", ":refs/heads/gone-a")
+	clock.add(time.Minute)
+	if got := onlyNotification(t, feedRead(t, app, gone, nil)); got.Title != "2 pushes" || got.Path != "/repositories/site" {
+		t.Fatalf("grouped push that deleted a branch %+v", got)
+	}
 }
 
 // With "only what I did not do", pushes from this computer are dropped and

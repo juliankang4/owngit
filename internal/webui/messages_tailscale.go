@@ -385,6 +385,8 @@ const (
 	MsgTSHomeHelp      MessageCode = "settings.tailscale.home_network_help"
 	MsgTSOnNote        MessageCode = "settings.tailscale.on_note"
 	MsgTSOffNote       MessageCode = "settings.tailscale.off_note"
+	MsgTSBusy          MessageCode = "settings.tailscale.busy"
+	MsgTSOffUnready    MessageCode = "settings.tailscale.off_unready"
 	MsgTSTurnedOn      MessageCode = "settings.tailscale.turned_on"
 	MsgTSTurnedOff     MessageCode = "settings.tailscale.turned_off"
 	MsgTSPortNote      MessageCode = "settings.tailscale.port_note"
@@ -468,6 +470,14 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 	MsgTSOffNote: {
 		en: "Turning off removes the Tailscale address that OwnGit made, if it is still as OwnGit made it, and takes back the address, name and proxy that sharing added. The listen address stays as it is.",
 		ko: "끄면 OwnGit이 만든 Tailscale 주소를 만든 그대로일 때만 지우고, 공유가 추가한 주소, 이름, 프록시를 되돌립니다. 연결을 받는 주소는 그대로 둡니다.",
+	},
+	MsgTSBusy: {
+		en: "Another change of Tailscale sharing is still running. Nothing was changed. Try again in a moment.",
+		ko: "다른 Tailscale 공유 변경이 아직 진행 중입니다. 아무것도 바꾸지 않았습니다. 잠시 뒤에 다시 시도하세요.",
+	},
+	MsgTSOffUnready: {
+		en: "Tailscale has a problem now (shown above). OwnGit will still try to remove its Tailscale address. If Tailscale refuses, nothing changes and Tailscale's answer is shown.",
+		ko: "지금 Tailscale에 문제가 있습니다(위에 표시). 그래도 OwnGit은 Tailscale 주소를 지워 보고, Tailscale이 거부하면 아무것도 바꾸지 않고 Tailscale의 답을 보여 줍니다.",
 	},
 	MsgTSTurnedOn:  {en: "Sharing on the tailnet is on.", ko: "tailnet 공유를 켰습니다."},
 	MsgTSTurnedOff: {en: "Sharing on the tailnet is off.", ko: "tailnet 공유를 껐습니다."},

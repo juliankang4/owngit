@@ -490,14 +490,16 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 	})
 	app.Tailscale.forget()
 	stopped := enText(webui.TailscaleProblemCode(string(tailscale.KindStopped)))
-	// The page says once that Tailscale is stopped and does not offer
-	// turning off, which would be refused.
+	// The page says once that Tailscale is stopped and still offers turning
+	// off, which the command line also does; Tailscale's own answer decides.
 	client, base, csrf, page := networkSettingsClient(t, app)
 	shown := func(body string) int { return strings.Count(body, `data-en="`+stopped+`"`) }
-	if _, off, _ := tailscaleOffers(page); shown(page) != 1 || off {
-		t.Fatalf("while stopped the page shows the problem %d times, or offers turning off", shown(page))
+	if _, off, _ := tailscaleOffers(page); shown(page) != 1 || !off {
+		t.Fatalf("while stopped the page shows the problem %d times, or does not offer turning off", shown(page))
 	}
-	// A page opened before Tailscale stopped still sends the form.
+	if !strings.Contains(page, enText(webui.MsgTSOffUnready)) {
+		t.Error("the page does not say what turning off will do while Tailscale has a problem")
+	}
 	result := browserForm(t, client, base+"/settings", tailscaleForm(csrf, webui.ActionTailscaleOff, "admin-password", false), base)
 	if result.status != http.StatusConflict {
 		t.Fatalf("turn off: status=%d", result.status)
@@ -515,45 +517,6 @@ func TestTurningOffWhileTailscaleIsStoppedSaysSo(t *testing.T) {
 	}
 	if _, on, _ := app.Store.TailscaleServe(t.Context()); !on {
 		t.Fatal("a refused turning off took back the settings")
-	}
-}
-
-// Turning off is not offered only while it would have to remove OwnGit's
-// address and Tailscale cannot change its configuration: when it is
-// stopped, signed out, starting, or its command does not work. Without the
-// address, after a rename, or with a problem that does not keep the address
-// from being removed, turning off changes what it can and stays offered.
-func TestTurningOffIsHiddenOnlyWhenTailscaleWouldRefuse(t *testing.T) {
-	record := state.TailscaleServe{Name: tailscaletest.Name, HTTPSPort: 443, Created: true}
-	here := TailscaleReport{Name: tailscaletest.Name, Endpoint: TailscaleEndpointOwnGit}
-	for _, test := range []struct {
-		name    string
-		problem tailscale.Kind
-		change  func(*TailscaleReport, *state.TailscaleServe)
-		refused bool
-	}{
-		{"no problem", "", nil, false},
-		{"stopped", tailscale.KindStopped, nil, true},
-		{"signed out", tailscale.KindLoggedOut, nil, true},
-		{"starting", tailscale.KindNotRunning, nil, true},
-		{"not installed", tailscale.KindNotInstalled, nil, true},
-		{"not answering", tailscale.KindTimeout, nil, true},
-		{"stopped without a name", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Name = "" }, true},
-		{"waiting for approval", tailscale.KindNeedsApproval, nil, false},
-		{"MagicDNS off", tailscale.KindMagicDNSOff, nil, false},
-		{"certificates off", tailscale.KindHTTPSOff, nil, false},
-		{"stopped, address gone", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Endpoint = TailscaleEndpointMissing }, false},
-		{"stopped, renamed", tailscale.KindStopped, func(report *TailscaleReport, _ *state.TailscaleServe) { report.Name = renamed }, false},
-		{"stopped, address not made by OwnGit", tailscale.KindStopped, func(_ *TailscaleReport, record *state.TailscaleServe) { record.Created = false }, false},
-	} {
-		report, record := here, record
-		report.Problem = string(test.problem)
-		if test.change != nil {
-			test.change(&report, &record)
-		}
-		if got := offNeedsTailscale(report, record); got != test.refused {
-			t.Errorf("%s: turning off hidden=%v, want %v", test.name, got, test.refused)
-		}
 	}
 }
 
@@ -779,5 +742,34 @@ func TestSharingStateThatOwnGitCannotReadIsNotBlamedOnTailscale(t *testing.T) {
 	checkLoggedSteps(t, "the sharing state read", lines, "sharing state read")
 	if !strings.Contains(strings.Join(lines, "\n"), "synthetic running record read failure") {
 		t.Errorf("the log does not name the cause: %q", lines)
+	}
+}
+
+// A change queued behind another one gives up at the request's deadline and
+// the page says another change is running, with status 409 and nothing saved.
+func TestQueuedTailscaleChangeExplainsItselfOnThePage(t *testing.T) {
+	app, _ := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
+	client, base, csrf, _ := networkSettingsClient(t, app)
+	_, release, err := app.Tailscale.lock(context.Background())
+	noErr(t, err)
+	defer release()
+	form := tailscaleForm(csrf, webui.ActionTailscaleOn, "admin-password", false)
+	request := httptest.NewRequest(http.MethodPost, base+"/settings/network", strings.NewReader(form.Encode()))
+	request.RemoteAddr = "127.0.0.1:45555"
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.Header.Set("Origin", base)
+	parsed, _ := url.Parse(base)
+	for _, cookie := range client.Jar.Cookies(parsed) {
+		request.AddCookie(cookie)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	response := httptest.NewRecorder()
+	app.Handler().ServeHTTP(response, request.WithContext(ctx))
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), enText(webui.MsgTSBusy)) {
+		t.Fatalf("queued change: status %d, busy reason shown %v", response.Code, strings.Contains(response.Body.String(), enText(webui.MsgTSBusy)))
+	}
+	if _, on, _ := app.Store.TailscaleServe(t.Context()); on {
+		t.Fatal("a queued change that gave up turned sharing on")
 	}
 }

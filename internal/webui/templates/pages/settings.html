@@ -729,6 +729,7 @@
       <p class="tslog" id="ts-log" data-show-if="tailscale=on">{{icon "info"}}<span>{{biF $lang "settings.tailscale.certificate_log" $ts.Name}}</span></p>
     {{else}}
       <p class="setblock__d" data-show-if="tailscale=off">{{bi $lang "settings.tailscale.off_note"}}</p>
+      {{if and $ts.Problem $ts.CanTurnOff}}<p class="netnote" data-show-if="tailscale=off">{{icon "warning"}}<span>{{bi $lang "settings.tailscale.off_unready"}}</span></p>{{end}}
       {{if $again}}<p class="netnote" data-show-if="tailscale=on">{{icon "clock"}}<span>{{bi $lang "settings.tailscale.again"}}</span></p>{{end}}
     {{end}}
     {{/* The HTTPS port, in the details of turning on: Automatic, or a

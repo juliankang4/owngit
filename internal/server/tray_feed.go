@@ -401,7 +401,11 @@ func (app *App) pushNotification(request *http.Request, feed trayFeedRequest, gr
 		notification.Body = strings.Join(parts, ", ") + ". " + text(webui.MsgNotifyLatest, latestLine)
 		notification.Path = "/activity"
 		if len(repositories) == 1 {
-			notification.Path = repositoryPath(latest.RepositoryAddress) + "/commits?ref=" + url.QueryEscape(name)
+			notification.Path = repositoryPath(latest.RepositoryAddress)
+			// A deleted ref has no commit list; the repository is the page.
+			if latest.NewOID != "" {
+				notification.Path += "/commits?ref=" + url.QueryEscape(name)
+			}
 		}
 		return notification
 	}

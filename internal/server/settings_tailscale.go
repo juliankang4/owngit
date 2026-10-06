@@ -307,11 +307,14 @@ func (app *App) renderTailscaleRefusal(writer http.ResponseWriter, request *http
 			notices = append(notices, webui.Notice{Kind: webui.NoticeInfo, Code: webui.MsgTSReadBackMacApp, Field: "tailscale"})
 		}
 		view.TailscaleRefused = refusal.Problem
+	case errors.Is(err, errTailscaleChangeBusy):
+		notices = append(notices, webui.Error("tailscale", webui.MsgTSBusy))
 	case !ahead:
 		notices = append(notices, webui.Error("tailscale", webui.MsgSettingsNotSaved))
 	}
+	// A busy answer is a conflict the owner retries, like a refusal they can fix.
 	status := http.StatusConflict
-	if ahead || !refused(err) {
+	if !errors.Is(err, errTailscaleChangeBusy) && (ahead || !refused(err)) {
 		status = unavailable(request, "Tailscale sharing change", err)
 	}
 	app.renderSettingsPage(writer, request, settings, csrf, action, notices, status, view)

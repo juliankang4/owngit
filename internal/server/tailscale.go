@@ -59,6 +59,10 @@ var ErrTailscaleMoveStopped = errors.New("sharing was turned off at its old port
 // saved: Tailscale may already have what OwnGit's settings do not.
 var ErrTailscaleAhead = errors.New("OwnGit's settings were not saved, and Tailscale may already have the change")
 
+// errTailscaleChangeBusy answers a change that waited for another one until
+// its own deadline.
+var errTailscaleChangeBusy = errors.New("another change of Tailscale sharing is still running; try again later")
+
 // tailscaleMayHave reports whether Tailscale may have a change of its
 // endpoint after the change returned changeErr, as Tailscale answered it and
 // before whyWriteFailed explains it by a later state, and the read back
@@ -140,7 +144,8 @@ type Tailscale struct {
 	// changing serializes changes inside this process, and
 	// Store.LockTailscaleChange between processes, so that no change reads
 	// the record of what OwnGit added while another rewrites it.
-	changing sync.Mutex
+	changing     chan struct{}
+	changingOnce sync.Once
 	// readings shares reads of Tailscale's state among reports.
 	readings readingCache
 }
@@ -231,7 +236,9 @@ type TailscaleReport struct {
 	// waits to be turned on again. The Settings page and "owngit tailscale
 	// status" offer turning on only then. CanTurnOff says the same of
 	// turning off: it is on, and Tailscale's endpoint was not changed into
-	// something turning off refuses to remove.
+	// something turning off refuses to remove. A problem with Tailscale,
+	// such as being stopped, does not hide it: turning off tries the
+	// removal and reports Tailscale's own refusal, as the command line does.
 	CanTurnOn  bool `json:"can_turn_on"`
 	CanTurnOff bool `json:"can_turn_off"`
 	// Listen is the listen address of the next start, and HomeNetwork
@@ -346,30 +353,8 @@ func (sharing *Tailscale) Report(ctx context.Context) (TailscaleReport, error) {
 			}
 		}
 	}
-	report.CanTurnOff = on && report.Endpoint != TailscaleEndpointChanged && !offNeedsTailscale(report, record)
+	report.CanTurnOff = on && report.Endpoint != TailscaleEndpointChanged
 	return report, nil
-}
-
-// offNeedsTailscale reports whether turning off would have to change
-// Tailscale's Serve configuration while a problem with Tailscale keeps it
-// from doing so: turning off would be refused, so it is not offered until
-// the problem is fixed. Without the endpoint, or after a rename, turning
-// off changes only OwnGit's settings. Tailscale changes its Serve
-// configuration only while it has this computer's node (its network map),
-// which it lacks when stopped, signed out or starting; the tailscale
-// command cannot help when it is missing or does not answer. Other
-// problems, such as MagicDNS or HTTPS certificates being off, do not show
-// that removing the endpoint fails, so turning off stays offered.
-func offNeedsTailscale(report TailscaleReport, record state.TailscaleServe) bool {
-	switch {
-	case !record.Created, report.Endpoint == TailscaleEndpointMissing, report.Name != "" && report.Name != record.Name:
-		return false
-	}
-	switch tailscale.Kind(report.Problem) {
-	case "", tailscale.KindHTTPSOff, tailscale.KindHTTPSUnavailable, tailscale.KindMagicDNSOff, tailscale.KindNeedsApproval:
-		return false
-	}
-	return true
 }
 
 // webPorts lists the ports that have web handlers in config, in order.
@@ -758,16 +743,27 @@ func (sharing *Tailscale) lock(ctx context.Context) (context.Context, func(), er
 		}
 	}
 	ctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
-	sharing.changing.Lock()
+	// A change waiting behind another one gives up at its own deadline.
+	sharing.changingOnce.Do(func() { sharing.changing = make(chan struct{}, 1) })
+	select {
+	case sharing.changing <- struct{}{}:
+	case <-ctx.Done():
+		cancel()
+		return nil, nil, errTailscaleChangeBusy
+	}
 	release, err := sharing.Store.LockTailscaleChange(ctx)
 	if err != nil {
-		sharing.changing.Unlock()
+		<-sharing.changing
+		if ctx.Err() != nil {
+			// Another process held the lock until this change's deadline.
+			err = errTailscaleChangeBusy
+		}
 		cancel()
 		return nil, nil, err
 	}
 	return ctx, func() {
 		release()
-		sharing.changing.Unlock()
+		<-sharing.changing
 		cancel()
 	}, nil
 }

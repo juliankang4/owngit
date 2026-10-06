@@ -21,15 +21,26 @@ import (
 const fakeGJS = `#!/bin/sh
 [ "$1" = "-c" ] || exit 2
 case "$2" in
-"` + toolkitCheck + `") [ "$FAKE_MODE" = notoolkit ] && exit 1; exit 0 ;;
+"` + toolkitCheck + `")
+	[ "$FAKE_MODE" = notoolkit ] && exit 1
+	[ "$FAKE_MODE" = probehang ] && { : > "$FAKE_DIR/started"; PATH=/bin:/usr/bin exec sleep 60; }
+	exit 0 ;;
 esac
 read -r init
 printf '%s\n' "$init" > "$FAKE_DIR/init"
+if [ "$FAKE_MODE" = silent ]; then
+	: > "$FAKE_DIR/started"
+	while read -r _; do :; done
+	exit 0
+fi
 if [ "$FAKE_MODE" = already ]; then
 	echo '{"type":"error","code":"already_running","message":"the OwnGit icon already runs"}'
 	exit 0
 fi
 echo '{"type":"ready"}'
+if [ "$FAKE_MODE" = stuck ]; then
+	PATH=/bin:/usr/bin exec sleep 60
+fi
 read -r reading
 printf '%s\n' "$reading" > "$FAKE_DIR/state"
 if [ "$FAKE_MODE" = notify ]; then
@@ -326,5 +337,74 @@ func TestLinuxIconRunsOnlyAProtectedGJS(t *testing.T) {
 				t.Fatal("the unsafe gjs ran")
 			}
 		})
+	}
+}
+
+// waitFor returns when the fake program created name in dir.
+func waitFor(t *testing.T, dir, name string) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return
+		} else if time.Now().After(deadline) {
+			t.Fatalf("the fake program did not create %s", name)
+		}
+	}
+}
+
+// Stop ends the icon as a normal end while the toolkit check or the panel
+// program's first answer is still pending.
+func TestLinuxIconStopEndsAStalledStartup(t *testing.T) {
+	for _, mode := range []string{"probehang", "silent"} {
+		fakeDir := useFakeGJS(t, mode)
+		stop := make(chan struct{})
+		done := make(chan error, 1)
+		go func() { done <- Run(Options{StateDir: newStateDir(t), Stop: stop}) }()
+		waitFor(t, fakeDir, "started")
+		close(stop)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("%s: stopped during startup: %v", mode, err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: Stop did not end the icon", mode)
+		}
+	}
+}
+
+// The startup bound and the write bound are real waits, so this runs only
+// without -short. A panel program that never answers ends the icon with an
+// explanation after 30 seconds, and one that stops reading after ready is
+// ended, with the write failure as the reason, when a message cannot be
+// written.
+func TestLinuxIconBoundsAHelperThatStopsAnswering(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits the real 30 s startup bound and 5 s write bound")
+	}
+	useFakeGJS(t, "silent")
+	err := Run(Options{StateDir: newStateDir(t), Stop: make(chan struct{})})
+	if err == nil || !strings.Contains(err.Error(), "could not start") {
+		t.Errorf("a silent panel program: %v", err)
+	}
+
+	useFakeGJS(t, "stuck")
+	gjs, err := toolkit(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	icon := &linuxIcon{poller: newPoller(Options{StateDir: newStateDir(t), Stop: make(chan struct{})}, DesktopLanguage()), icons: t.TempDir()}
+	process, err := icon.startPanel(gjs, make(chan struct{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	process.send(panelMessage{Type: "notice", Text: strings.Repeat("x", 1<<20)})
+	select {
+	case <-process.messages:
+	case <-time.After(20 * time.Second):
+		t.Fatal("a panel program that stopped reading was not ended")
+	}
+	if err := <-process.ended; !strings.Contains(err.Error(), "could not be written") {
+		t.Errorf("the end of the stuck program: %v", err)
 	}
 }

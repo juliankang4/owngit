@@ -462,10 +462,22 @@ function field(value, name, copyName) {
 
 const conditionClass = {running: 'success', attention: 'warning', stopped: 'error', unavailable: 'dim-label'};
 
+// bodyHeightLimit is the tallest the scrolling middle of the panel may be:
+// what is left of the screen's height after the heading, the status line and
+// the footer, which always stay in view.
+function bodyHeightLimit() {
+    const display = Gdk.Display.get_default();
+    const surface = window && window.get_surface();
+    const monitor = (surface && display.get_monitor_at_surface(surface)) || display.get_monitors().get_item(0);
+    const screen = monitor ? monitor.get_geometry().height : 768;
+    return Math.max(120, Math.floor(screen * 0.85) - 300);
+}
+
 function panelContent() {
     const labels = panel.labels;
     const box = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 12,
         margin_top: 16, margin_bottom: 16, margin_start: 16, margin_end: 16, width_request: 340});
+    const body = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 12});
 
     const heading = new Gtk.Box({spacing: 10});
     heading.append(iconImage('owngit-tile', 32));
@@ -490,7 +502,7 @@ function panelContent() {
             notes.append(text(panel.command_intro));
             notes.append(field(panel.command, 'command', labels.copy_command));
         }
-        box.append(notes);
+        body.append(notes);
     }
 
     if (panel.clone_address) {
@@ -498,7 +510,7 @@ function panelContent() {
         clone.append(text(labels.clone_address, ['heading']));
         clone.append(field(panel.clone_address, 'clone', labels.copy_clone));
         clone.append(text(labels.clone_help, ['dim-label', 'caption']));
-        box.append(clone);
+        body.append(clone);
     }
 
     const recent = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 4});
@@ -519,18 +531,15 @@ function panelContent() {
         row.append(text(push.when, ['dim-label', 'numeric']));
         recent.append(row);
     }
-    box.append(recent);
-
-    if (panel.can_open)
-        box.append(button(labels.open, 'open', ['suggested-action'], () => send({type: 'open'})));
+    body.append(recent);
 
     if (notifications) {
-        box.append(new Gtk.Separator());
-        box.append(text(notifications.heading, ['heading']));
+        body.append(new Gtk.Separator());
+        body.append(text(notifications.heading, ['heading']));
         if (notifications.error)
-            box.append(text(notifications.error, ['error']));
+            body.append(text(notifications.error, ['error']));
         if (notifications.unavailable)
-            box.append(text(notifications.unavailable, ['dim-label']));
+            body.append(text(notifications.unavailable, ['dim-label']));
         const list = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 2});
         for (const setting of notifications.settings) {
             const check = new Gtk.CheckButton({label: setting.label, active: setting.on,
@@ -541,10 +550,17 @@ function panelContent() {
                 send({type: 'notification_setting', setting: setting.setting, on: check.get_active()}));
             list.append(check);
         }
-        box.append(list);
-        box.append(text(notifications.hint, ['dim-label', 'caption']));
+        body.append(list);
+        body.append(text(notifications.hint, ['dim-label', 'caption']));
     }
 
+    const scroll = new Gtk.ScrolledWindow({hscrollbar_policy: Gtk.PolicyType.NEVER, propagate_natural_height: true,
+        propagate_natural_width: true, overlay_scrolling: false, max_content_height: bodyHeightLimit(), vexpand: true});
+    scroll.set_child(body);
+    box.append(scroll);
+
+    if (panel.can_open)
+        box.append(button(labels.open, 'open', ['suggested-action'], () => send({type: 'open'})));
     box.append(new Gtk.Separator());
     box.append(text(labels.this_computer, ['heading']));
     const choices = new Gtk.Box({spacing: 8, homogeneous: true});
