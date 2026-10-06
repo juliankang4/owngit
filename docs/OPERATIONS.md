@@ -127,6 +127,8 @@ The command refuses an `owngit` program that another account could replace, and 
 
 A Homebrew install hands the service to Homebrew (`brew services restart owngit`); its log is `$(brew --prefix)/var/log/owngit.log`.
 
+On macOS and Windows, and with Homebrew, the service log is a file. When it nears 10 MB, its older part moves to a file with `.1` added to the name. If that move fails, OwnGit keeps writing to the current file, reports the failure once, and tries again every minute. When the file reaches twice the limit, later lines go to the service's standard error (`owngit.stderr.log` on macOS). A Windows service discards its standard error, so there those lines are lost, and the failure notice says so.
+
 ### Linux
 
 | Where you run the command | Service | State directory | Log |
@@ -167,10 +169,21 @@ To update, install the new release outside `%ProgramFiles%\OwnGit` and run its `
 
 The log folder is `~/Library/Logs/owngit`, or `$(brew --prefix)/var/log` for a Homebrew install.
 
-- `owngit.log` is the server log. It stays below 10 MB; the older part moves to `owngit.log.1`.
+- `owngit.log` is the server log. When it nears 10 MB, the older part moves to `owngit.log.1` ([if that fails](#run-as-a-service)).
 - `owngit.stderr.log` holds only crash output and other text the server log could not record.
+- `.owngit-staging` is a hidden, empty folder where OwnGit makes new log files. Leave it in place.
 
-OwnGit makes `owngit.log`, `owngit.log.1` and its own LaunchAgent's `owngit.stderr.log` readable by your account only, and removes any access list (ACL) they inherit. If it cannot make `owngit.log` private, it does not start and names the fix, such as `chmod -N PATH`.
+Only your account can read OwnGit's log files, from the moment each file appears. OwnGit makes each new log file in `.owngit-staging`, which only your account can open, removes any access list (ACL) from it there, and then moves it to its name. If OwnGit cannot make `owngit.log` private, it does not start and names the fix, such as `chmod -N PATH`.
+
+A log file that other accounts can read, or that an older OwnGit wrote, is replaced once by a private copy with the same content. OwnGit does this for `owngit.log` and `owngit.log.1` when it starts, and for its LaunchAgent's `owngit.stderr.log` when you run `owngit service install`. A program that opened the old file sees no new lines after that.
+
+OwnGit removes an inherited access list only from a log folder it owns: `~/Library/Logs/owngit`, or a folder it creates for the log. It leaves a folder shared with other programs, such as `$(brew --prefix)/var/log`, as it is. If that folder's access list lets other accounts read new files, the first lines of the log say so. OwnGit's own log files stay private, but other files in the folder stay readable. To remove the folder's access list, run:
+
+```sh
+chmod -N "$(brew --prefix)/var/log"
+```
+
+If a second OwnGit writes its log in the same folder while one is running, the second one does not replace the files there, and the first lines of its log say why.
 
 OwnGit does not change the `owngit.stderr.log` that Homebrew's service writes. If other accounts can read files in `$(brew --prefix)/var/log`, make that file private yourself:
 

@@ -127,6 +127,8 @@ owngit setup-link
 
 Homebrew로 설치했다면 서비스는 Homebrew가 맡습니다(`brew services restart owngit`). 로그는 `$(brew --prefix)/var/log/owngit.log`입니다.
 
+macOS와 Windows, Homebrew에서는 서비스 로그가 파일로 남습니다. 파일이 10 MB 가까이 되면 오래된 부분은 이름 끝에 `.1`을 붙인 파일로 옮겨집니다. 옮기지 못하면 OwnGit은 지금 파일에 계속 쓰고 실패를 한 번 알린 뒤 1분마다 다시 시도합니다. 파일이 한도의 두 배가 되면 그 뒤의 줄은 서비스의 표준 오류로 갑니다(macOS에서는 `owngit.stderr.log`). Windows 서비스는 표준 오류를 버리므로 이 줄은 남지 않습니다. 실패를 알리는 안내에도 그렇게 적힙니다.
+
 ### Linux
 
 | 명령을 실행한 곳 | 서비스 | 상태 디렉터리 | 로그 |
@@ -167,10 +169,21 @@ root로 설치할 때는 다음을 지켜야 합니다.
 
 로그 폴더는 `~/Library/Logs/owngit`입니다. Homebrew로 설치했다면 `$(brew --prefix)/var/log`입니다.
 
-- `owngit.log`는 서버 로그입니다. 10 MB를 넘지 않으며, 오래된 부분은 `owngit.log.1`로 옮겨집니다.
+- `owngit.log`는 서버 로그입니다. 10 MB 가까이 되면 오래된 부분이 `owngit.log.1`로 옮겨집니다([옮기지 못할 때](#서비스로-실행하기)).
 - `owngit.stderr.log`에는 충돌 출력처럼 서버 로그에 담지 못한 내용만 남습니다.
+- `.owngit-staging`은 OwnGit이 새 로그 파일을 만드는 빈 숨김 폴더입니다. 그대로 두세요.
 
-OwnGit은 `owngit.log`, `owngit.log.1`, 자신의 LaunchAgent가 쓰는 `owngit.stderr.log`를 내 계정만 읽을 수 있게 하고, 폴더에서 물려받은 접근 목록(ACL)을 지웁니다. `owngit.log`를 비공개로 만들지 못하면 시작하지 않고 `chmod -N PATH` 같은 해결 명령을 알려 줍니다.
+OwnGit의 로그 파일은 생기는 순간부터 내 계정만 읽을 수 있습니다. OwnGit은 내 계정만 열 수 있는 `.owngit-staging`에서 새 로그 파일을 만들고 거기서 접근 목록(ACL)을 지운 다음 제 이름으로 옮깁니다. `owngit.log`를 비공개로 만들지 못하면 시작하지 않고 `chmod -N PATH` 같은 해결 명령을 알려 줍니다.
+
+다른 계정이 읽을 수 있는 로그 파일이나 이전 버전의 OwnGit이 쓴 로그 파일은 내용이 같은 비공개 사본으로 한 번 바뀝니다. `owngit.log`와 `owngit.log.1`은 OwnGit이 시작할 때, LaunchAgent의 `owngit.stderr.log`는 `owngit service install`을 실행할 때 바뀝니다. 바뀌기 전에 옛 파일을 열어 둔 프로그램은 그 뒤로 새 줄을 보지 못합니다.
+
+물려받은 접근 목록은 OwnGit이 소유한 로그 폴더에서만 지웁니다. `~/Library/Logs/owngit`과 OwnGit이 로그를 위해 만든 폴더가 여기에 해당합니다. `$(brew --prefix)/var/log`처럼 다른 프로그램과 함께 쓰는 폴더는 그대로 둡니다. 이런 폴더의 접근 목록이 다른 계정에게 새 파일을 읽도록 허용하면 로그 첫 줄에 그 사실이 나옵니다. OwnGit의 로그 파일은 계속 비공개입니다. 하지만 폴더의 다른 파일은 다른 계정도 읽을 수 있습니다. 폴더의 접근 목록을 지우려면 다음을 실행하세요.
+
+```sh
+chmod -N "$(brew --prefix)/var/log"
+```
+
+한 OwnGit이 로그를 쓰고 있는 폴더에 두 번째 OwnGit이 로그를 쓰면 두 번째 OwnGit은 그 폴더의 파일을 바꾸지 않고 로그 첫 줄에 이유를 남깁니다.
 
 Homebrew 서비스가 쓰는 `owngit.stderr.log`는 OwnGit이 건드리지 않습니다. `$(brew --prefix)/var/log`의 파일을 다른 계정이 읽을 수 있다면 그 파일을 직접 비공개로 바꾸세요.
 
