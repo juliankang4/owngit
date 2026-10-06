@@ -397,7 +397,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	if stopAtLimit {
 		stdout.exceededHook = cancel
 	}
-	waited, err := runOwnedProcess(runCtx, cmd, r.TerminationGrace, r.processSeam, stdin, stdinPipe)
+	waited, err := runOwnedProcess(runCtx, cmd, r.TerminationGrace, r.processSeam, stdin, stdinPipe, false)
 	if !waited {
 		// Attachment cleanup returned while the delayed Wait still owns the
 		// output buffers, so copied output is not stable. Caller stdin is not
@@ -733,7 +733,7 @@ func windowsStdinPipeErrno(err error) bool {
 // caller. waited is false only when attachment cleanup returns with Wait
 // still pending. After attachment, a failed termination or owner release is
 // joined to the command's own error under ErrProcessCleanup.
-func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, seam *processCleanupSeam, stdin io.Reader, stdinPipe io.WriteCloser) (bool, error) {
+func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, seam *processCleanupSeam, stdin io.Reader, stdinPipe io.WriteCloser, endLeftovers bool) (bool, error) {
 	ConfigureOwnedProcess(cmd)
 	if err := cmd.Start(); err != nil {
 		closeOwnedStdin(stdinPipe)
@@ -772,6 +772,13 @@ func runOwnedProcess(ctx context.Context, cmd *exec.Cmd, grace time.Duration, se
 		<-copyDone
 		if runErr == nil {
 			runErr = copyErr
+		}
+		// The process ended on its own. When the caller asks for it, what it
+		// left running, in its process group or in a new session, ends with it.
+		if endLeftovers {
+			if err := seam.terminate(owner, grace); err != nil {
+				cleanupErr = fmt.Errorf("terminate owned process: %w", err)
+			}
 		}
 	case <-ctx.Done():
 		if err := seam.terminate(owner, grace); err != nil {

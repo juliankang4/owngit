@@ -57,7 +57,9 @@ func runStreamFixture(mode string) {
 			_ = os.WriteFile(os.Getenv(streamFixtureMarker), []byte("eof"), 0o600)
 		}
 	default:
-		os.Exit(94)
+		if !runSessionFixture(mode) {
+			os.Exit(94)
+		}
 	}
 }
 

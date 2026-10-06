@@ -685,9 +685,17 @@ func definiteRefusal(err error) bool {
 // in revision. The working tree copy is ignored, so an uncommitted edit cannot
 // change what runs for the recorded revision.
 func committedCheckDefinitions(ctx context.Context, directory, revision string) ([]checkexec.Definition, error) {
-	listing, err := runGit(ctx, directory, "ls-tree", "-z", "-l", "--full-tree", revision, "--", checkworkflow.Path)
+	readCtx, cancel := context.WithTimeout(ctx, committedCheckReadBound)
+	defer cancel()
+	unreadable := func(err error) error {
+		if ctx.Err() == nil && errors.Is(readCtx.Err(), context.DeadlineExceeded) {
+			return cliProblem("revision_unavailable", fmt.Sprintf("Git did not read %s in revision %s within %s. In a partial clone the file may be missing and its remote slow. Run git show %s:%s to download it (this waits for the remote), then run the check again.", checkworkflow.Path, revision, committedCheckReadBound, revision, checkworkflow.Path))
+		}
+		return cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
+	}
+	listing, err := runGit(readCtx, directory, "ls-tree", "-z", "-l", "--full-tree", revision, "--", checkworkflow.Path)
 	if err != nil {
-		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
+		return nil, unreadable(err)
 	}
 	listing = strings.TrimSuffix(listing, "\x00")
 	if listing == "" {
@@ -701,14 +709,11 @@ func committedCheckDefinitions(ctx context.Context, directory, revision string) 
 	if size, err := strconv.ParseInt(fields[3], 10, 64); err != nil || size > checkworkflow.MaximumBytes {
 		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is larger than 64 KiB.")
 	}
-	command := exec.CommandContext(ctx, "git", "cat-file", "blob", fields[2])
-	command.Dir = directory
-	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	content, err := gitexec.Output(command)
+	content, err := runGit(readCtx, directory, "cat-file", "blob", fields[2])
 	if err != nil {
-		return nil, cliProblem("revision_unavailable", "The committed check configuration could not be read: "+err.Error())
+		return nil, unreadable(err)
 	}
-	document, err := checkworkflow.Parse(content)
+	document, err := checkworkflow.Parse([]byte(content))
 	if err != nil {
 		return nil, cliProblem("invalid_check_configuration", checkworkflow.Path+" in revision "+revision+" is invalid: "+err.Error())
 	}
@@ -718,6 +723,13 @@ func committedCheckDefinitions(ctx context.Context, directory, revision string) 
 	}
 	return definitions, nil
 }
+
+// committedCheckReadBound bounds reading the committed check file as a whole.
+// In a partial clone a missing blob is fetched from the promisor remote, which
+// a small file needs a few seconds for on a normal connection; when the remote
+// is slower than this, the owner downloads the file once with git show. A
+// variable only so tests can shorten it.
+var committedCheckReadBound = 30 * time.Second
 
 // worktreeObservationBound bounds one Git observation of the working tree,
 // before and after a check run. The bound belongs to the observation, not to
@@ -794,9 +806,12 @@ func confirmWorktree(ctx context.Context, directory, revision, before string) (s
 // command: when ctx ends, Git and the filters and other programs it started
 // are stopped before runGit returns, so a filter that does not finish cannot
 // hold the run. Containment covers Git and every descendant that stays in its
-// process group on Unix or its job on Windows; the checks and the owner's Git
-// configuration run with the owner's authority and are not a sandbox, so a
-// descendant that leaves both is outside what this can stop. Two things that
+// process group on Unix or its job on Windows, and on Linux also a
+// descendant that started a new session, which is found by the mark of the
+// run in its environment, and this also holds when Git ends on its own. The
+// checks and the owner's Git configuration run with the owner's authority and
+// are not a sandbox, so a descendant that leaves both and clears the mark is
+// outside what this can stop. Two things that
 // do not change the answer are turned off, because a clone's configuration
 // could name any program for them:
 // core.fsmonitor, which only speeds up the scan, and the optional index write

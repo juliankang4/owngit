@@ -11,12 +11,16 @@ import (
 // RunOwned runs a prepared command that is not Git, such as OwnGit's own
 // binary in a helper mode, with the same ownership as Git commands: its own
 // process group on Unix and a job object on Windows. It copies stdin to the
-// process, if not nil, and waits for it. When ctx ends first, the process and
-// everything it started are terminated, with grace between the polite and the
-// forced stop, and RunOwned returns ctx.Err() once they are confirmed gone.
-// When stopping them or releasing their owner fails, the returned error also
-// matches ErrProcessCleanup and keeps the original causes; their removal is
-// then not confirmed.
+// process, if not nil, and waits for it. Whenever the run ends, whether the
+// process exits on its own or ctx ends first, the process and everything it
+// started are terminated, with grace between the polite and the forced stop.
+// On Linux this includes a descendant that started a new session, found by the
+// mark of the run in its environment; on other Unix systems only the process
+// group is covered. After the process exits on its own, RunOwned returns its
+// result once the leftovers are gone. When ctx ends first, RunOwned returns
+// ctx.Err() once they are confirmed gone. When stopping them or releasing
+// their owner fails, the returned error also matches ErrProcessCleanup and
+// keeps the original causes; their removal is then not confirmed.
 //
 // The caller sets cmd.Path, arguments, environment and output writers. The
 // output writers may still be called while RunOwned returns an error for a
@@ -33,7 +37,7 @@ func RunOwned(ctx context.Context, cmd *exec.Cmd, stdin io.Reader, grace time.Du
 	if grace <= 0 {
 		grace = 2 * time.Second
 	}
-	waited, err := runOwnedProcess(ctx, cmd, grace, nil, stdin, stdinPipe)
+	waited, err := runOwnedProcess(ctx, cmd, grace, nil, stdin, stdinPipe, true)
 	if !waited {
 		return fmt.Errorf("contain helper process: %w", err)
 	}

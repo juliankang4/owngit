@@ -175,7 +175,7 @@ func TestRunOwnedProcessJoinsBeforeReportingCleanupFailure(t *testing.T) {
 		}
 		cancel()
 	}()
-	waited, err := runOwnedProcess(ctx, cmd, runner.TerminationGrace, runner.processSeam, probe, stdinPipe)
+	waited, err := runOwnedProcess(ctx, cmd, runner.TerminationGrace, runner.processSeam, probe, stdinPipe, false)
 	probe.returned.Store(true)
 	if !waited || cmd.ProcessState == nil {
 		t.Fatalf("returned before Wait: waited=%v state=%v", waited, cmd.ProcessState)

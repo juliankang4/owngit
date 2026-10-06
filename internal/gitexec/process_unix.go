@@ -12,10 +12,17 @@ import (
 
 type ProcessOwner struct {
 	pgid int
+	// token marks the run in the environment on Linux, so that ending the run
+	// can find a descendant that left the process group. Empty elsewhere.
+	token string
+	// since is the start time of the group leader, so a scan counts only
+	// processes that started no earlier. Zero when unknown.
+	since uint64
 }
 
 func ConfigureOwnedProcess(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	markOwnedRun(cmd)
 }
 
 func AttachOwnedProcess(cmd *exec.Cmd) (*ProcessOwner, error) {
@@ -36,7 +43,7 @@ func AttachOwnedProcessObserved(cmd *exec.Cmd, observeStarted func() error) (*Pr
 	// Setpgid with Pgid zero creates a group whose ID is the child PID before
 	// exec. A successful Start therefore establishes ownership without a
 	// post-start Getpgid call, which races a fast child exit on macOS.
-	owner := &ProcessOwner{pgid: cmd.Process.Pid}
+	owner := &ProcessOwner{pgid: cmd.Process.Pid, token: ownedRunToken(cmd), since: processStartTime(cmd.Process.Pid)}
 	if !registerOwner(owner) {
 		return nil, errors.Join(errOwnedProcessesClosed, TerminateOwnedProcess(owner, 0))
 	}
@@ -49,14 +56,21 @@ func AttachOwnedProcessObserved(cmd *exec.Cmd, observeStarted func() error) (*Pr
 	return owner, nil
 }
 
-// TerminateOwnedProcess signals the owned process group and reports whether the
-// group could be confirmed gone. A group that already exited is not a failure,
-// so ESRCH is ignored. macOS reports EPERM for a group that only contains
-// zombies, which is also gone for our purposes.
+// TerminateOwnedProcess ends the owned process group and, on Linux, then every
+// process that still carries the mark of this run, such as a descendant that
+// started a new session. It reports whether they could be confirmed gone.
 func TerminateOwnedProcess(owner *ProcessOwner, grace time.Duration) error {
 	if owner == nil || owner.pgid <= 0 {
 		return nil
 	}
+	return errors.Join(terminateProcessGroup(owner, grace), killMarkedProcesses(owner.token, owner.since))
+}
+
+// terminateProcessGroup signals the owned process group and reports whether the
+// group could be confirmed gone. A group that already exited is not a failure,
+// so ESRCH is ignored. macOS reports EPERM for a group that only contains
+// zombies, which is also gone for our purposes.
+func terminateProcessGroup(owner *ProcessOwner, grace time.Duration) error {
 	var cleanupErr error
 	if err := syscall.Kill(-owner.pgid, syscall.SIGTERM); err != nil {
 		if groupGone(err) {
