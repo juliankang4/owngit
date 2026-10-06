@@ -393,7 +393,8 @@ func TestRetentionKeepsTheLastVerifiedBackup(t *testing.T) {
 	if !present(verified) || present(second) || !present(third) {
 		t.Fatalf("verified %v second %v third %v", present(verified), present(second), present(third))
 	}
-	// A backup that fails verification removes nothing.
+	// A backup that fails verification does not count toward keep and
+	// removes no verified backup.
 	on := true
 	f.configure(t, ScheduleChange{Verify: &on})
 	f.service.VerifyLimit = time.Nanosecond
@@ -405,6 +406,25 @@ func TestRetentionKeepsTheLastVerifiedBackup(t *testing.T) {
 	noErr(t, err)
 	if status.LastVerified == nil || status.LastVerified.ID != verified.ID {
 		t.Fatalf("last verified: %+v", status.LastVerified)
+	}
+	// Only the newest failed backup stays. One that cannot be removed is
+	// reported in a short notice that leaves the failure reason whole.
+	added := filepath.Join(f.destination, failed.BackupName, "readme.txt")
+	noErr(t, os.WriteFile(added, []byte("mine"), 0o600))
+	failed2 := f.backUpNow(t)
+	if !present(failed) || !present(failed2) || !strings.HasPrefix(failed2.Message, failed.Message) || !strings.Contains(failed2.Message, "left in place") {
+		t.Fatalf("failed2 failure: failed %v failed2 %v: %q", present(failed), present(failed2), failed2.Message)
+	}
+	noErr(t, os.Remove(added))
+	failed3 := f.backUpNow(t)
+	if present(failed) || present(failed2) || !present(failed3) || !present(verified) || f.run(t, failed.ID).BackupName != "" {
+		t.Fatalf("failed3 failure: failed %v failed2 %v failed3 %v verified %v", present(failed), present(failed2), present(failed3), present(verified))
+	}
+	// A verified backup supersedes the earlier failure.
+	f.service.VerifyLimit = 0
+	last := f.backUpNow(t)
+	if last.Status != state.BackupSucceeded || present(failed3) || f.run(t, failed3.ID).BackupName != "" || !present(last) {
+		t.Fatalf("after a verified backup: %+v, failed3 %v", last, present(failed3))
 	}
 }
 

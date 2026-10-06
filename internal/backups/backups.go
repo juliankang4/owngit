@@ -369,14 +369,14 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	// removal that follows would look at the folders while an older backup is
 	// removed. A stop that saved the result here removes nothing; the next
 	// backup removes then.
-	if run.Status == state.BackupSucceeded && ctx.Err() == nil {
+	if retains(run) && ctx.Err() == nil {
 		s.holdRemoval(&run)
 		defer s.dropRemoval(&run)
 	}
 	if !s.record(ctx, run) {
 		return
 	}
-	if run.Status == state.BackupSucceeded && ctx.Err() == nil {
+	if retains(run) && ctx.Err() == nil {
 		if left := s.removeOld(ctx, run, schedule.Keep); len(left) > 0 {
 			s.noteLeftInPlace(ctx, &run, left)
 		}
@@ -389,6 +389,19 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 		line += ": " + run.Message
 	}
 	s.logf("%s", line)
+}
+
+// retains says whether run, once recorded, is followed by removing
+// backups: a succeeded run applies the keep limit, and a run that failed
+// verification removes only the older failed-verification backups.
+func retains(run state.BackupRun) bool {
+	return run.Status == state.BackupSucceeded || failedVerification(run)
+}
+
+// failedVerification says whether run wrote a backup that did not pass the
+// verification right after it was written.
+func failedVerification(run state.BackupRun) bool {
+	return run.Status == state.BackupFailed && run.Verification == state.BackupVerifyFailed
 }
 
 // record writes the final result of run, and says whether it was saved.
@@ -483,14 +496,28 @@ func (s *Service) dropRemoval(run *state.BackupRun) {
 // message of the run that is recorded already, so the record says what
 // OwnGit left where it is. The backup itself is saved by now, so a message
 // that cannot be saved is logged and the run stands; the write ends with
-// the service, since nothing depends on it. The note keeps its room in the
-// message, so a long message in front of it cannot cut it away.
+// the service, since nothing depends on it. After a successful run the note
+// keeps its room in the message, so a long message in front of it cannot cut
+// it away. After a failed run the failure reason stays whole at the front and
+// the note takes only the room left; the full list goes to the server log.
 func (s *Service) noteLeftInPlace(ctx context.Context, run *state.BackupRun, left []string) {
 	note := "Also, " + strings.Join(left, "; ")
-	if run.Message == "" {
-		note = "The backup is complete, but " + strings.Join(left, "; ")
+	switch {
+	case failedVerification(*run):
+		// The failure reason stays whole and first; the notice takes the
+		// room that is left, and the log keeps the full list.
+		s.logf("backup %s: %s", filepath.Join(run.Destination, run.BackupName), note)
+		kind := "older failed backup was"
+		if len(left) > 1 {
+			kind = "older failed backups were"
+		}
+		lead := fmt.Sprintf(" Also, %d %s left in place; the first: ", len(left), kind)
+		run.Message += state.CutBackupRunMessage(lead+left[0], state.MaxBackupRunMessage-len(run.Message))
+	case run.Message == "":
+		run.Message = "The backup is complete, but " + strings.Join(left, "; ")
+	default:
+		run.Message = withNotice(run.Message, note)
 	}
-	run.Message = withNotice(run.Message, note)
 	write, cancel := context.WithTimeout(ctx, recordWrite)
 	defer cancel()
 	if err := s.Store.SetBackupRunMessage(write, run.ID, run.Message); err != nil {
@@ -671,7 +698,10 @@ func validName(name string) bool {
 
 // removeOld removes the backups in run's folder beyond the newest keep that
 // OwnGit's runs wrote, in the order the runs started, never run's own and
-// never the newest verified one, and forgets old run records. A backup is
+// never the newest verified one, and forgets old run records. A backup that
+// failed verification does not count toward keep. When run is one, it is the
+// only one that stays and nothing else is removed; when run passed
+// verification, none stays; otherwise the newest stays. A backup is
 // found by its run record and its manifest and removed through the folder
 // that was opened, never through a link, and not when it holds anything
 // OwnGit did not write. It returns what it could not do; nothing else is
@@ -687,11 +717,16 @@ func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) 
 	}
 	defer folder.Close()
 	var problems []string
-	kept, verifiedKept := 0, false
+	kept, verifiedKept, failedKept := 0, false, false
+	onlyFailed := failedVerification(run)
+	supersedes := run.Verification == state.BackupVerifyPassed
 	for _, record := range runs {
 		if record.ID == run.ID {
 			record = run
 		} else if record.Status == state.BackupRunning || record.Destination != run.Destination || record.BackupName == "" {
+			continue
+		}
+		if onlyFailed && record.ID != run.ID && !failedVerification(record) {
 			continue
 		}
 		backup, err := openOwned(folder, record)
@@ -712,7 +747,13 @@ func (s *Service) removeOld(ctx context.Context, run state.BackupRun, keep int) 
 			continue
 		}
 		verified := record.Verification == state.BackupVerifyPassed
-		if record.ID == run.ID || kept < keep || verified && !verifiedKept {
+		if failedVerification(record) {
+			if record.ID == run.ID || !onlyFailed && !supersedes && !failedKept {
+				failedKept = true
+				backup.Close()
+				continue
+			}
+		} else if record.ID == run.ID || kept < keep || verified && !verifiedKept {
 			kept++
 			verifiedKept = verifiedKept || verified
 			backup.Close()

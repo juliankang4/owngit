@@ -157,8 +157,8 @@ var backupsCatalog = map[MessageCode]message{
 		ko: "보관할 백업 수",
 	},
 	MsgBackupKeepHelp: {
-		en: "From 1 to 1000. OwnGit keeps this many of the backups it made in the folder, plus the newest verified one, and removes older ones it made. It never touches other files there.",
-		ko: "1에서 1000 사이입니다. OwnGit은 폴더에 자기가 만든 백업을 이 개수만큼, 그리고 가장 최근에 검사를 통과한 백업을 남기고 더 오래된 자기 백업을 지웁니다. 폴더의 다른 파일은 건드리지 않습니다.",
+		en: "From 1 to 1000. OwnGit keeps this many of the backups it made in the folder, plus the newest verified one, and removes older ones it made. A backup that fails its verification does not count: OwnGit keeps only the newest one of those, until a verified backup replaces it. It never touches other files there.",
+		ko: "1에서 1000 사이입니다. OwnGit은 폴더에 자기가 만든 백업을 이 개수만큼, 그리고 가장 최근에 검사를 통과한 백업을 남기고 더 오래된 자기 백업을 지웁니다. 검사에 실패한 백업은 개수에 넣지 않으며, 가장 최근 것 하나만 남기고 검사를 통과한 백업이 생기면 그것도 지웁니다. 폴더의 다른 파일은 건드리지 않습니다.",
 	},
 	MsgBackupKeepInvalid: {
 		en: "Enter a whole number from 1 to 1000.",
