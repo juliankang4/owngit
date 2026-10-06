@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -67,8 +68,9 @@ func TestPostWithRetryStopsWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// The check run steps are separable: a cancelled execution still observes
-// the worktree and is recorded by the completion step with its own context.
+// The check run steps are separable: a cancelled execution is recorded by the
+// completion step with its own context, and the worktree state it could not
+// read is unknown.
 func TestCheckAttemptStepsRecordACancelledExecution(t *testing.T) {
 	remoteFlags, taskID, work := startCheckCLIServer(t)
 	flags := newCommandFlagSet("check run")
@@ -92,8 +94,14 @@ func TestCheckAttemptStepsRecordACancelledExecution(t *testing.T) {
 	if !output.OK || !output.Uploaded || output.Attempt == nil {
 		t.Fatalf("cancelled run was not recorded: %+v", output)
 	}
-	if output.Attempt.Status != checkexec.StatusCancelled || output.Attempt.WorktreeState != state.WorktreeClean {
+	if output.Attempt.Status != checkexec.StatusCancelled || output.Attempt.WorktreeState != state.WorktreeUnknown {
 		t.Fatalf("recorded status=%q worktree=%q", output.Attempt.Status, output.Attempt.WorktreeState)
+	}
+	// Stopping the run also stops the observation of the worktree, so the
+	// recorded state is unknown with the reason, never a clean tree the helper
+	// did not read.
+	if !strings.Contains(attempt.log, "unknown") {
+		t.Fatalf("the recorded log does not tell why the worktree state is unknown: %q", attempt.log)
 	}
 	if markerExists(t, work, "ran-marker") {
 		t.Fatal("a check ran after the context was cancelled")

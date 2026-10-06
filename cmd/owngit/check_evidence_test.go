@@ -31,7 +31,7 @@ func TestCheckRunEvidenceStaysWithinServerBoundsAfterJSON(t *testing.T) {
 	if cleanup := roundTripJSONString(t, facts[2].CleanupError); cleanup == "" || len(cleanup) > state.MaximumCleanupErrorBytes {
 		t.Fatalf("cleanup error decodes to %d bytes", len(cleanup))
 	}
-	log, truncated := buildCheckLog(results)
+	log, truncated := buildCheckLog(results, "")
 	if decoded := roundTripJSONString(t, log); len(decoded) > state.MaximumCheckLogBytes || !utf8.ValidString(log) || !truncated {
 		t.Fatalf("log decodes to %d bytes, valid=%v truncated=%v", len(decoded), utf8.ValidString(log), truncated)
 	}
@@ -40,7 +40,7 @@ func TestCheckRunEvidenceStaysWithinServerBoundsAfterJSON(t *testing.T) {
 	if facts := checkResultsJSON(small); facts[0].OutputExcerpt != "ok 가" || facts[0].Truncated {
 		t.Fatalf("small excerpt changed: %+v", facts[0])
 	}
-	if log, truncated := buildCheckLog(small); log != "== small: passed (exit 0)\nok 가" || truncated {
+	if log, truncated := buildCheckLog(small, ""); log != "== small: passed (exit 0)\nok 가" || truncated {
 		t.Fatalf("small log=%q truncated=%v", log, truncated)
 	}
 }
@@ -59,7 +59,7 @@ func roundTripJSONString(t *testing.T, value string) string {
 func TestCheckRunLogReportsTruncationAtEveryCharacterAlignment(t *testing.T) {
 	for shift := 0; shift < 3; shift++ {
 		output := strings.Repeat("a", shift) + strings.Repeat("가", (state.MaximumCheckLogBytes+300)/3)
-		log, truncated := buildCheckLog([]checkexec.Result{{Name: "c", Status: checkexec.StatusPassed, Command: "c", Output: output}})
+		log, truncated := buildCheckLog([]checkexec.Result{{Name: "c", Status: checkexec.StatusPassed, Command: "c", Output: output}}, "")
 		if !truncated || len(log) > state.MaximumCheckLogBytes || !utf8.ValidString(log) {
 			t.Errorf("shift=%d stored=%d truncated=%v valid=%v", shift, len(log), truncated, utf8.ValidString(log))
 		}
@@ -77,7 +77,7 @@ func TestCheckRunEvidenceHidesOverlappingCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	log, _ := buildCheckLog(results)
+	log, _ := buildCheckLog(results, "")
 	for name, text := range map[string]string{"output_excerpt": string(encoded), "log": log} {
 		if strings.Contains(strings.ReplaceAll(text, "[redacted]", ""), "ab") || !strings.Contains(text, "[redacted]") {
 			t.Fatalf("%s shows part of the credential: %s", name, text)

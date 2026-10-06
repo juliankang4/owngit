@@ -836,7 +836,7 @@ func TestMCPWriteToolsAndCheckRun(t *testing.T) {
 	var run checkRunOutput
 	text, isError = session.call("check_run", map[string]any{"task": task.Task.ID})
 	decodeToolJSON(t, text, &run)
-	if isError || !run.OK || !run.Uploaded || run.Attempt == nil || run.Attempt.Status != "passed" || run.Attempt.WorktreeState != "clean" ||
+	if isError || !run.OK || !run.Uploaded || run.Attempt == nil || run.Attempt.Status != "passed" || run.Attempt.WorktreeState != "clean" || run.WorktreeNote != "" ||
 		run.Attempt.RevisionOID != prGitOutput(t, work, "rev-parse", "HEAD") || len(run.Results) != 1 || run.Results[0].Name != "pass" {
 		t.Fatalf("check_run: %s", text)
 	}

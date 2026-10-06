@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -234,13 +236,17 @@ func checkConfigCommand(arguments []string) error {
 }
 
 type checkRunOutput struct {
-	OK                        bool              `json:"ok"`
-	Registered                bool              `json:"registered"`
-	Uploaded                  bool              `json:"uploaded"`
-	AttemptID                 string            `json:"attempt_id"`
-	CycleID                   string            `json:"cycle_id,omitempty"`
-	Task                      *checkapi.Task    `json:"task,omitempty"`
-	Attempt                   *checkapi.Attempt `json:"attempt,omitempty"`
+	OK         bool              `json:"ok"`
+	Registered bool              `json:"registered"`
+	Uploaded   bool              `json:"uploaded"`
+	AttemptID  string            `json:"attempt_id"`
+	CycleID    string            `json:"cycle_id,omitempty"`
+	Task       *checkapi.Task    `json:"task,omitempty"`
+	Attempt    *checkapi.Attempt `json:"attempt,omitempty"`
+
+	// WorktreeNote says why the worktree state is unknown, in the words of the
+	// recorded log line. It is empty when the state was read.
+	WorktreeNote              string            `json:"worktree_note,omitempty"`
 	CorrectionCyclesRemaining int               `json:"correction_cycles_remaining"`
 	Results                   []checkapi.Result `json:"results"`
 	UploadError               string            `json:"upload_error,omitempty"`
@@ -284,23 +290,49 @@ func checkRun(arguments []string) error {
 		}
 		target = &resolved
 	}
-	attempt, err := prepareCheckAttempt(context.Background(), target, request)
+	// The interrupt covers preparation too. The observations there start Git
+	// as an owned process, in its own group on Unix, so a terminal interrupt
+	// reaches this process alone and only this process can stop that Git.
+	stops := stopRunOnSignal()
+	defer stops.release()
+	attempt, err := prepareCheckAttempt(stops.run, target, request)
+	if signal := stops.stopped(); signal != nil {
+		// The owner stopped the run before anything was registered: no check
+		// runs, nothing is recorded, and the exit status names the signal.
+		return interruptedExit(signal)
+	}
 	if err != nil {
 		return err
 	}
-	if err := attempt.register(context.Background()); err != nil {
-		return err
+	// Registration and completion outlive the signal that stopped the run, so a
+	// stopped attempt is still recorded; a second signal ends them at once.
+	if err := attempt.register(stops.finish); err != nil {
+		return finishInterrupted(stops, err)
 	}
-	// Only execution listens for an interrupt, so a cancelled run is still
-	// recorded by the completion below.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	attempt.execute(ctx)
-	output := attempt.complete(context.Background())
+	attempt.execute(stops.run)
+	output := attempt.complete(stops.finish)
 	if err := writeJSONValue(output); err != nil {
 		return err
 	}
+	// The signal is read here, where the exit status is decided: one that arrived
+	// while the result was recorded or printed must name that status too, and the
+	// second signal that ended the finishing work outranks the upload it made
+	// fail.
+	attempt.stopSignal = stops.stopped()
+	if stops.finish.Err() != nil {
+		return interruptedExit(stops.stopped())
+	}
 	return attempt.outcome()
+}
+
+// finishInterrupted reports the error of a registration or a completion that a
+// second stop signal ended, and the error itself when it was an answer from the
+// server.
+func finishInterrupted(stops *runStops, err error) error {
+	if stops.finish.Err() != nil {
+		return interruptedExit(stops.stopped())
+	}
+	return err
 }
 
 // checkRunRequest describes one check run.
@@ -359,16 +391,26 @@ type checkAttempt struct {
 	finished     time.Time
 	log          string
 	logTruncated bool
+	// stopSignal is the signal that stopped the run, as 128 plus its number is
+	// the exit status. It is nil when no signal stopped the run, and it is read
+	// where the exit status is decided, after the result is recorded.
+	stopSignal os.Signal
+	// worktreeNote explains a worktree state the helper could not read. It is
+	// the note of the observation after the checks, or of the observation
+	// before them when that one could not read the state either, and it is what
+	// the result and the recorded log say.
+	worktreeNote string
 }
 
 func prepareCheckAttempt(ctx context.Context, target *connection, request checkRunRequest) (*checkAttempt, error) {
 	if err := request.validate(); err != nil {
 		return nil, err
 	}
-	revision, worktree, err := inspectWorktree(ctx, request.Workdir)
+	observation, err := inspectWorktree(ctx, request.Workdir)
 	if err != nil {
 		return nil, err
 	}
+	revision, worktree := observation.revision, observation.state
 	definitions := request.Checks
 	if len(definitions) == 0 {
 		// Without explicit checks, only the configuration committed in the
@@ -392,7 +434,7 @@ func prepareCheckAttempt(ctx context.Context, target *connection, request checkR
 			AttemptID: attemptID, RevisionOID: revision, WorktreeState: worktree, Checks: checkDefinitionsJSON(definitions),
 			CycleID: request.CycleID, StartedAt: started, TimeoutMS: request.Timeout.Milliseconds(), OutputLimitBytes: request.OutputLimit,
 		},
-		output: checkRunOutput{AttemptID: attemptID, CycleID: request.CycleID},
+		output: checkRunOutput{AttemptID: attemptID, CycleID: request.CycleID}, worktreeNote: observation.note,
 	}, nil
 }
 
@@ -439,16 +481,27 @@ func (run *checkAttempt) execute(ctx context.Context) {
 	run.finished = time.Now().UTC()
 	run.status = aggregateCheckStatus(run.results, run.cancelled)
 	// A check that commits or dirties the tree must not be certified as the
-	// revision observed before it ran. The observation belongs to the record,
-	// so it runs even after a cancellation.
-	run.worktree = confirmWorktree(context.WithoutCancel(ctx), run.request.Workdir, run.revision, run.worktree)
-	run.log, run.logTruncated = buildCheckLog(run.results)
+	// revision observed before it ran, so the worktree is observed again after
+	// the checks. That observation is bounded and it stops with the run, so an
+	// owner filter that does not finish cannot keep the result. The state is
+	// then unknown, and the note says so in the recorded log.
+	worktree, note := confirmWorktree(ctx, run.request.Workdir, run.revision, run.worktree)
+	run.worktree = worktree
+	if note == "" && worktree == state.WorktreeUnknown {
+		// Neither observation read the state, and the earlier one says why.
+		note = run.worktreeNote
+	}
+	run.worktreeNote = note
+	run.log, run.logTruncated = buildCheckLog(run.results, note)
 	run.output.Results = checkResultsJSON(run.results)
 }
 
 // complete records the outcome of a registered attempt, or describes a
 // local-only attempt, and returns the result.
 func (run *checkAttempt) complete(ctx context.Context) checkRunOutput {
+	// The note reaches a reader without a call to check log, and without the
+	// line break the recorded log separates its lines with.
+	run.output.WorktreeNote = strings.TrimSpace(run.worktreeNote)
 	if run.registered {
 		completion := checkapi.AttemptCompletion{
 			Results: run.output.Results, Cancelled: run.cancelled, FinishedAt: run.finished, WorktreeState: run.worktree,
@@ -488,20 +541,125 @@ func (run *checkAttempt) complete(ctx context.Context) checkRunOutput {
 
 // outcome is the conventional exit status of a completed run.
 func (run *checkAttempt) outcome() error {
-	return checkRunOutcomeError(run.output.OK, run.status, run.cancelled)
+	return checkRunOutcomeError(run.output.OK, run.status, run.cancelled, run.stopSignal)
 }
 
-func checkRunOutcomeError(recorded bool, status string, cancelled bool) error {
+func checkRunOutcomeError(recorded bool, status string, cancelled bool, stop os.Signal) error {
 	switch {
 	case !recorded:
 		return &checkExit{code: 2, err: errors.New("the check attempt was not recorded")}
 	case cancelled && status == checkexec.StatusCancelled:
-		return &checkExit{code: 130, err: errors.New("the check run was cancelled")}
+		return interruptedExit(stop)
 	case status != checkexec.StatusPassed:
 		return &checkExit{code: 1, err: errors.New("one or more checks did not pass")}
+	case stop != nil:
+		// The checks passed and a signal stopped the run after them, while the
+		// worktree was read again: the result is still recorded, and the exit
+		// must not claim a run that the owner stopped.
+		return interruptedExit(stop)
 	default:
 		return nil
 	}
+}
+
+// stopRunSignals are the signals that stop a run: Ctrl-C, a closed terminal and
+// a termination request. A run started under nohup ignores SIGHUP, and its owner
+// chose that, so the signal is left alone there. SIGKILL cannot be caught: on
+// Unix the owned Git and everything it started outlive this process, because the
+// observation bound lives here, and only on Windows does the owned job object
+// close with the process and end them.
+func stopRunSignals() []os.Signal {
+	signals := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		signals = append(signals, syscall.SIGHUP)
+	}
+	return signals
+}
+
+// runStops watches the stop signals of one check run. The first signal stops the
+// run: the worktree observation and the checks end with it. Registration and
+// completion keep going under finish, so the attempt is not left pending, until
+// a second signal ends them at once.
+//
+// The signal is recorded before its context ends, so a run that observed the end
+// also observes the signal that caused it.
+type runStops struct {
+	run       context.Context
+	finish    context.Context
+	endRun    context.CancelFunc
+	endFinish context.CancelFunc
+	signals   chan os.Signal
+	watcher   chan struct{}
+	mutex     sync.Mutex
+	last      os.Signal
+}
+
+// onStopSignalRecorded, when set, is called with the signal that a run recorded,
+// on the watcher goroutine and before the context that the signal ends.
+// Production leaves it nil. A test that must know a run recorded a signal before
+// it lets the run finish sets it, so the hook must not block.
+var onStopSignalRecorded func(os.Signal)
+
+// stopRunOnSignal starts watching the signals that stop a run. release stops the
+// watching and leaves no goroutine behind.
+func stopRunOnSignal() *runStops {
+	stops := &runStops{signals: make(chan os.Signal, 2), watcher: make(chan struct{})}
+	stops.run, stops.endRun = context.WithCancel(context.Background())
+	stops.finish, stops.endFinish = context.WithCancel(context.Background())
+	signal.Notify(stops.signals, stopRunSignals()...)
+	go func() {
+		defer close(stops.watcher)
+		select {
+		case arrived := <-stops.signals:
+			stops.remember(arrived)
+			stops.endRun()
+		case <-stops.finish.Done():
+			return
+		}
+		// The second signal ends the registration or the completion that the
+		// first one deliberately let finish.
+		select {
+		case arrived := <-stops.signals:
+			stops.remember(arrived)
+			stops.endFinish()
+		case <-stops.finish.Done():
+		}
+	}()
+	return stops
+}
+
+// stopped names the last signal that arrived, or nil when none did.
+func (stops *runStops) stopped() os.Signal {
+	stops.mutex.Lock()
+	defer stops.mutex.Unlock()
+	return stops.last
+}
+
+func (stops *runStops) remember(arrived os.Signal) {
+	stops.mutex.Lock()
+	stops.last = arrived
+	stops.mutex.Unlock()
+	if onStopSignalRecorded != nil {
+		onStopSignalRecorded(arrived)
+	}
+}
+
+func (stops *runStops) release() {
+	signal.Stop(stops.signals)
+	stops.endRun()
+	stops.endFinish()
+	<-stops.watcher
+}
+
+// interruptedExit is the conventional status of a process stopped by a signal,
+// 128 plus the signal number. A cancellation no signal caused keeps the
+// interrupt status the command line used before.
+func interruptedExit(signal os.Signal) error {
+	code := 130
+	if value, ok := signal.(syscall.Signal); ok {
+		code = 128 + int(value)
+	}
+	return &checkExit{code: code, err: errors.New("the check run was cancelled")}
 }
 
 func parseCheckDefinitions(values []string) ([]checkexec.Definition, error) {
@@ -561,52 +719,145 @@ func committedCheckDefinitions(ctx context.Context, directory, revision string) 
 	return definitions, nil
 }
 
-func inspectWorktree(ctx context.Context, directory string) (string, string, error) {
+// worktreeObservationBound bounds one Git observation of the working tree,
+// before and after a check run. The bound belongs to the observation, not to
+// the caller, so a run that nobody stops still ends and records unknown
+// instead of no result at all. The value is generous because the owner's
+// configured clean filters run here, and a filter that hashes every changed
+// file may take long. A warm scan of 100,000 synthetic files took about 150 ms
+// on Linux; a very large checkout with a cold cache, above all on Windows
+// without a file system monitor, can still reach this bound, and the state is
+// then unknown, never a false clean one. It matches the bound the
+// configured-check runner gives its own post-run verification. A variable only
+// so tests can shorten it.
+var worktreeObservationBound = 30 * time.Second
+
+// observationResult is one bounded reading of the working tree. note is the
+// recorded log line that explains a state which could not be read.
+type observationResult struct {
+	revision string
+	state    string
+	note     string
+}
+
+func inspectWorktree(ctx context.Context, directory string) (observationResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, worktreeObservationBound)
+	defer cancel()
 	revision, err := runGit(ctx, directory, "rev-parse", "HEAD")
 	if err != nil {
-		return "", state.WorktreeUnknown, cliProblem("revision_unavailable", "The working directory is not a Git checkout with a commit: "+err.Error())
+		return observationResult{state: state.WorktreeUnknown, note: observationNote(ctx)},
+			cliProblem("revision_unavailable", "The working directory is not a Git checkout with a commit: "+err.Error())
 	}
 	status, err := runGit(ctx, directory, "status", "--porcelain")
 	if err != nil {
-		return revision, state.WorktreeUnknown, nil
+		return observationResult{revision: revision, state: state.WorktreeUnknown, note: observationNote(ctx)}, nil
 	}
 	if strings.TrimSpace(status) != "" {
-		return revision, state.WorktreeDirty, nil
+		return observationResult{revision: revision, state: state.WorktreeDirty}, nil
 	}
-	return revision, state.WorktreeClean, nil
+	return observationResult{revision: revision, state: state.WorktreeClean}, nil
+}
+
+// observationNote is the note for a working tree state that could not be read.
+// The result carries it as worktree_note and it opens the recorded log, so the
+// command line, an MCP caller and the server record all say why.
+func observationNote(ctx context.Context) string {
+	reason := "Git could not read it"
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		reason = fmt.Sprintf("the Git status scan did not answer within %s", worktreeObservationBound)
+	case errors.Is(ctx.Err(), context.Canceled):
+		reason = "the run was stopped while the worktree was read"
+	}
+	return "[OwnGit could not read the worktree: " + reason + ". The worktree state is unknown.]\n"
 }
 
 // confirmWorktree re-observes the worktree after execution and keeps the more
 // pessimistic of the two observations: dirty, then unknown, then clean. A
 // moved revision counts as dirty. An unreadable revision or tree is unknown,
-// since it neither shows nor rules out a change.
-func confirmWorktree(ctx context.Context, directory, revision, before string) string {
-	afterRevision, after, err := inspectWorktree(ctx, directory)
+// since it neither shows nor rules out a change, and the returned note names
+// the reason for the recorded log.
+func confirmWorktree(ctx context.Context, directory, revision, before string) (string, string) {
+	after, err := inspectWorktree(ctx, directory)
 	switch {
-	case err == nil && afterRevision != revision, before == state.WorktreeDirty, after == state.WorktreeDirty:
-		return state.WorktreeDirty
-	case before == state.WorktreeUnknown, after == state.WorktreeUnknown:
-		return state.WorktreeUnknown
+	case err == nil && after.revision != revision, before == state.WorktreeDirty, after.state == state.WorktreeDirty:
+		return state.WorktreeDirty, ""
+	case before == state.WorktreeUnknown, after.state == state.WorktreeUnknown:
+		return state.WorktreeUnknown, after.note
 	}
-	return state.WorktreeClean
+	return state.WorktreeClean, ""
 }
 
 // runGit runs Git in the working directory with the user's configuration,
 // which decides what counts as a change (for example ignored files and
-// filters), so configured clean filters still run. Two things that do not
-// change the answer are turned off, because a clone's configuration could
-// name any program for them: core.fsmonitor, which only speeds up the scan,
-// and the optional index write of git status, which would run the
-// post-index-change hook.
+// filters), so configured clean filters still run. Git is owned like a check
+// command: when ctx ends, Git and the filters and other programs it started
+// are stopped before runGit returns, so a filter that does not finish cannot
+// hold the run. Containment covers Git and every descendant that stays in its
+// process group on Unix or its job on Windows; the checks and the owner's Git
+// configuration run with the owner's authority and are not a sandbox, so a
+// descendant that leaves both is outside what this can stop. Two things that
+// do not change the answer are turned off, because a clone's configuration
+// could name any program for them:
+// core.fsmonitor, which only speeds up the scan, and the optional index write
+// of git status, which would run the post-index-change hook.
 func runGit(ctx context.Context, directory string, arguments ...string) (string, error) {
-	command := exec.CommandContext(ctx, "git", append([]string{"-c", "core.fsmonitor=false"}, arguments...)...)
+	command := exec.Command("git", append([]string{"-c", "core.fsmonitor=false"}, arguments...)...)
 	command.Dir = directory
 	command.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
-	output, err := gitexec.Output(command)
-	if err != nil {
-		return "", err
+	stdout := &observationOutput{}
+	stderr := &observationOutput{limit: observationErrorLimit}
+	command.Stdout = stdout
+	command.Stderr = stderr
+	if err := gitexec.RunOwned(ctx, command, nil, 0); err != nil {
+		return "", gitObservationError(arguments, err, stderr.text())
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(stdout.text()), nil
+}
+
+// observationErrorLimit bounds the Git explanation kept for a failed
+// observation. Git reports a failure in a few short lines, and the text only
+// reaches an error message.
+const observationErrorLimit = 64 << 10
+
+// observationOutput collects one stream of a Git observation. The process
+// owner may still write after it returns when it could not contain the
+// process, so a write and the read are guarded, and limit keeps at most that
+// many bytes. A zero limit keeps everything.
+type observationOutput struct {
+	mu     sync.Mutex
+	buffer bytes.Buffer
+	limit  int
+}
+
+func (output *observationOutput) Write(p []byte) (int, error) {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	kept := len(p)
+	if output.limit > 0 {
+		kept = min(kept, max(output.limit-output.buffer.Len(), 0))
+	}
+	_, _ = output.buffer.Write(p[:kept])
+	return len(p), nil
+}
+
+func (output *observationOutput) text() string {
+	output.mu.Lock()
+	defer output.mu.Unlock()
+	return strings.TrimSpace(output.buffer.String())
+}
+
+// gitObservationError names a failed Git observation and its command, with
+// Git's own reason when it wrote one.
+func gitObservationError(arguments []string, err error, stderr string) error {
+	command := "git"
+	if len(arguments) > 0 {
+		command += " " + arguments[0]
+	}
+	if stderr == "" {
+		return fmt.Errorf("%s: %w", command, err)
+	}
+	return fmt.Errorf("%s: %w: %s", command, err, stderr)
 }
 
 // aggregateCheckStatus uses the server's canonical aggregate so uploaded and
@@ -659,10 +910,12 @@ func checkDefinitionsJSON(definitions []checkexec.Definition) []checkapi.CheckDe
 	return output
 }
 
-// buildCheckLog joins the per-check output and reports whether the total had
-// to be truncated, so the durable record can say so instead of hiding it.
-func buildCheckLog(results []checkexec.Result) (string, bool) {
+// buildCheckLog joins the worktree observation note and the per-check output
+// and reports whether the total had to be truncated, so the durable record can
+// say so instead of hiding it.
+func buildCheckLog(results []checkexec.Result, worktreeNote string) (string, bool) {
 	log := checkapi.LogBuffer{Limit: state.MaximumCheckLogBytes}
+	log.Add(worktreeNote)
 	for _, result := range results {
 		log.Add(fmt.Sprintf("== %s: %s (exit %s)\n", result.Name, result.Status, exitCodeText(result.ExitCode)))
 		log.AddClipped(result.Output, result.OutputGap)

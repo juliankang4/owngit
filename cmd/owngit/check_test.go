@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -395,7 +396,8 @@ func TestConfirmWorktreeKeepsUnknownApartFromChanges(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			work, revision := newWork(t)
 			test.after(t, work)
-			if got := confirmWorktree(ctx, work, revision, test.before); got != test.want {
+			got, _ := confirmWorktree(ctx, work, revision, test.before)
+			if got != test.want {
 				t.Fatalf("confirmWorktree(before=%s)=%s, want %s", test.before, got, test.want)
 			}
 		})
@@ -433,7 +435,7 @@ func TestCleanupFailureOutranksSeparateCancellationInCLI(t *testing.T) {
 			// the exit code. Cleanup uncertainty is an execution failure, not the
 			// cancellation exit reserved for cancellation-only evidence.
 			var exit *checkExit
-			if err := checkRunOutcomeError(true, status, true); !errors.As(err, &exit) || exit.code != 1 {
+			if err := checkRunOutcomeError(true, status, true, nil); !errors.As(err, &exit) || exit.code != 1 {
 				t.Fatalf("local cleanup exit=%v", err)
 			}
 		})
@@ -445,8 +447,34 @@ func TestCleanupFailureOutranksSeparateCancellationInCLI(t *testing.T) {
 	}
 	status := aggregateCheckStatus(ordinary, true)
 	var exit *checkExit
-	if err := checkRunOutcomeError(true, status, true); status != checkexec.StatusCancelled || !errors.As(err, &exit) || exit.code != 130 {
+	if err := checkRunOutcomeError(true, status, true, nil); status != checkexec.StatusCancelled || !errors.As(err, &exit) || exit.code != 130 {
 		t.Fatalf("ordinary cancellation precedence changed: status=%q err=%v", status, err)
+	}
+	// A signal that stopped the run names its exit status, 128 plus the signal
+	// number, as a process stopped by signal does.
+	for _, test := range []struct {
+		signal os.Signal
+		code   int
+	}{
+		{syscall.SIGINT, 130},
+		{syscall.SIGHUP, 129},
+		{syscall.SIGTERM, 143},
+	} {
+		if err := checkRunOutcomeError(true, status, true, test.signal); !errors.As(err, &exit) || exit.code != test.code {
+			t.Fatalf("run stopped by %v exit=%v, want %d", test.signal, err, test.code)
+		}
+	}
+	// A signal recorded after the checks passed keeps the check's own result but
+	// must not report the run as a success either. The precedence above it stays:
+	// a check that did not pass exits 1, and an attempt nobody recorded exits 2.
+	if err := checkRunOutcomeError(true, checkexec.StatusPassed, false, syscall.SIGINT); !errors.As(err, &exit) || exit.code != 130 {
+		t.Fatalf("run whose checks passed and which a signal stopped exit=%v, want 130", err)
+	}
+	if err := checkRunOutcomeError(true, checkexec.StatusError, false, syscall.SIGINT); !errors.As(err, &exit) || exit.code != 1 {
+		t.Fatalf("failed check with a recorded signal exit=%v, want 1", err)
+	}
+	if err := checkRunOutcomeError(false, checkexec.StatusPassed, false, syscall.SIGINT); !errors.As(err, &exit) || exit.code != 2 {
+		t.Fatalf("unrecorded run with a recorded signal exit=%v, want 2", err)
 	}
 }
 
@@ -790,5 +818,60 @@ func TestCredentialCreateAcceptsTheRepositoryAtItsCurrentAddress(t *testing.T) {
 	var problem *apiclient.Error
 	if !errors.As(create.err, &problem) || problem.Code != "mismatched_response" || !strings.Contains(problem.Message, "elsewhere") {
 		t.Fatalf("credential for another address error=%v", create.err)
+	}
+}
+
+// A worktree state the helper could not read reaches the command line result
+// and an MCP caller with its reason, so a reader does not have to fetch the
+// recorded log to know why it is unknown. A state that was read carries no
+// note.
+func TestCheckRunResultSaysWhyTheWorktreeStateIsUnknown(t *testing.T) {
+	remoteFlags, taskID, work := startMCPCheckFixture(t)
+	writeCommittedChecks(t, work, `{"version":1,"events":{"push":{}},"checks":[{"name":"pass","command":"exit 0"}]}`)
+	local := func() checkRunOutput {
+		t.Helper()
+		output := cliOutput(t, checkCommand, "run", "--no-upload", "--task", taskID, "--workdir", work, "--check", "pass=exit 0")
+		var result checkRunOutput
+		noErr(t, json.Unmarshal([]byte(output), &result))
+		return result
+	}
+	read := local()
+	if read.Attempt == nil || read.Attempt.WorktreeState != state.WorktreeClean || read.WorktreeNote != "" {
+		t.Fatalf("a worktree the helper read: %+v", read)
+	}
+	// A corrupt index makes every later Git read of the worktree fail while
+	// the revision stays readable, so the state is unknown for a reason the
+	// helper can name and the check's own result must survive it.
+	noErr(t, os.WriteFile(filepath.Join(work, ".git", "index"), []byte("not an index\n"), 0o600))
+	unread := local()
+	if unread.Attempt == nil || unread.Attempt.WorktreeState != state.WorktreeUnknown || unread.WorktreeNote == "" {
+		t.Fatalf("a worktree the helper could not read: %+v", unread)
+	}
+	if !strings.Contains(unread.WorktreeNote, "could not read the worktree") {
+		t.Fatalf("the result does not say why the state is unknown: %q", unread.WorktreeNote)
+	}
+	if len(unread.Results) != 1 || unread.Results[0].Status != checkexec.StatusPassed {
+		t.Fatalf("the check's own result was lost: %+v", unread.Results)
+	}
+	// An MCP caller gets the same field in the same words.
+	session := startMCPSession(t, mcpOptions{server: remoteFlags[1], repository: "project", credentialFile: remoteFlags[6], acceptInsecureHTTP: true, workdir: work})
+	text, isError := session.call("check_run", map[string]any{"task": taskID})
+	if isError {
+		t.Fatalf("check_run: %s", text)
+	}
+	var run checkRunOutput
+	decodeToolJSON(t, text, &run)
+	if run.Attempt == nil || run.Attempt.WorktreeState != state.WorktreeUnknown || run.WorktreeNote != unread.WorktreeNote {
+		t.Fatalf("check_run: %s, want the note %q", text, unread.WorktreeNote)
+	}
+	// The result repeats the recorded log line, so both say the same thing.
+	text, isError = session.call("check_log", map[string]any{"attempt": run.Attempt.ID})
+	if isError {
+		t.Fatalf("check_log: %s", text)
+	}
+	var recorded checkapi.LogResponse
+	decodeToolJSON(t, text, &recorded)
+	if line := strings.SplitN(recorded.Content, "\n", 2)[0]; line != run.WorktreeNote {
+		t.Fatalf("recorded log line %q, result note %q", line, run.WorktreeNote)
 	}
 }

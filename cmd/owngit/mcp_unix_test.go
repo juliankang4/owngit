@@ -57,7 +57,10 @@ func awaitCancelledAttempt(t *testing.T, remoteFlags []string, taskID, markers s
 		var status checkapi.TaskResponse
 		noErr(t, json.Unmarshal([]byte(cliOutput(t, checkCommand, append([]string{"status", "--task", taskID}, remoteFlags...)...)), &status))
 		if status.Attempt != nil && status.Attempt.Status == "cancelled" {
-			if status.Attempt.WorktreeState != "clean" {
+			// The cancellation stopped the observation of the worktree with the
+			// checks, so the attempt records an unknown state, never a clean
+			// tree nobody read.
+			if status.Attempt.WorktreeState != "unknown" {
 				t.Fatalf("cancelled attempt worktree %q", status.Attempt.WorktreeState)
 			}
 			break

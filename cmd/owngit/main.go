@@ -69,8 +69,9 @@ func main() {
 // JSON to stdout. Any other error with a code is written as JSON to stdout,
 // and the rest to standard error.
 func reportError(stdout io.Writer, err error) int {
-	// A completed check run already wrote its JSON result and only needs
-	// its conventional exit code.
+	// A check run's own status, which its result carries: a completed run wrote
+	// its JSON result before it returned, and a run that a signal stopped during
+	// preparation wrote nothing and exits with 128 plus the signal number.
 	var exit *checkExit
 	if errors.As(err, &exit) {
 		return exit.code

@@ -18,7 +18,7 @@ func TestCLIGitFailuresNameTheCommandAndReason(t *testing.T) {
 	ctx := context.Background()
 	work := newClone(t) // no commit yet, so HEAD does not resolve
 
-	_, _, err := inspectWorktree(ctx, work)
+	_, err := inspectWorktree(ctx, work)
 	if err == nil || !strings.Contains(err.Error(), ": git rev-parse: exit status 128: fatal: ") {
 		t.Errorf("worktree inspection err=%v, want git rev-parse and Git's reason", err)
 	}

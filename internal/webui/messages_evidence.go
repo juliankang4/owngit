@@ -409,8 +409,8 @@ var evidenceCatalog = map[MessageCode]message{
 		ko: "워킹 트리: 커밋하지 않은 변경 있음",
 	},
 	MsgCheckWorktreeUnknown: {
-		en: "Working copy: not recorded",
-		ko: "워킹 트리: 기록 없음",
+		en: "Working copy: could not be read",
+		ko: "워킹 트리: 읽지 못함",
 	},
 
 	MsgCheckLogTitle:       {en: "Raw log", ko: "원본 로그"},
