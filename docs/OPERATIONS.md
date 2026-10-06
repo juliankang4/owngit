@@ -187,7 +187,21 @@ A Linux system service runs with systemd hardening: nothing it starts can gain p
 
 ### Health check
 
-`GET /healthz` answers `200 OK` while OwnGit serves HTTP. A monitor on another device must use a host name OwnGit accepts ([Host names](#host-names)). On this computer, `owngit health` exits 0 only when this installation's server answers, and otherwise says what it found.
+`GET /healthz` answers `200 OK` while OwnGit serves HTTP. A monitor on another device must use a host name OwnGit accepts ([Host names](#host-names)).
+
+On this computer, `owngit health` exits 0 and prints `OwnGit answers at http://ADDRESS` only when the server of this state directory answers and proves who it is. Each time the server starts, it writes a new key to `health-run.json` in the state directory, readable only by its account, and removes the file when it stops. `owngit health` sends a fresh challenge and accepts only an answer made with that key, so another program that listens on the same address cannot pass. `owngit service install`, `start` and `restart` use the same check before they report that the service runs.
+
+`owngit health` reads the state directory and writes nothing, so it also works when the state directory is read-only. Run it as the account that runs OwnGit. The file is not part of backups.
+
+When it cannot confirm the server, it exits non-zero and says why:
+
+| Message | Meaning |
+| --- | --- |
+| `it published no health key; restart OwnGit` | The running server started before version 1.1.5, or it could not write its key. Restart OwnGit once. |
+| `another program answers at http://ADDRESS, or OwnGit restarted` | The answer did not carry a valid proof. Another program may hold the address, or OwnGit restarted during the check. Run it again; if it repeats, find the program that listens on the address. |
+| `OwnGit is still starting` | Try again shortly. |
+| `OwnGit is not running` | No server runs for this state directory. |
+| `another program holds the state directory` | OwnGit cannot tell which program runs with this state directory. |
 
 ## Checkup
 
@@ -566,7 +580,16 @@ This ends every browser's administrator confirmation and leaves the repositories
 
 Every command that reads a password or token file (`reset-admin`, `settings`, `import`, `pr`, `repo` and others) requires a regular file that only your account can read. OwnGit never accepts a password as a command-line value. The file holds the password on one line. When OwnGit refuses a file, it says which accounts can also read it and gives the command that fixes it.
 
-On macOS and Linux, create the file with `umask 077`, or fix it with `chmod 600 FILE`. On macOS, also remove any access list with `chmod -N FILE`.
+On macOS, Linux and other Unix systems, the file must:
+
+- belong to your account or to root;
+- be private to its owner (no access for the group or others);
+- be a regular file, not a folder, pipe or device;
+- be at most 1 MiB for a token or import credential file.
+
+OwnGit opens the file once, checks the open file and reads from it, so the file cannot be swapped between the check and the read. A symbolic link is followed, and the file it points to must meet the same rules.
+
+Create the file with `umask 077`, or fix it with `chmod 600 FILE`. On macOS, also remove any access list with `chmod -N FILE`.
 
 On Windows, a file made with Notepad or `echo` inherits its folder's permissions. In PowerShell, create the file, limit it to your account, and only then write the password:
 

@@ -187,7 +187,21 @@ Linux 시스템 서비스에는 systemd 보안 설정이 걸립니다. 서비스
 
 ### 상태 확인
 
-`GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 `200 OK`로 응답합니다. 다른 기기의 모니터링 도구는 OwnGit이 받아들이는 호스트 이름을 써야 합니다([호스트 이름](#호스트-이름)). 이 컴퓨터에서 `owngit health`는 이 설치의 서버가 응답할 때만 0으로 끝납니다. 그렇지 않으면 무엇을 발견했는지 알려 줍니다.
+`GET /healthz`는 OwnGit이 HTTP를 제공하는 동안 `200 OK`로 응답합니다. 다른 기기의 모니터링 도구는 OwnGit이 받아들이는 호스트 이름을 써야 합니다([호스트 이름](#호스트-이름)).
+
+이 컴퓨터에서 `owngit health`는 이 상태 디렉터리의 서버가 응답하고 자신이 그 서버임을 증명할 때만 `OwnGit answers at http://ADDRESS`를 출력하고 0으로 끝납니다. 서버는 시작할 때마다 새 키를 상태 디렉터리의 `health-run.json`에 씁니다. 이 파일은 서버 계정만 읽을 수 있고, 서버가 멈추면 지워집니다. `owngit health`는 매번 새 확인값을 보내고 그 키로 만든 응답만 받아들입니다. 그래서 같은 주소에서 다른 프로그램이 응답해도 통과하지 못합니다. `owngit service install`, `start`, `restart`도 서비스가 실행 중이라고 알리기 전에 같은 방식으로 확인합니다.
+
+`owngit health`는 상태 디렉터리를 읽기만 하고 아무것도 쓰지 않습니다. 따라서 상태 디렉터리가 읽기 전용이어도 동작합니다. OwnGit을 실행하는 계정으로 실행하세요. 이 파일은 백업에 들어가지 않습니다.
+
+서버를 확인하지 못하면 0이 아닌 값으로 끝나고 이유를 알려 줍니다.
+
+| 메시지 | 뜻 |
+| --- | --- |
+| `it published no health key; restart OwnGit` | 실행 중인 서버가 1.1.5보다 먼저 시작했거나 키를 쓰지 못했습니다. OwnGit을 한 번 다시 시작하세요. |
+| `another program answers at http://ADDRESS, or OwnGit restarted` | 응답에 올바른 증명이 없습니다. 다른 프로그램이 그 주소를 쓰고 있거나, 확인하는 사이에 OwnGit이 다시 시작했을 수 있습니다. 다시 실행해 보고, 같은 메시지가 나오면 그 주소에서 듣고 있는 프로그램을 찾으세요. |
+| `OwnGit is still starting` | 잠시 뒤에 다시 실행하세요. |
+| `OwnGit is not running` | 이 상태 디렉터리로 실행 중인 서버가 없습니다. |
+| `another program holds the state directory` | 어떤 프로그램이 이 상태 디렉터리로 실행 중인지 OwnGit이 알 수 없습니다. |
 
 ## 점검
 
@@ -566,7 +580,16 @@ owngit reset-admin --password-file /path/to/owner-only-password-file
 
 비밀번호나 토큰 파일을 읽는 명령(`reset-admin`, `settings`, `import`, `pr`, `repo` 등)은 내 계정만 읽을 수 있는 일반 파일만 받습니다. 명령줄 값으로 비밀번호를 받지 않습니다. 파일에는 비밀번호를 한 줄로 적습니다. 파일을 거부할 때는 그 파일을 읽을 수 있는 다른 계정과 고치는 명령을 알려 줍니다.
 
-macOS와 Linux에서는 `umask 077` 상태에서 파일을 만들거나 `chmod 600 FILE`로 고치세요. macOS에서는 `chmod -N FILE`로 접근 목록(ACL)도 지우세요.
+macOS, Linux와 그 밖의 Unix에서는 파일이 다음 조건을 모두 갖춰야 합니다.
+
+- 내 계정이나 root가 소유한 파일
+- 소유자만 접근할 수 있는 파일(그룹과 다른 사용자에게는 권한 없음)
+- 폴더, 파이프, 장치가 아닌 일반 파일
+- 토큰 파일과 가져오기 인증 파일은 1 MiB 이하
+
+OwnGit은 파일을 한 번 열고, 열린 파일을 검사한 뒤 그대로 읽습니다. 그래서 검사와 읽기 사이에 파일을 바꿔치기할 수 없습니다. 심볼릭 링크는 따라가며, 링크가 가리키는 파일도 같은 조건을 갖춰야 합니다.
+
+`umask 077` 상태에서 파일을 만들거나 `chmod 600 FILE`로 고치세요. macOS에서는 `chmod -N FILE`로 접근 목록(ACL)도 지우세요.
 
 Windows에서 메모장이나 `echo`로 만든 파일은 폴더의 권한을 물려받습니다. PowerShell에서 파일을 만들고 내 계정만 접근하게 한 다음 비밀번호를 쓰세요.
 
