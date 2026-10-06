@@ -92,7 +92,12 @@ the user must accept that risk for the private connection.
   attempt was recorded; a local `--no-upload` run also exits 0.
 - `1`: at least one check did not pass.
 - `2`: this client could not confirm that the attempt was recorded.
-- `130`: the run was cancelled.
+- `128` plus the signal number: a signal stopped the run (`130` for Ctrl-C,
+  `129` for a closed terminal, `143` for `SIGTERM`). Once registration has
+  started, the attempt is still recorded, and this status holds even when the
+  checks had already passed. It is `2` instead when the record is unconfirmed,
+  and `1` when the checks had finished without passing before the signal or a
+  check ended in `error`.
 
 An error object (`{"ok":false,"error":{...}}`) with exit code `1` instead of a
 result means nothing ran and nothing was recorded: an argument was invalid, the
@@ -114,7 +119,7 @@ Fields to report:
   accepted already, so its outcome is unconfirmed: do not call the task known
   to be unchanged, and do not call it known to have changed.
 - `attempt.status`, `attempt.revision_oid`, `attempt.worktree_state`,
-  `attempt.cleanup_failed`.
+  `attempt.cleanup_failed`, and `worktree_note` when it is present.
 - `results[].name`, `results[].status`, `results[].exit_code`,
   `results[].cleanup_error`.
 - `upload_error` when this client could not confirm the registration or
@@ -134,7 +139,19 @@ not change the status. An empty configured set is `unavailable`, never `passed`.
 - The helper inherits the user's environment and permissions. It is not a
   sandbox.
 - A dirty or unknown worktree is not a tested commit. Report the recorded
-  worktree state instead of calling the revision tested.
+  worktree state instead of calling the revision tested. When the state is
+  `unknown`, report `worktree_note`, which says why. Each Git reading of the
+  worktree, before and after the checks, has 30 seconds; a reading that fails,
+  runs out of time, or is stopped by a signal records `unknown`. A run stopped
+  during its checks therefore records `unknown` unless a change was already
+  seen.
+- A signal during preparation, before registration starts, stops the run
+  with nothing run, recorded, or printed. Once registration has started, the
+  first signal stops the checks but lets registration and completion finish.
+  A second signal ends that wait at once; the server may still have recorded
+  the attempt, so inspect `check status --task TASK_ID` to see what it kept. A run started
+  with `SIGHUP` ignored, as `nohup` starts one, is not stopped by a closed
+  terminal.
 - `--no-upload` runs locally and is not recorded on the server. Do not describe
   it as server-recorded evidence, and do not read its top-level
   `correction_cycles_remaining` of `0` as a budget. The server task keeps its

@@ -303,14 +303,39 @@ records nothing. For how long the server keeps raw logs, see
 | `0` | Every check passed. |
 | `1` | A check did not pass, or the run stopped before any check ran (for example `checks_not_configured`). |
 | `2` | The checks ran, but this client could not confirm that the server recorded them. `upload_error` says why. |
-| `130` | The run was cancelled. |
+| `128` plus the signal number | A signal stopped the run: `130` for Ctrl-C, `129` for a closed terminal, `143` for `SIGTERM`. |
+
+A signal stops the checks, but once registration has started the client still
+lets registration and completion finish, so the attempt is recorded. The exit
+status names the signal, even when the checks had already
+passed. It is `2` instead when the client could not confirm the record, and
+`1` when the checks had finished without passing before the signal arrived or
+a check ended in `error`. A few cases differ:
+
+- A signal during preparation, before registration starts, stops the run
+  there. Nothing runs, nothing is recorded and no result is printed.
+- A second signal ends the wait for registration or completion at once, and
+  the exit status names that signal. The server may still have recorded the
+  attempt, so run `check status --task TASK_ID` to see what it kept.
+- A run started with `SIGHUP` ignored, as `nohup` starts one, is not stopped
+  by a closed terminal and exits with the status of its checks.
 
 Each check ends as `passed`, `failed`, `error`, `cancelled`, `incomplete`
 (it exceeded its time or output limit) or `unavailable`.
 
-`attempt.worktree_state` says whether the clone stayed clean. If a check
-changed tracked files, or the state could not be read, it is `dirty` or
-`unknown`. Do not call that commit tested.
+`attempt.worktree_state` says whether the clone stayed clean. The client reads
+it with Git before and after the checks, and each reading has 30 seconds. The
+state is `dirty` when a check changed tracked files or moved the commit. It is
+`unknown` when a reading failed, did not finish in 30 seconds, or was stopped
+by a signal, so a run stopped during its checks records `unknown` unless a
+change was already seen. When the state is `unknown`, `worktree_note` in the
+result says why, in the same words as the first line of the recorded log. The
+field is absent when the state was read. Do not call a `dirty` or `unknown`
+commit tested.
+
+Thirty seconds leaves wide room for a typical checkout whose files are already
+cached. A very large checkout with a cold file cache, above all on Windows, can
+still exceed it and record `unknown`.
 
 ### Correction rounds
 
