@@ -235,12 +235,33 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 | `owngit import cancel PROJECT` | Stop a run before it publishes |
 | `owngit import schedule PROJECT --enable --interval 6h` | Refresh every 60s to 168h while OwnGit runs |
 | `owngit import credentials PROJECT --token-file FILE` | Replace the credential; `--clear` removes it |
-| `owngit import configure PROJECT ...` | Change connection choices, limits and refresh choices |
+| `owngit import configure PROJECT ...` | Change the source address, mode, consents, connection choices, limits and refresh choices ([details](#change-the-source)) |
 | `owngit import resolve PROJECT` | Accept the repository after an [unresolved publication](#unresolved-publications) |
 
 `add` and `refresh` exit 0 on success, 3 when local refs were kept that differ from the source, 130 when cancelled, and 1 otherwise. Every command takes `--json`.
 
 If another Git operation holds the repository, `import add` or a change to the source, credentials or choices waits for it. When the request runs out of time first, it gets HTTP 409, `another Git operation holds the repository; nothing was changed`, and nothing changes; try again. When the first run of `import add` fails, OwnGit removes the source and credential it saved. Anything that cleanup leaves behind is removed the next time OwnGit starts.
+
+### Change the source
+
+`owngit import configure` changes only what you give it. Everything you leave out keeps its saved value:
+
+```sh
+owngit import configure PROJECT \
+  --url https://git.example.test/new-team/project.git --mode coexistence
+```
+
+| Option | What it sets |
+|---|---|
+| `--url URL` | The source address |
+| `--mode standalone` | OwnGit is the main copy from now on |
+| `--mode coexistence` | The other host stays the main copy, and you refresh this copy from it |
+| `--git-only-consent` | Accept Git-only content ([Git LFS](#git-lfs)) |
+| `--allow-private-network` | Allow a private-network source ([Source address and network](#source-address-and-network)) |
+
+Withdraw a consent with `--git-only-consent=false` or `--allow-private-network=false`. OwnGit checks each change as it does in the dashboard, and the command prints its refusal as it is.
+
+To attach a source to an existing repository that has none, give `--url`. The mode is then Standalone and both consents are off unless the same command sets them. `import add` only creates new repositories.
 
 ### Source address and network
 
@@ -255,7 +276,7 @@ The source must use HTTPS. OwnGit refuses some addresses unless you allow them f
 
 Redirects are refused by default. Under Redirects, you can follow redirects within the same origin (`--redirects same_origin`), or also to one approved origin (`--redirects approved --approved-origin https://mirror.example`). Credentials are only sent to the source's own origin.
 
-When a run stops on one of these, the Import tab names the setting to turn on. Changing the source address turns plain HTTP, the exceptional destination, redirects and both [refresh choices](#refresh-choices) off again; choose them again for the new address.
+When a run stops on one of these, the Import tab names the setting to turn on. Changing the source address turns plain HTTP, the exceptional destination, redirects and both [refresh choices](#refresh-choices) off again. Choose them again for the new address, or give them in the same `import configure` command. Limits and extra ref namespaces stay. OwnGit stops using a credential saved for the old address, so save one for the new address with `owngit import credentials`.
 
 ### Limits
 

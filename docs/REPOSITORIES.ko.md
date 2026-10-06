@@ -235,12 +235,33 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 | `owngit import cancel PROJECT` | 게시하기 전의 실행을 멈춤 |
 | `owngit import schedule PROJECT --enable --interval 6h` | OwnGit이 실행 중일 때 60초~168시간 간격으로 새로고침 |
 | `owngit import credentials PROJECT --token-file FILE` | 인증 정보를 바꿈. `--clear`는 지움 |
-| `owngit import configure PROJECT ...` | 연결 설정, 한도, 새로고침 설정을 바꿈 |
+| `owngit import configure PROJECT ...` | 원본 주소, 방식, 동의, 연결 설정, 한도, 새로고침 설정을 바꿈([자세히](#원본-바꾸기)) |
 | `owngit import resolve PROJECT` | [미해결 게시](#미해결-게시) 뒤 저장소 상태를 인정 |
 
 `add`와 `refresh`는 성공하면 0, 원본과 다른 로컬 ref를 남겼으면 3, 취소되면 130, 그 밖에는 1로 끝납니다. 모든 명령이 `--json`을 받습니다.
 
 다른 Git 작업이 저장소를 쓰고 있으면 `import add`와 원본, 인증 정보, 설정 변경은 그 작업이 끝나기를 기다립니다. 그 전에 요청 시간이 다 되면 HTTP 409 `another Git operation holds the repository; nothing was changed`를 받고, 아무것도 바뀌지 않습니다. 다시 시도하세요. `import add`의 첫 실행이 실패하면 OwnGit은 저장해 둔 원본과 인증 정보를 지웁니다. 이 정리에서 남은 것은 OwnGit을 다음에 시작할 때 지웁니다.
+
+### 원본 바꾸기
+
+`owngit import configure`는 지정한 항목만 바꿉니다. 지정하지 않은 항목은 저장된 값을 그대로 씁니다.
+
+```sh
+owngit import configure PROJECT \
+  --url https://git.example.test/new-team/project.git --mode coexistence
+```
+
+| 옵션 | 정하는 것 |
+|---|---|
+| `--url URL` | 원본 주소 |
+| `--mode standalone` | 독립. 앞으로 OwnGit을 주 저장소로 씀 |
+| `--mode coexistence` | 공존. 다른 호스트가 계속 주 저장소이고 이 복사본은 거기서 새로고침함 |
+| `--git-only-consent` | Git 내용만 받기([Git LFS](#git-lfs)) |
+| `--allow-private-network` | 사설망 원본 허용([원본 주소와 네트워크](#원본-주소와-네트워크)) |
+
+동의를 거두려면 `--git-only-consent=false`나 `--allow-private-network=false`를 씁니다. OwnGit은 대시보드에서와 같은 기준으로 변경을 확인하고, 거부하면 명령이 그 이유를 그대로 보여 줍니다.
+
+원본이 없는 기존 저장소에 원본을 붙이려면 `--url`을 지정합니다. 같은 명령에서 따로 정하지 않으면 방식은 독립이고 두 동의는 꺼진 상태입니다. `import add`는 새 저장소를 만들 때만 씁니다.
 
 ### 원본 주소와 네트워크
 
@@ -255,7 +276,7 @@ owngit import add PROJECT https://git.example.test/team/project.git \
 
 리디렉션은 기본적으로 거부합니다. 리디렉션 설정에서 같은 출처 안의 리디렉션만 따르게 하거나(`--redirects same_origin`), 승인한 출처 하나까지 따르게 할 수 있습니다(`--redirects approved --approved-origin https://mirror.example`). 인증 정보는 원본 자신의 출처에만 보냅니다.
 
-이런 이유로 실행이 멈추면 가져오기 탭이 켜야 할 설정을 알려 줍니다. 원본 주소를 바꾸면 암호화되지 않은 HTTP, 예외 대상 주소, 리디렉션, 두 [새로고침 설정](#새로고침-설정)이 다시 꺼집니다. 새 주소에 필요한 것을 다시 고르세요.
+이런 이유로 실행이 멈추면 가져오기 탭이 켜야 할 설정을 알려 줍니다. 원본 주소를 바꾸면 암호화되지 않은 HTTP, 예외 대상 주소, 리디렉션, 두 [새로고침 설정](#새로고침-설정)이 다시 꺼집니다. 새 주소에 필요한 것을 다시 고르거나 같은 `import configure` 명령에 함께 지정하세요. 한도와 추가 ref 네임스페이스는 그대로입니다. 이전 주소용으로 저장한 인증 정보는 더 이상 쓰지 않으므로 `owngit import credentials`로 새 주소용 인증 정보를 저장하세요.
 
 ### 한도
 
