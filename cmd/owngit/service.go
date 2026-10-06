@@ -395,7 +395,10 @@ func (host *serviceHost) installHomebrew(stateDir string, headless bool) error {
 	if filepath.Clean(stateDir) != filepath.Clean(mustAbs(defaultStateDir())) {
 		return errors.New("the Homebrew service uses the default state directory; leave out --state-dir")
 	}
-	if headless {
+	// An existing state may have an older schema after an upgrade. It is not
+	// opened here: the new serving process backs it up and migrates it, and
+	// an earlier install already saved the listen address.
+	if err := state.RequireExisting(stateDir); headless && errors.Is(err, state.ErrNotExist) {
 		if err := saveHeadlessListen(stateDir); err != nil {
 			return err
 		}

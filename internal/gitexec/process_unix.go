@@ -37,6 +37,9 @@ func AttachOwnedProcessObserved(cmd *exec.Cmd, observeStarted func() error) (*Pr
 	// exec. A successful Start therefore establishes ownership without a
 	// post-start Getpgid call, which races a fast child exit on macOS.
 	owner := &ProcessOwner{pgid: cmd.Process.Pid}
+	if !registerOwner(owner) {
+		return nil, errors.Join(errOwnedProcessesClosed, TerminateOwnedProcess(owner, 0))
+	}
 	if observeStarted != nil {
 		if err := observeStarted(); err != nil {
 			cleanupErr := errors.Join(err, TerminateOwnedProcess(owner, 0), CloseOwnedProcess(owner))
@@ -97,4 +100,7 @@ func groupGone(err error) bool {
 }
 
 // CloseOwnedProcess releases the owner. The POSIX owner holds no handle.
-func CloseOwnedProcess(_ *ProcessOwner) error { return nil }
+func CloseOwnedProcess(owner *ProcessOwner) error {
+	unregisterOwner(owner)
+	return nil
+}

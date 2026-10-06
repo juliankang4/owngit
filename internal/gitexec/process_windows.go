@@ -113,8 +113,12 @@ func AttachOwnedProcessObserved(cmd *exec.Cmd, observeStarted func() error) (*Pr
 	if attachErr != nil {
 		return nil, abortWindowsProcessOwner(owner, assigned, attachErr)
 	}
+	if !registerOwner(owner) {
+		return nil, abortWindowsProcessOwner(owner, true, errOwnedProcessesClosed)
+	}
 	if observeStarted != nil {
 		if err := observeStarted(); err != nil {
+			unregisterOwner(owner)
 			return nil, abortWindowsProcessOwner(owner, true, fmt.Errorf("observe started process: %w", err))
 		}
 	}
@@ -721,6 +725,7 @@ func CloseOwnedProcess(owner *ProcessOwner) error {
 	if owner == nil || owner.job == 0 {
 		return nil
 	}
+	unregisterOwner(owner)
 	handle := owner.job
 	owner.job = 0
 	if err := windows.CloseHandle(handle); err != nil {

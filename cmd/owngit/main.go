@@ -542,13 +542,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// repository whose storage becomes unavailable later is prepared again
 	// the same way. The stop is registered first, so a signal during the startup wait
 	// also cancels and awaits the attempts before the store closes.
-	defer func() {
-		stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := repositories.StopPreparation(stopContext); err != nil {
-			logf("%v", err)
-		}
-	}()
+	shutdown := newShutdownClock(ctx, shutdownDeadline)
+	defer shutdown.stop(logf, "preparation shutdown", repositories.StopPreparation)
 	if err := repositories.StartPreparation(ctx, pullRequests.RecoverRepositoryLocked, preparationGrace, logf); err != nil {
 		return err
 	}
@@ -557,13 +552,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	// Registered after the store is opened and the offline lock is taken, so
 	// a maintenance command is terminated and reaped before either closes.
-	defer func() {
-		stopContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := repositories.StopMaintenance(stopContext); err != nil {
-			logf("%v", err)
-		}
-	}()
+	defer shutdown.stop(logf, "maintenance shutdown", repositories.StopMaintenance)
 	// Raw check logs past their retention are removed in the background, so
 	// a large backlog never delays serving. The cleanup is cancelled and
 	// awaited before the store closes.
@@ -577,7 +566,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}()
 	defer func() {
 		stopPrune()
-		<-pruned
+		shutdown.wait(logf, "check log pruning", pruned)
 	}()
 	gitHandler, err := githttp.New(runner, repositories, backendPath)
 	if err != nil {
@@ -651,24 +640,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	imports := &importsync.Service{Store: store, Repositories: repositories, Logf: logf}
 	// Registered after the store is opened, so in-flight imports record their
 	// outcome before the store closes.
-	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf}
+	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf, shutdown: shutdown}
 	defer importRuntime.stop()
 	if settings.Initialized {
 		importRuntime.start()
 	}
 	// Backups use the store and the repositories, so they stop, and a
 	// running one records itself as interrupted, before either closes.
-	backupService := &backups.Service{Store: store, Repositories: repositories, Logf: logf}
+	backupService := &backups.Service{Store: store, Repositories: repositories, Logf: logf, StopBy: shutdown.deadline}
 	if err := backupService.Start(ctx); err != nil {
 		return err
 	}
-	defer func() {
-		stopContext, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := backupService.Stop(stopContext); err != nil {
-			logf("backup shutdown: %v", err)
-		}
-	}()
+	defer shutdown.stop(logf, "backup shutdown", backupService.Stop)
 	// Apart from imports, which reach only the source hosts an owner
 	// configures, the new-release check is OwnGit's only outbound
 	// connection. It waits
@@ -735,13 +718,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	// Background readings of Tailscale end with the server, within the same
 	// grace as its requests, so no tailscale command outlives it.
-	defer func() {
-		stopContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := application.Tailscale.Stop(stopContext); err != nil {
-			logf("stopping: Tailscale readings still running after 10s: %v", err)
-		}
-	}()
+	defer shutdown.stop(logf, "stopping: Tailscale readings", application.Tailscale.Stop)
 	// First-run setup asks its questions in the terminal when OwnGit was
 	// started from one. Otherwise, as under a service manager, it keeps the
 	// private setup file. The terminal flow issues no setup file at all.
@@ -796,7 +773,11 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// Activity is counted in the background under the serving lifetime, so
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)
-	defer application.StopBackground()
+	defer func() {
+		stopped := make(chan struct{})
+		go func() { application.StopBackground(); close(stopped) }()
+		shutdown.wait(logf, "activity counting", stopped)
+	}()
 	changeApp.Store(application)
 	if releases != nil {
 		releaseContext, cancelReleases := context.WithCancel(ctx)
@@ -807,7 +788,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		}()
 		defer func() {
 			cancelReleases()
-			<-releaseDone
+			shutdown.wait(logf, "release check", releaseDone)
 		}()
 	}
 	pullRequests.OnChange = noteWrite
@@ -822,13 +803,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		application.CheckRuntimeUnavailableReason = checkRuntimeUnavailableReason(unavailable.Code)
 		logf("configured check runtime unavailable; ordinary Git service remains available and OwnGit must be restarted after repair: %v", err)
 	} else {
-		defer func() {
-			stopContext, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-			if err := checkCoordinator.Stop(stopContext); err != nil {
-				logf("configured check shutdown: %v", err)
-			}
-		}()
+		defer shutdown.stop(logf, "configured check shutdown", checkCoordinator.Stop)
 	}
 
 	if !settings.Initialized && !terminalSetup {
@@ -870,7 +845,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		logf("OwnGit answers share links only on %s, which visitors reach at %s", publicListener.Addr(), network.PublicShareURL)
 	}
 	live.Publish()
-	defer clearNetwork()
+	defer shutdown.stop(logf, "could not clear the running network settings", clearNetwork)
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpServer.Serve(listener) }()
 	logf("OwnGit listening on %s", listener.Addr())
@@ -924,10 +899,19 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		for _, server := range servers {
 			_ = server.Close()
 		}
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// The server failed: stop everything else as for a signal, within
+		// the same deadline. Giving up then must still be a failure for the
+		// service manager, with the cause recorded as a normal return does.
+		if !errors.Is(serveErr, http.ErrServerClosed) {
+			shutdown.status.Store(1)
+			recordServeError(*stateDir, serveErr)
+		}
+		cancelServe()
+		shutdownContext, cancel := shutdown.context()
 		gitErr := gitHandler.Wait(shutdownContext)
 		cancel()
 		if gitErr != nil {
+			shutdown.giveUp(logf, "Git process cleanup")
 			return fmt.Errorf("wait for Git process cleanup: %w", gitErr)
 		}
 		if !errors.Is(serveErr, http.ErrServerClosed) {
@@ -935,10 +919,19 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		}
 		return nil
 	case <-ctx.Done():
-		// Stop import runs first, so their handlers return promptly with the
-		// recorded outcome instead of outliving the HTTP shutdown window.
-		importRuntime.stop()
-		return stopServing(servers, gitHandler, 10*time.Second, logf)
+		// Import runs end while requests drain: stopping them cancels their
+		// handlers, which return with the recorded outcome.
+		importsStopped := make(chan struct{})
+		go func() {
+			importRuntime.stop()
+			close(importsStopped)
+		}()
+		err := stopServing(servers, gitHandler, shutdown.deadline(), logf)
+		if err != nil && time.Now().After(shutdown.deadline()) {
+			shutdown.giveUp(logf, "Git process cleanup")
+		}
+		shutdown.wait(logf, "import shutdown", importsStopped)
+		return err
 	}
 }
 
@@ -952,13 +945,13 @@ func runTerminalSetup(ctx context.Context, config firstrun.Config) error {
 	return firstrun.Run(ctx, config)
 }
 
-// stopServing stops the HTTP server and waits up to grace for running
-// requests. Requests still running then, such as a slow clone, are ended by
-// closing their connections, which is an ordinary stop and is logged. It
-// fails only when the server cannot stop or when the Git processes are not
-// cleaned up within another grace.
-func stopServing(servers []*http.Server, gitHandler *githttp.Handler, grace time.Duration, logf func(string, ...any)) error {
-	shutdownContext, cancel := context.WithTimeout(context.Background(), grace)
+// stopServing stops the HTTP server and waits for running requests until
+// deadline less gitCleanupReserve. Requests still running then, such as a
+// slow clone, are ended by closing their connections, which is an ordinary
+// stop and is logged. It fails only when the server cannot stop or when the
+// Git processes are not cleaned up by deadline.
+func stopServing(servers []*http.Server, gitHandler *githttp.Handler, deadline time.Time, logf func(string, ...any)) error {
+	shutdownContext, cancel := context.WithDeadline(context.Background(), deadline.Add(-gitCleanupReserve))
 	defer cancel()
 	errs := make([]error, len(servers))
 	var wait sync.WaitGroup
@@ -968,7 +961,7 @@ func stopServing(servers []*http.Server, gitHandler *githttp.Handler, grace time
 	wait.Wait()
 	var shutdownErr error
 	if slices.ContainsFunc(errs, func(err error) bool { return errors.Is(err, context.DeadlineExceeded) }) {
-		logf("stopping: ended %d Git transfer(s) and any other requests still running after %s", gitHandler.Active(), grace)
+		logf("stopping: ended %d Git transfer(s) and any other requests still running at the shutdown deadline", gitHandler.Active())
 	}
 	for i, err := range errs {
 		if err != nil {
@@ -978,9 +971,9 @@ func stopServing(servers []*http.Server, gitHandler *githttp.Handler, grace time
 			}
 		}
 	}
-	// The ended requests stop their Git processes; wait for that cleanup with
-	// its own deadline, since the shutdown wait may have used all of grace.
-	cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), grace)
+	// The ended requests stop their Git processes; the reserve left at the end
+	// of the deadline is for that cleanup.
+	cleanupContext, cancelCleanup := context.WithDeadline(context.Background(), deadline)
 	defer cancelCleanup()
 	if err := gitHandler.Wait(cleanupContext); err != nil {
 		return fmt.Errorf("wait for Git process cleanup: %w", err)
@@ -1003,6 +996,7 @@ type importLifetime struct {
 	started   bool
 	stopped   bool
 	scheduler *importsync.Scheduler
+	shutdown  *shutdownClock
 }
 
 func (lifetime *importLifetime) start() {
@@ -1024,10 +1018,6 @@ func (lifetime *importLifetime) start() {
 	lifetime.scheduler = scheduler
 }
 
-// importShutdownTimeout bounds how long serve waits for scheduled and manual
-// import runs to record their outcome after cancellation.
-const importShutdownTimeout = 45 * time.Second
-
 // stop stops the scheduler, then cancels and drains manual runs, bounded,
 // and releases the import runtime lease. It is idempotent.
 func (lifetime *importLifetime) stop() {
@@ -1037,15 +1027,21 @@ func (lifetime *importLifetime) stop() {
 		return
 	}
 	lifetime.stopped = true
-	stopContext, cancel := context.WithTimeout(context.Background(), importShutdownTimeout)
+	stopContext, cancel := lifetime.shutdown.context()
 	defer cancel()
 	if lifetime.scheduler != nil {
 		if err := lifetime.scheduler.Stop(stopContext); err != nil {
 			lifetime.logf("import scheduler shutdown: %v", err)
+			if stopContext.Err() != nil {
+				lifetime.shutdown.giveUp(lifetime.logf, "import scheduler shutdown")
+			}
 		}
 	}
 	if err := lifetime.service.Shutdown(stopContext); err != nil {
 		lifetime.logf("import shutdown: %v; the next start reconciles unfinished runs", err)
+		if stopContext.Err() != nil {
+			lifetime.shutdown.giveUp(lifetime.logf, "import shutdown")
+		}
 	}
 }
 

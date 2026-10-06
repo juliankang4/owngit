@@ -56,6 +56,7 @@ class Owngit < Formula
   service do
     run [opt_bin/"owngit", "serve", "-no-open", "--log-file", var/"log/owngit.log", "--service"]
     keep_alive true
+    stop_timeout 70
     process_type :interactive
     log_path var/"log/owngit.stderr.log"
     error_log_path var/"log/owngit.stderr.log"

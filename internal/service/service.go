@@ -11,7 +11,16 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// StopTimeout is how long a service manager waits for OwnGit to stop before
+// it kills it: the systemd unit, the launchd agent, the Windows task, the
+// Homebrew formula's stop_timeout and the container's stop_grace_period. It
+// is a little longer than the shutdown deadline of "owngit serve"
+// (shutdownDeadline in cmd/owngit), and a test keeps them in step. launchd
+// itself caps the wait at 60 s, which the deadline fits under.
+const StopTimeout = 70 * time.Second
 
 // Mode is who runs the service and which service manager starts it.
 type Mode string

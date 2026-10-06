@@ -143,7 +143,7 @@ func RenderLaunchAgent(plan Plan) (string, error) {
 	line("\t<integer>63</integer>")
 	// SIGTERM lets OwnGit end Git processes, imports and checks in order.
 	line("\t<key>ExitTimeOut</key>")
-	line("\t<integer>150</integer>")
+	line("\t<integer>%d</integer>", int(StopTimeout.Seconds()))
 	output := LaunchAgentOutputPath(plan.Home)
 	line("\t<key>StandardOutPath</key>")
 	line("\t%s", str(output))

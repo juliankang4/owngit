@@ -132,7 +132,7 @@ func RenderUnit(plan Plan) (string, error) {
 	// SIGTERM goes to OwnGit alone, which ends its Git processes, imports
 	// and checks in order; whatever is left is killed after the timeout.
 	line("KillMode=mixed")
-	line("TimeoutStopSec=150")
+	line("TimeoutStopSec=%d", int(StopTimeout.Seconds()))
 	// Hardening. None of these limit Git, hooks, checks run on this
 	// computer, or checks in Docker, which OwnGit reaches through its socket.
 	line("NoNewPrivileges=yes")

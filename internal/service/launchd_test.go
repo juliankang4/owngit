@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -52,7 +53,7 @@ func TestRenderLaunchAgent(t *testing.T) {
 		"ProcessType":            "Interactive",
 		"LimitLoadToSessionType": []any{"Aqua", "Background"},
 		"Umask":                  "63",
-		"ExitTimeOut":            "150",
+		"ExitTimeOut":            strconv.Itoa(int(StopTimeout.Seconds())),
 		"StandardOutPath":        output,
 		"StandardErrorPath":      output,
 	}

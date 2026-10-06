@@ -97,6 +97,9 @@ type Service struct {
 	Now func() time.Time
 	// VerifyLimit bounds each verification; zero is DefaultVerifyLimit.
 	VerifyLimit time.Duration
+	// StopBy returns the moment a stop must be over, or nil. The final
+	// record of an interrupted backup is written by then, not after it.
+	StopBy func() time.Time
 
 	mu   sync.Mutex
 	ctx  context.Context
@@ -465,6 +468,11 @@ func (s *Service) record(ctx context.Context, run state.BackupRun) bool {
 func (s *Service) recordEnd(ctx context.Context, run state.BackupRun) bool {
 	write, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordEndWrite)
 	defer cancel()
+	if s.StopBy != nil {
+		var bounded context.CancelFunc
+		write, bounded = context.WithDeadline(write, s.StopBy())
+		defer bounded()
+	}
 	if s.Store.FinishBackupRun(write, run) != nil {
 		return false
 	}

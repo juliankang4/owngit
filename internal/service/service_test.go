@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -455,5 +456,17 @@ func unixPathsOnly(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("systemd units and Homebrew prefixes use Unix paths; owngit service runs on Linux only")
+	}
+}
+
+// The systemd unit waits as long as the service constant says.
+func TestUnitStopTimeout(t *testing.T) {
+	unixPathsOnly(t)
+	unit, err := RenderUnit(Plan{Mode: ModeUser, Executable: "/usr/bin/owngit", StateDir: "/home/you/.config/owngit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "\nTimeoutStopSec=" + strconv.Itoa(int(StopTimeout.Seconds())) + "\n"; !strings.Contains(unit, want) {
+		t.Fatalf("unit lacks %q:\n%s", want, unit)
 	}
 }

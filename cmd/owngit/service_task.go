@@ -113,9 +113,8 @@ const wingetNoApplicableUpgrade = 0x8A15002B
 // elevatedMessageExit means the elevated step already printed its one-line failure.
 const elevatedMessageExit = 3
 
-// taskStopTimeout bounds the wait for a server to stop after it was asked
-// to; its own shutdown steps add up to about two minutes.
-const taskStopTimeout = 150 * time.Second
+// taskStopTimeout bounds the wait for a server to stop after it was asked to.
+const taskStopTimeout = service.StopTimeout
 
 // taskHost is this Windows computer and the account running the command.
 type taskHost struct {

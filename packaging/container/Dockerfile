@@ -58,5 +58,10 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=1m --start-interval=2s -
 # OwnGit listens on every address inside the container; which addresses
 # reach it is decided by the ports the container publishes. Until setup is
 # done it answers only the one-time setup link.
+#
+# On a stop (tini passes SIGTERM on), OwnGit gives running Git transfers,
+# imports, checks and backups 45 seconds to finish, then ends what is left and
+# exits. Docker's default wait is 10 seconds, so give it a longer one:
+# "docker run --stop-timeout 70", or "docker stop -t 70".
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["owngit", "serve", "--listen", "0.0.0.0:7654"]

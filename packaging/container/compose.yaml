@@ -10,6 +10,10 @@ services:
   owngit:
     image: ghcr.io/juliankang4/owngit:latest
     restart: unless-stopped
+    # On a stop, OwnGit gives running Git transfers, imports, checks and
+    # backups 45 seconds to finish, then ends what is left. The Docker default
+    # of 10 seconds would kill it during that cleanup.
+    stop_grace_period: 70s
     ports:
       - "7654:7654"
     volumes:

@@ -152,9 +152,9 @@ func claimRunningRecord(ctx context.Context, store *state.Store, logf func(strin
 
 // liveNetwork is what this serve run uses for the network, published for
 // "owngit network show" and the Settings page each time it changes. The
-// returned unpublish removes the record when serving stops. Without the
+// returned unpublish removes the record when serving stops, within ctx. Without the
 // running-record lock (live false) nothing is published.
-func liveNetwork(store *state.Store, live bool, network serveNetwork, proxies serveProxies, address, origin string, savedHosts, flagHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (*server.LiveNetwork, func(), error) {
+func liveNetwork(store *state.Store, live bool, network serveNetwork, proxies serveProxies, address, origin string, savedHosts, flagHosts []string, policy *server.HostPolicy, logf func(string, ...any)) (*server.LiveNetwork, func(context.Context) error, error) {
 	config := server.LiveNetworkConfig{
 		Record: state.RunningNetwork{
 			PID: os.Getpid(), StartedAt: time.Now().Unix(),
@@ -174,18 +174,14 @@ func liveNetwork(store *state.Store, live bool, network serveNetwork, proxies se
 	if sharing {
 		config.Tailscale = &record
 	}
-	unpublish := func() {}
+	unpublish := func(context.Context) error { return nil }
 	if live {
 		config.Publish = func(running state.RunningNetwork) {
 			if err := store.PublishRunningNetwork(context.Background(), running); err != nil {
 				logf("could not record the running network settings for \"owngit network show\": %v", err)
 			}
 		}
-		unpublish = func() {
-			if err := store.ClearRunningNetwork(context.Background()); err != nil {
-				logf("could not clear the running network settings: %v", err)
-			}
-		}
+		unpublish = store.ClearRunningNetwork
 	}
 	return server.NewLiveNetwork(config), unpublish, nil
 }

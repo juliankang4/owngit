@@ -330,6 +330,34 @@ func TestStoppedBackupIsInterrupted(t *testing.T) {
 	}
 }
 
+// The final record of a stopped backup is written by the stop's deadline and
+// not after it; a record that missed the deadline is left to the next start.
+func TestStoppedBackupRecordsOnlyBeforeTheStopDeadline(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		stopBy time.Duration
+		want   string
+	}{
+		{"before the deadline", time.Hour, state.BackupInterrupted},
+		{"after the deadline", -time.Second, state.BackupRunning},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			schedule := f.configure(t, ScheduleChange{})
+			run := state.BackupRun{ID: strings.Repeat("d", 32), Kind: state.BackupRunManual, Status: state.BackupRunning, Destination: f.destination,
+				BackupName: namePrefix + "deadline", Verification: state.BackupVerifyNotRun, StartedAt: f.clock.Now()}
+			noErr(t, f.store.StartBackupRun(context.Background(), run))
+			f.service.StopBy = func() time.Time { return time.Now().Add(test.stopBy) }
+			stopped, cancel := context.WithCancel(context.Background())
+			cancel()
+			f.service.execute(stopped, run, schedule)
+			if got := f.run(t, run.ID).Status; got != test.want {
+				t.Fatalf("status %s, want %s", got, test.want)
+			}
+		})
+	}
+}
+
 func TestVerificationPastItsLimitFails(t *testing.T) {
 	f := newFixture(t)
 	f.configure(t, ScheduleChange{})
