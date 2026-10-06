@@ -97,6 +97,94 @@ func (m *Manager) Compare(ctx context.Context, id, targetOID, sourceOID string, 
 	return comparison, nil
 }
 
+// MergeBases returns every merge base of two commits, the starting points of
+// a Comparison, without reading any changes.
+func (m *Manager) MergeBases(ctx context.Context, id, targetOID, sourceOID string) ([]string, error) {
+	if !isOID(targetOID) || !isOID(sourceOID) {
+		return nil, errors.New("invalid commit ID")
+	}
+	return m.mergeBases(ctx, id, targetOID, sourceOID)
+}
+
+// CompareFile reads one path of a comparison on its own: its change record
+// and its text diff between baseOID and sourceOID, within outputLimit and
+// timeLimit. The patch may also hold the diffs of paths below path, which the
+// caller separates by file. found is false when the path itself has no
+// change. A diff cut by the limit sets truncated; its last lines may be
+// missing. It never depends on
+// the list of the other changed files.
+func (m *Manager) CompareFile(ctx context.Context, id, baseOID, sourceOID, path string, outputLimit int64, timeLimit time.Duration) (file ChangedFile, patch string, truncated, found bool, err error) {
+	if !isOID(baseOID) || !isOID(sourceOID) {
+		return ChangedFile{}, "", false, false, errors.New("invalid commit ID")
+	}
+	args := []string{"--git-dir", ".", "diff", "--raw", "--numstat", "--patch", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"--unified=3", "--src-prefix=a/", "--dst-prefix=b/", baseOID, sourceOID, "--", ":(top,literal)" + path}
+	key := strings.Join(args[3:], "\x00") + "\x00" + strconv.FormatInt(outputLimit, 10)
+	result, err := m.cachedRead(ctx, id, "compare-file", key, func(repositoryPath string) (cachedResult, bool, error) {
+		limits := gitexec.CommandLimits{OutputLimit: outputLimit, Timeout: timeLimit, StopAtOutputLimit: true}
+		output, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, args...)
+		var limitErr *gitexec.LimitError
+		switch {
+		case err == nil:
+			return cachedResult{data: output.Stdout}, true, nil
+		case errors.As(err, &limitErr):
+			return cachedResult{data: output.Stdout, truncated: true}, true, nil
+		}
+		return cachedResult{}, false, err
+	})
+	if err != nil {
+		return ChangedFile{}, "", false, false, err
+	}
+	files, end, complete, separated := parseChanges(result.data)
+	if !complete || result.truncated && !separated {
+		if !result.truncated {
+			return ChangedFile{}, "", false, false, errors.New("Git returned malformed comparison records")
+		}
+		return ChangedFile{}, "", false, false, errors.New("the change record of the file exceeds the read limit")
+	}
+	// A path names everything below it too, so a file that became a folder
+	// lists the folder's files as well. Only the exact path is this file.
+	for _, candidate := range files {
+		if candidate.Path == path {
+			return candidate, string(result.data[end:]), result.truncated, true, nil
+		}
+	}
+	return ChangedFile{}, "", false, false, nil
+}
+
+// ComparePatch reads the text diff of paths alone between the merge base and
+// sourceOID of a Comparison, so a page of a large change reads the patch of
+// its own files within the size limit instead of sharing it with every file
+// before them. Output past outputLimit is cut and truncated is set; the last
+// file's part may then be incomplete.
+func (m *Manager) ComparePatch(ctx context.Context, id, baseOID, sourceOID string, paths []string, outputLimit int64, timeLimit time.Duration) (patch string, truncated bool, err error) {
+	if !isOID(baseOID) || !isOID(sourceOID) {
+		return "", false, errors.New("invalid commit ID")
+	}
+	args := []string{"--git-dir", ".", "diff", "--patch", "--no-renames", "--no-ext-diff", "--no-textconv",
+		"--unified=3", "--src-prefix=a/", "--dst-prefix=b/", baseOID, sourceOID, "--"}
+	for _, path := range paths {
+		args = append(args, ":(top,literal)"+path)
+	}
+	key := strings.Join(args[3:], "\x00") + "\x00" + strconv.FormatInt(outputLimit, 10)
+	result, err := m.cachedRead(ctx, id, "compare-patch", key, func(repositoryPath string) (cachedResult, bool, error) {
+		limits := gitexec.CommandLimits{OutputLimit: outputLimit, Timeout: timeLimit, StopAtOutputLimit: true}
+		output, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, args...)
+		var limitErr *gitexec.LimitError
+		switch {
+		case err == nil:
+			return cachedResult{data: output.Stdout}, true, nil
+		case errors.As(err, &limitErr):
+			return cachedResult{data: output.Stdout, truncated: true}, true, nil
+		}
+		return cachedResult{}, false, err
+	})
+	if err != nil {
+		return "", false, err
+	}
+	return string(result.data), result.truncated, nil
+}
+
 // mergeBases returns every merge base of two commits. The answer never
 // changes for the two IDs, so it is cached.
 func (m *Manager) mergeBases(ctx context.Context, id, left, right string) ([]string, error) {

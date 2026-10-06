@@ -1190,6 +1190,9 @@ type CommitDetail struct {
 	SelectedPath string
 	AllFilesURL  string
 	Continuation PageContinuation
+	// FilePages places Files among all changed files when they span several
+	// pages. Continuation counts lines of one file and never files.
+	FilePages PageContinuation
 	// Truncated is true when the diff was too large to load completely.
 	Truncated bool
 	// Unavailable is true when the diff could not be produced, for example for

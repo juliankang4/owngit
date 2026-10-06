@@ -340,7 +340,7 @@ func TestPullRequestFilesPastTheLimitAreMarked(t *testing.T) {
 		files[fmt.Sprintf("f%03d.txt", index)] = strings.Repeat(fmt.Sprintf("line %d\n", index), maximumCommitDiffLines*6/10)
 	}
 	head := commitFiles(t, work, files, "add many files", when.Add(time.Hour))
-	changes, err := app.comparePullRequestRevisions(context.Background(), "many-files", head, base)
+	changes, err := app.comparePullRequestRevisions(context.Background(), "many-files", head, base, changesView{first: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

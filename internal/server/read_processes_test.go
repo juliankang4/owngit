@@ -222,7 +222,7 @@ func TestPullRequestComparisonUsesTheMergeBase(t *testing.T) {
 	_, base, source, target := pullRequestRepository(t, app, "compare", map[string]string{"feature.txt": "feature line\n"})
 	started := countGit(t, app)
 
-	changes, err := app.comparePullRequestRevisions(context.Background(), "compare", source, target)
+	changes, err := app.comparePullRequestRevisions(context.Background(), "compare", source, target, changesView{first: 1})
 	noErr(t, err)
 	processes := started()
 	if changes.Base != base || changes.Unavailable != "" || changes.PatchesIncomplete || changes.FilesIncomplete ||
@@ -232,7 +232,7 @@ func TestPullRequestComparisonUsesTheMergeBase(t *testing.T) {
 	if len(processes) != 2 {
 		t.Fatalf("comparison started %d Git processes, want 2: %q", len(processes), processes)
 	}
-	if again, err := app.comparePullRequestRevisions(context.Background(), "compare", source, target); err != nil || len(again.Files) != 1 || len(started()) != 0 {
+	if again, err := app.comparePullRequestRevisions(context.Background(), "compare", source, target, changesView{first: 1}); err != nil || len(again.Files) != 1 || len(started()) != 0 {
 		t.Fatalf("cached comparison files=%d err=%v", len(again.Files), err)
 	}
 
@@ -255,7 +255,7 @@ func TestPullRequestComparisonProcessesDoNotGrowWithFiles(t *testing.T) {
 		}
 		_, _, source, target := pullRequestRepository(t, app, "grow", files)
 		started := countGit(t, app)
-		changes, err := app.comparePullRequestRevisions(context.Background(), "grow", source, target)
+		changes, err := app.comparePullRequestRevisions(context.Background(), "grow", source, target, changesView{first: 1})
 		noErr(t, err)
 		counts[size] = len(started())
 		if len(changes.Files) != size || changes.PatchesIncomplete {
@@ -287,7 +287,7 @@ func TestPullRequestComparisonKeepsUnusualPathsApart(t *testing.T) {
 	}
 	files["binary.bin"] = "\x00\x01\x02binary"
 	_, _, source, target := pullRequestRepository(t, app, "names", files)
-	changes, err := app.comparePullRequestRevisions(context.Background(), "names", source, target)
+	changes, err := app.comparePullRequestRevisions(context.Background(), "names", source, target, changesView{first: 1})
 	noErr(t, err)
 	if len(changes.Files) != len(names)+1 || changes.PatchesIncomplete || changes.FilesIncomplete {
 		t.Fatalf("listed %d files: %+v", len(changes.Files), changes)
@@ -402,7 +402,7 @@ func TestDiffPatchBoundariesFollowGit(t *testing.T) {
 		files[`q"uote.txt`] = "quote\n"
 	}
 	_, _, source, target := pullRequestRepository(t, app, "bounds", files)
-	changes, err := app.comparePullRequestRevisions(context.Background(), "bounds", source, target)
+	changes, err := app.comparePullRequestRevisions(context.Background(), "bounds", source, target, changesView{first: 1})
 	noErr(t, err)
 	check := func(where string, items []webui.DiffFile) {
 		t.Helper()

@@ -102,6 +102,14 @@ type NewPullRequestPage struct {
 	// observed target, counted from their merge base. The list is
 	// informational; the backend recomputes the merge.
 	Changes []DiffFile
+	// ChangesPages places Changes among all changed files when they span
+	// several pages.
+	ChangesPages PageContinuation
+	// ChangesAllURL leaves the view of one changed file for the whole list.
+	// Empty unless one file is shown.
+	ChangesAllURL string
+	// ChangesLines places the lines of the one changed file shown alone.
+	ChangesLines PageContinuation
 	// ChangesBase is the merge base the changes are counted from.
 	ChangesBase string
 	// DiffTruncated is true when some file's text diff is not shown. The
@@ -163,6 +171,14 @@ type PullRequestPage struct {
 	// Changes are what the current source adds since it branched from the
 	// current target, counted from their merge base.
 	Changes []DiffFile
+	// ChangesPages places Changes among all changed files when they span
+	// several pages.
+	ChangesPages PageContinuation
+	// ChangesAllURL leaves the view of one changed file for the whole list.
+	// Empty unless one file is shown.
+	ChangesAllURL string
+	// ChangesLines places the lines of the one changed file shown alone.
+	ChangesLines PageContinuation
 	// ChangesBase is the merge base the changes are counted from.
 	ChangesBase string
 	// DiffTruncated is true when some file's text diff is not shown. The

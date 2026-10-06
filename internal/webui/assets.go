@@ -1,14 +1,18 @@
 package webui
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"sync"
+	"time"
 )
 
 // assetPrefix is where the caller must mount Assets().
@@ -62,8 +66,14 @@ func (f fingerprints) url(name string) string {
 // time, because that exact URL only ever names this exact content. A request
 // without it, or with an old one, gets a short lifetime and must revalidate,
 // so an outdated bookmark or a hand-typed URL cannot pin stale code.
+//
+// Every asset carries an ETag made from its content hash, so a request for an
+// outdated or unversioned URL (the font, which the stylesheet names without a
+// version) is answered 304 when nothing changed. Text assets are sent gzipped
+// to clients that accept it; fonts are already compressed.
 func assetHandler(files fs.FS, prints fingerprints) http.Handler {
 	fileServer := http.FileServer(http.FS(files))
+	var zipped sync.Map // asset name to its gzipped content
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodGet && req.Method != http.MethodHead {
 			w.Header().Set("Allow", "GET, HEAD")
@@ -81,6 +91,39 @@ func assetHandler(files fs.FS, prints fingerprints) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=300, must-revalidate")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		etag := `"` + prints[name] + `"`
+		if prints[name] != "" {
+			w.Header().Set("ETag", etag)
+		}
+		if isTextAsset(name) && prints[name] != "" && AcceptsGzip(req.Header) {
+			content, ok := zipped.Load(name)
+			if !ok {
+				plain, err := fs.ReadFile(files, name)
+				if err != nil {
+					http.NotFound(w, req)
+					return
+				}
+				content, _ = zipped.LoadOrStore(name, Gzip(plain))
+			}
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Content-Type", mime.TypeByExtension(path.Ext(name)))
+			w.Header().Set("ETag", `"`+prints[name]+`-gzip"`)
+			w.Header().Add("Vary", "Accept-Encoding")
+			http.ServeContent(w, req, name, time.Time{}, bytes.NewReader(content.([]byte)))
+			return
+		}
+		if isTextAsset(name) {
+			w.Header().Add("Vary", "Accept-Encoding")
+		}
 		fileServer.ServeHTTP(w, req)
 	})
+}
+
+// isTextAsset reports whether name is an uncompressed text asset.
+func isTextAsset(name string) bool {
+	switch path.Ext(name) {
+	case ".css", ".js", ".svg", ".txt":
+		return true
+	}
+	return false
 }

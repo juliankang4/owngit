@@ -888,7 +888,8 @@ func (m *Manager) Commits(ctx context.Context, id, requestedRef string, limit in
 	return commitOID, commits, err
 }
 
-// CommitPageSize is how many commits the list of commits shows.
+// CommitPageSize is how many commits a page of the list of commits shows.
+// The list reads one more, to know whether an older page exists.
 const CommitPageSize = 100
 
 func commitListKey(commitOID string, limit int) string {
@@ -898,14 +899,29 @@ func commitListKey(commitOID string, limit int) string {
 // CommitsAt lists up to limit commits reachable from commitOID, newest
 // first, with one Git process.
 func (m *Manager) CommitsAt(ctx context.Context, id, commitOID string, limit int) ([]Commit, error) {
+	return m.CommitsPage(ctx, id, commitOID, 0, limit)
+}
+
+// CommitsPage is CommitsAt after the first skip commits of the same
+// traversal. The order for one commitOID is fixed, so consecutive pages of
+// one list neither repeat nor lose a commit, merged branches included.
+func (m *Manager) CommitsPage(ctx context.Context, id, commitOID string, skip, limit int) ([]Commit, error) {
 	if !isOID(commitOID) {
 		return nil, errInvalidCommitID
 	}
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	result, err := m.cachedRead(ctx, id, "log", commitListKey(commitOID, limit), func(repositoryPath string) (cachedResult, bool, error) {
-		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "-z", "--no-decorate", "--max-count="+strconv.Itoa(limit), GitDateOption, "--format="+commitLogFormat, commitOID)
+	key := commitListKey(commitOID, limit)
+	if skip > 0 {
+		key += "\x00" + strconv.Itoa(skip)
+	}
+	result, err := m.cachedRead(ctx, id, "log", key, func(repositoryPath string) (cachedResult, bool, error) {
+		arguments := []string{"--git-dir", ".", "log", "-z", "--no-decorate", "--max-count=" + strconv.Itoa(limit)}
+		if skip > 0 {
+			arguments = append(arguments, "--skip="+strconv.Itoa(skip))
+		}
+		output, err := m.Git.Run(ctx, repositoryPath, nil, append(arguments, GitDateOption, "--format="+commitLogFormat, commitOID)...)
 		if err != nil {
 			return cachedResult{}, false, err
 		}
@@ -954,7 +970,7 @@ func (m *Manager) CommitReachableFrom(ctx context.Context, id, rootOID, commitOI
 	// A commit opened from the list of commits is in that list's cached
 	// read, which answers without Git.
 	if repositoryPath, stored, exists, err := m.ExistingPath(ctx, id); err == nil && exists {
-		if listed, ok := m.objects.peek(namespaceFor(id, repositoryPath, stored.CreatedAt), "log", commitListKey(rootOID, CommitPageSize)); ok {
+		if listed, ok := m.objects.peek(namespaceFor(id, repositoryPath, stored.CreatedAt), "log", commitListKey(rootOID, CommitPageSize+1)); ok {
 			if commits, err := parseCommits(listed.data); err == nil {
 				for _, commit := range commits {
 					if commit.OID == commitOID {

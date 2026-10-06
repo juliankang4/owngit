@@ -51,7 +51,7 @@ func TestWindowsLongRepositoryRootSupportsBrowserPullRequestDiff(t *testing.T) {
 	}
 
 	app := &App{Store: store, Repositories: manager}
-	changes, err := app.comparePullRequestRevisions(ctx, stored.ID, sourceOID, targetOID)
+	changes, err := app.comparePullRequestRevisions(ctx, stored.ID, sourceOID, targetOID, changesView{first: 1})
 	noErr(t, err)
 	files := changes.Files
 	if changes.PatchesIncomplete || changes.FilesIncomplete || changes.Base != targetOID || len(files) != 1 || files[0].Path != "feature.txt" || files[0].Status != "added" || len(files[0].Hunks) == 0 {

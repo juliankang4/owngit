@@ -970,7 +970,11 @@ var errPageAddress = errors.New("invalid page address")
 
 type pageAddress struct {
 	Ref, Path, View, Revision, Blob, After string
-	Lines                                  linePageRequest
+	// Root and Skip place a later page of the list of commits: the page
+	// shows the history of commit Root after its first Skip commits.
+	Root  string
+	Skip  int
+	Lines linePageRequest
 }
 
 type linePageRequest struct {
@@ -993,7 +997,7 @@ func parsePageAddress(request *http.Request, tab []string) (pageAddress, error) 
 	if err != nil {
 		return address, errPageAddress
 	}
-	for _, key := range []string{"revision", "blob", "after"} {
+	for _, key := range []string{"revision", "blob", "after", "root"} {
 		values, present := query[key]
 		if !present {
 			continue
@@ -1013,7 +1017,14 @@ func parsePageAddress(request *http.Request, tab []string) (pageAddress, error) 
 		return address, errPageAddress
 	}
 	address.Ref, address.Path, address.View = query.Get("ref"), query.Get("path"), query.Get("view")
-	address.Revision, address.Blob, address.After = query.Get("revision"), query.Get("blob"), query.Get("after")
+	address.Revision, address.Blob, address.After, address.Root = query.Get("revision"), query.Get("blob"), query.Get("after"), query.Get("root")
+	if values, present := query["skip"]; present || address.Root != "" {
+		skipped, err := strconv.Atoi(query.Get("skip"))
+		if len(values) != 1 || err != nil || skipped < 1 || address.Root == "" {
+			return address, errPageAddress
+		}
+		address.Skip = skipped
+	}
 	for _, key := range []string{"line", "from"} {
 		values, present := query[key]
 		if !present {
@@ -1331,11 +1342,43 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		if !resolved {
 			return nil
 		}
-		commits, err := app.Repositories.CommitsAt(request.Context(), page.Repo.ID, page.Ref.Revision, repository.CommitPageSize)
+		// Every page continues one traversal: the history of a root commit
+		// fixed when the first older page was linked, in Git's own order, so
+		// merged branches keep their place. One more commit than the page
+		// shows tells whether an older page exists.
+		root, skip := page.Ref.Revision, address.Skip
+		if address.Root != "" {
+			reachable, err := app.Repositories.CommitReachableFrom(request.Context(), page.Repo.ID, page.Ref.Revision, address.Root)
+			if errors.Is(err, repository.ErrNotFound) || (err == nil && !reachable) {
+				return errPageAddress
+			}
+			if err != nil {
+				return err
+			}
+			root = address.Root
+		}
+		commits, err := app.Repositories.CommitsPage(request.Context(), page.Repo.ID, root, skip, repository.CommitPageSize+1)
 		if err := app.noteUnreadableCommits(request, page, selectedRef, err); err != nil {
 			return err
 		}
 		page.Commits.Unreadable = err != nil
+		commitsPage := func(skipped int) string {
+			parsed, _ := url.Parse(page.CommitsURL)
+			if skipped > 0 {
+				query := parsed.Query()
+				query.Set("root", root)
+				query.Set("skip", strconv.Itoa(skipped))
+				parsed.RawQuery = query.Encode()
+			}
+			return parsed.String()
+		}
+		if skip > 0 {
+			page.Commits.NewerURL = commitsPage(max(0, skip-repository.CommitPageSize))
+		}
+		if len(commits) > repository.CommitPageSize {
+			page.Commits.OlderURL = commitsPage(skip + repository.CommitPageSize)
+			commits = commits[:repository.CommitPageSize]
+		}
 		for _, commit := range commits {
 			page.Commits.List = append(page.Commits.List, app.commitSummary(page.Repo.URL, selectedRef, commit))
 		}
@@ -1457,6 +1500,12 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		page.Commits.Detail = &view
 		return nil
 	}
+	from, filePages := fileWindow(changeView(request).first, len(files))
+	if filePages.Total > maximumDiffFiles {
+		addFileLinks(request, &filePages)
+		view.FilePages = filePages
+	}
+	files = files[from : from+max(0, filePages.Last-filePages.First+1)]
 	// A file with more changed lines than the page shows is left out of the
 	// diff read, so it cannot use up the size limit of the files after it.
 	deferred := map[string]bool{}
@@ -1494,7 +1543,85 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 const (
 	maximumCommitDiffLines = 10000
 	maximumDeferredFiles   = 100
+	// maximumDiffFiles is how many file sections one page shows. Each section
+	// carries its own header markup, so many small files would otherwise make
+	// a page far larger than the line limit suggests.
+	maximumDiffFiles = 400
 )
+
+// changesView says which part of a long change list a request asks for: the
+// page of files starting at file number first (1 for the first page), or the
+// one file at path file with a link back to the whole list.
+type changesView struct {
+	first   int
+	from    int // first line of the one file shown alone
+	file    string
+	allURL  string
+	fileURL func(string) string
+}
+
+// changeView reads the "files" and "file" parameters of request. A missing
+// or invalid "files" value means the first page, and one past the end means
+// the last.
+func changeView(request *http.Request) changesView {
+	query := request.URL.Query()
+	view := changesView{first: 1, from: 1, file: query.Get("file")}
+	if number, err := strconv.Atoi(query.Get("from")); err == nil && number > 0 {
+		view.from = (number-1)/maximumCommitDiffLines*maximumCommitDiffLines + 1
+	}
+	if number, err := strconv.Atoi(query.Get("files")); err == nil && number > 0 {
+		view.first = number
+	}
+	address := func(change func(url.Values)) string {
+		target := *request.URL
+		values := target.Query()
+		change(values)
+		target.RawQuery = values.Encode()
+		return target.RequestURI()
+	}
+	view.allURL = address(func(values url.Values) { values.Del("file") })
+	view.fileURL = func(path string) string {
+		return address(func(values url.Values) { values.Del("files"); values.Set("file", path) })
+	}
+	return view
+}
+
+// fileWindow returns where the page that contains file number first starts
+// (as an index) and its place among total files. Nothing is paged when every
+// file fits on one page.
+func fileWindow(first, total int) (from int, page webui.PageContinuation) {
+	if total <= maximumDiffFiles {
+		return 0, webui.PageContinuation{First: 1, Last: total, Total: total}
+	}
+	first = (min(first, total)-1)/maximumDiffFiles*maximumDiffFiles + 1
+	return first - 1, webui.PageContinuation{First: first, Last: min(first+maximumDiffFiles-1, total), Total: total}
+}
+
+// addFileLinks adds the links to the first and the next page of files to a
+// window made by fileWindow.
+func addFileLinks(request *http.Request, page *webui.PageContinuation) {
+	if page.Total <= maximumDiffFiles {
+		return
+	}
+	link := func(position int) string {
+		address := *request.URL
+		query := address.Query()
+		query.Del("file")
+		if position == 1 {
+			query.Del("files")
+		} else {
+			query.Set("files", strconv.Itoa(position))
+		}
+		address.RawQuery = query.Encode()
+		return address.RequestURI()
+	}
+	if page.First > 1 {
+		page.FirstURL = link(1)
+	}
+	if page.Last < page.Total {
+		page.MoreURL = link(page.Last + 1)
+	}
+}
 
 // diffFileItem is the list row of one changed file, without its diff.
 func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webui.DiffFile {

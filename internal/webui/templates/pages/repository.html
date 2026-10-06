@@ -371,7 +371,9 @@
            shows that file alone and says so. */}}
       {{with .AllFilesURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
-      {{template "diffFiles" dict "Lang" $lang "Files" .Files "Title" "app.changed_files"}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .FilePages}}
+      {{template "diffFiles" dict "Lang" $lang "Files" .Files "Pages" .FilePages "Title" "app.changed_files"}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .FilePages}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
     {{end}}
@@ -428,21 +430,6 @@
   </ul>
   {{end}}
 </nav>
-{{end}}
-
-{{/* One bounded page's place and its links. A long file, diff or folder
-     renders it above and below its content, so it carries no id and both
-     copies are identical; the file drawer renders it once above its list. */}}
-{{define "pageContinuation"}}
-{{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
-<nav class="pager pager--pages" data-page-continuation {{biAttr $lang "aria-label" "code.pages"}}>
-  <p class="pager__at">{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
-  <span class="pager__links">
-    {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
-    {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
-  </span>
-</nav>
-{{end}}{{end}}
 {{end}}
 
 {{/* A folder's README below its listing, or the top README on the overview.

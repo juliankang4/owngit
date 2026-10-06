@@ -103,7 +103,7 @@ func TestRepositoryReadsTellMissingFromUnreadable(t *testing.T) {
 		{"merge-base", "/commits/" + parent},
 		{"--raw", "/commits/" + commit},
 		{"diff-tree", "/commits/" + commit + "?path=docs/a.txt"},
-		{"--max-count=100", "/commits"},
+		{"--max-count=101", "/commits"},
 		{"ls-tree", "/code"},
 		{"ls-tree", "/code?path=docs"},
 		{"ls-tree", "/raw?ref=refs/heads/main&path=README.md"},

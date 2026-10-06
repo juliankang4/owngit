@@ -21,8 +21,11 @@ import (
 // changes a ref in that repository or restarts.
 // Ref data gets half the object-backed page cache's 64 MiB budget. A single
 // repository may use at most one quarter, leaving space for other repositories.
+// The entry count must cover every repository the dashboard lists: it reads
+// them in order each time, so a smaller cache evicts each entry before the
+// next visit and every view starts one Git process per repository.
 const (
-	snapshotCapacity   = 64
+	snapshotCapacity   = 8192
 	snapshotByteBudget = 32 << 20
 )
 

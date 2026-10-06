@@ -16,7 +16,7 @@
 <div class="diffs" data-diff>
   <div class="diffs__bar">
     <h2 class="diffs__h">{{bi $lang (code .Title)}}</h2>
-    <span class="diffs__sum">{{biCount $lang "file" (len $files)}}{{if $sum.Text}} <span class="add">+{{number $sum.Additions}}</span> <span class="del">-{{number $sum.Deletions}}</span>{{end}}</span>
+    <span class="diffs__sum">{{biCount $lang "file" (or .Pages.Total (len $files))}}{{if and $sum.Text (not .Pages.Total)}} <span class="add">+{{number $sum.Additions}}</span> <span class="del">-{{number $sum.Deletions}}</span>{{end}}</span>
     <span class="diffs__tools">
       {{/* Both switches start hidden: they only work with the script. */}}
       <button type="button" class="seg__btn seg__btn--solo" data-wrap-toggle aria-pressed="false" hidden>{{icon "wrap"}}<span>{{bi $lang "code.wrap"}}</span></button>
@@ -103,4 +103,19 @@
   </div>
 </section>
 {{end}}
+{{end}}
+
+{{/* One bounded page's place and its links. A long file, diff or folder
+     renders it above and below its content, so it carries no id and both
+     copies are identical; the file drawer renders it once above its list. */}}
+{{define "pageContinuation"}}
+{{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
+<nav class="pager pager--pages" data-page-continuation {{biAttr $lang "aria-label" "code.pages"}}>
+  <p class="pager__at">{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
+  <span class="pager__links">
+    {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
+    {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}
+  </span>
+</nav>
+{{end}}{{end}}
 {{end}}

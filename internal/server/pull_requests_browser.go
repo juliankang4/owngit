@@ -187,7 +187,7 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	} else if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
+		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID, changeView(request))
 		if err != nil {
 			// Every failed comparison is shown as unavailable, and makes the
 			// page's answer unavailable unless it already has another status.
@@ -198,7 +198,8 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 				status = comparison
 			}
 		} else {
-			page.Changes = changes.Files
+			page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
+			addFileLinks(request, &page.ChangesPages)
 			page.ChangesBase = changes.Base
 			page.ChangesUnavailable = changes.Unavailable != ""
 			page.ChangesReason = changes.Unavailable
@@ -481,7 +482,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID)
+		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID, changeView(request))
 		if err != nil {
 			// Every failed comparison is shown as unavailable, and makes the
 			// page's answer unavailable unless it already has another status.
@@ -492,7 +493,8 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 				status = comparison
 			}
 		} else {
-			page.Changes = changes.Files
+			page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
+			addFileLinks(request, &page.ChangesPages)
 			page.ChangesBase = changes.Base
 			page.ChangesUnavailable = changes.Unavailable != ""
 			page.ChangesReason = changes.Unavailable
@@ -919,6 +921,13 @@ func browserProvenance(jobID, credentialID, executionScope string) string {
 // pullRequestChanges is what a pull request page shows as its changes.
 type pullRequestChanges struct {
 	Files []webui.DiffFile
+	// Pages places Files among all changed files when they span several
+	// pages; its links are added by the caller.
+	Pages webui.PageContinuation
+	// Lines places the lines of the one file shown alone.
+	Lines webui.PageContinuation
+	// AllURL leaves a view of one file for the whole list.
+	AllURL string
 	// Base is the merge base the changes are counted from.
 	Base string
 	// Unavailable names why there is no change list: the branches share no
@@ -947,13 +956,18 @@ func comparisonFailure(request *http.Request, err error) (int, webui.MessageCode
 // base, or with several, it shows no comparison rather than one against the
 // target tip or an arbitrary base. Merge and review use their own exact
 // revision checks and never this reading.
-func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, sourceOID, targetOID string) (pullRequestChanges, error) {
+func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, sourceOID, targetOID string, view changesView) (pullRequestChanges, error) {
 	if !validOID(sourceOID) || !validOID(targetOID) {
 		return pullRequestChanges{}, errors.New("invalid pull request revision")
 	}
 	limits, err := app.Store.BrowseLimits(ctx)
 	if err != nil {
 		return pullRequestChanges{}, err
+	}
+	if view.file != "" {
+		if changes, found, err := app.pullRequestFile(ctx, repositoryID, sourceOID, targetOID, view, limits); err != nil || found {
+			return changes, err
+		}
 	}
 	comparison, err := app.Repositories.Compare(ctx, repositoryID, targetOID, sourceOID, limits.CompareBytes, limits.CompareTime)
 	if err != nil {
@@ -965,12 +979,79 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 	case comparison.Bases > 1:
 		return pullRequestChanges{Unavailable: webui.MsgPRChangesManyBases}, nil
 	}
-	files, notLoaded := diffFileItems(comparison.Files, comparison.Patch, comparison.PatchTruncated, nil, nil, limits.CommitFileBytes)
+	// The window of files comes first, so the page's line budget and patch
+	// are spent on its own files and not on those before them.
+	from, pages := fileWindow(view.first, len(comparison.Files))
+	window := comparison.Files[from : from+max(0, pages.Last-pages.First+1)]
+	if pages.Total <= maximumDiffFiles {
+		pages = webui.PageContinuation{}
+	}
+	patch, patchTruncated := comparison.Patch, comparison.PatchTruncated
+	if len(window) < len(comparison.Files) && !comparison.FilesTruncated {
+		paths := make([]string, len(window))
+		for index, file := range window {
+			paths[index] = file.Path
+		}
+		var err error
+		patch, patchTruncated, err = app.Repositories.ComparePatch(ctx, repositoryID, comparison.Base, sourceOID, paths, limits.CompareBytes, limits.CompareTime)
+		if err != nil {
+			return pullRequestChanges{}, fmt.Errorf("read pull request changes: %w", err)
+		}
+	}
+	files, notLoaded := diffFileItems(window, patch, patchTruncated, nil, view.fileURL, limits.CommitFileBytes)
 	return pullRequestChanges{
-		Files: files, Base: comparison.Base,
-		PatchesIncomplete: notLoaded || comparison.PatchTruncated,
+		Files: files, Pages: pages, Base: comparison.Base,
+		PatchesIncomplete: notLoaded || patchTruncated,
 		FilesIncomplete:   comparison.FilesTruncated,
 	}, nil
+}
+
+// pullRequestFile reads one changed path alone, for the view of one file: its
+// change and its diff, within the limit of one file's diff and paged by
+// lines like a single-file commit diff. It does not read the list of the
+// other changed files, so a long list never decides what this view shows.
+// found is false when the path has no change in this comparison, and the
+// caller then shows the list. A read that fails is returned as an error,
+// never shown as an empty diff.
+func (app *App) pullRequestFile(ctx context.Context, repositoryID, sourceOID, targetOID string, view changesView, limits state.BrowseLimits) (changes pullRequestChanges, found bool, err error) {
+	bases, err := app.Repositories.MergeBases(ctx, repositoryID, targetOID, sourceOID)
+	if err != nil {
+		return pullRequestChanges{}, false, fmt.Errorf("read pull request changes: %w", err)
+	}
+	switch len(bases) {
+	case 0:
+		return pullRequestChanges{Unavailable: webui.MsgPRChangesNoBase}, true, nil
+	case 1:
+	default:
+		return pullRequestChanges{Unavailable: webui.MsgPRChangesManyBases}, true, nil
+	}
+	file, patch, truncated, found, err := app.Repositories.CompareFile(ctx, repositoryID, bases[0], sourceOID, view.file, limits.FilePatchBytes, limits.CompareTime)
+	if err != nil {
+		return pullRequestChanges{}, false, fmt.Errorf("read pull request changes: %w", err)
+	}
+	if !found {
+		return pullRequestChanges{}, false, nil
+	}
+	item := diffFileItem(file, view.fileURL)
+	patch = splitPatchByFile(patch, false)[file.Path]
+	var lines webui.PageContinuation
+	if !item.Binary {
+		first := view.from
+		var total, shown int
+		item.Hunks, total, shown = patchLinePage(patch, first, maximumCommitDiffLines)
+		if total > 0 && shown == 0 {
+			first = 1
+			item.Hunks, total, shown = patchLinePage(patch, first, maximumCommitDiffLines)
+		}
+		lines = lineContinuation(view.fileURL(item.Path), first, shown, total)
+		lines.Incomplete = truncated
+		// Changed lines that were counted but not read are not an empty diff.
+		item.NotLoaded = len(item.Hunks) == 0 && file.Additions+file.Deletions > 0
+	}
+	return pullRequestChanges{
+		Files: []webui.DiffFile{item}, Lines: lines, AllURL: view.allURL, Base: bases[0],
+		PatchesIncomplete: truncated || item.NotLoaded,
+	}, true, nil
 }
 
 func parsePullRequestNumber(value string) (int64, bool) {

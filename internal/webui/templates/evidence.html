@@ -216,7 +216,7 @@
 
      Call as: {{template "changeList" dict "Lang" $lang "Files" $p.Changes
                  "Base" $p.ChangesBase "Truncated" $p.DiffTruncated
-                 "FilesTruncated" $p.FilesTruncated "Unavailable" $p.ChangesUnavailable
+                 "FilesTruncated" $p.FilesTruncated "Pages" $p.ChangesPages "AllURL" $p.ChangesAllURL "Lines" $p.ChangesLines "Unavailable" $p.ChangesUnavailable
                  "Reason" $p.ChangesReason}} */}}
 {{define "changeList"}}
 {{$lang := .Lang}}{{$files := .Files}}
@@ -243,7 +243,12 @@
     {{if $files}}
       {{/* The same diff partials the commit screen uses, so one rendering
            serves every place a change is read. */}}
-      {{template "diffFiles" dict "Lang" $lang "Files" $files "Title" "pr.changes.title"}}
+      {{with .AllURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Pages}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Lines}}
+      {{template "diffFiles" dict "Lang" $lang "Files" $files "Pages" .Pages "Title" "pr.changes.title"}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Lines}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Pages}}
     {{else if not .FilesTruncated}}
       <p class="empty">{{bi $lang "pr.changes.none"}}</p>
     {{end}}
