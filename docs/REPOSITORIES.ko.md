@@ -99,7 +99,13 @@ owngit repo settings set --repository NAME --extra-ref-prefixes refs/notes/,refs
 owngit repo rename NAME NEW-NAME
 ```
 
-저장소 안의 내용은 그대로입니다. 90일 동안 예전 주소는 새 주소로 리디렉션되므로 기존 클론도 계속 동작합니다. 이때 Git은 `warning: redirecting to` 줄을 보여 줍니다. 90일 안에 클론마다 주소를 바꾸세요.
+저장소 안의 내용은 그대로입니다. 90일 동안은 예전 주소도 동작합니다. 화면과 API는 새 주소로 리디렉션됩니다. Git 요청은 예전 주소에서 그대로 처리하므로 기존 클론에서 계속 가져오고 푸시할 수 있으며, 이때 Git은 새 주소를 알려 줍니다.
+
+```text
+remote: This repository moved to http://HOST:7654/git/NEW-NAME.git
+```
+
+90일 안에 클론마다 주소를 바꾸세요.
 
 ```sh
 git remote set-url origin http://HOST:7654/git/NEW-NAME.git

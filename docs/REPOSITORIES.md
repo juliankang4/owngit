@@ -99,7 +99,13 @@ Rename on the repository's Settings tab, under Name and address, or run:
 owngit repo rename NAME NEW-NAME
 ```
 
-Everything in the repository stays. For 90 days the old address redirects to the new one, so existing clones keep working, with a `warning: redirecting to` line. Update each clone within those 90 days:
+Everything in the repository stays. For 90 days the old address keeps working. Pages and the API redirect to the new address. Git is answered at the old address itself, so existing clones keep fetching and pushing, and a fetch or push there names the new address:
+
+```text
+remote: This repository moved to http://HOST:7654/git/NEW-NAME.git
+```
+
+Update each clone within those 90 days:
 
 ```sh
 git remote set-url origin http://HOST:7654/git/NEW-NAME.git

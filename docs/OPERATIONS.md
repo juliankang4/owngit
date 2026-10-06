@@ -382,6 +382,14 @@ Settings that `settings set` and `settings confirmation` change belong to this h
 
 A shared-password sign-in lasts 12 hours by default. Choose 1 hour, 8 hours, 12 hours, 1 day, 7 days or 30 days on the Access tab, or `owngit settings set --session 7d`. A new time applies to later sign-ins. To end every sign-in now, change the shared password.
 
+A browser can be signed in at the HTTPS address and at a plain HTTP address of the same host at the same time. Each address keeps its own sign-in:
+
+- Signing out at the HTTPS address ends both sign-ins of that browser.
+- Signing out at a plain HTTP address ends that address's sign-in only. When the base URL is the HTTPS address, the sign-in page then says that the HTTPS address keeps its own sign-in. Sign out there too to end it.
+- Administrator confirmation follows the same rule. Ending it at the HTTPS address ends both confirmations of that browser. Ending it at a plain HTTP address leaves the HTTPS one. When the base URL is the HTTPS address, the dashboard says so, or the sign-in page does when that browser is not signed in at the plain address with the shared password.
+
+Upgrading to OwnGit 1.1.5 ends every sign-in made at the HTTPS address once, because the browser cookies that hold sign-ins were renamed. Sign in again after the upgrade. A sign-in at a plain HTTP address lasts until that browser first opens a page at the HTTPS address. OwnGit then ends it once, on the server as well as in the browser.
+
 ### Links from other sites
 
 By default, a link to OwnGit opened from a chat, webmail or another site opens without the shared sign-in until you open it again from OwnGit. To keep the sign-in on such links, choose "Keep the sign-in" on the Access tab, or run `owngit settings set --cross-site-links lax` (`strict` is the default). Administrator confirmation is never kept on such a link.
