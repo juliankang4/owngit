@@ -130,3 +130,62 @@ func TestImportConfigureSetsRefreshChoices(t *testing.T) {
 		t.Fatal("a branch namespace was accepted as an extra namespace")
 	}
 }
+
+func TestImportConfigureChangesTheSource(t *testing.T) {
+	root := t.TempDir()
+	passwordPath := filepath.Join(root, "admin")
+	noErr(t, os.WriteFile(passwordPath, []byte("admin-password\n"), 0o600))
+	noErr(t, state.ProtectPrivatePath(passwordPath, false))
+	fixture := startImportCLIServer(t)
+	remote := []string{"--server", fixture.url, "--accept-insecure-http", "--password-file", passwordPath}
+	configure := func(arguments ...string) (string, error) {
+		return captureStdout(func() error {
+			return importCommand(append(append([]string{"configure", fixture.repositoryID}, arguments...), remote...))
+		})
+	}
+	stored := func() state.ImportSource {
+		source, _, err := fixture.store.ImportSource(context.Background(), fixture.repositoryID)
+		noErr(t, err)
+		return source
+	}
+	before := stored()
+
+	// The server's refusal reaches the command and leaves the source as it was.
+	if _, err := configure("--url", "ftp://example.invalid/project.git"); err == nil || stored().URL != before.URL {
+		t.Fatalf("an unsupported address was accepted: %v", err)
+	}
+	printed, err := configure("--url", "https://192.168.1.20/team/project.git", "--allow-private-network", "--mode", "coexistence", "--git-only-consent", "--json")
+	var response struct {
+		URL  string `json:"url"`
+		Mode string `json:"mode"`
+	}
+	if err != nil || json.Unmarshal([]byte(printed), &response) != nil || response.Mode != "coexistence" {
+		t.Fatalf("configure --url output=%q err=%v", printed, err)
+	}
+	after := stored()
+	if after.URL != "https://192.168.1.20/team/project.git" || !after.AllowPrivateNetwork || !after.GitOnlyConsent || after.Mode != "coexistence" {
+		t.Fatalf("stored source = %+v", after)
+	}
+	// An omitted field keeps its value, including the consents.
+	if _, err := configure("--url", "https://192.168.1.21/team/project.git"); err != nil {
+		t.Fatal(err)
+	}
+	if kept := stored(); !kept.AllowPrivateNetwork || !kept.GitOnlyConsent || kept.Mode != "coexistence" {
+		t.Fatalf("an omitted flag changed the source: %+v", kept)
+	}
+	// Consent can be withdrawn without a new address.
+	if _, err := configure("--git-only-consent=false"); err != nil || stored().GitOnlyConsent || stored().URL != "https://192.168.1.21/team/project.git" {
+		t.Fatalf("git-only consent not withdrawn: %+v, %v", stored(), err)
+	}
+	// A repository without a source gets one from --url, with the dashboard's defaults.
+	noErr(t, fixture.store.DeleteImportSource(context.Background(), fixture.repositoryID))
+	if _, err := configure("--mode", "coexistence"); err == nil || !strings.Contains(err.Error(), "configure <name> --url") {
+		t.Fatalf("missing address guidance: %v", err)
+	}
+	if _, err := configure("--url", "https://attached.invalid/project.git", "--json"); err != nil {
+		t.Fatal(err)
+	}
+	if attached := stored(); attached.URL != "https://attached.invalid/project.git" || attached.Mode != "standalone" || attached.GitOnlyConsent || attached.AllowPrivateNetwork {
+		t.Fatalf("attached source = %+v", attached)
+	}
+}

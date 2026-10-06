@@ -61,7 +61,8 @@ func importCommand(arguments []string) error {
 func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "Usage: owngit import <add|configure|refresh|status|history|cancel|schedule|credentials|resolve> [options]")
 	fmt.Fprintln(writer, "  import add <name> <url> [--mode standalone|coexistence] [--git-only-consent] [--allow-private-network] [--token-file PATH | --basic-file PATH] [--ca-file PATH] [source options] [--json]")
-	fmt.Fprintln(writer, "  import configure <name> [source options] [--json]   change the connection options, limits and refresh choices of a source")
+	fmt.Fprintln(writer, "  import configure <name> [--url URL] [--mode standalone|coexistence] [--git-only-consent[=false]] [--allow-private-network[=false]] [source options] [--json]")
+	fmt.Fprintln(writer, "                                          change the address, mode, consents, connection options, limits and refresh choices of a source; omitted fields keep their value")
 	fmt.Fprintln(writer, "  import refresh <name> [--json]")
 	fmt.Fprintln(writer, "  import status <name> [--json]")
 	fmt.Fprintln(writer, "  import history <name> [--limit N] [--cursor ROW] [--json]")
@@ -86,7 +87,8 @@ func printImportUsage(writer io.Writer) {
 	fmt.Fprintln(writer, "  --overwrite-diverged[=false]            a later refresh replaces a ref changed here since the source was last seen")
 	fmt.Fprintln(writer, "  --follow-upstream-deletions[=false]     a later refresh deletes refs the source deleted, except changed ones unless")
 	fmt.Fprintln(writer, "                                          overwrite is on, the default branch and symbolic refs")
-	fmt.Fprintln(writer, "    Local work may be replaced; upstream deletions will remove these local refs. A new source address turns both off.")
+	fmt.Fprintln(writer, "    Local work may be replaced; upstream deletions will remove these local refs. A new source address turns both off, and also resets")
+	fmt.Fprintln(writer, "    the transport options above unless the same command gives them again; a credential bound to the old address stops applying.")
 	fmt.Fprintln(writer, "  owngit import status <name> shows every limit in force and the refs the last two choices would change now.")
 }
 
@@ -777,11 +779,18 @@ func parseImportLimitValue(name, raw string) (int64, error) {
 	return 0, errors.New("use a whole number")
 }
 
-// importConfigure changes the connection options and limits of a source.
-// The address, mode and consents stay.
+// importConfigure changes the address, mode, consents, connection options and
+// limits of a source. A field that is not given keeps its value. Options only
+// go through the options route; a new address, mode or consent replaces the
+// source, as the dashboard does, so the server applies its consent and
+// credential rules.
 func importConfigure(arguments []string) error {
 	flags := newCommandFlagSet("import configure")
 	remote := addImportFlags(flags)
+	address := flags.String("url", "", "the new source address")
+	mode := flags.String("mode", "", "standalone or coexistence")
+	gitOnly := flags.Bool("git-only-consent", false, "accept Git LFS pointers as incomplete content")
+	privateNetwork := flags.Bool("allow-private-network", false, "allow a private-network source address")
 	options := addImportOptionFlags(flags)
 	asJSON := flags.Bool("json", false, "print JSON")
 	if err := parseImportFlags(flags, arguments); err != nil {
@@ -791,7 +800,14 @@ func importConfigure(arguments []string) error {
 		return cliProblem("invalid_arguments", "import configure requires <name>.")
 	}
 	body := options.body(flags)
-	if len(body) == 0 {
+	replacesSource := false
+	flags.Visit(func(given *flag.Flag) {
+		switch given.Name {
+		case "url", "mode", "git-only-consent", "allow-private-network":
+			replacesSource = true
+		}
+	})
+	if len(body) == 0 && !replacesSource {
 		return cliProblem("invalid_arguments", "import configure needs at least one source option; see owngit import --help.")
 	}
 	path, err := importRepositoryPath(flags.Arg(0))
@@ -802,7 +818,14 @@ func importConfigure(arguments []string) error {
 	if err != nil {
 		return err
 	}
-	content, err := client.Do(context.Background(), http.MethodPatch, path, body)
+	method := http.MethodPatch
+	if replacesSource {
+		method = http.MethodPut
+		if err := addSavedSource(client, path, flags, body, *address, *mode, *gitOnly, *privateNetwork); err != nil {
+			return err
+		}
+	}
+	content, err := client.Do(context.Background(), method, path, body)
 	if err != nil {
 		return err
 	}
@@ -822,6 +845,53 @@ func importConfigure(arguments []string) error {
 		fmt.Printf("Local work may be replaced; upstream deletions will remove these local refs. owngit import status %s lists the refs this would change now.\n", flags.Arg(0))
 	}
 	return nil
+}
+
+// addSavedSource completes a source replacement with the saved address, mode
+// and consents the command line did not give. A repository without a source
+// gets the dashboard's initial values instead.
+func addSavedSource(client *apiclient.Client, path string, flags *flag.FlagSet, body map[string]any, address, mode string, gitOnly, privateNetwork bool) error {
+	content, err := client.Do(context.Background(), http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	var saved struct {
+		Status importsync.Status `json:"status"`
+	}
+	if err := json.Unmarshal(content, &saved); err != nil {
+		return cliProblem("invalid_response", "The saved import source could not be read.")
+	}
+	if saved.Status.Configured {
+		body["url"], body["mode"] = saved.Status.URL, saved.Status.Mode
+		body["git_only_consent"], body["allow_private_network"] = saved.Status.GitOnlyConsent, saved.Status.TransportConsent
+	} else {
+		// The repository has no source yet. As in the dashboard, the address
+		// is required, the mode is standalone and no consent is given until
+		// the command line gives it.
+		if !urlGiven(flags) {
+			return cliProblem("invalid_arguments", "The repository has no import source yet; attach one with owngit import configure <name> --url URL [--mode standalone|coexistence].")
+		}
+		body["mode"], body["git_only_consent"], body["allow_private_network"] = "standalone", false, false
+	}
+	flags.Visit(func(given *flag.Flag) {
+		switch given.Name {
+		case "url":
+			body["url"] = address
+		case "mode":
+			body["mode"] = mode
+		case "git-only-consent":
+			body["git_only_consent"] = gitOnly
+		case "allow-private-network":
+			body["allow_private_network"] = privateNetwork
+		}
+	})
+	return nil
+}
+
+func urlGiven(flags *flag.FlagSet) bool {
+	given := false
+	flags.Visit(func(f *flag.Flag) { given = given || f.Name == "url" })
+	return given
 }
 
 // printImportOptions describes a source's options and limits in words.
