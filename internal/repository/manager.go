@@ -48,10 +48,20 @@ type Manager struct {
 	Locks            *gitexec.Locks
 	Root             string
 	restorePublisher func(context.Context, string, string, string, string) error
-	// OnChange wakes advisory check reconciliation after a repository ref write.
-	// It must be nonblocking and must not execute repository commands.
+	// OnChange reports that a repository's refs or storage changed, or may
+	// have changed: a notification from the Git HTTP receive path or an
+	// import does not prove a write. OwnGit wakes check reconciliation and
+	// activity, records a possible write for idle maintenance, and the
+	// maintenance scheduler checks for work the last run has not considered
+	// before it runs. Preparation reports it only for a repository with such
+	// work. It must be nonblocking and must not execute repository commands.
 	OnChange func(string)
-	mu       sync.RWMutex
+	// OnReady reports that a repository became ready after preparation
+	// without such a change, so it wakes check reconciliation and activity
+	// and is not a write. It must be nonblocking and must not execute
+	// repository commands.
+	OnReady func(string)
+	mu      sync.RWMutex
 	// snapshots caches RefSnapshot results between ref writes.
 	snapshots snapshotCache
 	// languages caches the newest language count of each repository.

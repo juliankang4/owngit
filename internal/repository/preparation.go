@@ -258,8 +258,18 @@ func (m *Manager) runPreparation(ctx context.Context, id string, job *preparatio
 			if ready && attempt > 1 {
 				p.logf("repository %q is prepared after %d attempts and is served again", id, attempt)
 			}
-			if ready && m.OnChange != nil {
+			if ready && m.OnChange != nil && m.preparationFoundWork(ctx, id) {
+				// Maintenance follows work the last run has not considered: the
+				// recovery above or a Git command the owner ran while OwnGit was
+				// stopped leaves refs or objects to pack. This reports the write,
+				// which wakes checks and activity as well. A repository folder
+				// that cannot be read counts as work, so the reason shows in the
+				// run.
 				m.OnChange(id)
+			} else if ready && m.OnReady != nil {
+				// A repository without work only became ready, so this is not a
+				// repository write and schedules no maintenance by itself.
+				m.OnReady(id)
 			}
 			return
 		}
@@ -280,6 +290,15 @@ func (m *Manager) runPreparation(ctx context.Context, id string, job *preparatio
 		}
 		delay = min(delay*2, preparationRetryMax)
 	}
+}
+
+// preparationFoundWork reports whether a repository that just became ready
+// holds work the last completed maintenance run has not considered. A
+// repository whose check fails counts as work, so a change is never assumed
+// away.
+func (m *Manager) preparationFoundWork(ctx context.Context, id string) bool {
+	work, err := m.maintenanceWork(ctx, id)
+	return work || err != nil
 }
 
 // waitForRetry waits delay before the next attempt, or less when probe is set

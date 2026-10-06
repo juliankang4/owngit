@@ -67,7 +67,7 @@ func TestCleanupRemovesOnlyOldUnreachableObjects(t *testing.T) {
 			// Full maintenance, with cleanup off, removes nothing.
 			schedule := MaintenanceSchedule{}.withDefaults()
 			full := inventory(t, remote)
-			_, err = manager.maintain(ctx, "cleanup", MaintenanceFull, schedule)
+			_, err = manager.maintain(ctx, "cleanup", MaintenanceFull, schedule, false)
 			noErr(t, err, "full maintenance with cleanup off")
 			assertSameInventory(t, full, inventory(t, remote))
 			recent := gitInputOutput(t, remote, []byte("recent unreachable\n"), "hash-object", "-w", "--stdin")
@@ -98,12 +98,12 @@ func TestCleanupRemovesOnlyOldUnreachableObjects(t *testing.T) {
 				`UPDATE import_runs SET status='publishing' WHERE id='run'`,
 				`UPDATE import_runs SET status='complete' WHERE id='run'`,
 			} {
-				if _, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) || !exists(oldLoose) || !exists(oldPacked) {
+				if _, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule, false); !errors.Is(err, errCleanupDeferred) || !exists(oldLoose) || !exists(oldPacked) {
 					t.Fatalf("cleanup with an unfinished consumer: err=%v", err)
 				}
 				noErr(t, manager.Store.Exec(ctx, finish))
 			}
-			steps, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule)
+			steps, err := manager.maintain(ctx, "cleanup", MaintenanceCleanup, schedule, false)
 			noErr(t, err, "cleanup")
 			if steps != 4 {
 				t.Fatalf("cleanup ran %d steps", steps)
@@ -169,7 +169,7 @@ func TestCleanupKeepsTheSourceOfACheckBetweenReads(t *testing.T) {
 
 	schedule := MaintenanceSchedule{}.withDefaults()
 	schedule.cleanupGrace = 2 * 24 * time.Hour
-	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) {
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule, false); !errors.Is(err, errCleanupDeferred) {
 		t.Fatalf("cleanup during the check: %v", err)
 	}
 	if _, err := pinned.ReadBlobObject(ctx, entries[0].OID, entries[0].Size); err != nil {
@@ -177,7 +177,7 @@ func TestCleanupKeepsTheSourceOfACheckBetweenReads(t *testing.T) {
 	}
 
 	noErr(t, manager.Store.Exec(ctx, `UPDATE check_jobs SET status='passed' WHERE id='job'`))
-	steps, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule)
+	steps, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule, false)
 	noErr(t, err, "cleanup after the check")
 	if steps != 4 {
 		t.Fatalf("cleanup ran %d steps", steps)
@@ -223,7 +223,7 @@ func TestCheckAdmissionAndCleanupExcludeEachOther(t *testing.T) {
 		admitCheckJob(t, manager, "sample", "admitted", admitted)
 		return nil
 	}))
-	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); !errors.Is(err, errCleanupDeferred) || !present(admitted) {
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule, false); !errors.Is(err, errCleanupDeferred) || !present(admitted) {
 		t.Fatalf("cleanup after an admission: err=%v present=%v", err, present(admitted))
 	}
 	noErr(t, manager.Store.Exec(ctx, `UPDATE check_jobs SET status='passed' WHERE id='admitted'`))
@@ -243,7 +243,7 @@ func TestCheckAdmissionAndCleanupExcludeEachOther(t *testing.T) {
 	if !errors.Is(err, ErrPinnedRepositoryBusy) || recorded {
 		t.Fatalf("admission during cleanup's step: err=%v recorded=%v", err, recorded)
 	}
-	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule); err != nil || present(late) || present(admitted) {
+	if _, err := manager.maintain(ctx, "sample", MaintenanceCleanup, schedule, false); err != nil || present(late) || present(admitted) {
 		t.Fatalf("cleanup with no unfinished job: err=%v", err)
 	}
 	if err := pinned.WhilePresent(ctx, record); !errors.Is(err, ErrPinnedObjectUnavailable) || recorded {

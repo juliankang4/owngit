@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/state"
 )
 
@@ -28,7 +31,11 @@ import (
 //
 //   - small maintenance runs once the repository has had no request for Idle
 //     after OwnGit wrote to it (a push, an import, a pull request or restore
-//     change, or its preparation at startup);
+//     change). It runs only for work the last completed run has not
+//     considered: a loose ref or a loose object newer than that run, which
+//     every such write leaves behind, so preparation at startup, a push that
+//     sent nothing and an unchanged import schedule nothing, and the loose
+//     objects a run keeps because no ref reaches them are not work again;
 //   - full consolidation runs once per night between NightStartHour and
 //     NightEndHour, server local time, on an idle repository with more than
 //     PackThreshold packs.
@@ -44,7 +51,25 @@ import (
 // only and the rest of the run waits until the repository is idle again.
 // The commands change no ref value and no object, so the lock is released
 // without invalidating cached ref snapshots (see maintenanceStep), and the
-// dashboard keeps showing the repository without waiting for it.
+// dashboard keeps showing the repository without waiting for it. A run that
+// waited for the memory gate holds its slot for the command, outside that
+// lock, so a host whose gate transfers keep full still consolidates.
+
+// maintenanceWindowSteps bounds the walk of windowStart, so no zone data can
+// stop the scheduler, which computes the wait under its own mutex. A clock
+// change removes at most a few hours, so a real answer is reached long before
+// this many steps.
+const maintenanceWindowSteps = 48
+
+// maintenanceGatePauses is how many runs in a row may stop because the memory
+// gate was full before the next run waits for a free slot of it instead of
+// only trying to take one; see maintain.
+const maintenanceGatePauses = 3
+
+// maintenanceRecordName is the file in a repository's objects/info folder
+// that holds the instant the last completed maintenance run started. Git
+// does not read it, and the work check skips that folder.
+const maintenanceRecordName = "owngit-maintenance"
 
 // MaintenanceKind names what a maintenance run does.
 type MaintenanceKind string
@@ -166,6 +191,11 @@ var errCleanupDeferred = errors.New("a check or an import of the repository has 
 // prepared; the maintenance runs later.
 var errMaintenanceBusy = errors.New("the repository is in use")
 
+// errMaintenanceGateBusy reports that a maintenance command found every slot
+// of the shared memory gate in use. It defers the run like a busy repository,
+// and repeated ones make the next run wait for the gate.
+var errMaintenanceGateBusy = fmt.Errorf("%w: %w", errMaintenanceBusy, gitexec.ErrMemoryBusy)
+
 // maintenanceState is the scheduler. Its zero value records writes and use
 // before StartMaintenance.
 type maintenanceState struct {
@@ -195,6 +225,13 @@ type maintenanceEntry struct {
 	notBefore time.Time
 	// night is the last night whose consolidation check finished.
 	night string
+	// retry is set when a run stopped before all of its steps, so the next
+	// run starts the idempotent sequence again without asking whether the
+	// repository still has packable work.
+	retry bool
+	// gatePauses counts the runs in a row that stopped because the memory
+	// gate was full; see maintain.
+	gatePauses int
 }
 
 type runningMaintenance struct {
@@ -489,13 +526,69 @@ func (schedule MaintenanceSchedule) nightOf(now time.Time) string {
 }
 
 // untilNight returns the time until the next consolidation window starts,
-// tomorrow's when the window has already started today.
+// tomorrow's date when the window has already started today. Tomorrow comes
+// from the calendar, because an instant inside a spring-forward gap belongs
+// to the previous date and adding a day to it would name today.
 func (schedule MaintenanceSchedule) untilNight(now time.Time) time.Duration {
-	start := time.Date(now.Year(), now.Month(), now.Day(), schedule.NightStartHour, 0, 0, 0, now.Location())
+	start := schedule.windowStart(now)
 	if !start.After(now) {
-		start = time.Date(now.Year(), now.Month(), now.Day()+1, schedule.NightStartHour, 0, 0, 0, now.Location())
+		year, month, day := now.Date()
+		start = schedule.windowStart(time.Date(year, month, day+1, 12, 0, 0, 0, now.Location()))
 	}
 	return start.Sub(now)
+}
+
+// maintenanceRecordMargin is how much earlier than a run's start its record is
+// written, so a file system that stores file times in whole seconds or two
+// second steps cannot place a write made just after that start before the
+// record. Its cost is that objects written in those seconds count once more.
+const maintenanceRecordMargin = 2 * time.Second
+
+// windowStart returns the first real instant of the start hour on the local
+// date of day. A clock change can remove that hour: time.Date then answers
+// with an instant that is off that date or before that hour, so the loop
+// moves an hour at a time. It stops at the first instant that is on the date
+// at or after the hour, and also at the first instant after the date, because
+// a start hour removed at the end of a date, as 23:00 on the last Saturday of
+// March in America/Nuuk, begins at the first instant after the gap, on the
+// next date. The walk is bounded, so an answer always comes back.
+func (schedule MaintenanceSchedule) windowStart(day time.Time) time.Time {
+	year, month, date := day.Date()
+	start := time.Date(year, month, date, schedule.NightStartHour, 0, 0, 0, day.Location())
+	for range maintenanceWindowSteps {
+		switch order := dateOrder(start, year, month, date); {
+		case order > 0:
+			return start
+		case order == 0 && start.Hour() >= schedule.NightStartHour:
+			return start
+		}
+		start = start.Add(time.Hour)
+	}
+	return start
+}
+
+// dateOrder compares the local date of t with the given date: -1 when it is
+// earlier, 0 when it is that date, and 1 when it is later.
+func dateOrder(t time.Time, year int, month time.Month, day int) int {
+	tYear, tMonth, tDay := t.Date()
+	switch {
+	case tYear != year:
+		if tYear < year {
+			return -1
+		}
+		return 1
+	case tMonth != month:
+		if tMonth < month {
+			return -1
+		}
+		return 1
+	case tDay != day:
+		if tDay < day {
+			return -1
+		}
+		return 1
+	}
+	return 0
 }
 
 // runMaintenance runs one job and records its outcome for the schedule.
@@ -510,6 +603,9 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 	schedule, logf := job.schedule, s.logf
 	wasPending := entry.pending
 	entry.pending = false
+	wasRetry := entry.retry
+	entry.retry = false
+	waitForGate := entry.gatePauses >= maintenanceGatePauses
 	jobContext, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.running = &runningMaintenance{id: job.id, cancel: cancel}
@@ -525,14 +621,33 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 	case job.night != "":
 		var consolidate bool
 		consolidate, err = m.needsConsolidation(jobContext, job.id, schedule.PackThreshold)
-		if consolidate {
+		switch {
+		case consolidate:
 			kind = MaintenanceFull
-		} else if err == nil && !wasPending {
+		case err != nil:
+			// The pack inventory could not be read. The run reports the
+			// error below, and the night is recorded, so the next attempt
+			// is the next night.
+		case !wasPending:
+			kind = ""
+		}
+	}
+	if kind == MaintenanceSmall && err == nil && !wasRetry {
+		// A write notification says the repository may have changed, and
+		// preparation reports one only for work it found. Small maintenance
+		// then runs only for work the last completed run has not considered,
+		// so a repository whose loose refs and objects are all older than
+		// that run, as after an unchanged restart, an unchanged import or a
+		// push that sent nothing, runs no command. A run that stopped earlier
+		// finishes its own sequence without this question.
+		var work bool
+		work, err = m.maintenanceWork(jobContext, job.id)
+		if !work && err == nil {
 			kind = ""
 		}
 	}
 	if kind != "" && err == nil {
-		steps, err = m.maintain(jobContext, job.id, kind, schedule)
+		steps, err = m.maintain(jobContext, job.id, kind, schedule, waitForGate)
 	}
 	elapsed := schedule.Now().Sub(started).Round(10 * time.Millisecond)
 
@@ -544,18 +659,29 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 	case errors.Is(err, ErrRepositoryNotFound):
 		delete(s.entries, job.id)
 	case err == nil:
+		entry.gatePauses = 0
 		if job.night != "" {
 			entry.night = job.night
 		}
 	case errors.Is(err, errCleanupDeferred):
 		// Tonight's cleanup is over; a write still gets its small
 		// maintenance.
+		entry.gatePauses = 0
 		entry.pending = entry.pending || wasPending
 		entry.night = job.night
+		entry.retry = true
 	case errors.Is(err, errMaintenanceBusy) || jobContext.Err() != nil:
 		entry.pending = entry.pending || wasPending
 		entry.notBefore = schedule.Now().Add(schedule.Retry)
+		entry.retry = true
+		if errors.Is(err, errMaintenanceGateBusy) {
+			entry.gatePauses++
+		} else {
+			entry.gatePauses = 0
+		}
 	default:
+		entry.gatePauses = 0
+		entry.retry = true
 		entry.pending = entry.pending || wasPending
 		entry.notBefore = schedule.Now().Add(schedule.FailureRetry)
 		if job.night != "" {
@@ -585,7 +711,8 @@ func (m *Manager) runMaintenance(ctx context.Context, job maintenanceJob) {
 }
 
 // needsConsolidation reports whether the repository has more than threshold
-// packs. It only lists the pack directory.
+// packs. It only lists the pack directory, and reports a folder it cannot
+// read, so an unreadable inventory never becomes a repository with no work.
 func (m *Manager) needsConsolidation(ctx context.Context, id string, threshold int) (bool, error) {
 	path, _, exists, err := m.existingPath(ctx, id)
 	if err == nil && !exists {
@@ -594,11 +721,156 @@ func (m *Manager) needsConsolidation(ctx context.Context, id string, threshold i
 	if err != nil {
 		return false, err
 	}
-	packs, err := filepath.Glob(filepath.Join(path, "objects", "pack", "pack-*.pack"))
+	entries, err := os.ReadDir(filepath.Join(path, "objects", "pack"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
-	return len(packs) > threshold, nil
+	packs := 0
+	for _, entry := range entries {
+		if name := entry.Name(); !entry.IsDir() && strings.HasPrefix(name, "pack-") && strings.HasSuffix(name, ".pack") {
+			packs++
+		}
+	}
+	return packs > threshold, nil
+}
+
+// maintenanceWork reports whether the repository has work the last completed
+// maintenance run has not considered: a loose ref or a loose object newer
+// than the instant that run started. A write OwnGit makes, an import that
+// published refs and a Git command the owner ran while OwnGit was stopped all
+// leave such a file, so they tell a real change from a readiness check or a
+// push that sent nothing. Work the run has already considered stays behind:
+// a small repack keeps the loose objects nothing reaches, such as the ones a
+// conflicting merge calculation or an unapplied restore preview writes, and
+// they are not work again. A repository without a record of a completed run
+// reports work. A pack is not part of this: the nightly check consolidates
+// packs above the threshold (needsConsolidation). Reading the repository
+// folder directly keeps this off the Git command budget, and it stops at the
+// first newer file.
+func (m *Manager) maintenanceWork(ctx context.Context, id string) (bool, error) {
+	path, _, exists, err := m.existingPath(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, ErrRepositoryNotFound
+	}
+	since := lastMaintenance(path)
+	if work, err := newerFile(filepath.Join(path, "refs"), since); err != nil || work {
+		return work, err
+	}
+	objects := filepath.Join(path, "objects")
+	entries, err := os.ReadDir(objects)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		// pack holds the packs, which the night consolidates by count, and
+		// info holds Git's own bookkeeping, such as the commit-graph, and the
+		// record of the last completed run.
+		if !entry.IsDir() || entry.Name() == "pack" || entry.Name() == "info" {
+			continue
+		}
+		if work, err := newerFile(filepath.Join(objects, entry.Name()), since); err != nil || work {
+			return work, err
+		}
+	}
+	return false, nil
+}
+
+// newerFile reports whether root holds a file newer than since, directly or
+// in one of its subdirectories. A folder that does not exist holds none, and
+// a folder is read because its own time does not cover the files of its
+// subfolders. A zero since, as for a repository without a record, is older
+// than every file.
+func newerFile(root string, since time.Time) (bool, error) {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
+		if entry.IsDir() {
+			if work, err := newerFile(path, since); err != nil || work {
+				return work, err
+			}
+			continue
+		}
+		info, err := entry.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if info.ModTime().After(since) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// lastMaintenance returns the instant the last completed maintenance run
+// started, and the zero time when the repository has no usable record, so a
+// missing, unreadable or future record reports work rather than hiding a
+// change. A record in the future comes from a clock that ran ahead, or from a
+// repository copied from a computer whose clock was ahead, and would hide
+// every write until that time.
+func lastMaintenance(path string) time.Time {
+	content, err := os.ReadFile(maintenanceRecordPath(path))
+	if err != nil {
+		return time.Time{}
+	}
+	recorded, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(content)))
+	if err != nil || recorded.After(time.Now()) {
+		return time.Time{}
+	}
+	return recorded
+}
+
+// maintenanceRecordPath returns the record of the last completed maintenance
+// run of a repository.
+func maintenanceRecordPath(path string) string {
+	return filepath.Join(path, "objects", "info", maintenanceRecordName)
+}
+
+// logfOrNothing returns the log of the scheduler, or a no-op when
+// maintenance has not started, so a run started from anywhere can report a
+// bookkeeping problem.
+func (s *maintenanceState) logfOrNothing() func(string, ...any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.logf == nil {
+		return func(string, ...any) {}
+	}
+	return s.logf
+}
+
+// recordMaintenance writes when a completed run started, so the loose refs
+// and objects it considered, such as the unreachable objects a small repack
+// keeps, stop counting as work. The instant is stored a little before that
+// start, so a file system with coarse file times cannot place a write made
+// just after it before the record. A run that cannot write the record is
+// maintained again, which costs one more run and hides nothing.
+func (m *Manager) recordMaintenance(ctx context.Context, id string, started time.Time) {
+	path, _, exists, err := m.existingPath(ctx, id)
+	if err != nil || !exists {
+		return
+	}
+	recorded := started.Truncate(time.Second).Add(-maintenanceRecordMargin)
+	file := maintenanceRecordPath(path)
+	if err := os.WriteFile(file, []byte(recorded.UTC().Format(time.RFC3339Nano)+"\n"), 0o644); err != nil {
+		m.maintenance.logfOrNothing()("repository %q: the maintenance record was not written, so it is maintained again: %v", id, err)
+	}
 }
 
 // maintain runs the commands of kind on repository id and returns how many
@@ -606,10 +878,20 @@ func (m *Manager) needsConsolidation(ctx context.Context, id string, threshold i
 // releases it right after, and re-checks that the repository still exists
 // and is prepared. The run stops with errMaintenanceBusy when the repository
 // is locked, when anyone waits for its lock, or when it had a request or a
-// write since the run started. Checking for waiters matters: after Unlock,
-// TryLock in this goroutine wins over a blocked push. The commands are
+// write since the run started. A waiting caller is checked first so that the
+// run stops and leaves the repository to that caller; TryLock would also fail
+// while one is queued, but the check makes the run end instead of retrying.
+// The commands are
 // idempotent, so a later run starts again from the first.
-func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind, schedule MaintenanceSchedule) (int, error) {
+//
+// waitForGate is set for a run that already stopped several times because the
+// memory gate was full: it waits for a free slot of the gate before a command
+// that needs one, and keeps that slot for the command, so the wait is not
+// given to a transfer that was queued behind it.
+func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind, schedule MaintenanceSchedule, waitForGate bool) (int, error) {
+	// The record for the work check uses the clock of the computer, because
+	// the check compares it with the times of the repository's files.
+	started := time.Now()
 	lock := m.Locks.For(id)
 	uses := m.repositoryUses(id)
 	commands := maintenanceCommands(kind, schedule.cleanupGrace)
@@ -617,37 +899,95 @@ func (m *Manager) maintain(ctx context.Context, id string, kind MaintenanceKind,
 		if err := ctx.Err(); err != nil {
 			return index, err
 		}
-		if lock.Waiting() || m.repositoryUses(id) != uses || !lock.TryLock() {
-			return index, errMaintenanceBusy
-		}
-		// A backup reads the repository's object files until its bundle is
-		// written; repacking would remove some of them.
-		if m.heldForBackup(id) {
-			lock.UnlockWithoutRefChanges()
-			return index, errMaintenanceBusy
-		}
-		// A check or an import records the commits it will read only in
-		// the state, where no ref reaches them. Cleanup reads whether any
-		// is unfinished under the write lock it cleans under.
-		if kind == MaintenanceCleanup {
-			busy, err := m.Store.RepositoryObjectsInUse(ctx, id)
-			if err == nil && busy {
-				err = errCleanupDeferred
-			}
-			if err != nil {
-				lock.UnlockWithoutRefChanges()
-				return index, err
-			}
-		}
-		timeout := schedule.CommandTimeout
-		if kind != MaintenanceSmall && args[0] == "repack" {
-			timeout = schedule.FullRepackTimeout
-		}
-		if err := m.maintenanceStep(ctx, id, lock, timeout, args); err != nil {
+		if err := m.maintenanceCommand(ctx, id, kind, args, schedule, uses, lock, waitForGate); err != nil {
 			return index, err
 		}
 	}
+	// The run considered every loose ref and object that existed when it
+	// started, so the ones it keeps, such as the unreachable objects a small
+	// repack leaves loose, stop counting as work.
+	m.recordMaintenance(ctx, id, started)
 	return len(commands), nil
+}
+
+// maintenanceCommand runs one command of a maintenance sequence. A run that
+// waited for the memory gate keeps the slot it got and tells the command to
+// take none (gitexec.WithHeldGateSlot), so the slot is not given away between
+// the wait and the command. The write lock is taken with TryLock, which
+// cannot deadlock while a slot is held, and a repository that is busy or
+// wanted by a backup releases the slot and pauses the run.
+func (m *Manager) maintenanceCommand(ctx context.Context, id string, kind MaintenanceKind, args []string, schedule MaintenanceSchedule, uses uint64, lock *gitexec.RepositoryLock, waitForGate bool) error {
+	timeout := schedule.commandTimeout(kind, args)
+	if waitForGate && takesMemoryGate(args) {
+		release, err := acquireMemoryGate(ctx, timeout)
+		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// Every slot stayed in use for the command's own budget: the
+			// repository is idle but the computer is busy, so the run waits
+			// and tries again later.
+			return errMaintenanceGateBusy
+		}
+		defer release()
+		ctx = gitexec.WithHeldGateSlot(ctx)
+	}
+	if lock.Waiting() || m.repositoryUses(id) != uses || !lock.TryLock() {
+		return errMaintenanceBusy
+	}
+	// A backup reads the repository's object files until its bundle is
+	// written; repacking would remove some of them.
+	if m.heldForBackup(id) {
+		lock.UnlockWithoutRefChanges()
+		return errMaintenanceBusy
+	}
+	// A check or an import records the commits it will read only in
+	// the state, where no ref reaches them. Cleanup reads whether any
+	// is unfinished under the write lock it cleans under.
+	if kind == MaintenanceCleanup {
+		busy, err := m.Store.RepositoryObjectsInUse(ctx, id)
+		if err == nil && busy {
+			err = errCleanupDeferred
+		}
+		if err != nil {
+			lock.UnlockWithoutRefChanges()
+			return err
+		}
+	}
+	return m.maintenanceStep(ctx, id, lock, timeout, args)
+}
+
+// commandTimeout is the budget of one maintenance command. A full or a cleanup
+// repack rewrites every pack and gets the longer budget.
+func (schedule MaintenanceSchedule) commandTimeout(kind MaintenanceKind, args []string) time.Duration {
+	if kind != MaintenanceSmall && args[0] == "repack" {
+		return schedule.FullRepackTimeout
+	}
+	return schedule.CommandTimeout
+}
+
+// takesMemoryGate reports whether a maintenance command builds a pack and so
+// shares the memory gate with transfers and backups (gitexec takes it for the
+// same commands).
+func takesMemoryGate(args []string) bool { return args[0] == "repack" }
+
+// acquireMemoryGate waits up to bound for a slot of the shared memory gate
+// and keeps it: the returned function releases it, and it returns one even
+// when OwnGit has no gate. The caller holds no repository lock, because a
+// transfer takes a gate slot before it waits for a repository lock, so
+// waiting for the gate under that lock can deadlock (see maintenanceStep).
+func acquireMemoryGate(ctx context.Context, bound time.Duration) (func(), error) {
+	gate := hostmem.Shared.Load()
+	if gate == nil {
+		return func() {}, nil
+	}
+	waitContext, cancel := context.WithTimeout(ctx, bound)
+	defer cancel()
+	release, err := gate.Acquire(waitContext)
+	if err != nil {
+		return nil, err
+	}
+	return release, nil
 }
 
 // maintenanceStep runs one command with the write lock held. repack and
@@ -693,11 +1033,14 @@ func (m *Manager) maintenanceStep(ctx context.Context, id string, lock *gitexec.
 			return err
 		}
 	}
-	// The write lock is held, so the command must not wait for the memory
-	// gate; it leaves and the scheduler retries later, as for a busy repository.
+	// The write lock is held, so a command that did not wait for the memory
+	// gate must not block on it: it tries a slot and leaves with
+	// errMaintenanceGateBusy when every one is in use, and the scheduler
+	// retries later, as for a busy repository. A run that waited for the gate
+	// holds a slot and its commands take none (see maintenanceCommand).
 	if _, err := m.Git.RunWithLimits(gitexec.WithoutGateWait(ctx), path, nil, limits, append([]string{"--git-dir", "."}, args...)...); err != nil {
 		if errors.Is(err, gitexec.ErrMemoryBusy) {
-			return errMaintenanceBusy
+			return errMaintenanceGateBusy
 		}
 		return err
 	}

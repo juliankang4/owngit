@@ -169,6 +169,16 @@ func WithoutGateWait(ctx context.Context) context.Context {
 	return context.WithValue(ctx, noGateWait{}, true)
 }
 
+type heldGateSlot struct{}
+
+// WithHeldGateSlot marks ctx for a command whose caller holds a slot of the
+// shared memory gate and keeps it for that command, so the command runs
+// without taking a second slot. It is for work that paid for a slot itself,
+// such as a maintenance repack that waited for one.
+func WithHeldGateSlot(ctx context.Context) context.Context {
+	return context.WithValue(ctx, heldGateSlot{}, true)
+}
+
 func packsInBackground(name string) bool {
 	switch strings.TrimPrefix(name, "git ") {
 	case "bundle", "repack":
@@ -339,8 +349,9 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	// A backup's bundle and maintenance's repack are background work: they
 	// wait for a slot of the memory gate, which transfers share.
 	// A command run under a repository lock never waits for a slot, because a
-	// transfer holding a slot may be waiting for that lock.
-	if gate := hostmem.Shared.Load(); gate != nil && packsInBackground(name) {
+	// transfer holding a slot may be waiting for that lock, and a command
+	// whose caller holds a slot takes no second one.
+	if gate := hostmem.Shared.Load(); gate != nil && packsInBackground(name) && ctx.Value(heldGateSlot{}) == nil {
 		var release func()
 		if ctx.Value(noGateWait{}) != nil {
 			if release = gate.TryAcquireBackground(); release == nil {

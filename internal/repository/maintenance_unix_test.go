@@ -167,3 +167,29 @@ func TestMaintenanceTimeoutAndFailureLeaveTheRepositoryUsable(t *testing.T) {
 	assertSameInventory(t, before, inventory(t, fixture.remote))
 	assertRepositoryUsable(t, fixture)
 }
+
+// A pack folder that cannot be read is an error, not a repository without
+// work: the night is reported as failed and recorded, so the next attempt is
+// the next night and the failure is never silent.
+func TestMaintenanceReportsAnUnreadablePackFolder(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("requires Unix read-permission enforcement for this account")
+	}
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	// The maintained repository has no packable work, so only the nightly
+	// pack inventory can speak about it.
+	_, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
+	noErr(t, err)
+	pack := filepath.Join(fixture.remote, "objects", "pack")
+	noErr(t, os.Chmod(pack, 0o000))
+	t.Cleanup(func() { _ = os.Chmod(pack, 0o700) })
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{Idle: time.Millisecond, Retry: time.Millisecond, Now: shiftedClock(3)})
+	waitFor(t, "the pack inventory error", func() bool { return len(log.matching(`"sample" maintenance (small) failed`)) > 0 })
+	if lines := log.matching("objects/pack"); len(lines) != 1 {
+		t.Fatalf("the failure did not name the pack folder: %v", log.matching("maintenance"))
+	}
+	if lines := log.matching("completed"); len(lines) != 0 {
+		t.Fatalf("maintenance reported a completed run: %v", lines)
+	}
+}

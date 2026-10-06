@@ -515,15 +515,23 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// nothing until the coordinator starts.
 	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
 	var changeApp atomic.Pointer[server.App]
-	// Every OwnGit write wakes reconciliation, idle maintenance and activity.
+	// A repository change or readiness wakes reconciliation and activity.
 	noteChange := func(id string) {
 		checkCoordinator.Wake(id)
-		repositories.NoteRepositoryWrite(id)
 		if app := changeApp.Load(); app != nil {
 			app.NoteRepositoryChange(id)
 		}
 	}
-	repositories.OnChange = noteChange
+	// Every OwnGit write also schedules idle maintenance, which checks the
+	// repository for packable work before it runs.
+	noteWrite := func(id string) {
+		noteChange(id)
+		repositories.NoteRepositoryWrite(id)
+	}
+	repositories.OnChange = noteWrite
+	// Preparation reports readiness, not a write; it reports a change through
+	// OnChange only when it found work.
+	repositories.OnReady = noteChange
 	if settings.Initialized {
 		// Deleted repositories have no rows, so an unfinished deletion never
 		// blocks startup; it is reported and retried at the next start.
@@ -751,7 +759,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		application.Approvals = server.NewSetupApprovals()
 	}
 	gitHandler.Authorize = application.AuthorizeGit
-	gitHandler.OnReceive = noteChange
+	gitHandler.OnReceive = noteWrite
 	// The push's exact ref updates feed the tray and check admission. Admission
 	// keeps only the branch updates it needs, in memory, so the completed Git
 	// response neither waits for it nor depends on its result.
@@ -795,7 +803,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 			<-releaseDone
 		}()
 	}
-	pullRequests.OnChange = noteChange
+	pullRequests.OnChange = noteWrite
 	checkContext, cancelChecks := context.WithCancel(ctx)
 	defer cancelChecks()
 	if err := checkCoordinator.Start(checkContext); err != nil {

@@ -1,14 +1,16 @@
 package repository
 
-// A transfer holds a gate slot and waits for the repository lock, so maintenance must not wait for the gate while it holds that lock: maintenance holds the
-// repository write lock while it waits for the memory gate, and a transfer
-// of the same repository holds the gate slot while it waits for that lock,
-// in the order githttp's handler takes them (admission with the gate, then
-// the repository lock).
+// A transfer holds a gate slot and waits for the repository lock, so
+// maintenance must not wait for the gate while it holds that lock:
+// maintenance holds the repository write lock while it waits for the memory
+// gate, and a transfer of the same repository holds the gate slot while it
+// waits for that lock, in the order githttp's handler takes them (admission
+// with the gate, then the repository lock).
 
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -49,29 +51,86 @@ func TestMaintenanceDoesNotWaitForTheGateUnderTheRepositoryLock(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults())
+		_, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
 		done <- err
 	}()
+	// The transfer holds the only gate slot and waits for the write lock of
+	// the running step. It gets that lock only once the step leaves it, so it
+	// finishes while the run is still in flight: a run that waited for the
+	// gate under the lock would hold it for the whole gate budget and hit
+	// this bound instead. A maintenance that stops for the gate lets it in.
+	select {
+	case <-transferDone:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("after 10 s the transfer (gate slot held, waiting for the write lock) has not finished: lock waiting=%v", lock.Waiting())
+	}
 	select {
 	case err := <-done:
 		t.Logf("maintenance finished: %v", err)
-		select {
-		case <-transferDone:
-			t.Log("transfer finished after the maintenance left")
-		case <-time.After(10 * time.Second):
-			t.Error("maintenance left but the transfer did not finish")
-		}
 		if !errors.Is(err, errMaintenanceBusy) {
 			t.Errorf("maintenance error = %v, want errMaintenanceBusy", err)
 		}
-		if lock.TryLock() {
-			lock.UnlockWithoutRefChanges()
-		} else {
-			t.Error("the repository lock is still held")
-		}
-	case <-transferDone:
-		t.Error("transfer finished while maintenance still runs")
 	case <-time.After(10 * time.Second):
-		t.Errorf("after 10 s neither the maintenance (write lock held, waiting for the gate) nor the transfer (gate slot held, waiting for the lock) has moved: lock waiting=%v", lock.Waiting())
+		t.Fatal("after 10 s the maintenance that met the full gate has not returned")
+	}
+	if lock.TryLock() {
+		lock.UnlockWithoutRefChanges()
+	} else {
+		t.Error("the repository lock is still held")
+	}
+}
+
+// Maintenance that keeps finding every slot of the memory gate in use stops
+// only trying it: after a few pauses the next run waits for a free slot with
+// no repository lock held, and that run finishes once a slot is free.
+func TestMaintenanceWaitsForTheGateAfterRepeatedPauses(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	gate := hostmem.NewGate(1)
+	hostmem.Shared.Store(gate)
+	t.Cleanup(func() { hostmem.Shared.Store(nil) })
+	held, _ := gate.TryAcquire()
+	if held == nil {
+		t.Fatal("the gate is full before the test")
+	}
+	var freeOnce sync.Once
+	free := func() { freeOnce.Do(held) }
+	defer free()
+
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{
+		Idle: time.Millisecond, Retry: time.Millisecond, CommandTimeout: 30 * time.Second, Now: shiftedClock(12),
+	})
+	defer func() {
+		if t.Failed() {
+			t.Logf("maintenance log: %v", log.matching(""))
+		}
+	}()
+	manager.NoteRepositoryWrite("sample")
+	waitFor(t, "the gate pauses", func() bool { return len(log.matching("paused")) >= maintenanceGatePauses })
+	// The next run stays in flight: it waits for a free slot instead of
+	// returning and pausing again.
+	waitFor(t, "a run in flight", func() bool { return manager.maintenanceRunning("sample") })
+	pauses := len(log.matching("paused"))
+	if becameTrueWithin(time.Second, func() bool { return len(log.matching("paused")) > pauses }) {
+		t.Fatalf("maintenance kept pausing instead of waiting: %v", log.matching("paused"))
+	}
+	// Waiting holds no repository lock, so a reader still gets it.
+	lock := manager.Locks.For("sample")
+	read := make(chan struct{})
+	go func() {
+		lock.RLock()
+		lock.RUnlock()
+		close(read)
+	}()
+	select {
+	case <-read:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a reader could not take the repository while maintenance waited for the gate")
+	}
+	// A free slot lets the waiting run finish, without another pause.
+	free()
+	waitFor(t, "maintenance after the gate freed", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+	if got := len(log.matching("paused")); got != maintenanceGatePauses {
+		t.Fatalf("maintenance paused %d times, want %d", got, maintenanceGatePauses)
 	}
 }

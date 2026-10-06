@@ -23,7 +23,7 @@ func TestBackupHoldRefusesDeletionAndMaintenance(t *testing.T) {
 	hold.Set("sample")
 
 	before := inventory(t, fixture.remote)
-	steps, err := manager.maintain(ctx, "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults())
+	steps, err := manager.maintain(ctx, "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
 	if !errors.Is(err, errMaintenanceBusy) || steps != 0 {
 		t.Fatalf("maintenance of a held repository steps=%d err=%v", steps, err)
 	}
@@ -41,7 +41,7 @@ func TestBackupHoldRefusesDeletionAndMaintenance(t *testing.T) {
 	}
 
 	hold.Release("sample")
-	if _, err := manager.maintain(ctx, "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults()); err != nil {
+	if _, err := manager.maintain(ctx, "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults(), false); err != nil {
 		t.Fatalf("maintenance after the hold: %v", err)
 	}
 	hold.Close()

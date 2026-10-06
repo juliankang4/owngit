@@ -137,7 +137,7 @@ func TestMaintenanceKeepsEveryRefAndObject(t *testing.T) {
 	}
 	generation := manager.Locks.For("sample").Generation()
 
-	steps, err := manager.maintain(ctx, "sample", MaintenanceSmall, schedule)
+	steps, err := manager.maintain(ctx, "sample", MaintenanceSmall, schedule, false)
 	noErr(t, err, "small maintenance")
 	if steps != 3 {
 		t.Fatalf("small maintenance ran %d steps", steps)
@@ -160,7 +160,7 @@ func TestMaintenanceKeepsEveryRefAndObject(t *testing.T) {
 		t.Fatalf("lock generation %d, want %d", got, generation)
 	}
 
-	steps, err = manager.maintain(ctx, "sample", MaintenanceFull, schedule)
+	steps, err = manager.maintain(ctx, "sample", MaintenanceFull, schedule, false)
 	noErr(t, err, "full maintenance")
 	if steps != 3 {
 		t.Fatalf("full maintenance ran %d steps", steps)
@@ -199,7 +199,7 @@ func TestMaintenanceKeepsEveryRefAndObject(t *testing.T) {
 func TestPreparationSucceedsAfterMaintenance(t *testing.T) {
 	fixture := newMaintenanceFixture(t)
 	schedule := MaintenanceSchedule{}.withDefaults()
-	_, err := fixture.manager.maintain(context.Background(), "sample", MaintenanceFull, schedule)
+	_, err := fixture.manager.maintain(context.Background(), "sample", MaintenanceFull, schedule, false)
 	noErr(t, err)
 	probe := newPreparationProbe()
 	startPreparationForTest(t, fixture.manager, probe, 5*time.Second)
@@ -314,7 +314,11 @@ func TestMaintenanceWaitsUntilTheRepositoryIsIdle(t *testing.T) {
 	}
 
 	// A repository in use defers maintenance without a log line. A run the
-	// uses above paused has already logged, so count only new lines.
+	// uses above paused has already logged, so count only new lines. A new
+	// loose branch is work the last run has not seen, so a run starts and
+	// finds the reader.
+	head := gitOutput(t, "", "--git-dir", fixture.remote, "rev-parse", "refs/heads/main")
+	runGit(t, "", "--git-dir", fixture.remote, "update-ref", "refs/heads/deferred", head)
 	logged := len(log.matching("(small)"))
 	lock := manager.Locks.For("sample")
 	lock.RLock()
@@ -361,6 +365,7 @@ func TestMaintenanceConsolidatesPacksOnlyAtNight(t *testing.T) {
 	assertSameInventory(t, before, inventory(t, remote))
 
 	// Once per night: a later write gets small maintenance only.
+	gitInputOutput(t, remote, []byte("a later write\n"), "hash-object", "-w", "--stdin")
 	manager.NoteRepositoryWrite("sample")
 	waitFor(t, "small maintenance", func() bool { return len(log.matching("(small) completed")) == 1 })
 	time.Sleep(200 * time.Millisecond)
@@ -374,6 +379,13 @@ func TestMaintenanceRunsOneRepositoryAtATime(t *testing.T) {
 	for _, name := range []string{"second", "third"} {
 		_, err := manager.Create(context.Background(), name, "")
 		noErr(t, err)
+	}
+	// Every repository gets a loose object, which is what a push leaves
+	// behind and what maintenance packs.
+	for _, name := range []string{"sample", "second", "third"} {
+		path, err := manager.Path(name)
+		noErr(t, err)
+		gitInputOutput(t, path, []byte(name+"\n"), "hash-object", "-w", "--stdin")
 	}
 	var active, peak atomic.Int32
 	perRepository := sync.Map{}
@@ -446,7 +458,7 @@ func TestWaitingPushRunsBeforeTheNextMaintenanceCommand(t *testing.T) {
 			}
 			done := make(chan outcome, 1)
 			go func() {
-				steps, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults())
+				steps, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
 				done <- outcome{steps, err}
 			}()
 			<-started
@@ -488,7 +500,7 @@ func TestWaitingPushRunsBeforeTheNextMaintenanceCommand(t *testing.T) {
 				t.Fatalf("order %v, steps %d, err %v; want order %v, %d steps and a pause", got, result.steps, result.err, want, ran)
 			}
 			assertRef(t, fixture.remote, "refs/heads/during", oid)
-			steps, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults())
+			steps, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
 			if err != nil || steps != 3 {
 				t.Fatalf("maintenance after the push: %d steps, %v", steps, err)
 			}
@@ -512,7 +524,7 @@ func TestRequestDuringMaintenanceStopsTheRun(t *testing.T) {
 		}
 		return nil
 	}
-	steps, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults())
+	steps, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults(), false)
 	if steps != 1 || !errors.Is(err, errMaintenanceBusy) || !slices.Equal(ran, []string{"pack-refs"}) {
 		t.Fatalf("steps %d, err %v, ran %v", steps, err, ran)
 	}
@@ -537,7 +549,7 @@ func TestRefusedCheckSourceReadStopsTheRun(t *testing.T) {
 		}
 		return nil
 	}
-	steps, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults())
+	steps, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults(), false)
 	if steps != 2 || !errors.Is(err, errMaintenanceBusy) || !slices.Equal(ran, []string{"pack-refs", "repack"}) {
 		t.Fatalf("steps %d, err %v, ran %v", steps, err, ran)
 	}
@@ -568,7 +580,7 @@ func TestMaintenanceKeepsCachedRefSnapshots(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults())
+		_, err := manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults(), false)
 		done <- err
 	}()
 	<-started
@@ -617,7 +629,7 @@ func TestMaintenanceKeepsCachedRefSnapshots(t *testing.T) {
 		}
 		return nil
 	}
-	_, err = manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults())
+	_, err = manager.maintain(context.Background(), "sample", MaintenanceSmall, MaintenanceSchedule{}.withDefaults(), false)
 	noErr(t, err)
 	if lock.Generation() == generation {
 		t.Fatal("a ref change during pack-refs kept the cached snapshot")
@@ -664,6 +676,9 @@ func TestDeletionStopsMaintenanceAndForgetsIt(t *testing.T) {
 	if manager.maintenanceKnown("sample") {
 		t.Fatal("new repository inherited maintenance state")
 	}
+	path, err := manager.Path("sample")
+	noErr(t, err)
+	gitInputOutput(t, path, []byte("first write\n"), "hash-object", "-w", "--stdin")
 	manager.NoteRepositoryWrite("sample")
 	waitFor(t, "maintenance of the new repository", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
 }
@@ -685,12 +700,205 @@ func TestMaintenanceSkipsRepositoriesBeingPrepared(t *testing.T) {
 	waitFor(t, "maintenance after preparation", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
 }
 
+// An unchanged preparation reports readiness, not a write, so a restart of a
+// maintained repository schedules no maintenance; a branch an offline Git
+// command left behind is work, and that preparation reports it.
+func TestPreparationSchedulesMaintenanceOnlyForWork(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	// A maintained repository has nothing to pack.
+	_, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false)
+	noErr(t, err)
+	if loose, _ := objectCounts(t, fixture.remote); loose != 0 || len(looseRefFiles(t, fixture.remote)) != 0 {
+		t.Fatalf("the maintained repository still has loose objects %d or refs %v", loose, looseRefFiles(t, fixture.remote))
+	}
+	var ready, changes, commands atomic.Int32
+	manager.OnReady = func(string) { ready.Add(1) }
+	manager.OnChange = func(id string) {
+		changes.Add(1)
+		manager.NoteRepositoryWrite(id)
+	}
+	manager.maintenanceHook = func(context.Context, string, []string) error { commands.Add(1); return nil }
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{Idle: 10 * time.Millisecond, Retry: 10 * time.Millisecond, Now: shiftedClock(12)})
+
+	probe := newPreparationProbe()
+	startPreparationForTest(t, manager, probe, 5*time.Second)
+	waitFor(t, "the first preparation", func() bool { return ready.Load() == 1 })
+	if becameTrueWithin(time.Second, func() bool { return commands.Load() > 0 }) {
+		t.Fatalf("an unchanged restart scheduled maintenance: %v", log.matching("maintenance"))
+	}
+	if manager.pendingMaintenance("sample") {
+		t.Fatal("an unchanged restart left the repository pending")
+	}
+
+	// A Git command the owner ran while OwnGit was stopped leaves a loose
+	// branch behind; preparation finds it, reports the write once (not the
+	// readiness as well) and the repository is maintained.
+	head := gitOutput(t, "", "--git-dir", fixture.remote, "rev-parse", "refs/heads/main")
+	runGit(t, "", "--git-dir", fixture.remote, "update-ref", "refs/heads/offline", head)
+	manager.PrepareRegistered("sample")
+	waitFor(t, "the write after the offline change", func() bool { return changes.Load() == 1 })
+	if ready.Load() != 1 {
+		t.Fatalf("preparation reported readiness %d times, want only the one without work", ready.Load())
+	}
+	waitFor(t, "maintenance of the offline write", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+}
+
+// A write notification with nothing the last completed run has not considered
+// behind it, as an unchanged import or a push that sent nothing reports, runs
+// no maintenance. The loose objects a completed run keeps because no ref
+// reaches them, such as the ones a conflicting merge calculation or an
+// unapplied restore preview writes, are not that work again.
+func TestWriteNotificationWithoutWorkRunsNoMaintenance(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	// A loose object nothing reaches, written before the run that considers it.
+	// Its time is a minute old, as a real write that waited for the idle time
+	// before the run has.
+	gitInputOutput(t, fixture.remote, []byte("unreachable\n"), "hash-object", "-w", "--stdin")
+	ageLooseFiles(t, fixture.remote)
+	var commands atomic.Int32
+	manager.maintenanceHook = func(context.Context, string, []string) error { commands.Add(1); return nil }
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{Idle: 10 * time.Millisecond, Retry: 10 * time.Millisecond, Now: shiftedClock(12)})
+	// The fixture's loose refs are work, so the first notification maintains
+	// the repository and records what it considered. Its repack packs them
+	// and keeps the unreachable object loose.
+	manager.NoteRepositoryWrite("sample")
+	waitFor(t, "the run of the loose refs", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+	if loose, _ := objectCounts(t, fixture.remote); loose == 0 {
+		t.Fatal("the run packed the unreachable object, so this test would prove nothing")
+	}
+	// Three notifications that changed nothing find nothing to pack.
+	commands.Store(0)
+	for round := range 3 {
+		manager.NoteRepositoryWrite("sample")
+		if becameTrueWithin(200*time.Millisecond, func() bool { return commands.Load() > 0 }) {
+			t.Fatalf("notification %d without work ran maintenance: %v", round+1, log.matching("maintenance"))
+		}
+	}
+	if manager.pendingMaintenance("sample") {
+		t.Fatal("a write without work stays pending")
+	}
+	if lines := log.matching("maintenance"); len(lines) != 1 {
+		t.Fatalf("a notification without work was logged: %v", lines[1:])
+	}
+}
+
+// A run that stopped before its last step retries its own sequence even when
+// the packing steps left no loose ref or object behind: a failure after them
+// does not leave the sequence half done.
+func TestMaintenanceRetriesTheRestOfASequenceWithoutLooseWork(t *testing.T) {
+	manager, remote, work := newTestRepository(t)
+	commitFile(t, work, "one\n", "one", "2024-01-01T00:00:00Z")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main")
+	var attempts atomic.Int32
+	manager.maintenanceHook = func(ctx context.Context, id string, args []string) error {
+		if args[0] == "commit-graph" && attempts.Add(1) == 1 {
+			return errors.New("synthetic commit-graph failure")
+		}
+		return nil
+	}
+	log := startMaintenanceForTest(t, manager, MaintenanceSchedule{
+		Idle: time.Millisecond, Retry: time.Millisecond, FailureRetry: 500 * time.Millisecond, Now: shiftedClock(12),
+	})
+	manager.NoteRepositoryWrite("sample")
+	waitFor(t, "the failure", func() bool { return len(log.matching("synthetic commit-graph failure")) > 0 })
+	if loose, packs := objectCounts(t, remote); loose != 0 || len(looseRefFiles(t, remote)) != 0 {
+		t.Fatalf("the packing steps left work behind: %d loose objects, %d packs, refs %v", loose, packs, looseRefFiles(t, remote))
+	}
+	waitFor(t, "the retry", func() bool { return len(log.matching(`"sample" maintenance (small) completed`)) == 1 })
+}
+
+// ageLooseFiles gives every loose ref and object of a repository a time a
+// minute old, as a write that waited for the idle time before a run has.
+func ageLooseFiles(t *testing.T, remote string) {
+	t.Helper()
+	old := time.Now().Add(-time.Minute)
+	aged := 0
+	noErr(t, filepath.WalkDir(remote, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		relative, err := filepath.Rel(remote, path)
+		if err != nil {
+			return err
+		}
+		// Rel separates with a backslash on Windows, so compare the forward
+		// slashes Git uses.
+		relative = filepath.ToSlash(relative)
+		if !strings.HasPrefix(relative, "refs/") && !strings.HasPrefix(relative, "objects/") {
+			return nil
+		}
+		if strings.HasPrefix(relative, "objects/pack/") || strings.HasPrefix(relative, "objects/info/") {
+			return nil
+		}
+		aged++
+		return os.Chtimes(path, old, old)
+	}))
+	if aged == 0 {
+		t.Fatal("no loose ref or object was aged, so this test would prove nothing")
+	}
+}
+
+// A record from a clock that ran ahead, or from a repository copied from a
+// computer whose clock was ahead, would hide every write until that time, so
+// it is no record: the repository reports work.
+func TestMaintenanceWorkWithAFutureRecordReportsWork(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	if _, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false); err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	ahead := time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339Nano) + "\n"
+	noErr(t, os.WriteFile(maintenanceRecordPath(fixture.remote), []byte(ahead), 0o644))
+	head := gitOutput(t, "", "--git-dir", fixture.remote, "rev-parse", "refs/heads/main")
+	runGit(t, "", "--git-dir", fixture.remote, "update-ref", "refs/heads/after", head)
+	work, err := manager.maintenanceWork(context.Background(), "sample")
+	noErr(t, err)
+	if !work {
+		t.Fatal("a record a day ahead hid a new loose branch")
+	}
+}
+
+// The record is stored a little before the run it records, so a file system
+// with whole-second times cannot report a write made just after that run as
+// older than the record and so hide it.
+func TestMaintenanceRecordCoversCoarseFileTimes(t *testing.T) {
+	fixture := newMaintenanceFixture(t)
+	manager := fixture.manager
+	if _, err := manager.maintain(context.Background(), "sample", MaintenanceFull, MaintenanceSchedule{}.withDefaults(), false); err != nil {
+		t.Fatalf("maintenance: %v", err)
+	}
+	recorded := lastMaintenance(fixture.remote)
+	if recorded.IsZero() {
+		t.Fatal("the completed run wrote no record")
+	}
+	// A file whose time is the run's start floored to a whole second, which is
+	// what a coarse file system reports for a write made just after that start.
+	head := gitOutput(t, "", "--git-dir", fixture.remote, "rev-parse", "refs/heads/main")
+	runGit(t, "", "--git-dir", fixture.remote, "update-ref", "refs/heads/coarse", head)
+	coarse := recorded.Add(maintenanceRecordMargin)
+	noErr(t, os.Chtimes(filepath.Join(fixture.remote, "refs", "heads", "coarse"), coarse, coarse))
+	work, err := manager.maintenanceWork(context.Background(), "sample")
+	noErr(t, err)
+	if !work {
+		t.Fatal("a write at the run's start, floored to a whole second, is not work")
+	}
+}
+
 func (m *Manager) pendingMaintenance(id string) bool {
 	s := &m.maintenance
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entry := s.entries[id]
 	return entry != nil && entry.pending
+}
+
+func (m *Manager) maintenanceRunning(id string) bool {
+	s := &m.maintenance
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.running != nil && s.running.id == id
 }
 
 func (m *Manager) maintenanceKnown(id string) bool {
@@ -701,38 +909,196 @@ func (m *Manager) maintenanceKnown(id string) bool {
 	return known
 }
 
+// A window follows the local wall clock of the computer that runs OwnGit.
+// Every answer is positive and lands inside a window, so the scheduler never
+// spins or waits past a night. A start hour that does not exist on a
+// spring-forward night begins at the first instant after it, so a 2-5 window
+// runs from 03:00 in New York and a 0-3 window from 01:00 when Santiago or
+// Havana change the clock at midnight; a fall-back night starts once, at the
+// single 02:00; and a window that passes midnight belongs to the date it
+// started.
 func TestMaintenanceNightWindow(t *testing.T) {
-	schedule := MaintenanceSchedule{}.withDefaults()
-	at := func(hour, minute int) time.Time { return time.Date(2026, 9, 24, hour, minute, 0, 0, time.UTC) }
+	newYork, err := time.LoadLocation("America/New_York")
+	noErr(t, err)
+	berlin, err := time.LoadLocation("Europe/Berlin")
+	noErr(t, err)
+	santiago, err := time.LoadLocation("America/Santiago")
+	noErr(t, err)
+	havana, err := time.LoadLocation("America/Havana")
+	noErr(t, err)
+	nuuk, err := time.LoadLocation("America/Nuuk")
+	noErr(t, err)
+	window := func(start, end int) MaintenanceSchedule {
+		return MaintenanceSchedule{}.following(state.Maintenance{WindowStart: start, WindowEnd: end})
+	}
+	at := func(location *time.Location, year int, month time.Month, day, hour, minute int) time.Time {
+		return time.Date(year, month, day, hour, minute, 0, 0, location)
+	}
+	// The repeated hour of a fall-back night is written in UTC, because the
+	// local time does not name one instant.
+	utcIn := func(location *time.Location, year int, month time.Month, day, hour, minute int) time.Time {
+		return time.Date(year, month, day, hour, minute, 0, 0, time.UTC).In(location)
+	}
 	for _, test := range []struct {
-		now   time.Time
-		night string
-		until time.Duration
+		what     string
+		schedule MaintenanceSchedule
+		now      time.Time
+		night    string
+		until    time.Duration
 	}{
-		{at(2, 0), "", time.Hour},
-		{at(3, 0), "2026-09-24", 24 * time.Hour},
-		{at(4, 59), "2026-09-24", 22*time.Hour + time.Minute},
-		{at(5, 0), "", 22 * time.Hour},
-		{at(23, 30), "", 3*time.Hour + 30*time.Minute},
+		// The defaults from Settings, 03:00 until 05:00.
+		{"before the default window", MaintenanceSchedule{}.withDefaults(), at(time.UTC, 2026, 9, 24, 2, 0), "", time.Hour},
+		{"at the default start", MaintenanceSchedule{}.withDefaults(), at(time.UTC, 2026, 9, 24, 3, 0), "2026-09-24", 24 * time.Hour},
+		{"near the default end", MaintenanceSchedule{}.withDefaults(), at(time.UTC, 2026, 9, 24, 4, 59), "2026-09-24", 22*time.Hour + time.Minute},
+		{"at the default end", MaintenanceSchedule{}.withDefaults(), at(time.UTC, 2026, 9, 24, 5, 0), "", 22 * time.Hour},
+		{"after the default window", MaintenanceSchedule{}.withDefaults(), at(time.UTC, 2026, 9, 24, 23, 30), "", 3*time.Hour + 30*time.Minute},
+		// A window that passes midnight belongs to the date it started.
+		{"before a window past midnight", window(22, 6), at(time.UTC, 2026, 9, 24, 21, 0), "", time.Hour},
+		{"at a window past midnight", window(22, 6), at(time.UTC, 2026, 9, 24, 22, 0), "2026-09-24", 24 * time.Hour},
+		{"late in a window past midnight", window(22, 6), at(time.UTC, 2026, 9, 24, 23, 0), "2026-09-24", 23 * time.Hour},
+		{"after midnight in the window", window(22, 6), at(time.UTC, 2026, 9, 25, 0, 0), "2026-09-24", 22 * time.Hour},
+		{"near the end of a window past midnight", window(22, 6), at(time.UTC, 2026, 9, 25, 5, 0), "2026-09-24", 17 * time.Hour},
+		{"at the end of a window past midnight", window(22, 6), at(time.UTC, 2026, 9, 25, 6, 0), "", 16 * time.Hour},
+		// A window that starts at midnight, in a zone without a clock change.
+		{"before a midnight window", window(0, 3), at(time.UTC, 2026, 9, 24, 23, 30), "", 30 * time.Minute},
+		{"inside a midnight window", window(0, 3), at(time.UTC, 2026, 9, 25, 0, 30), "2026-09-25", 23*time.Hour + 30*time.Minute},
+		// New York changes the clock at 02:00, in March and in November.
+		{"before the New York change", window(2, 5), at(newYork, 2026, 3, 8, 0, 30), "", 90 * time.Minute},
+		{"during the missing New York hour", window(2, 5), at(newYork, 2026, 3, 8, 1, 30), "", 30 * time.Minute},
+		{"at the real New York start", window(2, 5), at(newYork, 2026, 3, 8, 3, 0), "2026-03-08", 23 * time.Hour},
+		{"inside the New York window", window(2, 5), at(newYork, 2026, 3, 8, 4, 59), "2026-03-08", 21*time.Hour + time.Minute},
+		{"after the New York window", window(2, 5), at(newYork, 2026, 3, 8, 5, 0), "", 21 * time.Hour},
+		{"before the New York fall change", window(2, 5), at(newYork, 2026, 11, 1, 0, 30), "", 2*time.Hour + 30*time.Minute},
+		{"first pass of the repeated hour", window(2, 5), utcIn(newYork, 2026, 11, 1, 5, 30), "", 90 * time.Minute},
+		{"second pass of the repeated hour", window(2, 5), utcIn(newYork, 2026, 11, 1, 6, 30), "", 30 * time.Minute},
+		{"at the single fall start", window(2, 5), at(newYork, 2026, 11, 1, 2, 0), "2026-11-01", 24 * time.Hour},
+		// Berlin, and the default window and a window past midnight on a
+		// spring-forward night.
+		{"before the Berlin change", window(2, 5), at(berlin, 2026, 3, 29, 1, 30), "", 30 * time.Minute},
+		{"at the real Berlin start", window(2, 5), at(berlin, 2026, 3, 29, 3, 0), "2026-03-29", 23 * time.Hour},
+		{"the default window before its change", window(3, 5), at(newYork, 2026, 3, 8, 1, 30), "", 30 * time.Minute},
+		{"a window past midnight before its change", window(22, 6), at(newYork, 2026, 3, 8, 1, 30), "2026-03-07", 19*time.Hour + 30*time.Minute},
+		// Santiago and Havana change the clock at midnight, so the start hour
+		// 0 does not exist on those dates and the window starts at 01:00.
+		{"before the Santiago midnight change", window(0, 3), at(santiago, 2026, 9, 5, 23, 30), "", 30 * time.Minute},
+		{"inside the Santiago window", window(0, 3), at(santiago, 2026, 9, 5, 0, 30), "2026-09-05", 23*time.Hour + 30*time.Minute},
+		{"after the Santiago midnight change", window(0, 3), at(santiago, 2026, 9, 6, 1, 30), "2026-09-06", 22*time.Hour + 30*time.Minute},
+		{"before the Havana midnight change", window(0, 3), at(havana, 2026, 3, 7, 23, 30), "", 30 * time.Minute},
+		{"after the Havana midnight change", window(0, 3), at(havana, 2026, 3, 8, 1, 30), "2026-03-08", 22*time.Hour + 30*time.Minute},
+		// Nuuk changes the clock at 23:00 on the last Saturday of March, so
+		// that date has no start hour 23 and the window begins at the first
+		// instant after the gap, on Sunday.
+		{"before the missing Nuuk late hour", window(23, 2), at(nuuk, 2026, 3, 28, 12, 0), "", 11 * time.Hour},
+		{"just before the missing Nuuk late hour", window(23, 2), at(nuuk, 2026, 3, 28, 22, 30), "", 30 * time.Minute},
+		{"inside the Nuuk window", window(23, 2), at(nuuk, 2026, 3, 29, 0, 30), "2026-03-28", 22*time.Hour + 30*time.Minute},
 	} {
-		if night, until := schedule.nightOf(test.now), schedule.untilNight(test.now); night != test.night || until != test.until {
-			t.Errorf("%s: night %q until %s, want %q and %s", test.now.Format(time.TimeOnly), night, until, test.night, test.until)
+		night, until := test.schedule.nightOf(test.now), test.schedule.untilNight(test.now)
+		if night != test.night || until != test.until {
+			t.Errorf("%s: night %q until %s, want %q and %s", test.what, night, until, test.night, test.until)
+		}
+		if until <= 0 || test.schedule.nightOf(test.now.Add(until)) == "" {
+			t.Errorf("%s: until %s lands outside every window", test.what, until)
+		}
+	}
+
+	// The repeated hour belongs to one night: both passes name the same date,
+	// so a repository is maintained once.
+	wide := window(1, 4)
+	for _, instant := range []time.Time{utcIn(newYork, 2026, 11, 1, 5, 30), utcIn(newYork, 2026, 11, 1, 6, 30)} {
+		if night := wide.nightOf(instant); night != "2026-11-01" {
+			t.Errorf("%s: night %q, want 2026-11-01", instant, night)
 		}
 	}
 }
 
-// A window that passes midnight belongs to the date it started.
-func TestMaintenanceNightWindowPassesMidnight(t *testing.T) {
-	schedule := MaintenanceSchedule{}.following(state.Maintenance{WindowStart: 22, WindowEnd: 6})
-	at := func(hour int) time.Time { return time.Date(2026, 9, 24, hour, 0, 0, 0, time.UTC) }
-	for _, test := range []struct {
-		now   time.Time
-		night string
-	}{{at(21), ""}, {at(22), "2026-09-24"}, {at(23), "2026-09-24"}, {at(0), "2026-09-23"}, {at(5), "2026-09-23"}, {at(6), ""}} {
-		if night := schedule.nightOf(test.now); night != test.night {
-			t.Errorf("%s: night %q, want %q", test.now.Format(time.TimeOnly), night, test.night)
+// maintenanceSweepZones are the zones whose clock changes are unusual, and so
+// the ones a wait computation must survive: a spring-forward gap at midnight
+// (Santiago, Havana, Cairo, Beirut; Asuncion had one in earlier years), a change of half an hour (Lord
+// Howe), and a start hour that a change removes from the last day it can
+// start on (Nuuk, Scoresbysund, 23:00 on the last Saturday of March). Go
+// loads them on every platform, from the zone database of the host or from
+// its own copy, and the test fails rather than skips when one does not load.
+var maintenanceSweepZones = []string{
+	"America/New_York",
+	"Europe/Berlin",
+	"Australia/Sydney",
+	"Australia/Lord_Howe",
+	"America/Santiago",
+	"America/Havana",
+	"America/Asuncion",
+	"Africa/Cairo",
+	"Asia/Beirut",
+	"America/Nuuk",
+	"America/Scoresbysund",
+}
+
+// windowSweep is what the sweep found: how many zones and clock-changing
+// dates it walked, and every wait that did not behave.
+type windowSweep struct {
+	zones    int
+	changes  int
+	problems []string
+}
+
+// TestMaintenanceNightWindowEndsInEveryZone walks the clock-changing dates of
+// 2026 in the zones whose changes are unusual, for every start hour: the walk
+// of windowStart stays within its bound, every wait is positive, and every
+// wait lands inside a window. The scheduler computes that wait under its own
+// mutex, so an answer that never comes blocks every request.
+func TestMaintenanceNightWindowEndsInEveryZone(t *testing.T) {
+	locations := make([]*time.Location, 0, len(maintenanceSweepZones))
+	for _, name := range maintenanceSweepZones {
+		location, err := time.LoadLocation(name)
+		if err != nil {
+			t.Fatalf("the time zone %s does not load: %v", name, err)
+		}
+		locations = append(locations, location)
+	}
+	// The sweep runs in its own goroutine, because a walk that does not end
+	// cannot be stopped, and it reports through its result rather than through
+	// the test, so a call after the deadline cannot panic.
+	done := make(chan windowSweep, 1)
+	go func() { done <- sweepClockChangeWindows(locations) }()
+	select {
+	case sweep := <-done:
+		t.Logf("%d clock-changing dates in %d zones", sweep.changes, sweep.zones)
+		for _, problem := range sweep.problems {
+			t.Error(problem)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the wait computation does not end: the sweep over the clock-changing dates did not finish")
+	}
+}
+
+// sweepClockChangeWindows checks every start hour on every clock-changing date
+// of 2026 in the given zones and returns what it found.
+func sweepClockChangeWindows(locations []*time.Location) windowSweep {
+	sweep := windowSweep{zones: len(locations)}
+	for _, location := range locations {
+		for day := time.Date(2026, 1, 1, 0, 0, 0, 0, location); day.Year() == 2026; day = day.AddDate(0, 0, 1) {
+			_, offset := day.Zone()
+			_, next := day.AddDate(0, 0, 1).Zone()
+			if offset == next {
+				continue
+			}
+			sweep.changes++
+			for hour := range 24 {
+				schedule := MaintenanceSchedule{NightStartHour: hour, NightEndHour: (hour + 3) % 24}
+				naive := time.Date(day.Year(), day.Month(), day.Day(), hour, 0, 0, 0, location)
+				start := schedule.windowStart(day)
+				if start.Before(naive) || start.Sub(naive) > maintenanceWindowSteps*time.Hour {
+					sweep.problems = append(sweep.problems, fmt.Sprintf("%s window %d-%d on %s: start %s is not the first instant of the hour", location, schedule.NightStartHour, schedule.NightEndHour, day.Format(time.DateOnly), start.Format(time.RFC3339)))
+				}
+				for _, now := range []time.Time{day.AddDate(0, 0, -1), day, day.Add(12 * time.Hour), day.Add(22 * time.Hour)} {
+					until := schedule.untilNight(now)
+					if until <= 0 || schedule.nightOf(now.Add(until)) == "" {
+						sweep.problems = append(sweep.problems, fmt.Sprintf("%s window %d-%d at %s: wait %s lands at %s", location, schedule.NightStartHour, schedule.NightEndHour, now.Format(time.RFC3339), until, now.Add(until).Format(time.RFC3339)))
+					}
+				}
+			}
 		}
 	}
+	return sweep
 }
 
 // Maintenance follows the owner's saved choices before each job: off, a

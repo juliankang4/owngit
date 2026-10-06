@@ -99,6 +99,22 @@ func waitFor(t *testing.T, what string, condition func() bool) {
 	}
 }
 
+// becameTrueWithin reports whether condition became true within bound, and
+// false when it stayed false. It waits out the bound for a state that must
+// not appear, where the wait itself is the passing case.
+func becameTrueWithin(bound time.Duration, condition func() bool) bool {
+	deadline := time.Now().Add(bound)
+	for {
+		if condition() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func TestFailedPreparationLocksOnlyThatRepositoryUntilARetrySucceeds(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
 	_, err := manager.Create(context.Background(), "other", "")
