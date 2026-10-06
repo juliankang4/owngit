@@ -415,7 +415,7 @@ owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m
 - `owngit tray off`는 `owngit tray on`을 실행할 때까지 아이콘을 숨깁니다. `owngit tray status`는 아이콘이 보이는지, 안 보인다면 왜인지 알려 줍니다. 설정 화면의 일반 탭에도 같은 스위치가 있습니다.
 - macOS: 아이콘은 프로그램 옆에 설치되는 OwnGit.app입니다. `owngit service install`이 앱을 열고 로그인할 때 열리도록 등록합니다.
 - Windows: `OwnGit icon` 작업이 로그인할 때 아이콘을 시작합니다. 클릭하면 대시보드가, 오른쪽 클릭하면 패널이 열립니다.
-- Linux: 데스크톱의 터미널에서 `owngit service install`을 실행하세요. 이 명령이 `~/.config/autostart/owngit-icon.desktop`을 만듭니다. 데스크톱이 StatusNotifierItem 아이콘을 보여 줘야 하고(Omarchy, AppIndicator 확장을 켠 GNOME 48에서 확인), GTK 4가 포함된 `gjs`가 필요합니다.
+- Linux: 데스크톱의 터미널에서 `owngit service install`을 실행하세요. 이 명령이 `~/.config/autostart/owngit-icon.desktop`을 만듭니다. 데스크톱이 StatusNotifierItem 아이콘을 보여 줘야 하고(Omarchy, AppIndicator 확장을 켠 GNOME 48에서 확인), GTK 4가 포함된 `gjs`가 필요합니다. 화면이 작으면 패널의 제목, 상태 줄, 대시보드 열기, 숨기기, 종료 버튼은 그대로 보이고 그 사이 내용만 스크롤됩니다. 데스크톱의 패널 프로그램이 30초 안에 응답하지 않으면 `owngit tray icon`이 이유를 알리고 시작을 포기합니다. 시작하는 도중에 멈춘 아이콘은 정상적으로 끝납니다.
 
 Linux의 root 설치와 화면이 없는 컴퓨터에는 아이콘이 없습니다.
 
@@ -428,7 +428,7 @@ owngit tray notifications only_others on
 
 `only_others`를 켜면 이 컴퓨터에서 한 푸시, 풀 리퀘스트, 가져오기는 알리지 않습니다. 다른 상태 표시줄이나 스크립트는 `owngit tray read --json`으로 패널 내용을 읽고 `owngit tray open --json`으로 대시보드를 열 수 있습니다.
 
-알림은 편의 기능입니다. 알림이 떴든 안 떴든 푸시, 체크, 백업 결과는 모두 대시보드에 남습니다. 알림을 클릭하면 그 알림이 가리키는 페이지가 열립니다.
+알림은 편의 기능입니다. 알림이 떴든 안 떴든 푸시, 체크, 백업 결과는 모두 대시보드에 남습니다. 알림을 클릭하면 그 알림이 가리키는 페이지가 열립니다. 여러 푸시를 묶은 알림이 한 저장소의 것이면, 클릭할 때 마지막으로 푸시된 브랜치나 태그의 커밋 목록이 열립니다. 그 마지막 푸시가 브랜치나 태그를 지웠다면 저장소 페이지가 열립니다.
 
 - Windows: 한꺼번에 생긴 알림은 약 10초 간격으로 하나씩 뜹니다(패널이 열려 있으면 5초). 한 번에 네 개 이상이면 "OwnGit 새 알림 4개"처럼 개수를 알려 주는 알림 하나로 뜨고, 이 알림을 클릭하면 대시보드가 열립니다. 알림이 화면에서 사라진 뒤에는 클릭해도 아무 페이지도 열리지 않습니다.
 - Linux: 데스크톱에 알림 서비스가 없으면 패널의 알림 항목과 아이콘 메뉴에 그 사실이 표시됩니다. OwnGit은 최대 5분까지 간격을 늘려 가며 다시 시도하고, 이유는 알림이 다시 표시될 때까지 로그에 한 번만 남깁니다. 알림 서비스가 시작되면 기다리던 알림이 중복 없이 한 번씩 뜹니다.
@@ -505,6 +505,8 @@ owngit tailscale off
 
 설정 화면에서 켜면 바로 적용됩니다. 명령줄에서 켰다면 OwnGit을 다시 시작해야 합니다.
 
+- 네트워크 탭에서는 Tailscale이 멈춰 있거나, 로그아웃됐거나, 시작하는 중이어도 공유를 끌 수 있습니다. OwnGit은 자기가 만든 주소를 지워 보고 Tailscale이 거부하면 아무것도 바꾸지 않은 채 화면에 Tailscale의 답을 보여 줍니다. 공유를 켜려면 Tailscale이 실행 중이어야 합니다.
+- 공유 변경은 한 번에 하나씩만 진행됩니다. 다른 변경이 진행 중일 때 시작한 변경은 정해진 시간 동안 기다립니다. 그때까지 다른 변경이 끝나지 않으면 OwnGit이 그렇다고 알리고 아무것도 바꾸지 않습니다. 잠시 뒤에 다시 시도하세요.
 - Tailscale은 443 포트로 HTTPS를 제공하고 443이 사용 중이면 8443이나 10000을 씁니다. 포트를 직접 고르려면 HTTPS 포트에서 "직접 지정"을 고르거나 `owngit tailscale on --https-port 8443`을 실행하세요. 예전 주소를 쓰던 클론은 `git remote set-url origin https://NAME.TAILNET.ts.net:8443/git/project.git`으로 바꿔야 합니다.
 - OwnGit은 다른 서비스가 쓰는 포트를, 사용자가 내용을 확인하고 바꾸기로 할 때까지 건드리지 않습니다. `owngit tailscale status`가 그 포트의 내용과 바꾸는 명령을 보여 줍니다.
 - "홈 네트워크에서도 허용 (암호화되지 않음)"을 체크하거나 `--home-network`를 붙이지 않으면 홈 네트워크에는 열지 않습니다.

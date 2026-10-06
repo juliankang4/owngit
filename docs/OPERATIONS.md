@@ -415,7 +415,7 @@ On a computer with a desktop, the OwnGit icon shows in the macOS menu bar, the W
 - `owngit tray off` hides the icon until `owngit tray on`. `owngit tray status` says whether it is shown and, if not, why. The General tab of Settings has the same switch.
 - macOS: the icon is OwnGit.app, installed beside the program. `owngit service install` opens it and registers it to open at sign-in.
 - Windows: the `OwnGit icon` task starts it at sign-in. Click opens the dashboard; right-click opens the panel.
-- Linux: run `owngit service install` from a terminal on the desktop. It writes `~/.config/autostart/owngit-icon.desktop`. The desktop must show StatusNotifierItem icons (tested on Omarchy, and GNOME 48 with the AppIndicator extension) and needs `gjs` with GTK 4.
+- Linux: run `owngit service install` from a terminal on the desktop. It writes `~/.config/autostart/owngit-icon.desktop`. The desktop must show StatusNotifierItem icons (tested on Omarchy, and GNOME 48 with the AppIndicator extension) and needs `gjs` with GTK 4. On a small screen, the panel keeps its title, status line and the Open dashboard, Hide and Quit buttons in view, and the part between them scrolls. If the desktop's panel program does not answer within 30 seconds, `owngit tray icon` gives up and says why. An icon stopped while it is still starting ends normally.
 
 Root installs on Linux and computers without a screen have no icon.
 
@@ -428,7 +428,7 @@ owngit tray notifications only_others on
 
 `only_others` hides pushes, pull requests and imports that came from this computer. Other bars and scripts can read the panel with `owngit tray read --json` and open the dashboard with `owngit tray open --json`.
 
-Notifications are a convenience. The dashboard keeps every push, check and backup result, whether or not a notification appeared. Clicking a notification opens the page it names.
+Notifications are a convenience. The dashboard keeps every push, check and backup result, whether or not a notification appeared. Clicking a notification opens the page it names. A notification that groups several pushes to one repository opens the commit list of the latest pushed branch or tag, or the repository when that latest push deleted it.
 
 - Windows: notifications that arrive together appear one after another, about 10 seconds apart (5 seconds while the panel is open). When more than three arrive at once, one notification says how many there are, for example "4 new OwnGit notifications", and clicking it opens the dashboard. A click after a notification has left the screen opens nothing.
 - Linux: when the desktop has no notification service, the Notifications section of the panel and the icon menu say so. OwnGit keeps trying, waiting longer each time up to five minutes, and writes the reason to its log once until notifications work again. When a service starts, the waiting notifications appear, each one once.
@@ -505,6 +505,8 @@ owngit tailscale off
 
 From Settings it applies at once; from the command line, restart OwnGit.
 
+- On the Network tab, turning sharing off stays available while Tailscale is stopped, signed out or starting. OwnGit tries to remove its address. If Tailscale refuses, nothing changes and the page shows Tailscale's answer. Turning sharing on needs Tailscale running.
+- One change of sharing runs at a time. A change started while another one runs waits for a limited time. If the other one is still running then, OwnGit says so and changes nothing. Try again in a moment.
 - Tailscale serves HTTPS on 443, or 8443 or 10000 when 443 is taken. To choose a port, select "Custom" under "HTTPS port", or `owngit tailscale on --https-port 8443`. Clones that used the old address need `git remote set-url origin https://NAME.TAILNET.ts.net:8443/git/project.git`.
 - OwnGit never changes what another service has on a port unless you review and replace it; `owngit tailscale status` shows what is there and the command that replaces it.
 - OwnGit stays off the home network unless you tick "Also allow on the home network (not encrypted)" or use `--home-network`.
