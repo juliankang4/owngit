@@ -2,6 +2,7 @@ package webui
 
 import (
 	"bytes"
+	"html"
 	"strings"
 	"testing"
 	"time"
@@ -101,8 +102,9 @@ func TestUncheckedRestoreDoesNotInviteFolderMoves(t *testing.T) {
 
 			ready := guide
 			ready.Command = "owngit restore --input /synthetic/backups/b --verify"
+			ready.Network = "owngit network set --base-url <public address> --trusted-proxy <proxy address>"
 			page = render(t, lang, ready)
-			for _, step := range []string{`class="bksteps"`, "/synthetic/state.before-restore", "/synthetic/repositories.before-restore", ready.Command} {
+			for _, step := range []string{`class="bksteps"`, "/synthetic/state.before-restore", "/synthetic/repositories.before-restore", ready.Command, html.EscapeString(ready.Network)} {
 				if !strings.Contains(page, step) {
 					t.Fatalf("a restore with a command lacks %q:\n%s", step, page)
 				}

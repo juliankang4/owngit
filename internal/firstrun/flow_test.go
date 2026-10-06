@@ -554,7 +554,7 @@ func TestCommandWordRunsThisExecutable(t *testing.T) {
 	}
 	t.Setenv("PATH", t.TempDir())
 	want := self
-	if got := commandWord(); got != want {
+	if got := CommandWord(); got != want {
 		t.Fatalf("with no owngit on PATH: %q, want %q", got, want)
 	}
 	onPath := t.TempDir()
@@ -566,7 +566,7 @@ func TestCommandWordRunsThisExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", onPath)
-	if got := commandWord(); got != want {
+	if got := CommandWord(); got != want {
 		t.Fatalf("with another owngit on PATH: %q, want %q", got, want)
 	}
 	linked := t.TempDir()
@@ -574,7 +574,7 @@ func TestCommandWordRunsThisExecutable(t *testing.T) {
 		t.Skipf("cannot link this executable into a folder on PATH: %v", err)
 	}
 	t.Setenv("PATH", linked)
-	if got := commandWord(); got != "owngit" {
+	if got := CommandWord(); got != "owngit" {
 		t.Fatalf("with this executable on PATH: %q, want owngit", got)
 	}
 }

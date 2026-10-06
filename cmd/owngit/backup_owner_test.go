@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
 	"owngit/internal/repository"
+	"owngit/internal/service"
 	"owngit/internal/state"
 )
 
@@ -195,7 +197,7 @@ func TestServeRunsBackups(t *testing.T) {
 	output = cliOutput(t, backupState, append([]string{"status"}, remote...)...)
 	noErr(t, json.Unmarshal([]byte(output), &uploaded))
 	moved := filepath.Join(stateDir+".before-restore", "backup-uploads", filepath.Base(started.Run.Path))
-	if uploaded.Upload.Status != "passed" || !strings.Contains(uploaded.Command, "owngit restore --input "+commandWord(moved)+" --state-dir "+commandWord(stateDir)) ||
+	if uploaded.Upload.Status != "passed" || !strings.Contains(uploaded.Command, programWord()+" restore --input "+commandWord(moved)+" --state-dir "+commandWord(stateDir)) ||
 		!strings.HasSuffix(uploaded.Command, " --verify") {
 		t.Fatalf("status after the upload: %s", output)
 	}
@@ -211,15 +213,22 @@ func TestRestoreGuideMovesTheCurrentFoldersAside(t *testing.T) {
 	noErr(t, os.MkdirAll(elsewhere, 0o700))
 	guide := restoreGuide(stateDir, false)(elsewhere, repositories)
 	if guide.Stop != "" || guide.Start != "" || guide.MovedState != stateDir+".before-restore" || guide.MovedRepositories != repositories+".before-restore" ||
-		guide.Command != "owngit restore --input "+commandWord(elsewhere)+" --state-dir "+commandWord(stateDir)+" --repository-root "+commandWord(repositories)+" --verify" {
+		guide.Command != programWord()+" restore --input "+commandWord(elsewhere)+" --state-dir "+commandWord(stateDir)+" --repository-root "+commandWord(repositories)+" --verify" {
 		t.Fatalf("guide: %+v", guide)
 	}
 	upload := filepath.Join(stateDir, "backup-uploads", "b")
 	noErr(t, os.MkdirAll(upload, 0o700))
 	uploaded := restoreGuide(stateDir, true)(upload, repositories)
-	if uploaded.Stop != "owngit service stop" || uploaded.Start != "owngit service start" ||
+	if uploaded.Stop != programWord()+" service stop" || uploaded.Start != programWord()+" service start" ||
 		!strings.Contains(uploaded.Command, "--input "+commandWord(filepath.Join(stateDir+".before-restore", "backup-uploads", "b"))) {
 		t.Fatalf("uploaded guide: %+v", uploaded)
+	}
+
+	// The test binary is not "owngit" on PATH, so the printed commands name its
+	// absolute path.
+	if self, err := os.Executable(); err != nil || !strings.Contains(guide.Command, commandWord(self)+" restore ") || !strings.HasSuffix(uploaded.Stop, commandWord(self)+" service stop") ||
+		!strings.HasPrefix(strings.TrimPrefix(guide.Network, "& "), commandWord(self)+" network set --state-dir "+commandWord(stateDir)+" --base-url ") {
+		t.Fatalf("printed commands do not start with the executable path %q: %s / %s", self, guide.Command, uploaded.Stop)
 	}
 
 	// The state folder named through a link, and the upload by its real
@@ -315,5 +324,19 @@ func unpackTar(t *testing.T, archive, dir string) {
 		default:
 			t.Fatalf("archive entry %s of type %c", header.Name, header.Typeflag)
 		}
+	}
+}
+
+// A Linux system service runs as the owngit account, and the restore runs as
+// it too. The account switch is runuser, since a Proxmox container has no
+// sudo. It needs the account, so it runs only as that account (the lab runs
+// the compiled test as owngit).
+func TestRestoreGuideSwitchesAccountWithRunuser(t *testing.T) {
+	if account, err := user.Current(); runtime.GOOS != "linux" || err != nil || account.Username != service.AccountName {
+		t.Skip("runs only as the owngit account on Linux")
+	}
+	guide := restoreGuide(t.TempDir(), true)(t.TempDir(), t.TempDir())
+	if !strings.HasPrefix(guide.Command, "runuser -u ") || strings.Contains(guide.Command, "sudo") {
+		t.Fatalf("restore command: %s", guide.Command)
 	}
 }

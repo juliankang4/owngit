@@ -146,7 +146,7 @@ func (policy *HostPolicy) MiddlewareAdmitting(admit func(*http.Request) (bool, e
 			if strings.HasPrefix(request.URL.Path, "/api/") {
 				writeAPIError(writer, http.StatusForbidden, "origin_mismatch", "The supplied Origin does not match this server.", nil)
 			} else {
-				http.Error(writer, "origin does not match this server", http.StatusForbidden)
+				http.Error(writer, "origin does not match this server\n"+webui.Text(refusedHostLang(request), webui.MsgOriginRefusedHint), http.StatusForbidden)
 			}
 			return
 		}

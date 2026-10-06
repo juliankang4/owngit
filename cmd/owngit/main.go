@@ -157,15 +157,21 @@ func runAsOwnerHint(err error, command string, arguments []string) error {
 	if !errors.As(err, &other) || other.Account == "" {
 		return err
 	}
-	line := "sudo -u " + service.ShellQuote(other.Account) + " owngit " + command
-	if runtime.GOOS == "linux" {
-		// runuser comes with Linux itself; sudo may not be installed.
-		line = "runuser -u " + service.ShellQuote(other.Account) + " -- owngit " + command
-	}
+	line := asAccount(other.Account) + "owngit " + command
 	for _, argument := range arguments {
 		line += " " + service.ShellQuote(argument)
 	}
 	return fmt.Errorf("%w: %s", err, line)
+}
+
+// asAccount is the command prefix that runs a command as account: runuser
+// on Linux, which comes with it where sudo may not be installed, and sudo
+// elsewhere.
+func asAccount(account string) string {
+	if runtime.GOOS == "linux" {
+		return "runuser -u " + service.ShellQuote(account) + " -- "
+	}
+	return "sudo -u " + service.ShellQuote(account) + " "
 }
 
 // accountPathHint explains a permission error of a command that root runs

@@ -84,6 +84,7 @@ const (
 	MsgBackupRestoreRun           MessageCode = "backup.restore_run"
 	MsgBackupRestoreUnchecked     MessageCode = "backup.restore_unchecked"
 	MsgBackupRestoreCommand       MessageCode = "backup.restore_command"
+	MsgBackupRestoreNetwork       MessageCode = "backup.restore_network"
 	MsgBackupRestoreStartService  MessageCode = "backup.restore_start_service"
 	MsgBackupRestoreStartProcess  MessageCode = "backup.restore_start_process"
 	MsgBackupRestoreAfter         MessageCode = "backup.restore_after"
@@ -425,6 +426,10 @@ var backupsCatalog = map[MessageCode]message{
 	MsgBackupRestoreCommand: {
 		en: "Restore command",
 		ko: "복원 명령",
+	},
+	MsgBackupRestoreNetwork: {
+		en: "Behind a proxy, save the public address and the proxy again before you start OwnGit, because a restore resets network settings and they apply at the next start:",
+		ko: "프록시 뒤에서 쓴다면 OwnGit을 시작하기 전에 공개 주소와 프록시를 다시 저장하세요. 복원은 네트워크 설정을 초기화하고, 저장한 설정은 다음 시작부터 적용됩니다:",
 	},
 	MsgBackupRestoreStartService: {
 		en: "Start OwnGit again:",

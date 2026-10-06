@@ -121,6 +121,9 @@ type BackupRestore struct {
 	// Stop and Start are the commands that stop and start the OwnGit
 	// service, empty when OwnGit does not run as a service.
 	Stop, Start string
+	// Network is the command that saves the base URL and trusted proxy, which
+	// a restore resets; they apply at the next start.
+	Network string
 	// StateDir and RepositoryRoot are the folders the restore writes, which
 	// must not exist, so the current ones are renamed first to MovedState
 	// and MovedRepositories.

@@ -198,6 +198,9 @@ const (
 	// MsgHostRefusedHint follows "unrecognized host" on the plain-text page
 	// for a Host that OwnGit refuses.
 	MsgHostRefusedHint MessageCode = "host.refused.hint"
+	// MsgOriginRefusedHint follows "origin does not match this server" on the
+	// plain-text page.
+	MsgOriginRefusedHint MessageCode = "origin.refused.hint"
 	// MsgSetupDoneLocalOnlyHint replaces MsgSetupDoneHostNotKeptHint when
 	// setup on a computer without a screen kept no address, so OwnGit
 	// listens only on that computer from its next start.
@@ -796,9 +799,13 @@ var catalog = map[MessageCode]message{
 		en: "Open OwnGit on the installation host. To use this address, allow it there with owngit network and restart OwnGit.",
 		ko: "OwnGit이 설치된 컴퓨터에서 OwnGit을 여세요. 이 주소를 쓰려면 그 컴퓨터에서 owngit network 명령으로 이 주소를 허용하고 OwnGit을 다시 시작하세요.",
 	},
+	MsgOriginRefusedHint: {
+		en: "Behind a proxy, save the settings with owngit network set --base-url <public address> --trusted-proxy <proxy address> on the computer running OwnGit, then restart OwnGit.",
+		ko: "프록시 뒤에서는 OwnGit이 실행 중인 컴퓨터에서 owngit network set --base-url <공개 주소> --trusted-proxy <프록시 주소> 명령으로 저장한 뒤 OwnGit을 다시 시작하세요.",
+	},
 	MsgHostRefusedHint: {
-		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit, then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer, and not for OwnGit in a container; there, use the computer's name or address.",
-		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용한 뒤 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있고, 컨테이너 안의 OwnGit에는 쓸 수 없습니다. 이때는 그 컴퓨터의 이름이나 주소를 쓰세요.",
+		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit. Behind a proxy, also save the public address and the proxy with owngit network set --base-url <public address> --trusted-proxy <proxy address>. Then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer, and not for OwnGit in a container; there, use the computer's name or address.",
+		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용하세요. 프록시 뒤에서는 owngit network set --base-url <공개 주소> --trusted-proxy <프록시 주소> 명령으로 공개 주소와 프록시도 저장하세요. 그런 다음 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있고, 컨테이너 안의 OwnGit에는 쓸 수 없습니다. 이때는 그 컴퓨터의 이름이나 주소를 쓰세요.",
 	},
 	MsgSetupDoneLocalOnlyHint: {
 		en: "From its next start OwnGit listens only on the installation host, so open it there. To use this address, set the listen address and allow the address there with owngit network, and restart OwnGit.",

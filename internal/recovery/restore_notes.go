@@ -14,7 +14,7 @@ import (
 var notRestored = []string{
 	"Sign-ins and setup links are not restored: everyone signs in again.",
 	"Network settings are not restored: the listen address, base URL, allowed Hosts, trusted proxies, the public share address, Tailscale Serve and the acknowledgement of plain HTTP start at their defaults. " +
-		"Set them again under Settings or with owngit network set and owngit tailscale on.",
+		"Set them again under Settings or with owngit network set and owngit tailscale on. Behind a proxy, save the public address and the proxy again before you start OwnGit, with owngit network set --base-url <address> --trusted-proxy <proxy address>, or HTTPS pages and Git are refused until you save them and restart.",
 	"Helper credentials are not restored, so their old tokens are refused: create new ones on each repository's Helper credentials page or with owngit helper-credential create.",
 	"Runner tokens are not restored, so their old tokens are refused: issue new ones on each repository's Runner tokens page or with owngit runner-credential issue.",
 	"Consent to run automatic checks is not restored, and unfinished check jobs are marked interrupted: " +

@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"owngit/internal/firstrun"
 	"owngit/internal/service"
 	"owngit/internal/webui"
 )
@@ -24,14 +25,16 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 	runAs := ""
 	if asService && runtime.GOOS == "linux" {
 		if account, err := user.Current(); err == nil && account.Username == service.AccountName {
-			runAs = "sudo -u " + service.AccountName + " "
+			runAs = asAccount(service.AccountName)
 		}
 	}
+	program := programWord()
 	return func(input, repositoryRoot string) *webui.BackupRestore {
 		guide := &webui.BackupRestore{
 			StateDir: stateDir, RepositoryRoot: repositoryRoot,
 			MovedState: stateDir + ".before-restore", MovedRepositories: repositoryRoot + ".before-restore",
-			Shell: commandShell(runtime.GOOS),
+			Network: program + " network set --state-dir " + commandWord(stateDir) + " --base-url <public address> --trusted-proxy <proxy address>",
+			Shell:   commandShell(runtime.GOOS),
 		}
 		// An uploaded backup is in the state folder, which moves first. A
 		// command is given only when where input will be is known.
@@ -43,13 +46,25 @@ func restoreGuide(stateDir string, asService bool) func(input, repositoryRoot st
 		if inside {
 			input = filepath.Join(guide.MovedState, relative)
 		}
-		guide.Command = runAs + "owngit restore --input " + commandWord(input) + " --state-dir " + commandWord(stateDir) +
+		guide.Command = runAs + program + " restore --input " + commandWord(input) + " --state-dir " + commandWord(stateDir) +
 			" --repository-root " + commandWord(repositoryRoot) + " --verify"
 		if asService {
-			guide.Stop, guide.Start = "owngit service stop", "owngit service start"
+			guide.Stop, guide.Start = program+" service stop", program+" service start"
 		}
 		return guide
 	}
+}
+
+// programWord is how a printed command names this program: "owngit" when
+// that is this executable on PATH, and otherwise its path (a copy from an
+// archive or a build is not on PATH).
+func programWord() string {
+	program := firstrun.CommandWord()
+	word := commandWord(program)
+	if runtime.GOOS == "windows" && word != program {
+		return "& " + word
+	}
+	return word
 }
 
 // pathInside reports whether input is inside the folder dir, and its path

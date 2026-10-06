@@ -87,8 +87,8 @@ func TestOriginMustExactlyMatchRequest(t *testing.T) {
 		request.Header.Set("Origin", origin)
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, request)
-		if response.Code != http.StatusForbidden || called {
-			t.Errorf("origin %q: status=%d called=%v", origin, response.Code, called)
+		if response.Code != http.StatusForbidden || called || !strings.Contains(response.Body.String(), "--base-url") {
+			t.Errorf("origin %q: status=%d called=%v body=%q", origin, response.Code, called, response.Body.String())
 		}
 	}
 	request := httptest.NewRequest(http.MethodPost, "http://owngit.internal/settings", nil)
@@ -278,6 +278,9 @@ func TestRemotePeerWithLoopbackHostIsRefused(t *testing.T) {
 			page := send("/", "localhost", remotePeer)
 			if body := page.Body.String(); !strings.HasPrefix(body, "unrecognized host\n") || !strings.Contains(body, webui.Text(webui.LangEN, webui.MsgHostRefusedHint)) {
 				t.Fatalf("refused page does not say how to allow the address:\n%s", body)
+			}
+			if !strings.Contains(page.Body.String(), "--trusted-proxy") {
+				t.Fatalf("refused page does not name the proxy repair:\n%s", page.Body.String())
 			}
 			korean := send("/", "localhost", remotePeer, &http.Cookie{Name: languageCookie, Value: string(webui.LangKO)})
 			if !strings.Contains(korean.Body.String(), webui.Text(webui.LangKO, webui.MsgHostRefusedHint)) {

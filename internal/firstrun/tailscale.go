@@ -150,11 +150,11 @@ func commandQuote(word string) string {
 	return service.PowerShellQuote(word)
 }
 
-// commandWord is the program that a printed command runs: "owngit" when
+// CommandWord is the program that a printed command runs: "owngit" when
 // that name on PATH is this executable, and otherwise this executable's
 // path, as for a copy from an archive that is not on PATH. Without the path
 // of this executable, "owngit" is the best hint left.
-func commandWord() string {
+func CommandWord() string {
 	self, err := os.Executable()
 	if err != nil {
 		return "owngit"
