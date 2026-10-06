@@ -303,7 +303,7 @@ func TestRestartRecordsARunningBackupAsInterrupted(t *testing.T) {
 	noErr(t, restarted.Start(context.Background()))
 	noErr(t, restarted.Stop(context.Background()))
 	run := f.run(t, left.ID)
-	if run.Status != state.BackupInterrupted || run.Verification != state.BackupVerifyNotRun || run.Message != interruptedMessage || run.FinishedAt.IsZero() {
+	if run.Status != state.BackupInterrupted || run.Verification != state.BackupVerifyNotRun || run.Message != InterruptedMessage || run.FinishedAt.IsZero() {
 		t.Fatalf("left run: %+v", run)
 	}
 	next, err := f.service.nextRun(context.Background())

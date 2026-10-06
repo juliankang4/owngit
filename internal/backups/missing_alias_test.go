@@ -67,7 +67,7 @@ func TestInterruptedServingBackupHasNoAliasNotice(t *testing.T) {
 	cancel()
 	f.service.execute(stopped, run, schedule)
 	run = f.run(t, run.ID)
-	if run.Status != state.BackupInterrupted || run.Message != interruptedMessage || strings.Contains(strings.Join(logs, "\n"), "alias notice") {
+	if run.Status != state.BackupInterrupted || run.Message != InterruptedMessage || strings.Contains(strings.Join(logs, "\n"), "alias notice") {
 		t.Fatalf("interrupted backup gained alias guidance or lost its error: %+v, logs %v", run, logs)
 	}
 }

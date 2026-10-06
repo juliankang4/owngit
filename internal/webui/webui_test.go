@@ -1381,7 +1381,8 @@ func TestScreensAreAccessible(t *testing.T) {
 					t.Error("notices do not carry distinct icon shapes")
 				}
 			}},
-		screen{name: "diff lines carry a text marker", page: repoPage(fullChrome(LangEN), RepoTabCommits),
+		screen{name: "diff lines carry a text marker and name their change", page: repoPage(fullChrome(LangEN), RepoTabCommits),
+			want:   []MessageCode{MsgDiffAddedLine, MsgDiffRemovedLine},
 			markup: []string{`class="difftable__s"`, "is-add", "is-del"}},
 		screen{name: "field errors are linked to their inputs",
 			page: SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok", Notices: []Notice{Error("storage_path", MsgSetupStorageDenied)}},

@@ -919,7 +919,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgRTScope: {
 		en: "A token works only for this repository and only for claiming and reporting configured-check work. You can revoke it at any time.",
-		ko: "이 토큰은 이 저장소에 설정한 체크 작업을 가져가고 결과를 보고할 때만 쓸 수 있습니다. 언제든 취소할 수 있습니다.",
+		ko: "이 토큰은 이 저장소에 설정한 체크 작업을 가져가고 결과를 보고할 때만 쓸 수 있습니다. 언제든 폐기할 수 있습니다.",
 	},
 	MsgRTNotPassword: {
 		en: "A token is not a password and not a repository sign-in. It cannot change settings, read other repositories, or act as an administrator.",
@@ -935,24 +935,24 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgRTLabel:     {en: "Label", ko: "이름"},
 	MsgRTLabelHelp: {
 		en: "Name the machine that will run the checks, so you know what you are revoking later.",
-		ko: "나중에 무엇을 취소하는지 알 수 있도록 체크를 실행할 컴퓨터 이름을 적어 두세요.",
+		ko: "나중에 무엇을 폐기하는지 알 수 있도록 체크를 실행할 컴퓨터 이름을 적어 두세요.",
 	},
 	MsgRTIssue: {en: "Issue a token", ko: "토큰 발급"},
 	MsgRTIssueHelp: {
 		en: "The value is shown once, right after it is issued.",
 		ko: "토큰 값은 발급 직후 한 번만 표시됩니다.",
 	},
-	MsgRTRevoke: {en: "Revoke", ko: "취소"},
+	MsgRTRevoke: {en: "Revoke", ko: "폐기"},
 	MsgRTRevHelp: {
 		en: "The runner stops being able to claim or report with it. An unstarted claim is interrupted; results already recorded stay.",
 		ko: "러너는 이 토큰으로 작업을 가져가거나 결과를 보고할 수 없게 됩니다. 가져갔지만 아직 시작하지 않은 작업은 중단되고 이미 기록된 결과는 남습니다.",
 	},
 	MsgRTActive:    {en: "Active", ko: "사용 중"},
-	MsgRTRevoked:   {en: "Revoked", ko: "취소됨"},
+	MsgRTRevoked:   {en: "Revoked", ko: "폐기됨"},
 	MsgRTCreatedAt: {en: "Issued", ko: "발급"},
 	MsgRTLastUsed:  {en: "Last used", ko: "마지막 사용"},
 	MsgRTNeverUsed: {en: "Never used", ko: "사용한 적 없음"},
-	MsgRTRevokedAt: {en: "Revoked", ko: "취소"},
+	MsgRTRevokedAt: {en: "Revoked", ko: "폐기한 때"},
 	MsgRTGen:       {en: "Generation", ko: "세대"},
 	MsgRTID:        {en: "Token ID", ko: "토큰 ID"},
 
@@ -1116,10 +1116,10 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 
 	MsgRTIssued:      {en: "The runner token was issued.", ko: "러너 토큰을 발급했습니다."},
-	MsgRTRevokedDone: {en: "The runner token was revoked.", ko: "러너 토큰을 취소했습니다."},
+	MsgRTRevokedDone: {en: "The runner token was revoked.", ko: "러너 토큰을 폐기했습니다."},
 	MsgRTNotFound: {
 		en: "That token was not found, or it was already revoked.",
-		ko: "그 토큰을 찾지 못했거나 이미 취소되었습니다.",
+		ko: "그 토큰을 찾지 못했거나 이미 폐기되었습니다.",
 	},
 	MsgRTLabelInvalid: {
 		en: "Enter a single-line label between 1 and 100 UTF-8 bytes.",
@@ -1132,7 +1132,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgRTRevokeFailed: {
 		en: "The runner token could not be revoked. Try again.",
-		ko: "러너 토큰을 취소하지 못했습니다. 다시 시도하세요.",
+		ko: "러너 토큰을 폐기하지 못했습니다. 다시 시도하세요.",
 	},
 	MsgRTExisting: {
 		en: "This request was already handled, so the existing token was kept and no new value was created.",

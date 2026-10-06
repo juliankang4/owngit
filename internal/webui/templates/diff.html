@@ -83,8 +83,10 @@
                 <td class="difftable__n">{{if .OldLine}}{{.OldLine}}{{end}}</td>
                 <td class="difftable__n">{{if .NewLine}}{{.NewLine}}{{end}}</td>
                 {{/* The marker is a separate span, so the change is readable
-                     without relying on the row colour. */}}
-                <td class="difftable__t"><span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
+                     without relying on the row colour. Screen readers get the
+                     change as a word instead; it is not selectable, so copying
+                     the code does not copy it. */}}
+                <td class="difftable__t">{{if eq .Kind "add"}}<span class="visually-hidden difftable__w">{{bi $lang "diff.added_line"}} </span>{{else if eq .Kind "del"}}<span class="visually-hidden difftable__w">{{bi $lang "diff.removed_line"}} </span>{{end}}<span class="difftable__s" aria-hidden="true">{{if eq .Kind "add"}}+{{else if eq .Kind "del"}}-{{else}} {{end}}</span>{{.Text}}</td>
               </tr>
             {{end}}
           {{end}}

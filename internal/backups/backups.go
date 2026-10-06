@@ -71,9 +71,21 @@ func IntervalName(interval time.Duration) string {
 // ErrNotConfigured refuses a backup before a backup folder is set.
 var ErrNotConfigured = errors.New("no backup folder is set")
 
-// interruptedMessage is the message of a run that OwnGit stopped, or that a
-// process which ended left running.
-const interruptedMessage = "OwnGit stopped before this backup finished, so it is not a finished backup."
+// The fixed sentences of a run's message. The dashboard shows them in the
+// owner's language; what follows each is the technical detail of the cause.
+const (
+	// InterruptedMessage is the message of a run that OwnGit stopped, or that
+	// a process which ended left running.
+	InterruptedMessage = "OwnGit stopped before this backup finished, so it is not a finished backup."
+	// NotVerifiedLead starts the reason of a backup that was written but failed
+	// its verification.
+	NotVerifiedLead = "the backup was written but did not pass verification:"
+	// CompleteButLead and AlsoLead start the problems found after a backup.
+	CompleteButLead = "The backup is complete, but"
+	AlsoLead        = " Also,"
+	// VerifyStopped is the reason of a verification that OwnGit's stop ended.
+	VerifyStopped = "OwnGit stopped before the verification finished"
+)
 
 // Service starts scheduled backups and backups asked for now. One runs at a
 // time, which the store enforces across restarts too.
@@ -138,7 +150,7 @@ func (s *Service) logf(format string, arguments ...any) {
 // Start records every run that a previous process left running as
 // interrupted, then starts the scheduler. Stop ends it.
 func (s *Service) Start(ctx context.Context) error {
-	if count, err := s.Store.InterruptBackupRuns(ctx, interruptedMessage, s.now()); err != nil {
+	if count, err := s.Store.InterruptBackupRuns(ctx, InterruptedMessage, s.now()); err != nil {
 		return fmt.Errorf("record unfinished backups as interrupted: %w", err)
 	} else if count > 0 {
 		s.logf("a backup that OwnGit was making when it stopped is recorded as interrupted")
@@ -321,7 +333,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	if err == nil && schedule.Verify {
 		if err = s.verify(ctx, output); err != nil {
 			run.Verification = state.BackupVerifyFailed
-			err = fmt.Errorf("the backup was written but did not pass verification: %w", err)
+			err = fmt.Errorf(NotVerifiedLead+" %w", err)
 		} else {
 			run.Verification = state.BackupVerifyPassed
 		}
@@ -329,7 +341,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	var problems []string
 	switch {
 	case ctx.Err() != nil:
-		run.Status, run.Message = state.BackupInterrupted, interruptedMessage
+		run.Status, run.Message = state.BackupInterrupted, InterruptedMessage
 		if run.Verification == state.BackupVerifyFailed {
 			run.Verification = state.BackupVerifyNotRun
 		}
@@ -352,9 +364,9 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	}
 	if len(problems) > 0 {
 		if run.Message == "" {
-			run.Message = "The backup is complete, but " + strings.Join(problems, "; ")
+			run.Message = CompleteButLead + " " + strings.Join(problems, "; ")
 		} else {
-			run.Message += " Also, " + strings.Join(problems, "; ")
+			run.Message += AlsoLead + " " + strings.Join(problems, "; ")
 		}
 	}
 	if run.BackupName != "" {
@@ -514,7 +526,7 @@ func (s *Service) noteLeftInPlace(ctx context.Context, run *state.BackupRun, lef
 		lead := fmt.Sprintf(" Also, %d %s left in place; the first: ", len(left), kind)
 		run.Message += state.CutBackupRunMessage(lead+left[0], state.MaxBackupRunMessage-len(run.Message))
 	case run.Message == "":
-		run.Message = "The backup is complete, but " + strings.Join(left, "; ")
+		run.Message = CompleteButLead + " " + strings.Join(left, "; ")
 	default:
 		run.Message = withNotice(run.Message, note)
 	}

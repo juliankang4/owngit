@@ -243,3 +243,14 @@ func TestConfirmationScopeNamesTheEndButton(t *testing.T) {
 		}
 	}
 }
+
+// A red button that revokes a token must not read as Cancel, which is what
+// backs out of a page.
+func TestKoreanRevokeIsNotCancel(t *testing.T) {
+	cancel := Text(LangKO, MsgCancel)
+	for _, code := range []MessageCode{MsgRTRevoke, MsgHelperRevoke, MsgRTRevoked, MsgHelperRevoked} {
+		if strings.Contains(Text(LangKO, code), cancel) {
+			t.Errorf("%s reads as Cancel (%q)", code, Text(LangKO, code))
+		}
+	}
+}

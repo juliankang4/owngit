@@ -120,6 +120,34 @@ func (c *BackupCopy) archiveFile(ctx context.Context, archive *tar.Writer, dir *
 // WriteArchive writes it; the error that wraps it says why.
 var ErrNotABackupArchive = errors.New("not a backup archive")
 
+// ArchiveReason says why an archive is refused, for a caller that words the
+// reason itself. ArchiveOther carries a reader's own error text.
+type ArchiveReason string
+
+const (
+	ArchiveEndsEarly    ArchiveReason = "ends_early"
+	ArchiveNoManifest   ArchiveReason = "no_manifest"
+	ArchiveUnsafePath   ArchiveReason = "unsafe_path"
+	ArchiveFolderName   ArchiveReason = "folder_name"
+	ArchiveManyFolders  ArchiveReason = "many_folders"
+	ArchiveDuplicate    ArchiveReason = "duplicate"
+	ArchiveUnknownEntry ArchiveReason = "unknown_entry"
+	ArchiveBeforeFolder ArchiveReason = "before_folder"
+	ArchiveOther        ArchiveReason = "other"
+)
+
+// ArchiveError is a refused archive. It is ErrNotABackupArchive; Value is
+// the entry, name or reader error the reason is about, when it has one.
+type ArchiveError struct {
+	Reason ArchiveReason
+	Value  string
+	text   string
+}
+
+func (e *ArchiveError) Error() string { return ErrNotABackupArchive.Error() + ": " + e.text }
+
+func (e *ArchiveError) Is(target error) bool { return target == ErrNotABackupArchive }
+
 // UnpackArchive unpacks the backup archive read from reader into the empty
 // folder dir and returns the name of the backup folder it made there. It
 // accepts only the entries WriteArchive writes, under one top folder whose
@@ -136,8 +164,8 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 		return "", err
 	}
 	defer root.Close()
-	refuse := func(format string, arguments ...any) (string, error) {
-		return "", fmt.Errorf("%w: %s", ErrNotABackupArchive, fmt.Sprintf(format, arguments...))
+	refuse := func(reason ArchiveReason, value, format string, arguments ...any) (string, error) {
+		return "", &ArchiveError{reason, value, fmt.Sprintf(format, arguments...)}
 	}
 	archive := tar.NewReader(contextReader{ctx, reader})
 	top, seen, manifest := "", map[string]bool{}, false
@@ -151,35 +179,35 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 				return "", ctx.Err()
 			}
 			if errors.Is(err, io.ErrUnexpectedEOF) {
-				return refuse("it ends early")
+				return refuse(ArchiveEndsEarly, "", "it ends early")
 			}
-			return refuse("%v", err)
+			return refuse(ArchiveOther, err.Error(), "%v", err)
 		}
 		name := strings.TrimSuffix(header.Name, "/")
 		elements := strings.Split(name, "/")
 		if name == "" || strings.ContainsAny(name, `\:`) || path.IsAbs(header.Name) || path.Clean(name) != name || slices.Contains(elements, "..") || slices.Contains(elements, ".") {
-			return refuse("it holds the path %q", header.Name)
+			return refuse(ArchiveUnsafePath, header.Name, "it holds the path %q", header.Name)
 		}
 		if top == "" {
 			top = elements[0]
 			// The folder name reaches the restore command shown for this
 			// backup, so it holds only what OwnGit's own names hold.
 			if strings.Trim(top, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-") != "" {
-				return refuse("its folder name %q holds characters other than letters, digits, '.', '_' and '-'", top)
+				return refuse(ArchiveFolderName, top, "its folder name %q holds characters other than letters, digits, '.', '_' and '-'", top)
 			}
 		}
 		if elements[0] != top {
-			return refuse("it holds more than one folder: %q and %q", top, elements[0])
+			return refuse(ArchiveManyFolders, top+", "+elements[0], "it holds more than one folder: %q and %q", top, elements[0])
 		}
 		if seen[name] {
-			return refuse("it holds %q twice", header.Name)
+			return refuse(ArchiveDuplicate, header.Name, "it holds %q twice", header.Name)
 		}
 		seen[name] = true
 		inner := path.Join(elements[1:]...)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if inner != "" && inner != "repositories" {
-				return refuse("it holds the folder %q, which a backup does not have", header.Name)
+				return refuse(ArchiveUnknownEntry, header.Name, "it holds the folder %q, which a backup does not have", header.Name)
 			}
 			if err := root.Mkdir(name, 0o700); err != nil {
 				return "", err
@@ -187,7 +215,7 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 			continue
 		case tar.TypeReg:
 		default:
-			return refuse("%q is a link or another entry that is not a file or folder", header.Name)
+			return refuse(ArchiveUnknownEntry, header.Name, "%q is a link or another entry that is not a file or folder", header.Name)
 		}
 		bundle, inRepositories := strings.CutPrefix(inner, "repositories/")
 		switch {
@@ -195,23 +223,23 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 			manifest = true
 		case inRepositories && !strings.Contains(bundle, "/") && strings.HasSuffix(bundle, ".bundle") && len(bundle) > len(".bundle"):
 		default:
-			return refuse("it holds the file %q, which a backup does not have", header.Name)
+			return refuse(ArchiveUnknownEntry, header.Name, "it holds the file %q, which a backup does not have", header.Name)
 		}
 		if header.Size < 0 {
-			return refuse("%q has a negative size", header.Name)
+			return refuse(ArchiveOther, header.Name, "%q has a negative size", header.Name)
 		}
 		if err := unpackFile(root, name, archive, header.Size); err != nil {
 			if ctx.Err() != nil {
 				return "", ctx.Err()
 			}
 			if errors.Is(err, io.ErrUnexpectedEOF) {
-				return refuse("it ends early")
+				return refuse(ArchiveEndsEarly, "", "it ends early")
 			}
 			return "", err
 		}
 	}
 	if !manifest {
-		return refuse("it holds no manifest.json")
+		return refuse(ArchiveNoManifest, "", "it holds no manifest.json")
 	}
 	return top, nil
 }
@@ -222,7 +250,7 @@ func UnpackArchive(ctx context.Context, reader io.Reader, dir string) (string, e
 func unpackFile(root *os.Root, name string, archive io.Reader, size int64) error {
 	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%w: %q comes before its folder", ErrNotABackupArchive, name)
+		return &ArchiveError{ArchiveBeforeFolder, name, fmt.Sprintf("%q comes before its folder", name)}
 	}
 	if err != nil {
 		return err

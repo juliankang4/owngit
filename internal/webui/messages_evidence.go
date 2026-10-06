@@ -825,7 +825,7 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgHelperScope: {
 		en: "A credential works only for this repository and only for reporting check evidence. You can revoke it at any time.",
-		ko: "이 토큰은 이 저장소의 체크 결과를 보고할 때만 쓸 수 있습니다. 언제든 취소할 수 있습니다.",
+		ko: "이 토큰은 이 저장소의 체크 결과를 보고할 때만 쓸 수 있습니다. 언제든 폐기할 수 있습니다.",
 	},
 	MsgHelperOpen:      {en: "Helper credentials", ko: "체크 에이전트 토큰"},
 	MsgHelperNone:      {en: "No credential has been issued for this repository.", ko: "이 저장소에 발급된 토큰이 없습니다."},
@@ -833,20 +833,20 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgHelperLabel:     {en: "Label", ko: "이름"},
 	MsgHelperLabelHelp: {
 		en: "Name the machine or tool that will use it, so you know what you are revoking later.",
-		ko: "나중에 무엇을 취소하는지 알 수 있도록 사용할 기기나 도구 이름을 적어 두세요.",
+		ko: "나중에 무엇을 폐기하는지 알 수 있도록 사용할 기기나 도구 이름을 적어 두세요.",
 	},
 	MsgHelperCreatedAt: {en: "Issued", ko: "발급"},
 	MsgHelperLastUsed:  {en: "Last used", ko: "마지막 사용"},
 	MsgHelperNeverUsed: {en: "Never used", ko: "사용한 적 없음"},
-	MsgHelperRevokedAt: {en: "Revoked", ko: "취소"},
+	MsgHelperRevokedAt: {en: "Revoked", ko: "폐기한 때"},
 	MsgHelperActive:    {en: "Active", ko: "사용 중"},
-	MsgHelperRevoked:   {en: "Revoked", ko: "취소됨"},
+	MsgHelperRevoked:   {en: "Revoked", ko: "폐기됨"},
 	MsgHelperIssue:     {en: "Issue a credential", ko: "토큰 발급"},
 	MsgHelperIssueHelp: {
 		en: "The secret is shown once, right after it is issued.",
 		ko: "토큰은 발급 직후 한 번만 표시됩니다.",
 	},
-	MsgHelperRevoke: {en: "Revoke", ko: "취소"},
+	MsgHelperRevoke: {en: "Revoke", ko: "폐기"},
 	MsgHelperRevokeHelp: {
 		en: "The helper stops being able to report with it immediately. Results it already reported stay.",
 		ko: "체크 에이전트는 이 토큰으로 즉시 보고할 수 없게 됩니다. 이미 보고된 결과는 남습니다.",
@@ -864,8 +864,8 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgHelperTokenLabel: {en: "Credential secret", ko: "토큰"},
 
 	MsgHelperIssued:      {en: "Credential issued.", ko: "토큰을 발급했습니다."},
-	MsgHelperRevokedDone: {en: "Credential revoked.", ko: "토큰을 취소했습니다."},
-	MsgHelperNotFound:    {en: "That credential was not found or was already revoked.", ko: "해당 토큰이 없거나 이미 취소되었습니다."},
+	MsgHelperRevokedDone: {en: "Credential revoked.", ko: "토큰을 폐기했습니다."},
+	MsgHelperNotFound:    {en: "That credential was not found or was already revoked.", ko: "해당 토큰이 없거나 이미 폐기되었습니다."},
 	MsgHelperLabelInvalid: {
 		en: "Enter a single-line label between 1 and 100 UTF-8 bytes.",
 		ko: "한 줄 이름을 UTF-8 기준 100바이트 이내로 입력하세요. 한글만 쓰면 최대 33자입니다.",

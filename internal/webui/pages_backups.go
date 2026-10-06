@@ -99,6 +99,8 @@ type BackupCheckInfo struct {
 	// Status is running, passed or failed; Message says why it failed.
 	Status  string
 	Message string
+	// MessageKO is Message in Korean.
+	MessageKO string
 }
 
 // BackupUploadInfo is the uploaded backup.
@@ -108,6 +110,7 @@ type BackupUploadInfo struct {
 	// Status is verifying, passed or failed; Message says why it failed.
 	Status    string
 	Message   string
+	MessageKO string
 	RemovesAt time.Time
 	Restore   *BackupRestore
 }

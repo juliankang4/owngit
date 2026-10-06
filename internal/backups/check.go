@@ -23,6 +23,13 @@ import (
 // verifies or receives a backup.
 var ErrBusy = errors.New("OwnGit is verifying or receiving a backup")
 
+// FolderChanged and NotRecordedLead are fixed sentences of a verification's
+// message.
+const (
+	FolderChanged   = "The backup's folder no longer holds this backup (it was moved, removed, changed or replaced by another backup), so nothing was recorded for it."
+	NotRecordedLead = "The result could not be recorded:"
+)
+
 // ErrNoBackup refuses a run that is unknown, still running, or whose
 // backup OwnGit removed or found gone.
 var ErrNoBackup = errors.New("this run has no backup")
@@ -163,14 +170,13 @@ func (s *Service) finishCheck(ctx context.Context, run state.BackupRun, backup *
 		return backup.Verify(ctx, "", gitPath)
 	})
 	there, thereErr := backup.StillThere()
-	const notThere = "The backup's folder no longer holds this backup (it was moved, removed, changed or replaced by another backup), so nothing was recorded for it."
 	switch {
 	case ctx.Err() != nil:
-		status, message, verification = CheckFailed, "OwnGit stopped before the verification finished.", ""
+		status, message, verification = CheckFailed, VerifyStopped+".", ""
 	case thereErr != nil:
-		status, message, verification = CheckFailed, joinSentences(notThere, thereErr.Error()), ""
+		status, message, verification = CheckFailed, joinSentences(FolderChanged, thereErr.Error()), ""
 	case errors.Is(err, recovery.ErrReplaced) || !there:
-		status, message, verification = CheckFailed, notThere, ""
+		status, message, verification = CheckFailed, FolderChanged, ""
 	case err != nil:
 		status, message, verification = CheckFailed, err.Error(), state.BackupVerifyFailed
 	}
@@ -178,7 +184,7 @@ func (s *Service) finishCheck(ctx context.Context, run state.BackupRun, backup *
 		record, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := s.Store.RecordBackupVerification(record, run.ID, verification); err != nil {
-			message = joinSentences(message, "The result could not be recorded: "+err.Error())
+			message = joinSentences(message, NotRecordedLead+" "+err.Error())
 			s.logf("the verification of backup %s could not be recorded: %v", runPath(run), err)
 		}
 	}

@@ -564,6 +564,10 @@ func CheckBackupFolder(store *state.Store, manager *repository.Manager, dir stri
 	return requireApartFromStorage(store, manager, filepath.Join(absolute, "backup"))
 }
 
+// ErrBackupOverlapsStorage refuses a backup folder that overlaps OwnGit's
+// state or repository storage.
+var ErrBackupOverlapsStorage = errors.New("backup destination must not overlap state or repository storage")
+
 func requireApartFromStorage(store *state.Store, manager *repository.Manager, output string) error {
 	stateRoot, err := canonicalExistingDirectory(store.Dir(), "state storage")
 	if err != nil {
@@ -574,7 +578,7 @@ func requireApartFromStorage(store *state.Store, manager *repository.Manager, ou
 		return err
 	}
 	if pathsOverlap(output, stateRoot) || pathsOverlap(output, repositoryRoot) {
-		return errors.New("backup destination must not overlap state or repository storage")
+		return ErrBackupOverlapsStorage
 	}
 	return nil
 }

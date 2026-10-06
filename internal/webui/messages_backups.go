@@ -9,98 +9,120 @@ const (
 
 // The Backups group of Storage & recovery.
 const (
-	MsgBackupTitle               MessageCode = "backup.title"
-	MsgBackupScope               MessageCode = "backup.scope"
-	MsgBackupNotConfigured       MessageCode = "backup.not_configured"
-	MsgBackupDestination         MessageCode = "backup.destination"
-	MsgBackupDestinationHelp     MessageCode = "backup.destination_help"
-	MsgBackupScheduled           MessageCode = "backup.scheduled"
-	MsgBackupScheduledHelp       MessageCode = "backup.scheduled_help"
-	MsgBackupInterval            MessageCode = "backup.interval"
-	MsgBackupEvery12h            MessageCode = "backup.every_12h"
-	MsgBackupEveryDay            MessageCode = "backup.every_day"
-	MsgBackupEvery7d             MessageCode = "backup.every_7d"
-	MsgBackupIntervalHelp        MessageCode = "backup.interval_help"
-	MsgBackupKeep                MessageCode = "backup.keep"
-	MsgBackupKeepHelp            MessageCode = "backup.keep_help"
-	MsgBackupKeepInvalid         MessageCode = "backup.keep_invalid"
-	MsgBackupVerify              MessageCode = "backup.verify"
-	MsgBackupVerifyHelp          MessageCode = "backup.verify_help"
-	MsgBackupScheduleRefused     MessageCode = "backup.schedule_refused"
-	MsgBackupSaved               MessageCode = "backup.saved"
-	MsgBackupStateTitle          MessageCode = "backup.state_title"
-	MsgBackupStateOn             MessageCode = "backup.state_on"
-	MsgBackupStateOff            MessageCode = "backup.state_off"
-	MsgBackupStateNotConfigured  MessageCode = "backup.state_not_configured"
-	MsgBackupRunningNow          MessageCode = "backup.running_now"
-	MsgBackupRunningSince        MessageCode = "backup.running_since"
-	MsgBackupNone                MessageCode = "backup.none"
-	MsgBackupLastRun             MessageCode = "backup.last_run"
-	MsgBackupLastVerified        MessageCode = "backup.last_verified"
-	MsgBackupNextRun             MessageCode = "backup.next_run"
-	MsgBackupNextRunSoon         MessageCode = "backup.next_run_soon"
-	MsgBackupNow                 MessageCode = "backup.now"
-	MsgBackupStarted             MessageCode = "backup.started"
-	MsgBackupBusy                MessageCode = "backup.busy"
-	MsgBackupRunningRefused      MessageCode = "backup.running_refused"
-	MsgBackupChooseFolder        MessageCode = "backup.choose_folder"
-	MsgBackupRestoreLimit        MessageCode = "backup.restore_limit"
-	MsgBackupRunsTitle           MessageCode = "backup.runs_title"
-	MsgBackupRunsEmpty           MessageCode = "backup.runs_empty"
-	MsgBackupStartedAt           MessageCode = "backup.started_at"
-	MsgBackupKind                MessageCode = "backup.kind"
-	MsgBackupStatus              MessageCode = "backup.status"
-	MsgBackupVerification        MessageCode = "backup.verification"
-	MsgBackupHold                MessageCode = "backup.hold"
-	MsgBackupHoldValue           MessageCode = "backup.hold_value"
-	MsgBackupHoldNone            MessageCode = "backup.hold_none"
-	MsgBackupMessage             MessageCode = "backup.message"
-	MsgBackupNotKept             MessageCode = "backup.not_kept"
-	MsgBackupKindScheduled       MessageCode = "backup.kind_scheduled"
-	MsgBackupKindManual          MessageCode = "backup.kind_manual"
-	MsgBackupStatusRunning       MessageCode = "backup.status_running"
-	MsgBackupStatusSucceeded     MessageCode = "backup.status_succeeded"
-	MsgBackupStatusFailed        MessageCode = "backup.status_failed"
-	MsgBackupStatusInterrupted   MessageCode = "backup.status_interrupted"
-	MsgBackupVerifyPassed        MessageCode = "backup.verify_passed"
-	MsgBackupVerifyFailed        MessageCode = "backup.verify_failed"
-	MsgBackupVerifyNotRun        MessageCode = "backup.verify_not_run"
-	MsgBackupActions             MessageCode = "backup.actions"
-	MsgBackupVerifyAgain         MessageCode = "backup.verify_again"
-	MsgBackupCheckStarted        MessageCode = "backup.check_started"
-	MsgBackupCheckTitle          MessageCode = "backup.check_title"
-	MsgBackupCheckRunning        MessageCode = "backup.check_running"
-	MsgBackupCheckPassed         MessageCode = "backup.check_passed"
-	MsgBackupCheckFailed         MessageCode = "backup.check_failed"
-	MsgBackupGone                MessageCode = "backup.gone"
-	MsgBackupNoBackup            MessageCode = "backup.no_backup"
-	MsgBackupDownload            MessageCode = "backup.download"
-	MsgBackupDownloadHelp        MessageCode = "backup.download_help"
-	MsgBackupRestoreTitle        MessageCode = "backup.restore_title"
-	MsgBackupRestoreLead         MessageCode = "backup.restore_lead"
-	MsgBackupRestoreStopService  MessageCode = "backup.restore_stop_service"
-	MsgBackupRestoreStopProcess  MessageCode = "backup.restore_stop_process"
-	MsgBackupRestoreMove         MessageCode = "backup.restore_move"
-	MsgBackupRestoreRun          MessageCode = "backup.restore_run"
-	MsgBackupRestoreUnchecked    MessageCode = "backup.restore_unchecked"
-	MsgBackupRestoreCommand      MessageCode = "backup.restore_command"
-	MsgBackupRestoreStartService MessageCode = "backup.restore_start_service"
-	MsgBackupRestoreStartProcess MessageCode = "backup.restore_start_process"
-	MsgBackupRestoreAfter        MessageCode = "backup.restore_after"
-	MsgBackupUploadTitle         MessageCode = "backup.upload_title"
-	MsgBackupUploadHelp          MessageCode = "backup.upload_help"
-	MsgBackupUploadFile          MessageCode = "backup.upload_file"
-	MsgBackupUploadSend          MessageCode = "backup.upload_send"
-	MsgBackupUploadReceived      MessageCode = "backup.upload_received"
-	MsgBackupUploadRefused       MessageCode = "backup.upload_refused"
-	MsgBackupUploadMissing       MessageCode = "backup.upload_missing"
-	MsgBackupUploadNoSize        MessageCode = "backup.upload_no_size"
-	MsgBackupUploadName          MessageCode = "backup.upload_name"
-	MsgBackupUploadRemovesAt     MessageCode = "backup.upload_removes_at"
-	MsgBackupUploadVerifying     MessageCode = "backup.upload_verifying"
-	MsgBackupUploadPassed        MessageCode = "backup.upload_passed"
-	MsgBackupUploadFailed        MessageCode = "backup.upload_failed"
-	MsgBackupFailed              MessageCode = "backup.failed"
+	MsgBackupTitle                MessageCode = "backup.title"
+	MsgBackupScope                MessageCode = "backup.scope"
+	MsgBackupNotConfigured        MessageCode = "backup.not_configured"
+	MsgBackupDestination          MessageCode = "backup.destination"
+	MsgBackupDestinationHelp      MessageCode = "backup.destination_help"
+	MsgBackupScheduled            MessageCode = "backup.scheduled"
+	MsgBackupScheduledHelp        MessageCode = "backup.scheduled_help"
+	MsgBackupInterval             MessageCode = "backup.interval"
+	MsgBackupEvery12h             MessageCode = "backup.every_12h"
+	MsgBackupEveryDay             MessageCode = "backup.every_day"
+	MsgBackupEvery7d              MessageCode = "backup.every_7d"
+	MsgBackupIntervalHelp         MessageCode = "backup.interval_help"
+	MsgBackupKeep                 MessageCode = "backup.keep"
+	MsgBackupKeepHelp             MessageCode = "backup.keep_help"
+	MsgBackupKeepInvalid          MessageCode = "backup.keep_invalid"
+	MsgBackupVerify               MessageCode = "backup.verify"
+	MsgBackupVerifyHelp           MessageCode = "backup.verify_help"
+	MsgBackupScheduleRefused      MessageCode = "backup.schedule_refused"
+	MsgBackupSaved                MessageCode = "backup.saved"
+	MsgBackupStateTitle           MessageCode = "backup.state_title"
+	MsgBackupStateOn              MessageCode = "backup.state_on"
+	MsgBackupStateOff             MessageCode = "backup.state_off"
+	MsgBackupStateNotConfigured   MessageCode = "backup.state_not_configured"
+	MsgBackupRunningNow           MessageCode = "backup.running_now"
+	MsgBackupRunningSince         MessageCode = "backup.running_since"
+	MsgBackupNone                 MessageCode = "backup.none"
+	MsgBackupLastRun              MessageCode = "backup.last_run"
+	MsgBackupLastVerified         MessageCode = "backup.last_verified"
+	MsgBackupNextRun              MessageCode = "backup.next_run"
+	MsgBackupNextRunSoon          MessageCode = "backup.next_run_soon"
+	MsgBackupNow                  MessageCode = "backup.now"
+	MsgBackupStarted              MessageCode = "backup.started"
+	MsgBackupBusy                 MessageCode = "backup.busy"
+	MsgBackupRunningRefused       MessageCode = "backup.running_refused"
+	MsgBackupChooseFolder         MessageCode = "backup.choose_folder"
+	MsgBackupRestoreLimit         MessageCode = "backup.restore_limit"
+	MsgBackupRunsTitle            MessageCode = "backup.runs_title"
+	MsgBackupRunsEmpty            MessageCode = "backup.runs_empty"
+	MsgBackupStartedAt            MessageCode = "backup.started_at"
+	MsgBackupKind                 MessageCode = "backup.kind"
+	MsgBackupStatus               MessageCode = "backup.status"
+	MsgBackupVerification         MessageCode = "backup.verification"
+	MsgBackupHold                 MessageCode = "backup.hold"
+	MsgBackupHoldValue            MessageCode = "backup.hold_value"
+	MsgBackupHoldNone             MessageCode = "backup.hold_none"
+	MsgBackupMessage              MessageCode = "backup.message"
+	MsgBackupNotKept              MessageCode = "backup.not_kept"
+	MsgBackupKindScheduled        MessageCode = "backup.kind_scheduled"
+	MsgBackupKindManual           MessageCode = "backup.kind_manual"
+	MsgBackupStatusRunning        MessageCode = "backup.status_running"
+	MsgBackupStatusSucceeded      MessageCode = "backup.status_succeeded"
+	MsgBackupStatusFailed         MessageCode = "backup.status_failed"
+	MsgBackupStatusInterrupted    MessageCode = "backup.status_interrupted"
+	MsgBackupVerifyPassed         MessageCode = "backup.verify_passed"
+	MsgBackupVerifyFailed         MessageCode = "backup.verify_failed"
+	MsgBackupVerifyNotRun         MessageCode = "backup.verify_not_run"
+	MsgBackupActions              MessageCode = "backup.actions"
+	MsgBackupVerifyAgain          MessageCode = "backup.verify_again"
+	MsgBackupCheckStarted         MessageCode = "backup.check_started"
+	MsgBackupCheckTitle           MessageCode = "backup.check_title"
+	MsgBackupCheckRunning         MessageCode = "backup.check_running"
+	MsgBackupCheckPassed          MessageCode = "backup.check_passed"
+	MsgBackupCheckFailed          MessageCode = "backup.check_failed"
+	MsgBackupGone                 MessageCode = "backup.gone"
+	MsgBackupNoBackup             MessageCode = "backup.no_backup"
+	MsgBackupDownload             MessageCode = "backup.download"
+	MsgBackupDownloadHelp         MessageCode = "backup.download_help"
+	MsgBackupRestoreTitle         MessageCode = "backup.restore_title"
+	MsgBackupRestoreLead          MessageCode = "backup.restore_lead"
+	MsgBackupRestoreStopService   MessageCode = "backup.restore_stop_service"
+	MsgBackupRestoreStopProcess   MessageCode = "backup.restore_stop_process"
+	MsgBackupRestoreMove          MessageCode = "backup.restore_move"
+	MsgBackupRestoreRun           MessageCode = "backup.restore_run"
+	MsgBackupRestoreUnchecked     MessageCode = "backup.restore_unchecked"
+	MsgBackupRestoreCommand       MessageCode = "backup.restore_command"
+	MsgBackupRestoreStartService  MessageCode = "backup.restore_start_service"
+	MsgBackupRestoreStartProcess  MessageCode = "backup.restore_start_process"
+	MsgBackupRestoreAfter         MessageCode = "backup.restore_after"
+	MsgBackupUploadTitle          MessageCode = "backup.upload_title"
+	MsgBackupUploadHelp           MessageCode = "backup.upload_help"
+	MsgBackupUploadFile           MessageCode = "backup.upload_file"
+	MsgBackupUploadSend           MessageCode = "backup.upload_send"
+	MsgBackupUploadReceived       MessageCode = "backup.upload_received"
+	MsgBackupUploadRefused        MessageCode = "backup.upload_refused"
+	MsgBackupUploadMissing        MessageCode = "backup.upload_missing"
+	MsgBackupUploadNoSize         MessageCode = "backup.upload_no_size"
+	MsgBackupUploadName           MessageCode = "backup.upload_name"
+	MsgBackupUploadRemovesAt      MessageCode = "backup.upload_removes_at"
+	MsgBackupUploadVerifying      MessageCode = "backup.upload_verifying"
+	MsgBackupUploadPassed         MessageCode = "backup.upload_passed"
+	MsgBackupUploadFailed         MessageCode = "backup.upload_failed"
+	MsgBackupFailed               MessageCode = "backup.failed"
+	MsgBackupFolderOverlaps       MessageCode = "backup.folder_overlaps"
+	MsgBackupUploadEndsEarly      MessageCode = "backup.upload_ends_early"
+	MsgBackupUploadNoManifest     MessageCode = "backup.upload_no_manifest"
+	MsgBackupUploadDeclaredNoSize MessageCode = "backup.upload_declared_no_size"
+	MsgBackupUploadStopped        MessageCode = "backup.upload_stopped"
+	MsgBackupUploadUnsafePath     MessageCode = "backup.upload_unsafe_path"
+	MsgBackupUploadFolderName     MessageCode = "backup.upload_folder_name"
+	MsgBackupUploadManyFolders    MessageCode = "backup.upload_many_folders"
+	MsgBackupUploadDuplicate      MessageCode = "backup.upload_duplicate"
+	MsgBackupUploadUnknownEntry   MessageCode = "backup.upload_unknown_entry"
+	MsgBackupUploadBeforeFolder   MessageCode = "backup.upload_before_folder"
+	MsgBackupFolderNotAbsolute    MessageCode = "backup.folder_not_absolute"
+	MsgBackupFolderUnusable       MessageCode = "backup.folder_unusable"
+	MsgBackupTextInterrupted      MessageCode = "backup.text_interrupted"
+	MsgBackupTextComplete         MessageCode = "backup.text_complete"
+	MsgBackupTextAlso             MessageCode = "backup.text_also"
+	MsgBackupTextNotVerified      MessageCode = "backup.text_not_verified"
+	MsgBackupTextUploadFailed     MessageCode = "backup.text_upload_failed"
+	MsgBackupTextNotRemoved       MessageCode = "backup.text_not_removed"
+	MsgBackupTextVerifyStopped    MessageCode = "backup.text_verify_stopped"
+	MsgBackupTextFolderChanged    MessageCode = "backup.text_folder_changed"
+	MsgBackupTextNotRecorded      MessageCode = "backup.text_not_recorded"
 )
 
 var backupsCatalog = map[MessageCode]message{
@@ -467,6 +489,94 @@ var backupsCatalog = map[MessageCode]message{
 	MsgBackupUploadFailed: {
 		en: "Failed",
 		ko: "실패",
+	},
+	MsgBackupFolderNotAbsolute: {
+		en: "The backup folder must be an absolute path.",
+		ko: "백업 폴더는 절대 경로여야 합니다.",
+	},
+	MsgBackupFolderUnusable: {
+		en: "The backup folder cannot be used:",
+		ko: "이 백업 폴더는 쓸 수 없습니다:",
+	},
+	MsgBackupTextInterrupted: {
+		en: "OwnGit stopped before this backup finished, so it is not a finished backup.",
+		ko: "백업이 끝나기 전에 OwnGit이 멈춰서 이 백업은 완성되지 않았습니다.",
+	},
+	MsgBackupTextComplete: {
+		en: "The backup is complete, but",
+		ko: "백업은 끝났지만 다음 문제가 있습니다:",
+	},
+	MsgBackupTextAlso: {
+		en: "Also,",
+		ko: "이와 함께 다음 문제가 있습니다:",
+	},
+	MsgBackupTextNotVerified: {
+		en: "The backup was written but did not pass verification:",
+		ko: "백업을 만들었지만 검사를 통과하지 못했습니다:",
+	},
+	MsgBackupTextUploadFailed: {
+		en: "The uploaded backup did not pass verification, so it was removed:",
+		ko: "올린 백업이 검사를 통과하지 못해 지웠습니다:",
+	},
+	MsgBackupTextNotRemoved: {
+		en: "It could not be removed:",
+		ko: "지우지 못했습니다:",
+	},
+	MsgBackupTextVerifyStopped: {
+		en: "OwnGit stopped before the verification finished",
+		ko: "검사가 끝나기 전에 OwnGit이 멈췄습니다",
+	},
+	MsgBackupTextFolderChanged: {
+		en: "The backup's folder no longer holds this backup (it was moved, removed, changed or replaced by another backup), so nothing was recorded for it.",
+		ko: "백업 폴더에 이 백업이 더 이상 없어서(옮겨졌거나 지워졌거나 바뀌었거나 다른 백업으로 교체됨) 아무것도 기록하지 않았습니다.",
+	},
+	MsgBackupTextNotRecorded: {
+		en: "The result could not be recorded:",
+		ko: "결과를 기록하지 못했습니다:",
+	},
+	MsgBackupFolderOverlaps: {
+		en: "The backup folder must be outside OwnGit's state and repository folders.",
+		ko: "백업 폴더는 OwnGit의 상태 폴더와 저장소 폴더 밖에 있어야 합니다.",
+	},
+	MsgBackupUploadEndsEarly: {
+		en: "The backup file ends early, so nothing of it was kept.",
+		ko: "백업 파일이 중간에 끝나서 아무것도 남기지 않았습니다.",
+	},
+	MsgBackupUploadNoManifest: {
+		en: "The backup file holds no manifest.json, so nothing of it was kept.",
+		ko: "백업 파일에 manifest.json이 없어 아무것도 남기지 않았습니다.",
+	},
+	MsgBackupUploadDeclaredNoSize: {
+		en: "The upload declared no size, so nothing of it was kept.",
+		ko: "업로드가 크기를 알리지 않아 아무것도 남기지 않았습니다.",
+	},
+	MsgBackupUploadStopped: {
+		en: "The upload stopped before it ended, so nothing of it was kept.",
+		ko: "업로드가 끝나기 전에 멈춰서 아무것도 남기지 않았습니다.",
+	},
+	MsgBackupUploadUnsafePath: {
+		en: "The backup file holds a path that is not allowed, and nothing of it was kept:",
+		ko: "백업 파일에 허용되지 않는 경로가 있어 아무것도 남기지 않았습니다:",
+	},
+	MsgBackupUploadFolderName: {
+		en: "The backup file's folder name is not allowed (only letters, digits, '.', '_' and '-'), and nothing of it was kept:",
+		ko: "백업 파일의 폴더 이름을 쓸 수 없습니다(영문자, 숫자, '.', '_', '-'만 가능). 아무것도 남기지 않았습니다:",
+	},
+	MsgBackupUploadManyFolders: {
+		en: "The backup file holds more than one top folder, and nothing of it was kept:",
+		ko: "백업 파일에 최상위 폴더가 둘 이상 있어 아무것도 남기지 않았습니다:",
+	},
+	MsgBackupUploadDuplicate: {
+		en: "The backup file holds the same entry twice, and nothing of it was kept:",
+		ko: "백업 파일에 같은 항목이 두 번 들어 있어 아무것도 남기지 않았습니다:",
+	},
+	MsgBackupUploadUnknownEntry: {
+		en: "The backup file holds an entry that a backup does not have, and nothing of it was kept:",
+		ko: "백업 파일에 백업에 없는 항목이 있어 아무것도 남기지 않았습니다:",
+	},
+	MsgBackupUploadBeforeFolder: {
+		en: "The backup file lists a file before its folder, and nothing of it was kept:",
+		ko: "백업 파일에서 파일이 자기 폴더보다 먼저 나와 아무것도 남기지 않았습니다:",
 	},
 	MsgBackupFailed: {
 		en: "This did not work. Try again later.",

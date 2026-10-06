@@ -100,6 +100,13 @@ func TestBackupsInTheDashboard(t *testing.T) {
 	if result := browserForm(t, client, storage, bad, server.URL); result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, webui.Text(webui.LangEN, webui.MsgBackupKeepInvalid)) {
 		t.Fatalf("keep 0: %d", result.status)
 	}
+	// A folder inside OwnGit's own state is refused in the owner's language.
+	bad.Set("backup_keep", "7")
+	bad.Set("backup_destination", filepath.Join(fixture.store.Dir(), "child-backups"))
+	if result := browserForm(t, client, storage+"?lang=ko", bad, server.URL); result.status != http.StatusUnprocessableEntity ||
+		!strings.Contains(result.body, webui.Text(webui.LangKO, webui.MsgBackupFolderOverlaps)) || strings.Contains(result.body, "must not overlap") {
+		t.Fatalf("overlapping folder: %d", result.status)
+	}
 	saved := browserForm(t, client, storage, schedule, server.URL)
 	if saved.status != http.StatusSeeOther || !strings.Contains(saved.header.Get("Location"), "notice=backup_saved_off") {
 		t.Fatalf("schedule saved: %d %s", saved.status, saved.header.Get("Location"))
@@ -167,8 +174,12 @@ func TestBackupsInTheDashboard(t *testing.T) {
 	}
 	escaping := backupTar(t, tarEntry{name: "b/", kind: tar.TypeDir}, tarEntry{name: "b/../../escape.bundle", kind: tar.TypeReg, content: "x"})
 	if result := uploadForm(t, client, storage, server.URL, upload, escaping); result.status != http.StatusBadRequest ||
-		!strings.Contains(result.body, webui.Text(webui.LangEN, webui.MsgBackupUploadRefused)) {
+		!strings.Contains(result.body, webui.Text(webui.LangEN, webui.MsgBackupUploadUnsafePath)) {
 		t.Fatalf("upload with a parent path: %d", result.status)
+	}
+	if result := uploadForm(t, client, storage+"?lang=ko", server.URL, upload, escaping); result.status != http.StatusBadRequest ||
+		!strings.Contains(result.body, webui.Text(webui.LangKO, webui.MsgBackupUploadUnsafePath)) || strings.Contains(result.body, "not a backup archive") {
+		t.Fatalf("Korean upload refusal: %d", result.status)
 	}
 	received := uploadForm(t, client, storage, server.URL, upload, []byte(file.body))
 	if received.status != http.StatusSeeOther || !strings.Contains(received.header.Get("Location"), "notice=backup_upload_received") {
@@ -304,5 +315,32 @@ func TestBackupUploadRefusesWhatIsNoBackup(t *testing.T) {
 	}
 	if code, errorCode := send(good, -1); code != http.StatusLengthRequired || errorCode != "length_required" {
 		t.Fatalf("no declared size: %d %s", code, errorCode)
+	}
+}
+
+// A Korean page words the fixed sentences of a backup, a verification and an
+// upload from the catalog and keeps only the technical cause as written.
+func TestBackupOutcomesAreWordedInKorean(t *testing.T) {
+	ko := func(code webui.MessageCode) string { return webui.Text(webui.LangKO, code) }
+	for message, want := range map[string]string{
+		backups.InterruptedMessage:                                           ko(webui.MsgBackupTextInterrupted),
+		backups.CompleteButLead + " disk full":                               ko(webui.MsgBackupTextComplete) + " disk full",
+		backups.NotVerifiedLead + " hash differs":                            ko(webui.MsgBackupTextNotVerified) + " hash differs",
+		backups.UploadFailedLead + " bad" + backups.NotRemovedLead + " busy": ko(webui.MsgBackupTextUploadFailed) + " bad " + ko(webui.MsgBackupTextNotRemoved) + " busy",
+		backups.VerifyStopped + ".":                                          ko(webui.MsgBackupTextVerifyStopped) + ".",
+		"no fixed sentence":                                                  "no fixed sentence",
+	} {
+		if got := backupMessageKO(message); got != want {
+			t.Errorf("%q: got %q, want %q", message, got, want)
+		}
+	}
+	for refused, want := range map[*backups.ChangeError]webui.Notice{
+		{Message: "x", Reason: backups.ReasonNotAbsolute}:                      webui.Error("backup_destination", webui.MsgBackupFolderNotAbsolute),
+		{Message: "x", Reason: backups.ReasonFolderUnusable, Detail: "denied"}: webui.Error("backup_destination", webui.MsgBackupFolderUnusable).WithDetail("denied"),
+		{Message: "interval is wrong."}:                                        webui.Error("", webui.MsgBackupScheduleRefused).WithDetail("interval is wrong."),
+	} {
+		if got := scheduleRefusal(refused); got != want {
+			t.Errorf("%+v: got %+v, want %+v", refused, got, want)
+		}
 	}
 }

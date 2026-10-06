@@ -30,6 +30,9 @@ type backupRefusal struct {
 	message webui.MessageCode
 	// detail is the cause in English, shown beside the message.
 	detail string
+	// cause is the error behind the refusal, which the dashboard words
+	// itself when OwnGit knows the reason.
+	cause error
 }
 
 // backupRefused describes err when it is a refusal the owner can act on,
@@ -37,17 +40,17 @@ type backupRefusal struct {
 func backupRefused(err error) (backupRefusal, bool) {
 	switch {
 	case errors.Is(err, state.ErrBackupRunning):
-		return backupRefusal{http.StatusConflict, "backup_running", webui.MsgBackupRunningRefused, ""}, true
+		return backupRefusal{http.StatusConflict, "backup_running", webui.MsgBackupRunningRefused, "", nil}, true
 	case errors.Is(err, backups.ErrBusy):
-		return backupRefusal{http.StatusConflict, "backup_busy", webui.MsgBackupBusy, ""}, true
+		return backupRefusal{http.StatusConflict, "backup_busy", webui.MsgBackupBusy, "", nil}, true
 	case errors.Is(err, backups.ErrNotConfigured):
-		return backupRefusal{http.StatusConflict, "backup_not_configured", webui.MsgBackupChooseFolder, ""}, true
+		return backupRefusal{http.StatusConflict, "backup_not_configured", webui.MsgBackupChooseFolder, "", nil}, true
 	case errors.Is(err, backups.ErrNoBackup):
-		return backupRefusal{http.StatusNotFound, "backup_not_found", webui.MsgBackupNoBackup, ""}, true
+		return backupRefusal{http.StatusNotFound, "backup_not_found", webui.MsgBackupNoBackup, "", nil}, true
 	case errors.Is(err, backups.ErrBackupGone):
-		return backupRefusal{http.StatusConflict, "backup_gone", webui.MsgBackupGone, err.Error()}, true
+		return backupRefusal{http.StatusConflict, "backup_gone", webui.MsgBackupGone, err.Error(), nil}, true
 	case errors.Is(err, backups.ErrUploadRefused):
-		return backupRefusal{http.StatusBadRequest, "invalid_backup_archive", webui.MsgBackupUploadRefused, err.Error()}, true
+		return backupRefusal{http.StatusBadRequest, "invalid_backup_archive", webui.MsgBackupUploadRefused, err.Error(), err}, true
 	}
 	return backupRefusal{}, false
 }
@@ -61,11 +64,42 @@ func (r backupRefusal) apiMessage() string {
 	return message
 }
 
-// notice is the refusal for the dashboard.
+// notice is the refusal for the dashboard. A refused upload says its
+// reason in the catalog; any other detail drops the error's own English lead.
 func (r backupRefusal) notice() webui.Notice {
+	if errors.Is(r.cause, backups.ErrUploadRefused) {
+		return uploadRefusal(r.cause)
+	}
 	notice := webui.Error("", r.message)
-	notice.Detail = r.detail
+	notice.Detail = strings.TrimPrefix(r.detail, backups.ErrBackupGone.Error()+": ")
 	return notice
+}
+
+// uploadRefusal words why an upload was refused: the reason OwnGit knows in
+// the catalog, with the entry or name it is about as the detail, and the
+// reader's or system's own text for any other.
+func uploadRefusal(err error) webui.Notice {
+	var archive *recovery.ArchiveError
+	code, detail := webui.MsgBackupUploadRefused, strings.TrimPrefix(err.Error(), backups.ErrUploadRefused.Error()+": ")
+	switch {
+	case errors.Is(err, backups.ErrUploadNoSize):
+		code, detail = webui.MsgBackupUploadDeclaredNoSize, ""
+	case errors.Is(err, backups.ErrUploadStopped):
+		code, detail = webui.MsgBackupUploadStopped, ""
+	case errors.As(err, &archive):
+		known := map[recovery.ArchiveReason]webui.MessageCode{
+			recovery.ArchiveEndsEarly: webui.MsgBackupUploadEndsEarly, recovery.ArchiveNoManifest: webui.MsgBackupUploadNoManifest,
+			recovery.ArchiveUnsafePath: webui.MsgBackupUploadUnsafePath, recovery.ArchiveFolderName: webui.MsgBackupUploadFolderName,
+			recovery.ArchiveManyFolders: webui.MsgBackupUploadManyFolders, recovery.ArchiveDuplicate: webui.MsgBackupUploadDuplicate,
+			recovery.ArchiveUnknownEntry: webui.MsgBackupUploadUnknownEntry, recovery.ArchiveBeforeFolder: webui.MsgBackupUploadBeforeFolder,
+		}
+		if reason, ok := known[archive.Reason]; ok {
+			code, detail = reason, archive.Value
+		} else {
+			detail = archive.Value
+		}
+	}
+	return webui.Error("", code).WithDetail(detail)
 }
 
 // backupsInfo reads the Backups groups for the Settings page. visible is
@@ -105,10 +139,10 @@ func (app *App) backupsInfo(request *http.Request, settings state.Settings, visi
 		info.Runs = append(info.Runs, *app.backupRun(&runs[index], settings))
 	}
 	if check := status.Check; check != nil {
-		info.Check = &webui.BackupCheckInfo{Name: check.BackupName, Status: check.Status, Message: check.Message}
+		info.Check = &webui.BackupCheckInfo{Name: check.BackupName, Status: check.Status, Message: check.Message, MessageKO: backupMessageKO(check.Message)}
 	}
 	if upload := status.Upload; upload != nil {
-		info.Upload = &webui.BackupUploadInfo{Name: upload.Name, Size: upload.Size, Status: upload.Status, Message: upload.Message}
+		info.Upload = &webui.BackupUploadInfo{Name: upload.Name, Size: upload.Size, Status: upload.Status, Message: upload.Message, MessageKO: backupMessageKO(upload.Message)}
 		if upload.RemovesAt != nil {
 			info.Upload.RemovesAt = *upload.RemovesAt
 		}
@@ -131,20 +165,8 @@ func (app *App) backupRun(run *backups.RunView, settings state.Settings) *webui.
 		ID: run.ID, Kind: run.Kind, Status: run.Status, Verification: run.Verification, Name: run.BackupName, Path: run.Path,
 		Message: run.Message, StartedAt: run.StartedAt, HoldRepository: run.LongestHoldRepository,
 	}
-	tail := info.Message[strings.LastIndexByte(info.Message, '\n')+1:]
-	countText, _, _ := strings.Cut(tail, " ")
-	omitted, parseErr := strconv.Atoi(countText)
-	hasOmitted := parseErr == nil && omitted > 0 && tail == strings.Replace(recovery.OmittedAliasNotice, "%d", countText, 1)
-	if strings.Contains(info.Message, recovery.AliasBranchNotice) || strings.Contains(info.Message, recovery.MissingAliasBranchNotice) || strings.Contains(info.Message, recovery.UnresolvedAliasBranchNotice) || hasOmitted {
-		info.MessageEN = info.Message
-		info.MessageKO = strings.NewReplacer(
-			recovery.AliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupAliasBranches),
-			recovery.MissingAliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupMissingAliasBranches),
-			recovery.UnresolvedAliasBranchNotice, webui.Text(webui.LangKO, webui.MsgBackupUnresolvedAliasBranches),
-		).Replace(info.Message)
-		if hasOmitted {
-			info.MessageKO = strings.TrimSuffix(info.MessageKO, tail) + strings.Replace(webui.Text(webui.LangKO, webui.MsgBackupOmittedAliases), "%d", countText, 1)
-		}
+	if ko := backupMessageKO(info.Message); ko != info.Message {
+		info.MessageEN, info.MessageKO = info.Message, ko
 	}
 	if run.FinishedAt != nil {
 		info.FinishedAt = *run.FinishedAt
@@ -156,6 +178,39 @@ func (app *App) backupRun(run *backups.RunView, settings state.Settings) *webui.
 		info.Restore = app.restoreGuide(run.Path, settings)
 	}
 	return info
+}
+
+// backupMessageKO is a message of a backup, a verification or an upload in
+// Korean: its fixed sentences come from the catalog, and the technical
+// cause that follows each stays as the program wrote it. It is message
+// itself when no fixed sentence is in it.
+func backupMessageKO(message string) string {
+	text := func(code webui.MessageCode) string { return webui.Text(webui.LangKO, code) }
+	tail := message[strings.LastIndexByte(message, '\n')+1:]
+	countText, _, _ := strings.Cut(tail, " ")
+	omitted, parseErr := strconv.Atoi(countText)
+	hasOmitted := parseErr == nil && omitted > 0 && tail == strings.Replace(recovery.OmittedAliasNotice, "%d", countText, 1)
+	if hasOmitted {
+		message = strings.TrimSuffix(message, tail)
+	}
+	message = strings.NewReplacer(
+		recovery.AliasBranchNotice, text(webui.MsgBackupAliasBranches),
+		recovery.MissingAliasBranchNotice, text(webui.MsgBackupMissingAliasBranches),
+		recovery.UnresolvedAliasBranchNotice, text(webui.MsgBackupUnresolvedAliasBranches),
+		backups.InterruptedMessage, text(webui.MsgBackupTextInterrupted),
+		backups.NotVerifiedLead, text(webui.MsgBackupTextNotVerified),
+		backups.CompleteButLead, text(webui.MsgBackupTextComplete),
+		backups.AlsoLead, " "+text(webui.MsgBackupTextAlso),
+		backups.UploadFailedLead, text(webui.MsgBackupTextUploadFailed),
+		backups.NotRemovedLead, " "+text(webui.MsgBackupTextNotRemoved),
+		backups.VerifyStopped, text(webui.MsgBackupTextVerifyStopped),
+		backups.FolderChanged, text(webui.MsgBackupTextFolderChanged),
+		backups.NotRecordedLead, text(webui.MsgBackupTextNotRecorded),
+	).Replace(message)
+	if hasOmitted {
+		message += strings.Replace(text(webui.MsgBackupOmittedAliases), "%d", countText, 1)
+	}
+	return message
 }
 
 // restoreGuide is how to restore the backup at input on this computer, or
@@ -214,9 +269,7 @@ func (app *App) backupAction(writer http.ResponseWriter, request *http.Request, 
 		before, configured, after, err := app.Backups.ChangeSchedule(request.Context(), change)
 		var refused *backups.ChangeError
 		if errors.As(err, &refused) {
-			notice := webui.Error("", webui.MsgBackupScheduleRefused)
-			notice.Detail = refused.Message
-			refuse(http.StatusUnprocessableEntity, notice)
+			refuse(http.StatusUnprocessableEntity, scheduleRefusal(refused))
 			return
 		}
 		if err != nil {
@@ -251,6 +304,23 @@ func (app *App) backupAction(writer http.ResponseWriter, request *http.Request, 
 		}
 		app.writeBackupArchive(writer, request, download)
 	}
+}
+
+// scheduleRefusal is a refused schedule change for the dashboard: worded
+// from the catalog when the refusal has a reason, and with the English
+// cause as its detail otherwise.
+func scheduleRefusal(refused *backups.ChangeError) webui.Notice {
+	switch refused.Reason {
+	case backups.ReasonChooseFolder:
+		return webui.Error("backup_destination", webui.MsgBackupChooseFolder)
+	case backups.ReasonNotAbsolute:
+		return webui.Error("backup_destination", webui.MsgBackupFolderNotAbsolute)
+	case backups.ReasonFolderOverlaps:
+		return webui.Error("backup_destination", webui.MsgBackupFolderOverlaps)
+	case backups.ReasonFolderUnusable:
+		return webui.Error("backup_destination", webui.MsgBackupFolderUnusable).WithDetail(refused.Detail)
+	}
+	return webui.Error("", webui.MsgBackupScheduleRefused).WithDetail(refused.Message)
 }
 
 // backupScheduleForm reads the schedule form, which sends every part.

@@ -55,9 +55,22 @@ type Upload struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
+// UploadFailedLead and NotRemovedLead start the two reasons of a failed upload.
+const (
+	UploadFailedLead = "The uploaded backup did not pass verification, so it was removed:"
+	NotRemovedLead   = " It could not be removed:"
+)
+
 // ErrUploadRefused is an archive that is not a backup, ends early, or has
 // no room; the error that wraps it says why. Nothing it held is kept.
 var ErrUploadRefused = errors.New("the uploaded backup was refused")
+
+// ErrUploadNoSize and ErrUploadStopped are the two reasons of a refused
+// upload that no archive reader gives.
+var (
+	ErrUploadNoSize  = errors.New("the upload declared no size")
+	ErrUploadStopped = errors.New("the upload stopped before it ended")
+)
 
 // uploadsPath is the folder of the uploaded backup.
 func (s *Service) uploadsPath() string {
@@ -83,7 +96,7 @@ func (s *Service) removeUploads() error {
 // and with ErrBusy while a verification or another upload runs.
 func (s *Service) ReceiveUpload(ctx context.Context, body io.Reader, size int64) (Upload, error) {
 	if size <= 0 {
-		return Upload{}, fmt.Errorf("%w: the upload declared no size", ErrUploadRefused)
+		return Upload{}, fmt.Errorf("%w: %w", ErrUploadRefused, ErrUploadNoSize)
 	}
 	s.mu.Lock()
 	err := s.begin(ctx, "upload")
@@ -137,9 +150,9 @@ func (s *Service) unpack(ctx context.Context, body io.Reader, size int64) (*Uplo
 	name, err := recovery.UnpackArchive(ctx, io.LimitReader(body, size), dir)
 	switch {
 	case ctx.Err() != nil:
-		return nil, fmt.Errorf("%w: the upload stopped before it ended", ErrUploadRefused)
+		return nil, fmt.Errorf("%w: %w", ErrUploadRefused, ErrUploadStopped)
 	case errors.Is(err, recovery.ErrNotABackupArchive):
-		return nil, fmt.Errorf("%w: %v", ErrUploadRefused, err)
+		return nil, fmt.Errorf("%w: %w", ErrUploadRefused, err)
 	case err != nil:
 		return nil, err
 	}
@@ -151,17 +164,17 @@ func (s *Service) unpack(ctx context.Context, body io.Reader, size int64) (*Uplo
 func (s *Service) finishUpload(ctx context.Context, upload *Upload) {
 	err := s.verify(ctx, upload.Path)
 	if ctx.Err() != nil {
-		err = errors.New("OwnGit stopped before the verification finished")
+		err = errors.New(VerifyStopped)
 	}
 	finished := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	upload.FinishedAt = &finished
 	if err != nil {
-		upload.Status, upload.Message = UploadFailed, "The uploaded backup did not pass verification, so it was removed: "+err.Error()
+		upload.Status, upload.Message = UploadFailed, UploadFailedLead+" "+err.Error()
 		upload.Path = ""
 		if removeErr := s.removeUploads(); removeErr != nil {
-			upload.Message += " It could not be removed: " + removeErr.Error()
+			upload.Message += NotRemovedLead + " " + removeErr.Error()
 		}
 		s.logf("%s", upload.Message)
 		return

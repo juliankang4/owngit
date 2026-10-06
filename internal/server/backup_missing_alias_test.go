@@ -94,7 +94,7 @@ func TestMissingBackupAliasesAreLocalizedWithoutClaimingConversion(t *testing.T)
 }
 
 func TestOmittedBackupAliasMarkerIsLocalizedAfterWarnings(t *testing.T) {
-	warnings := "The backup is complete, but another warning remains."
+	warnings := "Another warning remains."
 	marker := fmt.Sprintf(recovery.OmittedAliasNotice, 12)
 	run := &backups.RunView{Message: warnings + "\n" + marker}
 	info := (&App{}).backupRun(run, state.Settings{})

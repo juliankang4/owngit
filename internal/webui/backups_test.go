@@ -7,21 +7,26 @@ import (
 	"time"
 )
 
+// renderBackups renders the Backups groups of Storage and recovery.
+func renderBackups(t *testing.T, lang Lang, info BackupsInfo) string {
+	t.Helper()
+	var out bytes.Buffer
+	data := struct {
+		Page   SettingsPage
+		Lang   Lang
+		Chrome Chrome
+	}{Page: SettingsPage{Backups: info}, Lang: lang}
+	noErr(t, newRenderer(t).templates["settings"].ExecuteTemplate(&out, "setBackups", data))
+	return out.String()
+}
+
 // A running backup shows its own message as its own line below the state
 // list, in the text style and wrapping as text: a finished backup whose
 // record the state store has not saved yet says so there. The message is
 // shown escaped, in either language, and only when there is one.
 func TestRunningBackupShowsItsMessageBelowTheState(t *testing.T) {
-	r := newRenderer(t)
 	render := func(lang Lang, run *BackupRunInfo) string {
-		var out bytes.Buffer
-		data := struct {
-			Page   SettingsPage
-			Lang   Lang
-			Chrome Chrome
-		}{Page: SettingsPage{Backups: BackupsInfo{Visible: true, Configured: true, Running: run}}, Lang: lang}
-		noErr(t, r.templates["settings"].ExecuteTemplate(&out, "setBackups", data))
-		return out.String()
+		return renderBackups(t, lang, BackupsInfo{Visible: true, Configured: true, Running: run})
 	}
 	// The Running now cell alone, which is narrow: the message must not sit
 	// in it, where a sentence breaks inside a word.
@@ -103,5 +108,20 @@ func TestUncheckedRestoreDoesNotInviteFolderMoves(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Before a backup folder is set the form shows the defaults (on, daily,
+// seven kept, verified). They are the saved values, so the page does not
+// call them unsaved changes nobody made.
+func TestUnconfiguredBackupsHoldNoUnsavedChanges(t *testing.T) {
+	page := renderBackups(t, LangEN, BackupsInfo{Visible: true, Scheduled: true, Verify: true, Interval: "1d", Keep: 7, Intervals: []string{"12h", "1d", "7d"}})
+	for _, saved := range []string{`data-saved="on"`, `data-saved="1d"`, `data-saved="7"`} {
+		if !strings.Contains(page, saved) {
+			t.Errorf("the default is not the saved value (%s):\n%s", saved, page)
+		}
+	}
+	if strings.Count(page, `data-saved="on"`) != 2 {
+		t.Errorf("both switches must start saved as on:\n%s", page)
 	}
 }

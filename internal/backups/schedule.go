@@ -2,6 +2,7 @@ package backups
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"time"
 
@@ -20,7 +21,28 @@ type ScheduleChange struct {
 }
 
 // ChangeError is a schedule change that cannot be saved as asked.
-type ChangeError struct{ Message string }
+type ChangeError struct {
+	// Message is the whole refusal in English, for the API and logs.
+	Message string
+	// Reason names a refusal that the dashboard words itself, and Detail is
+	// the cause that goes with it; both are empty for any other refusal.
+	Reason, Detail string
+}
+
+// The Reason of a ChangeError that the dashboard words itself.
+const (
+	ReasonChooseFolder   = "choose_folder"
+	ReasonNotAbsolute    = "not_absolute"
+	ReasonFolderUnusable = "folder_unusable"
+	ReasonFolderOverlaps = "folder_overlaps"
+)
+
+func folderUnusable(err error) *ChangeError {
+	if errors.Is(err, recovery.ErrBackupOverlapsStorage) {
+		return &ChangeError{Message: "The backup folder cannot be used: " + err.Error() + ".", Reason: ReasonFolderOverlaps}
+	}
+	return &ChangeError{"The backup folder cannot be used: " + err.Error() + ".", ReasonFolderUnusable, err.Error()}
+}
 
 func (e *ChangeError) Error() string { return e.Message }
 
@@ -38,22 +60,22 @@ func (s *Service) ChangeSchedule(ctx context.Context, change ScheduleChange) (be
 	after = before
 	if !configured {
 		if change.Destination == nil {
-			return before, configured, after, &ChangeError{"Choose a backup folder first."}
+			return before, configured, after, &ChangeError{Message: "Choose a backup folder first.", Reason: ReasonChooseFolder}
 		}
 		after = state.BackupSchedule{Enabled: true, Interval: DefaultInterval, Keep: DefaultKeep, Verify: true}
 	}
 	if change.Destination != nil {
 		destination := *change.Destination
 		if !filepath.IsAbs(destination) {
-			return before, configured, after, &ChangeError{"The backup folder must be an absolute path."}
+			return before, configured, after, &ChangeError{Message: "The backup folder must be an absolute path.", Reason: ReasonNotAbsolute}
 		}
 		destination = filepath.Clean(destination)
 		if err := recovery.CheckBackupFolder(s.Store, s.Repositories, destination); err != nil {
-			return before, configured, after, &ChangeError{"The backup folder cannot be used: " + err.Error() + "."}
+			return before, configured, after, folderUnusable(err)
 		}
 		area, err := state.OpenStagingArea(destination)
 		if err != nil {
-			return before, configured, after, &ChangeError{"The backup folder cannot be used: " + err.Error() + "."}
+			return before, configured, after, folderUnusable(err)
 		}
 		area.Close()
 		after.Destination = destination
@@ -72,7 +94,7 @@ func (s *Service) ChangeSchedule(ctx context.Context, change ScheduleChange) (be
 	}
 	after.UpdatedAt = s.now()
 	if err := state.ValidateBackupSchedule(after); err != nil {
-		return before, configured, after, &ChangeError{err.Error() + "."}
+		return before, configured, after, &ChangeError{Message: err.Error() + "."}
 	}
 	if err := s.Store.SaveBackupSchedule(ctx, after); err != nil {
 		return before, configured, after, err

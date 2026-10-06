@@ -21,23 +21,22 @@
   {{$keep := draft $p.Group $p.Draft "backups" "backup_keep" (print $b.Keep)}}
   {{$scheduled := draft $p.Group $p.Draft "backups" "backup_scheduled" (onOff $b.Scheduled)}}
   {{$verify := draft $p.Group $p.Draft "backups" "backup_verify" (onOff $b.Verify)}}
-  {{$savedScheduled := ""}}{{$savedVerify := ""}}{{if $b.Configured}}{{$savedScheduled = onOff $b.Scheduled}}{{$savedVerify = onOff $b.Verify}}{{end}}
-  <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
+    <form class="gform" method="post" action="{{tabURL "storage"}}" data-group-form>
     <input type="hidden" name="csrf" value="{{.Chrome.CSRF}}">
     <input type="hidden" name="action" value="save_backup_schedule">
     <div class="f f--row">
       <label for="backup-destination">{{bi $lang "backup.destination"}}</label>
       <input id="backup-destination" name="backup_destination" type="text" class="mono" autocomplete="off" spellcheck="false" required dir="ltr"
-             value="{{$dest}}" data-saved="{{if $b.Configured}}{{$b.Destination}}{{end}}"
+             value="{{$dest}}" data-saved="{{$b.Destination}}"
              {{template "netDescribed" dict "Notices" $gn "Scope" "backups" "Field" "backup_destination" "Help" "backup-destination-help"}}{{if eq $focus "backup_destination"}} autofocus{{end}}>
       {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "backups" "Field" "backup_destination"}}
       <p class="f__help" id="backup-destination-help">{{bi $lang "backup.destination_help"}}</p>
     </div>
-    {{template "switch" dict "Lang" $lang "ID" "backup-scheduled" "Name" "backup_scheduled" "On" (eq $scheduled "on") "Saved" $savedScheduled "Label" (bi $lang "backup.scheduled") "Help" (bi $lang "backup.scheduled_help")}}
+    {{template "switch" dict "Lang" $lang "ID" "backup-scheduled" "Name" "backup_scheduled" "On" (eq $scheduled "on") "Saved" (onOff $b.Scheduled) "Label" (bi $lang "backup.scheduled") "Help" (bi $lang "backup.scheduled_help")}}
     <p class="wn" data-show-if="backup_scheduled=off"{{if eq $scheduled "on"}} hidden{{end}}>{{icon "warning"}}<span>{{bi $lang "backup.schedule_off_warning"}}</span></p>
     <div class="f f--row">
       <label for="backup-interval">{{bi $lang "backup.interval"}}</label>
-      <select id="backup-interval" name="backup_interval" data-saved="{{if $b.Configured}}{{$b.Interval}}{{end}}" aria-describedby="backup-interval-help">
+      <select id="backup-interval" name="backup_interval" data-saved="{{$b.Interval}}" aria-describedby="backup-interval-help">
         {{range $b.Intervals}}
           <option value="{{.}}"{{if eq . $interval}} selected{{end}}>{{backupEvery $lang .}}</option>
         {{end}}
@@ -47,12 +46,12 @@
     <div class="f f--row">
       <label for="backup-keep">{{bi $lang "backup.keep"}}</label>
       <input id="backup-keep" name="backup_keep" type="text" inputmode="numeric" autocomplete="off" required
-             value="{{$keep}}" data-saved="{{if $b.Configured}}{{$b.Keep}}{{end}}"
+             value="{{$keep}}" data-saved="{{$b.Keep}}"
              {{template "netDescribed" dict "Notices" $gn "Scope" "backups" "Field" "backup_keep" "Help" "backup-keep-help"}}{{if eq $focus "backup_keep"}} autofocus{{end}}>
       {{template "fieldNotice" dict "Lang" $lang "Notices" $gn "Scope" "backups" "Field" "backup_keep"}}
       <p class="f__help" id="backup-keep-help">{{bi $lang "backup.keep_help"}}</p>
     </div>
-    {{template "switch" dict "Lang" $lang "ID" "backup-verify" "Name" "backup_verify" "On" (eq $verify "on") "Saved" $savedVerify "Label" (bi $lang "backup.verify") "Help" (bi $lang "backup.verify_help")}}
+    {{template "switch" dict "Lang" $lang "ID" "backup-verify" "Name" "backup_verify" "On" (eq $verify "on") "Saved" (onOff $b.Verify) "Label" (bi $lang "backup.verify") "Help" (bi $lang "backup.verify_help")}}
     <p class="wn" data-show-if="backup_verify=off"{{if eq $verify "on"}} hidden{{end}}>{{icon "warning"}}<span>{{bi $lang "backup.verify_off_warning"}}</span></p>
     {{template "grpBar" dict "Lang" $lang "Viewer" $v "Group" "backups" "Notices" $gn "Focus" $focus "Cancel" (tabURL "storage")}}
   </form>
@@ -79,7 +78,7 @@
   {{with $run := $b.Running}}{{with $run.Message}}<p class="bkmsg" dir="auto">{{if $run.MessageEN}}{{biText $lang $run.MessageEN $run.MessageKO}}{{else}}{{.}}{{end}}</p>{{end}}{{end}}
   {{with $b.RestoreLimit}}<p class="wn">{{icon "warning"}}<span>{{biF $lang "backup.restore_limit" .}}</span></p>{{end}}
   {{with $b.Check}}
-    <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.check_title" .Name}}: {{backupWord $lang "check" .Status}}</span>{{with .Message}} <span class="mono bkmsg" dir="auto">{{.}}</span>{{end}}</p>
+    <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.check_title" .Name}}: {{backupWord $lang "check" .Status}}</span>{{if .Message}} <span class="bkmsg{{if not .MessageKO}} mono{{end}}" dir="auto">{{if .MessageKO}}{{biText $lang .Message .MessageKO}}{{else}}{{.Message}}{{end}}</span>{{end}}</p>
   {{end}}
   {{/* The one form every backup button sends, with the administrator
        password when a change asks for it. Each run's buttons name it. */}}
@@ -139,7 +138,7 @@
   <p class="scope">{{icon "info"}}<span>{{bi $lang "backup.upload_help"}}</span></p>
   {{with $b.Upload}}
     <p class="bkline">{{statusIcon (backupState .Status)}}<span>{{biF $lang "backup.upload_name" .Name (bytes .Size)}}: {{backupWord $lang "upload" .Status}}</span></p>
-    {{with .Message}}<p class="bkmsg mono" dir="auto">{{.}}</p>{{end}}
+    {{if .Message}}<p class="bkmsg{{if not .MessageKO}} mono{{end}}" dir="auto">{{if .MessageKO}}{{biText $lang .Message .MessageKO}}{{else}}{{.Message}}{{end}}</p>{{end}}
     {{if not .RemovesAt.IsZero}}<p class="f__help">{{biWhen $lang "backup.upload_removes_at" .RemovesAt}}</p>{{end}}
     {{with .Restore}}{{template "backupRestore" dict "Lang" $lang "R" . "ID" "restore-upload" "Open" true}}{{end}}
   {{end}}
