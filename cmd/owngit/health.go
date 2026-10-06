@@ -31,31 +31,76 @@ func healthCommand(arguments []string) error {
 	if flags.NArg() != 0 {
 		return errors.New("health takes no positional arguments")
 	}
-	target, running, observed, err := healthStatus(*stateDir)
+	target, err := confirmedHealth(*stateDir)
 	if err != nil {
-		return fmt.Errorf("state directory %s: %w", *stateDir, err)
-	}
-	if running {
-		target, err = localIPTarget(observed.Record.Address)
-		if err != nil {
-			return fmt.Errorf("state directory %s: %w", *stateDir, err)
-		}
-	} else {
-		switch observed.Server {
-		case state.ServerStarting:
-			return fmt.Errorf("OwnGit is still starting for state directory %s; try again shortly", *stateDir)
-		case state.ServerUnknown:
-			return fmt.Errorf("cannot confirm that OwnGit is running for state directory %s: another program holds the state directory, or its running record cannot be vouched for", *stateDir)
-		}
-		if _, err := localIPTarget(target); err != nil {
-			return fmt.Errorf("OwnGit is not running for state directory %s", *stateDir)
-		}
-	}
-	if err := checkHealthRun(*stateDir, target, observed.Record); err != nil {
 		return err
 	}
 	fmt.Printf("OwnGit answers at http://%s\n", target)
 	return nil
+}
+
+// confirmedHealth returns the address where the server of stateDir answered
+// with its proof. It reads the health file the server published and writes
+// nothing, so it works on a read-only state. Only a valid proof confirms; the
+// store is read afterwards, on failure only, to say why.
+func confirmedHealth(stateDir string) (string, error) {
+	run, published, err := healthRun(stateDir)
+	if err != nil {
+		return "", fmt.Errorf("state directory %s: %w", stateDir, err)
+	}
+	if !published {
+		return "", explainUnconfirmed(stateDir, nil)
+	}
+	target, err := localIPTarget(run.Address)
+	if err != nil {
+		return "", fmt.Errorf("state directory %s: %w", stateDir, err)
+	}
+	if err := checkHealthProof(target, run); err != nil {
+		return "", explainUnconfirmed(stateDir, err)
+	}
+	return target, nil
+}
+
+// explainUnconfirmed is the error for a server that did not prove itself.
+// proofErr is the failed proof, or nil when no health file exists, as for a
+// server that is starting, an older server or a file that could not be
+// written. A running record that agrees with a failed proof keeps the proof's
+// message; any other state is described from the store.
+func explainUnconfirmed(stateDir string, proofErr error) error {
+	target, running, observed, err := healthStatus(stateDir)
+	if err != nil {
+		if proofErr != nil && !errors.Is(err, errOlderSchema) {
+			return proofErr
+		}
+		return fmt.Errorf("state directory %s: %w", stateDir, err)
+	}
+	if running {
+		if proofErr != nil {
+			return proofErr
+		}
+		return fmt.Errorf("cannot confirm that the OwnGit running for state directory %s is this one: it published no health key; restart OwnGit", stateDir)
+	}
+	switch observed.Server {
+	case state.ServerStarting:
+		return fmt.Errorf("OwnGit is still starting for state directory %s; try again shortly", stateDir)
+	case state.ServerUnknown:
+		return fmt.Errorf("cannot confirm that OwnGit is running for state directory %s: another program holds the state directory, or its running record cannot be vouched for", stateDir)
+	}
+	if _, err := localIPTarget(target); err != nil {
+		return fmt.Errorf("OwnGit is not running for state directory %s", stateDir)
+	}
+	if err := checkHealth(target); err != nil {
+		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
+	}
+	return fmt.Errorf("OwnGit is not running for this state directory, and another program answers at http://%s", target)
+}
+
+// healthRun reads the health file of an existing state directory.
+func healthRun(stateDir string) (state.HealthRun, bool, error) {
+	if err := state.RequireExisting(stateDir); err != nil {
+		return state.HealthRun{}, false, err
+	}
+	return state.ReadHealthRun(stateDir)
 }
 
 // healthAddress returns the host:port to check on this computer, and
@@ -69,8 +114,8 @@ func healthAddress(stateDir string) (string, bool, error) {
 	return target, running, err
 }
 
-// healthStatus keeps the observation beside the target so health can
-// distinguish startup and confirm the same run after its response.
+// healthStatus keeps the observation beside the target so health can say
+// whether the server is starting, running or not running.
 func healthStatus(stateDir string) (string, bool, state.RunningObservation, error) {
 	if err := state.RequireExisting(stateDir); err != nil {
 		return "", false, state.RunningObservation{}, err
@@ -183,54 +228,56 @@ var healthClient = &http.Client{
 
 // checkHealth asks the liveness check at target once.
 func checkHealth(target string) error {
-	return checkHealthHost(target, "")
+	_, err := askHealth(target, "", "")
+	return err
 }
 
-// checkHealthHost keeps HTTP routing separate from the connection target.
-func checkHealthHost(target, requestHost string) error {
+// askHealth asks the liveness check at target once and returns the answer's
+// proof header. A non-empty requestHost keeps HTTP routing separate from the
+// connection target, and a non-empty nonce asks for the proof.
+func askHealth(target, requestHost, nonce string) (string, error) {
 	request, err := http.NewRequest(http.MethodGet, "http://"+target+server.HealthPath, nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if requestHost != "" {
 		request.Host = requestHost
 	}
+	if nonce != "" {
+		request.Header.Set(state.HealthNonceHeader, nonce)
+	}
 	response, err := healthClient.Do(request)
 	if err != nil {
-		return err
+		return "", err
 	}
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("status %d", response.StatusCode)
+		return "", fmt.Errorf("status %d", response.StatusCode)
 	}
-	return nil
+	return response.Header.Get(state.HealthProofHeader), nil
 }
 
-// checkHealthRun checks the response and re-observes the locked running record.
-// Without an observed run, an answer belongs to another program.
-func checkHealthRun(stateDir, target string, record *state.RunningNetwork) error {
+// checkHealthProof asks target for the proof of the key in run. An answer
+// without a valid proof comes from another program.
+func checkHealthProof(target string, run state.HealthRun) error {
 	requestHost := ""
 	// The admitted listen hostname may differ from the numeric bound address.
-	if record != nil {
-		if host, _, err := net.SplitHostPort(record.Listen); err == nil && host != "" {
-			if _, err := netip.ParseAddr(host); err != nil {
-				_, port, _ := net.SplitHostPort(target)
-				requestHost = net.JoinHostPort(host, port)
-			}
+	if host, _, err := net.SplitHostPort(run.Listen); err == nil && host != "" {
+		if _, err := netip.ParseAddr(host); err != nil {
+			_, port, _ := net.SplitHostPort(target)
+			requestHost = net.JoinHostPort(host, port)
 		}
 	}
-	if err := checkHealthHost(target, requestHost); err != nil {
+	nonce, err := state.NewTrayNonce()
+	if err != nil {
+		return err
+	}
+	proof, err := askHealth(target, requestHost, nonce)
+	if err != nil {
 		return fmt.Errorf("OwnGit does not answer at http://%s: %w", target, err)
 	}
-	if record == nil {
-		return fmt.Errorf("OwnGit is not running for this state directory, and another program answers at http://%s", target)
-	}
-	_, running, confirmed, err := healthStatus(stateDir)
-	if err != nil {
-		return fmt.Errorf("cannot confirm that OwnGit is still running for state directory %s: %w", stateDir, err)
-	}
-	if !running || confirmed.Record.PID != record.PID || confirmed.Record.StartedAt != record.StartedAt || confirmed.Record.Address != record.Address {
-		return fmt.Errorf("cannot confirm that the same OwnGit is still running for state directory %s at http://%s; try again shortly", stateDir, target)
+	if !state.ValidHealthProof(run.Key, nonce, proof) {
+		return fmt.Errorf("another program answers at http://%s, or OwnGit restarted; it did not prove it is the OwnGit of this state directory", target)
 	}
 	return nil
 }
@@ -316,17 +363,9 @@ func waitHealthy(stateDir string, timeout time.Duration) (string, error) {
 		if message, failed := serveErrorSince(stateDir, since); failed && !strings.Contains(message, state.ErrInspectionUnstable.Error()) {
 			return "", errServeFailed{message}
 		}
-		target, running, observed, err := healthStatus(stateDir)
-		if errors.Is(err, state.ErrNotExist) || err == nil && !running {
-			err = errors.New("no running server has published its address yet")
-		}
+		target, err := confirmedHealth(stateDir)
 		if err == nil {
-			target, err = localIPTarget(observed.Record.Address)
-		}
-		if err == nil {
-			if err = checkHealthRun(stateDir, target, observed.Record); err == nil {
-				return target, nil
-			}
+			return target, nil
 		}
 		if time.Now().After(deadline) {
 			if errors.Is(err, errOlderSchema) {

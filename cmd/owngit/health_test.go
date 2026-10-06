@@ -8,8 +8,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"owngit/internal/state"
@@ -110,7 +110,7 @@ func TestHealthCommandDoesNotTrustAnUnknownStateHolder(t *testing.T) {
 	}
 }
 
-func publishedHealthRun(t *testing.T, record state.RunningNetwork) (string, *state.Store, func()) {
+func publishedHealthRun(t *testing.T, health *fakeHealth, record state.RunningNetwork) string {
 	t.Helper()
 	stateDir := filepath.Join(t.TempDir(), "state")
 	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--listen", "127.0.0.1:18966")
@@ -120,11 +120,15 @@ func publishedHealthRun(t *testing.T, record state.RunningNetwork) (string, *sta
 	t.Cleanup(func() { noErr(t, store.Close()) })
 	release, err := store.ClaimRunningNetwork(context.Background())
 	noErr(t, err)
-	var once sync.Once
-	stop := func() { once.Do(release) }
-	t.Cleanup(stop)
+	t.Cleanup(release)
 	noErr(t, store.PublishRunningNetwork(context.Background(), record))
-	return stateDir, store, stop
+	held, err := state.OpenStateDirectory(stateDir)
+	noErr(t, err)
+	defer held.Close()
+	run, err := state.PublishHealthRun(held, record.Listen, record.Address)
+	noErr(t, err)
+	health.key = run.Key
+	return stateDir
 }
 
 func runHealthCheck(t *testing.T, command, stateDir string) (string, error) {
@@ -151,7 +155,7 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 				t.Run(test.name, func(t *testing.T) {
 					health := useFakeHealth(t)
 					health.answering = true
-					stateDir, _, _ := publishedHealthRun(t, state.RunningNetwork{
+					stateDir := publishedHealthRun(t, health, state.RunningNetwork{
 						PID: os.Getpid(), StartedAt: 100, Listen: test.listen, Address: test.bound,
 					})
 					output, err := runHealthCheck(t, command, stateDir)
@@ -180,35 +184,29 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 	}
 }
 
-func TestHealthRejectsAChangedRun(t *testing.T) {
+func TestHealthRejectsAnAnswerWithoutTheRunsProof(t *testing.T) {
 	for _, command := range []string{"health", "waitHealthy"} {
 		t.Run(command, func(t *testing.T) {
-			for _, change := range []string{"PID", "start time", "bound address", "released lock", "cleared record"} {
-				t.Run(change, func(t *testing.T) {
+			for _, test := range []struct {
+				name, key, want string
+				withoutFile     bool
+			}{
+				{"no proof", "", "another program answers", false},
+				{"another key", "another run's key", "another program answers", false},
+				// A server that an older version started, still running.
+				{"running record without a health file", "", "restart OwnGit", true},
+			} {
+				t.Run(test.name, func(t *testing.T) {
 					health := useFakeHealth(t)
 					health.answering = true
-					record := state.RunningNetwork{PID: os.Getpid(), StartedAt: 100, Listen: "127.0.0.1:18966", Address: "127.0.0.1:18966"}
-					stateDir, store, stop := publishedHealthRun(t, record)
-					health.onRequest = func() {
-						switch change {
-						case "PID":
-							record.PID++
-						case "start time":
-							record.StartedAt++
-						case "bound address":
-							record.Address = "127.0.0.1:18967"
-						case "released lock":
-							stop()
-							return
-						case "cleared record":
-							noErr(t, store.ClearRunningNetwork(context.Background()))
-							return
-						}
-						noErr(t, store.PublishRunningNetwork(context.Background(), record))
+					stateDir := publishedHealthRun(t, health, state.RunningNetwork{Listen: "127.0.0.1:18966", Address: "127.0.0.1:18966"})
+					health.key = test.key
+					if test.withoutFile {
+						noErr(t, os.Remove(filepath.Join(stateDir, state.HealthRunFile)))
 					}
 					output, err := runHealthCheck(t, command, stateDir)
-					if err == nil || !strings.Contains(err.Error(), "cannot confirm") || output != "" || len(health.checked) != 1 {
-						t.Fatalf("changed run: output %q, error %v, requests %q", output, err, health.checked)
+					if err == nil || !strings.Contains(err.Error(), test.want) || output != "" {
+						t.Fatalf("answer without the proof: output %q, error %v, want %q", output, err, test.want)
 					}
 				})
 			}
@@ -268,6 +266,16 @@ func TestHealthWithAHostnameAndBaseURL(t *testing.T) {
 	_, _, observed, err := healthStatus(stateDir)
 	noErr(t, err)
 	target := observed.Record.Address
+	// Health reads the server's own file and must not change the state
+	// directory; a loosened mode that it repaired would show a write.
+	if runtime.GOOS != "windows" {
+		noErr(t, os.Chmod(stateDir, 0o750))
+		defer func() {
+			if info, err := os.Stat(stateDir); err != nil || info.Mode().Perm() != 0o750 {
+				t.Errorf("health changed the state directory mode: %v, %v", info, err)
+			}
+		}()
+	}
 	for _, command := range []string{"health", "waitHealthy"} {
 		output, err := runHealthCheck(t, command, stateDir)
 		noErr(t, err)

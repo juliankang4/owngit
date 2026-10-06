@@ -106,6 +106,9 @@ type App struct {
 	// answers to, and TrayProof the secret with which it proves its
 	// answers (state.TrayProof). Either empty leaves that path unanswered.
 	TrayToken, TrayProof string
+	// HealthKey is the key of state.HealthRunFile, with which the health
+	// check proves its answer. Empty leaves the answer without a proof.
+	HealthKey string
 	// TrayAvailable is true when this install offers the OwnGit icon: it
 	// runs as the account that signs in at the desktop, not as a dedicated
 	// service account.

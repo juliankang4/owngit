@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -52,12 +51,8 @@ func TestParseCloneURLAcceptsOnlyOwnGitCloneAddresses(t *testing.T) {
 	}
 }
 
-func TestMacOSTokenFileReadIsBounded(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Darwin held-input bound")
-	}
-	path := filepath.Join(t.TempDir(), "credential")
-	noErr(t, os.WriteFile(path, []byte(strings.Repeat("x", int(maximumSecretFileBytes)+1)), 0o600))
+func TestTokenFileReadIsBounded(t *testing.T) {
+	path := writePrivate(t, filepath.Join(t.TempDir(), "credential"), strings.Repeat("x", int(maximumSecretFileBytes)+1))
 	if _, err := readTokenFile(path); commandErrorCode(err) != "invalid_credential_file" {
 		t.Fatalf("oversized token err=%v", err)
 	}

@@ -312,7 +312,9 @@ type fakeHealth struct {
 	checked   []string
 	hosts     []string
 	answering bool
-	onRequest func()
+	// key proves the answer to a request that sends a nonce; empty answers
+	// without a proof, as another program would.
+	key string
 }
 
 // useFakeHealth answers the health checks of the rest of the test.
@@ -328,13 +330,14 @@ func useFakeHealth(t *testing.T) *fakeHealth {
 func (fake *fakeHealth) RoundTrip(request *http.Request) (*http.Response, error) {
 	fake.checked = append(fake.checked, request.URL.Host)
 	fake.hosts = append(fake.hosts, request.Host)
-	if fake.onRequest != nil {
-		fake.onRequest()
-	}
 	if !fake.answering {
 		return nil, errors.New("nothing answers there")
 	}
-	return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: request}, nil
+	response := &http.Response{StatusCode: http.StatusOK, Body: http.NoBody, Request: request, Header: http.Header{}}
+	if nonce := request.Header.Get(state.HealthNonceHeader); nonce != "" && fake.key != "" {
+		response.Header.Set(state.HealthProofHeader, state.HealthProof(fake.key, nonce))
+	}
+	return response, nil
 }
 
 func TestServiceCommandsAreRefusedWithoutABackend(t *testing.T) {

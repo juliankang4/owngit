@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 	"syscall"
 
@@ -76,15 +75,10 @@ func ValidatePrivateFile(path string) error {
 }
 
 // OpenPrivateInputFile validates a supplied secret and returns the same open
-// file for reading. On macOS, mode, owner identity and ACL all come from this
-// held object. Other Unix systems keep the earlier path validation behavior.
+// file for reading. Type, mode, owner identity and (on macOS) the access list
+// all come from this held object, so a path replacement cannot change them.
+// A link at the final name is followed and its target checked.
 func OpenPrivateInputFile(path string) (*os.File, error) {
-	if runtime.GOOS != "darwin" {
-		if err := ValidatePrivateFile(path); err != nil {
-			return nil, err
-		}
-		return os.Open(path)
-	}
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, &os.PathError{Op: "open private input", Path: path, Err: err}
@@ -115,9 +109,6 @@ func OpenPrivateInputFile(path string) (*os.File, error) {
 // by hand, such as a password or token file. Besides the Unix mode check,
 // macOS refuses an access list that gives another account read access.
 func ValidatePrivateInputFile(path string) error {
-	if runtime.GOOS != "darwin" {
-		return ValidatePrivateFile(path)
-	}
 	file, err := OpenPrivateInputFile(path)
 	if err != nil {
 		return err

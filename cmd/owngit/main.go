@@ -787,6 +787,18 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		}
 		application.TrayToken, application.TrayProof = access.Token, access.Proof
 	}
+	// "owngit health" reads the key from the health file, which only this
+	// account can read, and asks this server to prove its answer with it.
+	if runningLive {
+		if run, err := state.PublishHealthRun(stateDirectory, network.Listen, listener.Addr().String()); err != nil {
+			logf("owngit health cannot confirm this server until OwnGit starts again, because the health file could not be written: %v", err)
+			// An older run's file must not stand for this server.
+			_ = state.RemoveHealthRun(stateDirectory)
+		} else {
+			application.HealthKey = run.Key
+			defer func() { _ = state.RemoveHealthRun(stateDirectory) }()
+		}
+	}
 	// Activity is counted in the background under the serving lifetime, so
 	// startup does not wait for it and the dashboard finds it ready.
 	application.StartBackground(ctx)

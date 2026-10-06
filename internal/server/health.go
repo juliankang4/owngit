@@ -1,6 +1,10 @@
 package server
 
-import "net/http"
+import (
+	"net/http"
+
+	"owngit/internal/state"
+)
 
 // HealthPath is the liveness check. It answers 200 with no body whenever
 // this process serves HTTP, before and after setup, and reads no state, so
@@ -21,5 +25,10 @@ func (app *App) handleHealth(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
+	// A checker that sends a nonce gets the proof that this server holds the
+	// key of state.HealthRunFile.
+	if nonce := request.Header.Get(state.HealthNonceHeader); app.HealthKey != "" && state.ValidTrayNonce(nonce) {
+		writer.Header().Set(state.HealthProofHeader, state.HealthProof(app.HealthKey, nonce))
+	}
 	writer.WriteHeader(http.StatusOK)
 }

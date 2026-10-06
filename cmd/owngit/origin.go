@@ -332,12 +332,7 @@ func readTokenFile(path string) (secretFile, error) {
 		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: secretFileMessage("The helper credential file", err), Cause: err}
 	}
 	defer file.Close()
-	var content []byte
-	if runtime.GOOS == "darwin" {
-		content, err = readBoundedInput(file, maximumSecretFileBytes)
-	} else {
-		content, err = io.ReadAll(file)
-	}
+	content, err := readBoundedInput(file, maximumSecretFileBytes)
 	if err != nil {
 		return secretFile{}, &apiclient.Error{Code: "invalid_credential_file", Message: "The helper credential file could not be read.", Cause: err}
 	}
