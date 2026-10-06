@@ -104,8 +104,8 @@ OwnGit never updates itself. When a new release exists, the dashboard shows the 
 
 ## Access and security
 
-- Repository access is open or protected by one shared password. There are no user accounts.
-- A separate administrator password protects settings.
+- Repository access is open or protected by one shared password. There are no user accounts. With open access, anyone who reaches OwnGit, including every device and program on the network, can read, push, delete branches and tags, create repositories, open and merge pull requests and restore files. Choose the shared password when the network has devices or people you do not fully trust.
+- A separate administrator password protects settings, repository deletion, rename, imports and check policies, unless you chose on the Access tab of Settings to be asked less often or not at all.
 - OwnGit serves plain HTTP. For other devices, use Tailscale (`owngit tailscale on`) or a reverse proxy for HTTPS. Plain HTTP on the LAN needs your explicit consent.
 - Do not put OwnGit on the public Internet. The one exception is an optional public address that answers share links only.
 - Once a day, OwnGit asks GitHub whether a newer release exists. It sends no repository data. Turn this off in Settings, or start with `--no-update-check`.

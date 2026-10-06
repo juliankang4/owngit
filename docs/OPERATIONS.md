@@ -81,6 +81,8 @@ The default address is `http://127.0.0.1:7654`. Setup asks for:
 - whether general access is open to anyone who reaches OwnGit, or needs one shared password;
 - a separate administrator password, which the dashboard asks for before administrator changes ([how often](#administrator-password-check)).
 
+With open access, anyone who reaches OwnGit, including every device and program on the network, can read, push, delete branches and tags, create repositories, open and merge pull requests and restore files. Settings, repository deletion, rename, imports and check policies need the administrator password, unless you chose to be [asked less often or not at all](#administrator-password-check). Choose the shared password when the network has devices or people you do not fully trust.
+
 Nothing is saved until you finish. Setup ends at an empty dashboard, where "New repository" gives a clone address such as `http://HOST:7654/git/PROJECT.git`.
 
 When you open setup from a public Internet address, setup preselects the shared-password option and says why.
@@ -393,6 +395,8 @@ owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m
 ```
 
 Attempts go from 1 to 100; the window and the pause from 1 minute to 24 hours. The limits cannot be turned off. During a pause, Git and the API get HTTP 429 with `Retry-After`.
+
+Wrong administrator passwords from all addresses together also have a limit: 5 times the attempts within the same window (20 within 10 minutes with the defaults). It covers the dashboard, the API and the command line; Git asks only for the shared password and is not affected. Changing the shared password on the Access tab without typing the administrator password counts as one wrong administrator password, because OwnGit checks that the new shared password is not the administrator password. Reaching it pauses every administrator password check for the pause time, even the right password from any address. Browsers already confirmed as administrator keep working. The pause ends by itself. If you cannot wait, run [`owngit reset-admin`](#host-owner-recovery) on the installation host; it ends the pause at once, and also every browser's administrator confirmation. This limit follows the settings above and has no setting of its own. The shared password is not affected.
 
 Behind a proxy that is not trusted, everyone arrives from the proxy's address and is paused together. [Trust the proxy](#behind-a-reverse-proxy) first.
 
