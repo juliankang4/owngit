@@ -112,7 +112,9 @@ A run's `status` is `running`, `succeeded`, `failed` or `interrupted`. Its `veri
 Each backup is a new folder in the destination, named `owngit-backup-YYYYMMDD-HHMMSS-XXXXXXXX` (the start time in UTC). After a successful backup, OwnGit keeps the newest `--keep` backups plus the newest verified one, and deletes its older backups in that folder.
 
 - OwnGit deletes only backups it made and recorded. Other files in the folder stay. A backup folder that you changed, for example by adding a file, also stays, and the next backup's message names it.
-- Nothing is deleted after a failed or interrupted backup.
+- A backup that fails its verification does not count toward `--keep` and never replaces a verified backup. OwnGit keeps only the newest failed one, so you can inspect it, and deletes its older failed ones. The next backup that passes verification deletes it too. A verification that cannot finish, for example because it ran out of time or temporary space, counts as failed.
+- When OwnGit cannot delete an older failed backup, the failed run's message says so after the reason for the failure. The next backup tries again.
+- Nothing is deleted after a backup that failed for another reason or was interrupted.
 - The folder needs room for one more backup, because the new one is written before an old one is deleted. When the free space is less than the last backup's size, the backup fails at once with `not enough free space in DIR`.
 
 ## Download a backup
