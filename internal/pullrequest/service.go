@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/importgit"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -614,7 +615,7 @@ func (service *Service) setClosed(ctx context.Context, repositoryID string, numb
 // already published. It returns the current record, merged or not. Who asked
 // for that merge is not known here, so nobody is recorded.
 func (service *Service) completePublishedMergeLocked(ctx context.Context, repositoryPath string, record state.PullRequest) (state.PullRequest, error) {
-	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
+	intents, err := service.Store.PullRequestMergeIntents(ctx, record.RepositoryID, record.Number, true)
 	if err != nil {
 		return state.PullRequest{}, &Problem{Code: "state_unavailable", Message: "The merge metadata could not be read.", Cause: err}
 	}
@@ -786,7 +787,7 @@ func (service *Service) RecoverRepositoryLocked(ctx context.Context, repositoryI
 		}
 	}
 
-	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
+	intents, err := service.Store.PullRequestMergeIntents(ctx, repositoryID, 0, true)
 	if err != nil {
 		return fmt.Errorf("read incomplete pull request merges: %w", err)
 	}
@@ -851,7 +852,7 @@ func (service *Service) validateReceipt(ctx context.Context, repositoryPath stri
 	if err != nil {
 		return false, err
 	}
-	intents, err := service.Store.PullRequestMergeIntents(ctx, false)
+	intents, err := service.Store.PullRequestMergeIntents(ctx, intent.RepositoryID, intent.PullRequestNumber, false)
 	if err != nil {
 		return false, &Problem{Code: "state_unavailable", Message: "The merge receipt metadata could not be read.", Cause: err}
 	}
@@ -875,7 +876,7 @@ func (service *Service) discardSupersededMergePlansLocked(ctx context.Context, r
 	if err != nil {
 		return err
 	}
-	intents, err := service.Store.PullRequestMergeIntents(ctx, true)
+	intents, err := service.Store.PullRequestMergeIntents(ctx, record.RepositoryID, record.Number, true)
 	if err != nil {
 		return &Problem{Code: "state_unavailable", Message: "The merge metadata could not be read.", Cause: err}
 	}
@@ -1238,10 +1239,7 @@ func (service *Service) ValidateBranchInput(ctx context.Context, value string, e
 	} else if exact {
 		return "", NewProblem("invalid_branch", "Pull requests require branch refs under refs/heads.")
 	}
-	if value == "HEAD" || value == "" || len(value) > 255 {
-		return "", NewProblem("invalid_branch", "The branch name is invalid.")
-	}
-	if _, err := service.Repositories.Git.Run(ctx, "", nil, "check-ref-format", "refs/heads/"+value); err != nil {
+	if value == "HEAD" || value == "" || len(value) > 255 || !importgit.ValidBranchName(value) {
 		return "", NewProblem("invalid_branch", "The branch name is invalid.")
 	}
 	return value, nil

@@ -25,12 +25,30 @@ func validateRefName(name string) error {
 	if !strings.HasPrefix(name, "refs/") {
 		return errors.New("the name is neither HEAD nor rooted at refs/")
 	}
-	// "refs/" alone has no component after the prefix.
-	if name == "refs/" {
-		return errors.New("the name has no component after refs/")
+	// Advertised names are octet strings, but a name that is not valid UTF-8
+	// cannot be displayed, stored in this project's state, or compared
+	// reliably. Refusing it is honest; re-encoding it would change the ref.
+	if !utf8.ValidString(name) {
+		return errors.New("the name is not valid UTF-8, so it cannot be represented without loss")
 	}
-	if strings.HasSuffix(name, "/") {
-		return errors.New("the name ends with a slash")
+	return CheckRefFormat(name)
+}
+
+// ValidBranchName reports whether "refs/heads/"+name is a legal ref name that
+// is also valid UTF-8. Callers add their own length and namespace rules.
+func ValidBranchName(name string) bool {
+	return utf8.ValidString(name) && CheckRefFormat("refs/heads/"+name) == nil
+}
+
+// CheckRefFormat applies the rules of "git check-ref-format <name>" (no
+// options) to a full ref name: at least two components, no empty component,
+// no component that starts with "." or ends with ".lock", none of the
+// forbidden characters or sequences, no trailing "." or "/", and not "@".
+// A dot at the end of a component other than the last is legal ("a./b").
+// It checks bytes only and does not require valid UTF-8.
+func CheckRefFormat(name string) error {
+	if name == "@" {
+		return errors.New("the name is a single @")
 	}
 	if strings.HasSuffix(name, ".") {
 		return errors.New("the name ends with a dot")
@@ -41,21 +59,19 @@ func validateRefName(name string) error {
 	if strings.Contains(name, "@{") {
 		return errors.New("the name contains the reflog sequence @{")
 	}
-	if strings.ContainsAny(name, "\\~^: ?*[") {
-		return errors.New("the name contains a character Git forbids in a ref")
-	}
 	for index := 0; index < len(name); index++ {
 		if name[index] < 0x20 || name[index] == 0x7f {
 			return errors.New("the name contains an ASCII control character")
 		}
 	}
-	// Advertised names are octet strings, but a name that is not valid UTF-8
-	// cannot be displayed, stored in this project's state, or compared
-	// reliably. Refusing it is honest; re-encoding it would change the ref.
-	if !utf8.ValidString(name) {
-		return errors.New("the name is not valid UTF-8, so it cannot be represented without loss")
+	if strings.ContainsAny(name, "\\~^: ?*[") {
+		return errors.New("the name contains a character Git forbids in a ref")
 	}
-	for _, component := range strings.Split(name, "/") {
+	components := strings.Split(name, "/")
+	if len(components) < 2 {
+		return errors.New("the name has only one component")
+	}
+	for _, component := range components {
 		if component == "" {
 			return errors.New("the name has an empty or repeated path component")
 		}

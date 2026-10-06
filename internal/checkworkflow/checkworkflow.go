@@ -2,7 +2,8 @@
 // workflow (".owngit/checks.json") and tightens its requests against the
 // operator policy.
 //
-// The package is deliberately small and dependency-free. It performs no Git
+// The package is deliberately small and depends only on the Git ref name rule
+// in importgit. It performs no Git
 // access, no file discovery, and no execution. Version 1 is strict: unknown
 // fields, duplicate fields, malformed patterns, unsupported versions, and
 // oversized input are rejected instead of being guessed.
@@ -17,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"owngit/internal/importgit"
 )
 
 // Path is the repository-relative workflow file. Parsing remains independent
@@ -388,23 +391,14 @@ func validateBranchPattern(pattern string) error {
 	if literal == "" {
 		return nil
 	}
-	if literal == "@" || literal[0] == '/' || (!hasWildcard && strings.HasSuffix(literal, "/")) ||
-		strings.Contains(literal, "//") || strings.Contains(literal, "..") || strings.Contains(literal, "@{") {
+	// A wildcard prefix only has to be the start of a legal branch name, so a
+	// stand-in character completes the last component.
+	name := literal
+	if hasWildcard {
+		name += "x"
+	}
+	if literal == "@" || !importgit.ValidBranchName(name) {
 		return fmt.Errorf("branch pattern %q is not valid Git branch syntax", pattern)
-	}
-	for _, character := range literal {
-		if character < 0x20 || character == 0x7f {
-			return fmt.Errorf("branch pattern %q contains a control character", pattern)
-		}
-	}
-	if strings.ContainsAny(literal, " \\~^:?[") {
-		return fmt.Errorf("branch pattern %q contains a character that is not valid in a ref name", pattern)
-	}
-	components := strings.Split(strings.TrimSuffix(literal, "/"), "/")
-	for _, component := range components {
-		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".") || strings.HasSuffix(component, ".lock") {
-			return fmt.Errorf("branch pattern %q has an invalid ref component", pattern)
-		}
 	}
 	return nil
 }

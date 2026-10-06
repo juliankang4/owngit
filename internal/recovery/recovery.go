@@ -25,6 +25,7 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/gitexec"
+	"owngit/internal/importgit"
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -2612,7 +2613,7 @@ func fileSHA256(filePath string) (string, error) {
 }
 
 func validRefName(name string) bool {
-	return strings.HasPrefix(name, "refs/") && !strings.ContainsAny(name, "\x00\r\n \\~^:?*[") && !strings.Contains(name, "..") && !strings.Contains(name, "@{") && !strings.HasSuffix(name, ".") && !strings.HasSuffix(name, "/") && !strings.HasSuffix(name, ".lock")
+	return strings.HasPrefix(name, "refs/") && importgit.CheckRefFormat(name) == nil
 }
 
 func validOID(oid string) bool {

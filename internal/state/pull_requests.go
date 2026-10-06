@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"owngit/internal/importgit"
 )
 
 const (
@@ -821,13 +823,21 @@ func (s *Store) PullRequestMergeIntent(ctx context.Context, repositoryID string,
 	return intent, err == nil, err
 }
 
-func (s *Store) PullRequestMergeIntents(ctx context.Context, incompleteOnly bool) ([]PullRequestMergeIntent, error) {
-	query := mergeIntentSelect
-	if incompleteOnly {
-		query += ` WHERE status!='complete'`
+// PullRequestMergeIntents reads the merge intents of one repository, or of
+// one pull request when number is not zero. The primary key serves both reads,
+// so a caller never decodes another repository's intents.
+func (s *Store) PullRequestMergeIntents(ctx context.Context, repositoryID string, number int64, incompleteOnly bool) ([]PullRequestMergeIntent, error) {
+	query := mergeIntentSelect + ` WHERE repository_id=?`
+	args := []any{repositoryID}
+	if number != 0 {
+		query += ` AND pull_request_number=?`
+		args = append(args, number)
 	}
-	query += ` ORDER BY repository_id,pull_request_number,created_at`
-	rows, err := s.db.QueryContext(ctx, query)
+	if incompleteOnly {
+		query += ` AND status!='complete'`
+	}
+	query += ` ORDER BY pull_request_number,created_at`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1291,20 +1301,7 @@ func validText(value string, maximum int) bool {
 }
 
 func validBranchText(value string) bool {
-	if value == "" || len(value) > 255 || value != strings.TrimSpace(value) || !utf8.ValidString(value) || strings.HasPrefix(value, "/") || strings.HasSuffix(value, "/") || strings.Contains(value, "//") || strings.Contains(value, "..") || strings.Contains(value, "@{") || strings.ContainsAny(value, "\\ ~^:?*[") {
-		return false
-	}
-	for _, character := range value {
-		if character < 0x20 || character == 0x7f {
-			return false
-		}
-	}
-	for _, component := range strings.Split(value, "/") {
-		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".") || strings.HasSuffix(component, ".lock") {
-			return false
-		}
-	}
-	return true
+	return value != "" && len(value) <= 255 && value == strings.TrimSpace(value) && importgit.ValidBranchName(value)
 }
 
 func pullRequestKey(repositoryID string, number int64) string {

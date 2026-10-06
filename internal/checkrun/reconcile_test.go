@@ -161,6 +161,14 @@ func (fixture *pushFixture) pushWorkflow(branch, workflow string) string {
 	return fixture.git("-C", fixture.work, "rev-parse", "HEAD")
 }
 
+// noteOwnGitWrite advances the repository's ref generation the way a push
+// through OwnGit does when it releases the write lock.
+func (fixture *pushFixture) noteOwnGitWrite() {
+	lock := fixture.coordinator.Repositories.Locks.For(fixture.repositoryID)
+	lock.Lock()
+	lock.Unlock()
+}
+
 func (fixture *pushFixture) observed() map[string]string {
 	fixture.t.Helper()
 	observations, err := fixture.store.CheckObservations(fixture.ctx, fixture.repositoryID)
@@ -222,6 +230,7 @@ func TestInvalidWorkflowOnOneBranchDoesNotBlockLaterBranches(t *testing.T) {
 
 	// Fixing the branch moves it to a new revision, which is admitted.
 	fixture.pushWorkflow("a-broken", validWorkflow)
+	fixture.noteOwnGitWrite()
 	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 2 {
 		t.Fatalf("admitted jobs after the fix=%v", refs)
@@ -388,17 +397,32 @@ func TestPushWakePassWaitsForTheWritingPush(t *testing.T) {
 	}
 }
 
-// A branch written straight into the repository folder, not through OwnGit,
-// is seen by the next pass.
-func TestBranchWrittenOutsideOwnGitIsSeenByTheNextPass(t *testing.T) {
+// A pass skips the Git read of a repository whose refs OwnGit did not write.
+// A branch written straight into the repository folder is seen once OwnGit
+// writes the repository again, or at the latest after fullScanInterval.
+func TestUnchangedRepositoryIsNotScannedUntilItChangesOrTheIntervalEnds(t *testing.T) {
 	fixture := newPushFixture(t, 4)
 	fixture.pushWorkflow("main", validWorkflow)
 	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	fixture.git("-C", fixture.work, "update-ref", "refs/heads/outside", "HEAD")
 	fixture.git("-C", fixture.work, "push", fixture.repoPath, "refs/heads/outside")
 	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 1 {
+		t.Fatalf("jobs after a pass over an unchanged repository=%v, want only main", refs)
+	}
+	scan := fixture.coordinator.pushScans[fixture.repositoryID]
+	scan.at = scan.at.Add(-fullScanInterval)
+	fixture.coordinator.pushScans[fixture.repositoryID] = scan
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
 	if refs := fixture.jobRefs(); len(refs) != 2 {
-		t.Fatalf("jobs=%v, want main and outside", refs)
+		t.Fatalf("jobs after the full scan interval=%v, want main and outside", refs)
+	}
+	fixture.git("-C", fixture.work, "update-ref", "refs/heads/second", "HEAD")
+	fixture.git("-C", fixture.work, "push", fixture.repoPath, "refs/heads/second")
+	fixture.noteOwnGitWrite()
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if refs := fixture.jobRefs(); len(refs) != 3 {
+		t.Fatalf("jobs after an OwnGit ref write=%v, want three", refs)
 	}
 }
 
@@ -784,5 +808,91 @@ func TestPushEventKeepsATransientAdmissionFailure(t *testing.T) {
 	}
 	if oids := pushJobOIDs(t, fixture); !oids[oid] {
 		t.Fatalf("the kept push has no job after the failure passed: %v", oids)
+	}
+}
+
+// A push refused while the queue is full, to a branch before the cursor of an
+// interrupted first sweep, is still revisited after the queue drains.
+func TestResumedPartialSweepDoesNotHideAHeadBeforeTheCursor(t *testing.T) {
+	f := newPushFixture(t, 1)
+	f.pushWorkflow("a-first", validWorkflow)
+	f.pushWorkflow("b-second", validWorkflow)
+	policy, _, err := f.store.CheckPolicy(f.ctx, f.repositoryID)
+	noErr(t, err)
+	if err := f.coordinator.reconcilePushes(f.ctx, f.repositoryID, policy); !errors.Is(err, state.ErrCheckQueueFull) {
+		t.Fatalf("first pass: %v", err)
+	}
+	if _, ok := f.coordinator.pushScans[f.repositoryID]; ok {
+		t.Fatal("failed pass was cached")
+	}
+	earlier := f.pushWorkflow("0-earlier", validWorkflow)
+	f.noteOwnGitWrite()
+	f.coordinator.NotePush(f.repositoryID, []PushUpdate{{Ref: "refs/heads/0-earlier", New: earlier}})
+	f.coordinator.admitPendingPushes(f.ctx)
+	if observed := f.observed(); observed["refs/heads/0-earlier"] != "" {
+		t.Fatal("queue-full push was observed")
+	}
+	jobs, err := f.store.LatestCheckJobs(f.ctx, f.repositoryID, 10)
+	noErr(t, err)
+	if len(jobs) != 1 {
+		t.Fatalf("first jobs=%+v", jobs)
+	}
+	_, err = f.store.CancelCheckJob(f.ctx, f.repositoryID, jobs[0].ID, time.Now().UTC())
+	noErr(t, err)
+	noErr(t, f.coordinator.reconcilePushes(f.ctx, f.repositoryID, policy))
+	jobs, err = f.store.LatestCheckJobs(f.ctx, f.repositoryID, 10)
+	noErr(t, err)
+	for _, job := range jobs {
+		if job.TriggerRef == "b-second" {
+			_, err = f.store.CancelCheckJob(f.ctx, f.repositoryID, job.ID, time.Now().UTC())
+			noErr(t, err)
+		}
+	}
+	noErr(t, f.coordinator.reconcilePushes(f.ctx, f.repositoryID, policy))
+	if observed := f.observed(); observed["refs/heads/0-earlier"] != earlier {
+		t.Fatalf("new head before the old partial cursor was skipped: observations=%v scans=%+v cursor=%q", observed, f.coordinator.pushScans, f.coordinator.pushCursor[f.repositoryID])
+	}
+}
+
+// A repository with more branches than one pass handles is swept over several
+// passes at one ref generation; once they cover every head, later passes run
+// no Git process until a ref write.
+func TestSweepOverSeveralPassesLetsUnchangedRepositoryBeSkipped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("counts Git runs with a shell wrapper")
+	}
+	fixture := newPushFixture(t, maximumObservedRefs+10)
+	fixture.pushWorkflow("main", validWorkflow)
+	var refspecs []string
+	for i := 0; i < maximumObservedRefs; i++ {
+		refspecs = append(refspecs, fmt.Sprintf("HEAD:refs/heads/b%02d", i))
+	}
+	fixture.git(append([]string{"-C", fixture.work, "push", fixture.repoPath}, refspecs...)...)
+	fixture.noteOwnGitWrite()
+	counts := filepath.Join(t.TempDir(), "git-runs")
+	realGit, err := exec.LookPath("git")
+	noErr(t, err)
+	wrapper := filepath.Join(t.TempDir(), "git")
+	noErr(t, os.WriteFile(wrapper, []byte(fmt.Sprintf("#!/bin/sh\nprintf x >> %q\nexec %q \"$@\"\n", counts, realGit)), 0o700))
+	runs := func() int {
+		data, _ := os.ReadFile(counts)
+		return len(data)
+	}
+	fixture.coordinator.Repositories.Git.GitPath = wrapper
+	for pass := 0; pass < 2; pass++ {
+		noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	}
+	if !fixture.coordinator.pushScans[fixture.repositoryID].complete {
+		t.Fatalf("two passes over %d branches did not complete the sweep: %+v", maximumObservedRefs+1, fixture.coordinator.pushScans[fixture.repositoryID])
+	}
+	before := runs()
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if runs() != before {
+		t.Fatalf("a pass over an unchanged repository ran %d Git processes", runs()-before)
+	}
+	fixture.noteOwnGitWrite()
+	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	if runs() == before {
+		t.Fatal("a ref write did not cause a new scan")
 	}
 }

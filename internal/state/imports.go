@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"owngit/internal/importgit"
 )
 
 // ImportRefLock is machine-local evidence, not portable publication authority.
@@ -1948,22 +1950,7 @@ func validImportRefName(name string) bool {
 	if !strings.HasPrefix(name, "refs/") || len(name) > maxImportRefName {
 		return false
 	}
-	if strings.HasSuffix(name, "/") || strings.HasSuffix(name, ".") || strings.Contains(name, "..") ||
-		strings.Contains(name, "@{") || strings.Contains(name, "//") {
-		return false
-	}
-	for index := 0; index < len(name); index++ {
-		character := name[index]
-		if character < 0x20 || character == 0x7f || character == ' ' || strings.ContainsRune("\\~^:?*[", rune(character)) {
-			return false
-		}
-	}
-	for _, component := range strings.Split(name, "/") {
-		if component == "" || strings.HasPrefix(component, ".") || strings.HasSuffix(component, ".lock") {
-			return false
-		}
-	}
-	return true
+	return importgit.CheckRefFormat(name) == nil
 }
 
 func validateImportSourceRecord(record ImportSource) error {

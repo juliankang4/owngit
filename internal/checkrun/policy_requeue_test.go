@@ -70,6 +70,7 @@ func TestPolicyChangeDoesNotRequeueHeadsThatAlreadyHadAJob(t *testing.T) {
 	// A branch that moves is a new event and is still queued.
 	fixture.git("-C", fixture.work, "commit", "--allow-empty", "-m", "moved")
 	fixture.git("-C", fixture.work, "push", "-q", fixture.repoPath, "HEAD:refs/heads/ci-03")
+	fixture.noteOwnGitWrite()
 	if jobs := fixture.settle(); jobs != initial+1 {
 		t.Fatalf("a moved branch queued %d jobs, want 1", jobs-initial)
 	}

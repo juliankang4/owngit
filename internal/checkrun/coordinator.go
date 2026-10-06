@@ -124,6 +124,7 @@ type Coordinator struct {
 	pushCursor        map[string]string
 	skippedRefs       map[string]map[string]string
 	pushChecked       map[string]bool
+	pushScans         map[string]pushScan
 	pullRequestCursor map[string]int64
 	// pendingPushes holds the branch updates of accepted pushes that no
 	// attempt has admitted or refused yet, oldest first per repository. The
@@ -713,6 +714,26 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	return nil
 }
 
+// fullScanInterval is the longest a repository's branch heads go unread. A
+// repository whose refs OwnGit did not write since its last complete scan is
+// skipped until then, which also catches a writer outside OwnGit.
+const fullScanInterval = 10 * time.Minute
+
+// pushScan tracks the sweep of one repository's branch heads at one RefState
+// and policy. A repository with more branches than one pass handles needs
+// several passes; handled counts the branches of the consecutive passes since
+// the sweep began at endCursor-contiguous positions, and complete is set once
+// they cover every head. at is when the sweep read its first batch.
+type pushScan struct {
+	refs          repository.RefState
+	policyVersion int64
+	policyDigest  string
+	at            time.Time
+	handled       int
+	endCursor     string
+	complete      bool
+}
+
 func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryID string, policy state.CheckPolicy) error {
 	if coordinator.pushCursor == nil {
 		coordinator.pushCursor = make(map[string]string)
@@ -725,24 +746,38 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	if !contains(policy.AllowedEvents, checkworkflow.EventPush) {
 		return nil
 	}
-	// Summary waits for a writer that is still pushing and reads the refs as
-	// they are, so a change made outside OwnGit is seen in the same pass.
-	summary, err := coordinator.Repositories.Summary(ctx, repositoryID)
+	// Every OwnGit ref write advances the lock generation, so a repository
+	// with the same RefState and policy as its last complete scan needs no Git
+	// read until fullScanInterval has passed. BranchHeads compares the state
+	// after it has waited for a writer that is still pushing, so a push that
+	// woke this pass is never skipped. A full read takes one Git process, not
+	// the tag and default branch reads of Summary.
+	var lastRefs *repository.RefState
+	now := time.Now()
+	if last, ok := coordinator.pushScans[repositoryID]; ok && last.complete && coordinator.pushChecked[repositoryID] &&
+		last.policyVersion == policy.Version && last.policyDigest == policy.Digest && now.Sub(last.at) < fullScanInterval {
+		lastRefs = &last.refs
+	}
+	heads, refs, unchanged, err := coordinator.Repositories.BranchHeads(ctx, repositoryID, lastRefs)
 	if err != nil {
 		return err
 	}
-	sort.Slice(summary.Branches, func(i, j int) bool { return summary.Branches[i].Name < summary.Branches[j].Name })
+	if unchanged {
+		return nil
+	}
+	cursorAtStart := coordinator.pushCursor[repositoryID]
+	sort.Slice(heads, func(i, j int) bool { return heads[i].Name < heads[j].Name })
 	// Verifying pages run toward the last branch without wrapping, so each
 	// head is evaluated once; later pages rotate through all branches.
 	verifying := !coordinator.pushChecked[repositoryID]
 	var branches []repository.Ref
 	if verifying {
-		branches = branchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+		branches = branchesAfter(heads, coordinator.pushCursor[repositoryID], maximumObservedRefs)
 	} else {
-		branches = boundedBranchesAfter(summary.Branches, coordinator.pushCursor[repositoryID], maximumObservedRefs)
+		branches = boundedBranchesAfter(heads, coordinator.pushCursor[repositoryID], maximumObservedRefs)
 	}
-	if len(summary.Branches) > maximumObservedRefs {
-		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(summary.Branches))
+	if len(heads) > maximumObservedRefs {
+		coordinator.log("configured check ref reconciliation for %s is processing a fair batch of %d/%d branches", repositoryID, len(branches), len(heads))
 	}
 	observations, err := coordinator.Store.CheckObservations(ctx, repositoryID)
 	if err != nil {
@@ -752,8 +787,8 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	for _, observation := range observations {
 		previous[observation.RefName] = observation.OID
 	}
-	live := make(map[string]bool, len(summary.Branches))
-	for _, branch := range summary.Branches {
+	live := make(map[string]bool, len(heads))
+	for _, branch := range heads {
 		live["refs/heads/"+branch.Name] = true
 	}
 	// A skipped branch whose ref is gone needs no further reporting.
@@ -811,11 +846,11 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 		}
 		coordinator.pushCursor[repositoryID] = branch.Name
 	}
-	if len(summary.Branches) == 0 {
+	if len(heads) == 0 {
 		delete(coordinator.pushCursor, repositoryID)
 	}
 	// The sweep is complete once a page reaches the last branch.
-	if verifying && (len(branches) == 0 || branches[len(branches)-1].Name == summary.Branches[len(summary.Branches)-1].Name) {
+	if verifying && (len(branches) == 0 || branches[len(branches)-1].Name == heads[len(heads)-1].Name) {
 		coordinator.pushChecked[repositoryID] = true
 	}
 	for refName := range previous {
@@ -825,6 +860,23 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 			}
 		}
 	}
+	// A sweep continues only while the refs, the policy and the cursor are
+	// the ones the previous successful pass left; a failed pass moves the
+	// cursor without recording, so the next pass starts a new sweep. Once the
+	// consecutive passes have covered every head at one RefState, later passes
+	// skip the Git read.
+	sweep, ok := coordinator.pushScans[repositoryID]
+	if !ok || sweep.refs != refs || sweep.policyVersion != policy.Version || sweep.policyDigest != policy.Digest ||
+		sweep.endCursor != cursorAtStart || sweep.complete {
+		sweep = pushScan{refs: refs, policyVersion: policy.Version, policyDigest: policy.Digest, at: now}
+	}
+	sweep.handled += len(branches)
+	sweep.endCursor = coordinator.pushCursor[repositoryID]
+	sweep.complete = sweep.handled >= len(heads) && coordinator.pushChecked[repositoryID]
+	if coordinator.pushScans == nil {
+		coordinator.pushScans = make(map[string]pushScan)
+	}
+	coordinator.pushScans[repositoryID] = sweep
 	return nil
 }
 

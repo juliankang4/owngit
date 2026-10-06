@@ -552,7 +552,7 @@ func TestMergeConflictLeavesTargetAndReceiptUnchanged(t *testing.T) {
 	if fixture.refExists(MergeReceiptRef(created.Number)) {
 		t.Fatal("conflicted merge created a receipt")
 	}
-	intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, false)
+	intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, fixture.repositoryID, 0, false)
 	noErr(t, err)
 	if len(intents) != 0 {
 		t.Fatalf("conflicted merge left durable plans: %+v", intents)
@@ -628,7 +628,7 @@ func TestChangedRevisionMergeDiscardsUnpublishedPlans(t *testing.T) {
 			fixture.push("HEAD:refs/heads/feature")
 			merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, number, RevisionInput{SourceOID: source, TargetOID: target})
 			noErr(t, err)
-			intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, false)
+			intents, err := fixture.store.PullRequestMergeIntents(fixture.ctx, fixture.repositoryID, 0, false)
 			noErr(t, err)
 			if len(intents) != 1 || intents[0].Status != state.MergeIntentComplete || merged.Merge == nil || fixture.ref(MergeReceiptRef(number)) != source {
 				t.Fatalf("changed revision did not settle its own receipt: %+v", intents)

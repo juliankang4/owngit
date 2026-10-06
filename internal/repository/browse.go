@@ -82,19 +82,71 @@ type ChangedFile struct {
 	Binary    bool
 }
 
-func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
+// readLockedPath resolves a repository and takes its read lock. The caller
+// calls unlock when done.
+func (m *Manager) readLockedPath(ctx context.Context, id string) (path string, unlock func(), err error) {
 	repositoryPath, _, exists, err := m.ExistingPath(ctx, id)
 	if err != nil || !exists {
 		if err == nil {
 			err = errors.New("repository not found")
 		}
-		return Summary{}, err
+		return "", nil, err
 	}
 	lock := m.Locks.For(id)
 	if err := readLock(ctx, lock); err != nil {
+		return "", nil, err
+	}
+	return repositoryPath, lock.RUnlock, nil
+}
+
+// RefState identifies the ref writes OwnGit had made to a repository: every
+// release of the write lock after a ref change advances Generation, and
+// Incarnation changes when the repository is removed.
+type RefState struct{ Generation, Incarnation uint64 }
+
+// BranchHeads lists the branch heads of a repository with one Git process. It
+// waits for a writer like Summary does, and reads the refs as they are. When
+// seen is not nil and the repository's RefState still equals it once the
+// writer is done, no OwnGit writer changed a ref since, so it returns
+// unchanged without running Git. The returned state is the one the read
+// belongs to.
+func (m *Manager) BranchHeads(ctx context.Context, id string, seen *RefState) (heads []Ref, current RefState, unchanged bool, err error) {
+	repositoryPath, unlock, err := m.readLockedPath(ctx, id)
+	if err != nil {
+		return nil, RefState{}, false, err
+	}
+	defer unlock()
+	lock := m.Locks.For(id)
+	current = RefState{Generation: lock.Generation(), Incarnation: lock.Incarnation()}
+	if seen != nil && *seen == current {
+		return nil, current, true, nil
+	}
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads")
+	if err != nil {
+		return nil, current, false, err
+	}
+	heads = nil
+	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		// The object type makes Git read each object, so a ref to a missing
+		// object fails here exactly as it does in Summary.
+		parts := bytes.SplitN(line, []byte{0}, 3)
+		if len(parts) != 3 {
+			return nil, current, false, errors.New("Git returned a malformed ref record")
+		}
+		heads = append(heads, Ref{Name: strings.TrimPrefix(string(parts[0]), "refs/heads/"), OID: string(parts[1]), Type: string(parts[2])})
+	}
+	return heads, current, false, nil
+}
+
+func (m *Manager) Summary(ctx context.Context, id string) (Summary, error) {
+	repositoryPath, unlock, err := m.readLockedPath(ctx, id)
+	if err != nil {
 		return Summary{}, err
 	}
-	defer lock.RUnlock()
+	defer unlock()
 
 	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained")
 	if err != nil {
