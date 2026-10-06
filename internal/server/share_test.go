@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -231,7 +232,9 @@ func TestShareCloneLinkFetchesAndRefusesPushes(t *testing.T) {
 	// A commit that only kept history holds cannot be fetched by its ID.
 	owner := filepath.Join(t.TempDir(), "owner")
 	apiRunGit(t, "", "clone", "-q", strings.Replace(server.URL, "://", "://owngit:shared-password@", 1)+"/git/project.git", owner)
-	apiRunGit(t, owner, "-c", "user.name=Share Test", "-c", "user.email=share-test@example.invalid", "commit", "-q", "--allow-empty", "-m", "kept only")
+	noErr(t, os.WriteFile(filepath.Join(owner, "kept.txt"), []byte("kept only\n"), 0o600))
+	apiRunGit(t, owner, "add", ".")
+	apiRunGit(t, owner, "-c", "user.name=Share Test", "-c", "user.email=share-test@example.invalid", "commit", "-q", "-m", "kept only")
 	apiRunGit(t, owner, "push", "-q", "origin", "HEAD:refs/heads/gone")
 	goneOID := apiGitOutput(t, owner, "rev-parse", "HEAD")
 	apiRunGit(t, owner, "push", "-q", "origin", ":refs/heads/gone")
@@ -239,6 +242,17 @@ func TestShareCloneLinkFetchesAndRefusesPushes(t *testing.T) {
 		if output, err := gitCombined(clone, "-c", "protocol."+protocol, "fetch", "origin", goneOID); err == nil {
 			t.Fatalf("a kept commit was fetched through a share link with protocol %s:\n%s", protocol, output)
 		}
+	}
+	// Nor is a tree that only the deleted branch reaches named by its ID. No
+	// stock client sends such a request, so it is built by hand.
+	tree := apiGitOutput(t, owner, "rev-parse", "HEAD^{tree}")
+	line := "want " + tree + " no-progress\n"
+	body := fmt.Sprintf("%04x%s00000009done\n", len(line)+4, line)
+	fetch, _ := http.NewRequest(http.MethodPost, plain.CloneURL+"/git-upload-pack", strings.NewReader(body))
+	fetch.SetBasicAuth("visitor", secret)
+	fetch.Header.Set("Content-Type", "application/x-git-upload-pack-request")
+	if answer := browserRequest(t, &http.Client{}, fetch); !strings.Contains(answer.body, "not our ref") {
+		t.Fatalf("a share link served a tree by its ID: %q", answer.body)
 	}
 	noErr(t, os.WriteFile(filepath.Join(clone, "new.txt"), []byte("new\n"), 0o600))
 	apiRunGit(t, clone, "add", ".")

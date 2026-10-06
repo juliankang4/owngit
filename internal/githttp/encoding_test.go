@@ -202,7 +202,8 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	defer server.Close()
 	logs := captureLog(t)
 
-	payload := bytes.Repeat([]byte("0032have 0000000000000000000000000000000000000000\n"), 1000)
+	// A fetch request ends with a flush packet; OwnGit refuses one that does not.
+	payload := append(bytes.Repeat([]byte("0032have 0000000000000000000000000000000000000000\n"), 1000), "0000"...)
 	for _, service := range []string{"git-upload-pack", "git-receive-pack"} {
 		for _, encoding := range []string{"gzip", "x-gzip", "GZIP"} {
 			response := postPack(t, server.URL, service, encoding, gzipBytes(t, payload))

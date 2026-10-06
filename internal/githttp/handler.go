@@ -237,19 +237,16 @@ func (h *Handler) ServeRead(writer http.ResponseWriter, request *http.Request, r
 		http.Error(writer, "this address can only be cloned and fetched; pushes are refused", http.StatusForbidden)
 		return
 	}
-	// Git protocol version 2 fetches any object a client names by its ID,
-	// also one only a hidden ref such as kept history reaches. Version 0
-	// fetches only what the advertised refs reach.
-	request.Header.Del("Git-Protocol")
 	route.config = readOnlyConfig
+	route.scope = branchesAndTags
 	h.serve(writer, request, route)
 }
 
 // readOnlyConfig limits a ServeRead fetch to branches and tags, whatever
 // the repository's own config says. Command-line scope comes after the
 // repository's config, so the last hideRefs entries decide: every ref is
-// hidden, then branches and tags are shown again. No object is served by
-// its ID alone.
+// hidden, then branches and tags are shown again. The wants of a fetch are
+// checked against the same refs before Git runs (fetchWantsGate).
 var readOnlyConfig = [][2]string{
 	{"uploadpack.hideRefs", "refs/"},
 	{"uploadpack.hideRefs", "!refs/heads/"},
@@ -512,6 +509,28 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 			return err
 		}}
 	}
+	// wantsPending holds the response back while a fetch's wants are being
+	// checked: Git's headers must not go out before a refusal can replace
+	// them, however long the check takes on a large repository.
+	var wantsPending atomic.Bool
+	var committed *responseState
+	if route.service == "git-upload-pack" && request.Method == http.MethodPost {
+		wantsPending.Store(true)
+		scope := route.scope
+		if scope == nil {
+			scope = mainScope
+		}
+		body = &fetchWantsGate{ReadCloser: body, v2: usesProtocolV2(request.Header.Get("Git-Protocol")), check: func(wants []string) error {
+			err := h.checkWants(streamContext, repositoryPath, scope, wants)
+			if errors.Is(err, errFetchCheck) {
+				logCause(request.Context(), fmt.Sprintf("Git fetch from repository %q could not check its wants", route.repositoryID), err)
+			}
+			return err
+		}, passed: func() {
+			wantsPending.Store(false)
+			committed.scheduleFlush()
+		}}
+	}
 	input = &observedBody{ReadCloser: body, stop: cancelStream, closed: make(chan struct{})}
 	// The response can still go out before the end of the request body, when
 	// Git writes more than net/http buffers or stops reading early. Without
@@ -520,8 +539,8 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	// closes the connection after a body left unread, so responseState does:
 	// otherwise a client that reuses the connection gets EOF.
 	_ = controller.EnableFullDuplex()
-	committed := &responseState{ResponseWriter: writer, deadlines: deadlines, flushDelay: responseFlushDelay,
-		bodyEnded: func() bool { return request.ContentLength == 0 || network.ended.Load() }}
+	committed = &responseState{ResponseWriter: writer, deadlines: deadlines, flushDelay: responseFlushDelay,
+		bodyEnded: func() bool { return !wantsPending.Load() && (request.ContentLength == 0 || network.ended.Load()) }}
 	network.onEnd = committed.requestBodyEnded
 	defer committed.stop()
 	var report *pushReport
@@ -548,6 +567,26 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	}
 	if err == nil && route.service == "git-receive-pack" && h.OnReceive != nil {
 		h.OnReceive(route.repositoryID)
+	}
+	if refusal := input.firstError(); refusal != nil && !committed.started() {
+		var notOurRef errNotOurRef
+		switch {
+		case errors.As(refusal, &notOurRef):
+			logGitFailure(route, request.Method, "a want is not reached by an advertised ref")
+			answerNotOurRef(committed, notOurRef.oid)
+			return
+		case errors.Is(refusal, errFetchRequest):
+			logGitFailure(route, request.Method, "Git protocol error")
+			http.Error(committed, errFetchRequest.Error(), http.StatusBadRequest)
+			return
+		case errors.Is(refusal, errFetchTooLarge):
+			logGitFailure(route, request.Method, errFetchTooLarge.Error())
+			http.Error(committed, requestTooLarge, http.StatusRequestEntityTooLarge)
+			return
+		case errors.Is(refusal, errFetchCheck):
+			http.Error(committed, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
 	}
 	inBand := ""
 	if report != nil {
@@ -929,6 +968,8 @@ type route struct {
 	query   string
 	// config is Git config at command-line scope for this request only.
 	config [][2]string
+	// scope names the refs a fetch may reach; nil means mainScope.
+	scope *fetchScope
 }
 
 func parseRoute(request *http.Request) (route, bool) {
@@ -1130,7 +1171,7 @@ func hopByHop(name string) bool {
 // last byte, and a response that it passes on before that read makes it fail
 // the request. Later flushes cannot overtake that read, so they go out at
 // once, and Git's keepalives reach a proxy with a read timeout in time.
-const responseFlushDelay = 200 * time.Millisecond
+var responseFlushDelay = 200 * time.Millisecond
 
 // responseState passes the backend response on under the transfer deadlines.
 //
