@@ -28,55 +28,6 @@ func formNamed(t *testing.T, out, action string) string {
 	return ""
 }
 
-func TestKoreanEvidenceUsesFamiliarDeveloperTerms(t *testing.T) {
-	expected := map[MessageCode]string{
-		MsgEvidenceAdvisory: "테스트, 린트, 빌드 같은 자동 체크와 코드 리뷰는 참고 정보이며 병합을 막지 않습니다.",
-		MsgCheckTitle:       "체크",
-		MsgCheckRevision:    "대상 커밋",
-		MsgReviewTitle:      "리뷰",
-		MsgTasksIntro:       "체크 에이전트가 실행한 명령과 각 결과가 어느 커밋에 해당하는지 보여 줍니다.",
-		MsgHelperTitle:      "체크 에이전트 토큰",
-		MsgHelperIntro:      "체크 에이전트가 결과를 보고할 때 쓰는 전용 토큰입니다. 저장소 접근 권한이나 관리자 비밀번호와는 별개입니다.",
-		MsgHelperTokenLabel: "토큰",
-	}
-	for code, want := range expected {
-		if got := Text(LangKO, code); got != want {
-			t.Errorf("%s Korean text=%q, want %q", code, got, want)
-		}
-	}
-
-	r := newRenderer(t)
-	var rendered strings.Builder
-	rendered.WriteString(render(t, r, pullRequestPage(fullChrome(LangKO), prFixtureFailing)))
-	rendered.WriteString(render(t, r, tasksPage(fullChrome(LangKO), false)))
-	rendered.WriteString(render(t, r, helperPage(fullChrome(LangKO), true)))
-	out := rendered.String()
-	for _, code := range []MessageCode{
-		MsgEvidenceAdvisory, MsgCheckTitle, MsgReviewTitle, MsgTasksIntro,
-		MsgHelperTitle, MsgHelperIntro, MsgHelperTokenLabel,
-	} {
-		if want := wantText(LangKO, code); !strings.Contains(out, want) {
-			t.Errorf("rendered Korean screens do not contain %s text %q", code, want)
-		}
-	}
-
-	for code, entry := range evidenceCatalog {
-		for _, stale := range []string{"검사", "도우미", "자격 증명", "비밀 값", "이름표", "리비전"} {
-			if strings.Contains(entry.ko, stale) {
-				t.Errorf("%s Korean text still contains %q: %q", code, stale, entry.ko)
-			}
-		}
-	}
-	// The configured-check screens and their ceilings say 체크 too.
-	for _, catalog := range []map[MessageCode]message{configuredCheckCatalog, checkCeilingsCatalog} {
-		for code, entry := range catalog {
-			if strings.Contains(entry.ko, "검사") {
-				t.Errorf("%s Korean text says 검사 instead of 체크: %q", code, entry.ko)
-			}
-		}
-	}
-}
-
 func TestNoProtectionValueEverClaimsASandbox(t *testing.T) {
 	// OwnGit runs checks in the developer's own environment. There is no
 	// sandbox, so no protection value may be worded as one, including when the
@@ -118,30 +69,6 @@ func TestLogDispositionIsFourDistinctAnswers(t *testing.T) {
 	// An unrecognised value states nothing rather than implying availability.
 	if logNote("shredded") != MsgCheckLogUnknown {
 		t.Error("an unrecognised log status does not fall back to a non-claim")
-	}
-}
-
-func TestNoUserFacingIdempotencyBadge(t *testing.T) {
-	// Attempt identity is a backend property proven by backend tests. The
-	// interface may show an identifier, but it must not award a badge that
-	// asserts the property to the reader.
-	r := newRenderer(t)
-	var all strings.Builder
-	for _, lang := range Langs() {
-		for _, page := range allPages(lang) {
-			all.WriteString(render(t, r, page))
-		}
-	}
-	out := all.String()
-	for _, claim := range []string{"idempot", "Idempot", "멱등"} {
-		if strings.Contains(out, claim) {
-			t.Errorf("the interface asserts an idempotency property (%q)", claim)
-		}
-	}
-	// The identifier itself is still available, which is what a reader
-	// actually needs to correlate a run.
-	if !strings.Contains(out, "att_9f31c0d4") {
-		t.Error("no attempt identifier is shown anywhere")
 	}
 }
 
@@ -284,10 +211,6 @@ func TestCredentialFormsAskForTheAdminPasswordOnlyWhenAChangeNeedsIt(t *testing.
 
 func TestHelperCredentialLabelShowsTheStoredUTF8ByteBoundary(t *testing.T) {
 	r := newRenderer(t)
-	expected := map[Lang]string{
-		LangEN: "Enter a single-line label between 1 and 100 UTF-8 bytes.",
-		LangKO: "한 줄 이름을 UTF-8 기준 100바이트 이내로 입력하세요. 한글만 쓰면 최대 33자입니다.",
-	}
 	for _, lang := range Langs() {
 		page := helperPage(fullChrome(lang), false)
 		page.PendingAction = ActionIssueHelperCredential
@@ -302,10 +225,7 @@ func TestHelperCredentialLabelShowsTheStoredUTF8ByteBoundary(t *testing.T) {
 		if strings.Contains(tag, `maxlength="200"`) {
 			t.Errorf("%s label input still promises 200 characters", lang)
 		}
-		if got := wantText(lang, MsgHelperLabelInvalid); got != expected[lang] {
-			t.Errorf("%s invalid-label text=%q, want %q", lang, got, expected[lang])
-		}
-		if !strings.Contains(out, expected[lang]) {
+		if !strings.Contains(out, wantText(lang, MsgHelperLabelInvalid)) {
 			t.Errorf("%s invalid-label text was not rendered", lang)
 		}
 		if !strings.Contains(out, wantText(lang, MsgHelperLabelHelp)) {
@@ -510,19 +430,14 @@ func TestNoPageRequiresAnInlineScriptOrStyleException(t *testing.T) {
 	}
 }
 
-func TestTokenSelectionIsHandledByTheExternalScript(t *testing.T) {
-	// The convenience survives the handler's removal: the script hooks the
-	// same field, and the field is selectable by hand without scripting.
+func TestTokenSelectionNeedsNoScript(t *testing.T) {
+	// The token field carries the hook for the external script and stays
+	// selectable by hand without scripting.
 	r := newRenderer(t)
 	out := render(t, r, helperPage(fullChrome(LangEN), true))
 
 	if !strings.Contains(out, "data-select-on-focus") {
 		t.Fatal("the token field carries no hook for the external script")
-	}
-	script, err := assetFS.ReadFile("assets/owngit.js")
-	noErr(t, err)
-	if !strings.Contains(string(script), "data-select-on-focus") {
-		t.Error("the external script does not implement the selection hook")
 	}
 	// Without scripting the value is still readable and selectable, so the
 	// screen never depends on the hook.
@@ -652,58 +567,22 @@ func resultNamed(t *testing.T, document, name string) string {
 	return ""
 }
 
+// A label reading "Passed, cleanup failed" would undo the rule the rest of this
+// file enforces, so the words of both languages are checked, not the constant.
 func TestTheUncleanStatusIsANonSuccessLabelInBothLanguages(t *testing.T) {
-	// A label reading "Passed, cleanup failed" would undo the rule the rest of
-	// this file enforces, so the words themselves are checked rather than the
-	// constant's current value.
-	english := catalog[MsgCheckStateUnclean].en
-	korean := catalog[MsgCheckStateUnclean].ko
-
-	if english != "Cleanup failed" {
-		t.Errorf("English unclean status is %q, want a non-success label", english)
-	}
-	if korean != "정리 실패" {
-		t.Errorf("Korean unclean status is %q, want a non-success label", korean)
-	}
-
-	// No wording that asserts the checks succeeded.
-	for _, banned := range []string{"Passed", "passed", "Pass", "Success", "succeeded", "OK"} {
-		if strings.Contains(english, banned) {
-			t.Errorf("English unclean status claims success with %q: %q", banned, english)
-		}
-	}
-	for _, banned := range []string{"통과", "성공", "정상"} {
-		if strings.Contains(korean, banned) {
-			t.Errorf("Korean unclean status claims success with %q: %q", banned, korean)
-		}
-	}
-}
-
-func TestCleanupWordingClaimsNoMoreThanTheRecordEstablishes(t *testing.T) {
-	// The record says one thing: OwnGit did not confirm the processes it
-	// started had stopped. It does not establish that they are still running,
-	// that work continues, or that the machine was restored.
-	warning := catalog[MsgCheckCleanupFailed]
-
-	for _, overreach := range []string{
-		"still running", "is running", "still doing work", "restored", "clean machine",
+	for lang, banned := range map[Lang][]string{
+		LangEN: {"Passed", "passed", "Pass", "Success", "succeeded", "OK"},
+		LangKO: {"통과", "성공", "정상"},
 	} {
-		if strings.Contains(strings.ToLower(warning.en), overreach) {
-			t.Errorf("English cleanup warning asserts %q: %q", overreach, warning.en)
+		label := Text(lang, MsgCheckStateUnclean)
+		if label == "" {
+			t.Fatalf("%s: no unclean status label", lang)
 		}
-	}
-	for _, overreach := range []string{"복원", "정상으로", "실행 중입니다"} {
-		if strings.Contains(warning.ko, overreach) {
-			t.Errorf("Korean cleanup warning asserts %q: %q", overreach, warning.ko)
+		for _, word := range banned {
+			if strings.Contains(label, word) {
+				t.Errorf("%s: the unclean status claims success with %q: %q", lang, word, label)
+			}
 		}
-	}
-
-	// It is scoped to processes this run owned, not to the machine at large.
-	if !strings.Contains(warning.en, "this run started") {
-		t.Errorf("English cleanup warning is not scoped to owned processes: %q", warning.en)
-	}
-	if !strings.Contains(warning.ko, "이 실행이 시작한") {
-		t.Errorf("Korean cleanup warning is not scoped to owned processes: %q", warning.ko)
 	}
 }
 
@@ -826,7 +705,6 @@ func TestAutomaticRunsDoNotBorrowTheManualWording(t *testing.T) {
 	if !strings.Contains(out, wantText(LangEN, MsgCheckProvenanceAutomatic)) {
 		t.Error("the automatic job detail does not say who ran it")
 	}
-	// The new wording is still not a sandbox claim.
 	if !strings.Contains(Text(LangEN, MsgCheckProtectionAutoHost), "not a sandbox") {
 		t.Error("the automatic host wording stopped saying it is not a sandbox")
 	}

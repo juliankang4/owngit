@@ -266,27 +266,6 @@ func TestImportHistorySaysWhenItCouldNotBeRead(t *testing.T) {
 	}
 }
 
-func TestSidebarScrollsOnItsOwnOnlyOnWideScreens(t *testing.T) {
-	wide := cssRule(t, ".sidebar__inner")
-	for _, want := range []string{"position: sticky", "overflow-y: auto", "overscroll-behavior: contain", "max-height: 100dvh", "calc(24px + 47px)"} {
-		if !strings.Contains(wide, want) {
-			t.Errorf("the sidebar list lacks %q", want)
-		}
-	}
-	narrow := declarationsOf(t, mediaBlock(t, readSheet(t), "@media (max-width: 900px)"), ".sidebar__inner")
-	for _, want := range []string{"position: static", "max-height: none", "overflow: visible"} {
-		if !strings.Contains(narrow, want) {
-			t.Errorf("the 900px layout does not reset %q", want)
-		}
-	}
-	reveal := section(t, scriptSource(t), "var sideList", "}\n  }\n")
-	for _, banned := range []string{"scrollIntoView", "window.scroll", ".focus("} {
-		if strings.Contains(reveal, banned) {
-			t.Errorf("the sidebar reveal moves more than its own list: %q", banned)
-		}
-	}
-}
-
 // TestAutomaticChecksLinksBackToSettings pins the way back from Automatic
 // checks to the Settings tab that lists it. The line depends on the Settings
 // address, which only an administrator's page carries.

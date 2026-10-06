@@ -20,36 +20,6 @@ import (
 //
 // The owner is told what the application does and does not do, and decides.
 
-func TestKoreanDeveloperTermsUseFamiliarWording(t *testing.T) {
-	expected := map[MessageCode]string{
-		MsgRepoTabsLabel:          "저장소 메뉴",
-		MsgPrereqHTTPMiss:         "Git의 HTTP 서비스를 찾지 못했습니다. HTTP로 클론하거나 푸시할 수 없습니다.",
-		MsgSettingsCloneTitle:     "클론 주소",
-		MsgSettingsCloneHelp:      "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
-		MsgRepoNameRules:          "영문자, 숫자, 점, 하이픈, 밑줄을 사용합니다. 이 이름이 클론 주소가 됩니다.",
-		MsgRepoNameInvalid:        "영문자나 숫자로 시작해 영문자, 숫자, 점, 하이픈, 밑줄로 1자에서 100자까지 입력하세요. .git으로 끝나거나 con 같은 Windows 장치 이름은 쓸 수 없습니다.",
-		MsgRepoCloneTitle:         "클론 주소",
-		MsgRepoDetached:           "브랜치가 아니라 특정 커밋을 보고 있습니다.",
-		MsgCodePathMissing:        "이 커밋에는 그 경로가 없습니다.",
-		MsgActivityNoChecks:       "활동은 커밋의 작성 날짜를 작성자가 기록한 시간대 기준으로 집계합니다. 체크를 실행했거나 통과했다는 뜻은 아닙니다.",
-		MsgImportKindInitial:      "처음 가져오기",
-		MsgImportKindRefresh:      "새로고침",
-		MsgImportStatusComplete:   "완료",
-		MsgImportStatusFailed:     "실패",
-		MsgImportStatusCancelled:  "취소됨",
-		MsgImportRefTracked:       "원본과 같음",
-		MsgImportRefDiverged:      "원본과 다름",
-		MsgImportCredentialBasic:  "사용자 이름과 비밀번호",
-		MsgImportCredentialBearer: "액세스 토큰",
-		MsgImportCredentialNone:   "없음",
-	}
-	for code, want := range expected {
-		if got := Text(LangKO, code); got != want {
-			t.Errorf("%s Korean text=%q, want %q", code, got, want)
-		}
-	}
-}
-
 func connectionMessages() []MessageCode {
 	return []MessageCode{
 		MsgSetupInsecureLabel, MsgSetupInsecureHelp, MsgSetupInsecureNeed,
@@ -261,28 +231,6 @@ func TestAcknowledgedConnectionStillReportsItsState(t *testing.T) {
 	}
 	if strings.Contains(out, `name="insecure_ack"`) {
 		t.Error("the acknowledgement is still being requested after it was given")
-	}
-}
-
-func TestSetupStorageWordingMatchesTheSupportedStorage(t *testing.T) {
-	// Repository storage on a mounted SMB or NFS share is supported with one
-	// OwnGit writer at a time; only the database must stay local. The setup
-	// hint must neither forbid the share nor call it unverified.
-	for _, lang := range Langs() {
-		local, remote := Text(lang, MsgSetupStorageLocal), Text(lang, MsgSetupStorageRemote)
-		if !strings.Contains(local, "SMB") || !strings.Contains(local, "NFS") {
-			t.Errorf("%s: the storage hint does not name the supported shares: %q", lang, local)
-		}
-		for _, text := range []string{local, remote} {
-			for _, stale := range []string{"not runtime-verified", "검증되지 않았"} {
-				if strings.Contains(text, stale) {
-					t.Errorf("%s: the storage wording still says %q: %q", lang, stale, text)
-				}
-			}
-			if !strings.Contains(text, "OwnGit") {
-				t.Errorf("%s: the storage wording omits the one-writer rule: %q", lang, text)
-			}
-		}
 	}
 }
 

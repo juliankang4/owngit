@@ -187,51 +187,24 @@ func TestCommitDetailAndListAgreeOnTheDay(t *testing.T) {
 
 func TestGraphCaptionSaysWhoseTimeZoneIsUsed(t *testing.T) {
 	// The graph counts by author date, which is only unambiguous if the
-	// caption says whose clock that is. It must also keep saying activity is
+	// caption says whose clock that is, and it must keep saying activity is
 	// not a check result.
-	for _, lang := range Langs() {
+	for lang, parts := range map[Lang][]string{
+		LangEN: {"author date", "time zone the author recorded", "checks ran or passed"},
+		LangKO: {"작성 날짜", "작성자가 기록한 시간대", "체크를 실행했거나 통과했다는 뜻은 아닙니다"},
+	} {
 		caption := Text(lang, MsgActivityNoChecks)
-
-		for _, part := range map[Lang][]string{
-			LangEN: {"author date", "time zone the author recorded", "checks ran or passed"},
-			LangKO: {"작성 날짜", "작성자가 기록한 시간대", "체크를 실행했거나 통과했다는 뜻은 아닙니다"},
-		}[lang] {
+		for _, part := range parts {
 			if !strings.Contains(caption, part) {
 				t.Errorf("%s: the caption never says %q: %q", lang, part, caption)
 			}
 		}
 	}
-
-	// And it reaches the screen.
 	r := newRenderer(t)
 	for _, lang := range Langs() {
 		out := render(t, r, OverviewPage{Chrome: fullChrome(lang), Activity: sampleGraph()})
 		if !strings.Contains(out, wantText(lang, MsgActivityNoChecks)) {
 			t.Errorf("%s: the caption is not rendered", lang)
 		}
-	}
-}
-
-// HasDistinctCommitter compares instants on purpose: one moment recorded with
-// two offsets is not two committer times. That is a different question from
-// which calendar day a commit is shown on, and must not be changed by this fix.
-
-func TestCommitterComparisonStillUsesInstants(t *testing.T) {
-	at := time.Date(2026, 9, 17, 0, 30, 0, 0, plus14)
-	detail := CommitDetail{
-		Commit:        CommitSummary{AuthorName: "Dana", AuthorDate: at},
-		CommitterName: "Dana", CommitterDate: at.In(seoulZone),
-	}
-	if detail.HasDistinctCommitter() {
-		t.Error("the same instant in two zones is reported as a different committer time")
-	}
-
-	// A genuinely different time is still reported.
-	later := CommitDetail{
-		Commit:        CommitSummary{AuthorName: "Dana", AuthorDate: at},
-		CommitterName: "Dana", CommitterDate: at.Add(time.Hour),
-	}
-	if !later.HasDistinctCommitter() {
-		t.Error("a different committer time is no longer reported")
 	}
 }

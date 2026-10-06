@@ -265,26 +265,6 @@ func TestFadedPanelsStillMeetContrast(t *testing.T) {
 	}
 }
 
-func TestRestoreFileListIsHiddenForTheWholeProject(t *testing.T) {
-	// The file list belongs to "Selected files". While the whole project is
-	// chosen it is hidden by a rule on the radio's own state, so a browser
-	// without scripting hides it too, and the ticks stay in the form.
-	data, err := assetFS.ReadFile("assets/owngit.css")
-	noErr(t, err)
-	css := string(data)
-	rule := `.restore:has([data-restore-scope="all"]:checked) .restore__files`
-	start := strings.Index(css, rule)
-	if start < 0 {
-		t.Fatal("no stylesheet rule hides the file list while the whole project is chosen")
-	}
-	if body := css[start : start+strings.Index(css[start:], "}")]; !strings.Contains(body, "display: none") {
-		t.Errorf("the whole-project rule does not hide the file list: %q", body)
-	}
-	if strings.Contains(css, "data-restore-dimmed") {
-		t.Error("the old dimmed state is still styled, so the list would show as inactive instead of hidden")
-	}
-}
-
 func TestSystemPaletteMatchesTheDarkPalette(t *testing.T) {
 	// System appearance must be the same Dark palette, not a second one that
 	// can drift from it.

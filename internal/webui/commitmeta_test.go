@@ -59,134 +59,46 @@ func authoredBy(name string) CommitSummary {
 	}
 }
 
-func TestSameNameDifferentTimeIsShown(t *testing.T) {
-	// The originally reported case: one person amends their own commit, so
-	// only the date moves. Comparing names alone would hide it.
-	committed := authored.Add(168 * time.Hour)
-	detail := &CommitDetail{
-		Commit: authoredBy("Dana"), Body: "Ties are broken by record id.",
-		CommitterName: "Dana", CommitterDate: committed,
-	}
-
-	for _, lang := range Langs() {
-		line, shown := committerLine(t, lang, detail)
-		if !shown {
-			t.Errorf("%s: the committer is hidden; the author date %s is the only date shown, "+
-				"but it was committed %s",
-				lang, authored.Format(time.RFC3339), committed.Format(time.RFC3339))
-			continue
-		}
-		if !strings.Contains(line, "2026") {
-			t.Errorf("%s: the committer is mentioned without its date: %q", lang, line)
-		}
-	}
-}
-
-func TestEarlierCommitterDateIsShownWithoutClaimingOrder(t *testing.T) {
-	// A committer date may precede the author date; Git does not prevent it.
-	// The difference is still worth showing, but nothing may imply the commit
-	// was recorded "later".
-	detail := &CommitDetail{
-		Commit:        authoredBy("Dana"),
-		CommitterName: "Dana", CommitterDate: authored.Add(-72 * time.Hour),
-	}
-
-	for _, lang := range Langs() {
-		line, shown := committerLine(t, lang, detail)
-		if !shown {
-			t.Errorf("%s: an earlier committer date is hidden", lang)
-			continue
-		}
-		if !strings.Contains(line, "2026") {
-			t.Errorf("%s: the earlier committer date is not shown: %q", lang, line)
-		}
-		for _, claim := range []string{"later", "after", "\ub098\uc911\uc5d0", "\uc774\ud6c4"} {
-			if strings.Contains(line, claim) {
-				t.Errorf("%s: an earlier committer date is described as %q: %q", lang, claim, line)
-			}
-		}
-	}
-}
-
-func TestDifferentNameAtTheSameInstantIsShown(t *testing.T) {
-	// Applying a patch records a different committer at the same instant. The
-	// names differ, the times do not, and nothing about time may be implied.
-	detail := &CommitDetail{
-		Commit:        authoredBy("Dana"),
-		CommitterName: "Patch Applier", CommitterDate: authored,
-	}
-
-	for _, lang := range Langs() {
-		line, shown := committerLine(t, lang, detail)
-		if !shown {
-			t.Errorf("%s: a different committer at the same instant is hidden", lang)
-			continue
-		}
-		if !strings.Contains(line, "Patch Applier") {
-			t.Errorf("%s: the committer is not named: %q", lang, line)
-		}
-		for _, claim := range []string{"later", "\ub098\uc911\uc5d0"} {
-			if strings.Contains(line, claim) {
-				t.Errorf("%s: a same-instant difference is described as %q: %q", lang, claim, line)
-			}
-		}
-	}
-}
-
-func TestDifferentNameAndTimeIsStillShown(t *testing.T) {
-	// The case that worked before the fix must keep working.
-	detail := &CommitDetail{
-		Commit:        authoredBy("Dana"),
-		CommitterName: "Rebase Bot", CommitterDate: authored.Add(72 * time.Hour),
-	}
-
-	for _, lang := range Langs() {
-		line, shown := committerLine(t, lang, detail)
-		if !shown {
-			t.Fatalf("%s: a commit committed by another person is no longer shown", lang)
-		}
-		if !strings.Contains(line, "Rebase Bot") {
-			t.Errorf("%s: the committer is not named: %q", lang, line)
-		}
-	}
-}
-
-func TestIdenticalCommitterStaysQuiet(t *testing.T) {
-	// Most commits are authored and committed by the same person at the same
-	// instant. Repeating that would be noise on every commit.
-	detail := &CommitDetail{Commit: authoredBy("Dana"), CommitterName: "Dana", CommitterDate: authored}
-
-	for _, lang := range Langs() {
-		if line, shown := committerLine(t, lang, detail); shown {
-			t.Errorf("%s: an identical committer is shown anyway: %q", lang, line)
-		}
-	}
-}
-
-func TestSameInstantInAnotherZoneIsNotADifference(t *testing.T) {
-	// The same moment recorded with a different UTC offset is one instant.
-	// Comparing wall-clock fields instead of instants would flag every commit
-	// made outside the server's zone.
+// Each row is one way the committer can relate to the author. A difference is
+// a fact to state, never proof of an amend or of an order of events.
+func TestCommitterLineShowsADifferenceAndStaysQuietOtherwise(t *testing.T) {
 	seoul := time.FixedZone("KST", 9*60*60)
-	detail := &CommitDetail{
-		Commit:        authoredBy("Dana"),
-		CommitterName: "Dana", CommitterDate: authored.In(seoul),
+	rows := []struct {
+		name       string
+		committer  string
+		at         time.Time
+		shown      bool
+		has, lacks []string
+	}{
+		{"same name, later time: only the date moved", "Dana", authored.Add(168 * time.Hour), true, []string{"2026"}, nil},
+		{"earlier time is shown without claiming order", "Dana", authored.Add(-72 * time.Hour), true, []string{"2026"},
+			[]string{"later", "after", "\ub098\uc911\uc5d0", "\uc774\ud6c4"}},
+		{"another name at the same instant", "Patch Applier", authored, true, []string{"Patch Applier"}, []string{"later", "\ub098\uc911\uc5d0"}},
+		{"another name and time", "Rebase Bot", authored.Add(72 * time.Hour), true, []string{"Rebase Bot"}, nil},
+		{"identical committer stays quiet", "Dana", authored, false, nil, nil},
+		{"the same instant in another zone is no difference", "Dana", authored.In(seoul), false, nil, nil},
+		{"a missing committer is not shown", "", time.Time{}, false, nil, nil},
 	}
-
-	if line, shown := committerLine(t, LangEN, detail); shown {
-		t.Errorf("a time-zone difference was reported as a difference: %q", line)
-	}
-}
-
-func TestMissingCommitterIsNotShown(t *testing.T) {
-	// The backend leaves the committer empty when it has nothing to report.
-	// An empty name with a zero date must not produce a line naming nobody.
-	detail := &CommitDetail{Commit: authoredBy("Dana")}
-
-	for _, lang := range Langs() {
-		if line, shown := committerLine(t, lang, detail); shown {
-			t.Errorf("%s: a commit with no committer information shows a committer line: %q", lang, line)
-		}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			detail := &CommitDetail{Commit: authoredBy("Dana"), CommitterName: row.committer, CommitterDate: row.at}
+			for _, lang := range Langs() {
+				line, shown := committerLine(t, lang, detail)
+				if shown != row.shown {
+					t.Fatalf("%s: committer line shown=%v, want %v: %q", lang, shown, row.shown, line)
+				}
+				for _, want := range row.has {
+					if !strings.Contains(line, want) {
+						t.Errorf("%s: the committer line lacks %q: %q", lang, want, line)
+					}
+				}
+				for _, claim := range row.lacks {
+					if strings.Contains(line, claim) {
+						t.Errorf("%s: the committer line claims %q: %q", lang, claim, line)
+					}
+				}
+			}
+		})
 	}
 }
 

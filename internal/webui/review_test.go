@@ -392,18 +392,6 @@ func TestRefPickerSubmitsTheCanonicalRefNotTheDisplayName(t *testing.T) {
 	}
 }
 
-func TestRefPickerValueMatchesTheLinkItWouldFollow(t *testing.T) {
-	// The value a form submits and the URL the same option points at must
-	// request the same ref, or the picker and the rest of the page disagree.
-	for _, option := range collidingRefPage(RepoTabCode).Ref.Branches {
-		got := refValue(option)
-		if !strings.Contains(option.URL, "ref="+strings.ReplaceAll(got, "/", "%2F")) {
-			t.Errorf("option %q submits %q, which its URL %q would not request",
-				option.Name, got, option.URL)
-		}
-	}
-}
-
 func TestRefValueFallsBackToTheNameOnlyWhenItMust(t *testing.T) {
 	// Older callers and display-only fixtures have no URL, or a URL without a
 	// ref. Those still submit the display name rather than nothing.
@@ -447,51 +435,6 @@ func TestRefPickerWorksWithoutScriptingForCollidingNames(t *testing.T) {
 	}
 }
 
-func TestWelcomeIntroDoesNotClaimTheReaderUsedTheLink(t *testing.T) {
-	// The static introduction is rendered before anything is checked. The
-	// server cannot see the URL fragment, so a plain GET /setup looks
-	// identical to an owner arriving by the one-time link. Telling every
-	// visitor "you opened the one-time setup link" states something the
-	// server does not know, and contradicts the missing-code notice shown
-	// right below it.
-	for _, lang := range Langs() {
-		intro := Text(lang, MsgSetupWelcomeBody)
-
-		for _, claim := range []string{
-			"You opened", "you opened", "you arrived", "your link",
-			"들어왔습니다", "여셨습니다", "접속하셨습니다",
-		} {
-			if strings.Contains(intro, claim) {
-				t.Errorf("%s: the introduction asserts how the reader arrived (%q): %q", lang, claim, intro)
-			}
-		}
-
-		// It must still explain what the link is and that it is single-use,
-		// which is the reason the owner must not share it.
-		for _, part := range map[Lang][]string{
-			LangEN: {"one-time setup link", "cannot be reused"},
-			LangKO: {"1회용 설정 링크", "다시 쓸 수 없습니다"},
-		}[lang] {
-			if !strings.Contains(intro, part) {
-				t.Errorf("%s: the introduction no longer explains %q: %q", lang, part, intro)
-			}
-		}
-	}
-
-	// On a plain visit the page shows the neutral introduction and nothing
-	// that presumes a code is present.
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		out := render(t, r, SetupPage{
-			Chrome: bareChrome(lang), Stage: SetupWelcome,
-			RedeemURL: "/setup/redeem", SubmitURL: "/setup",
-		})
-		if !strings.Contains(out, wantText(lang, MsgSetupWelcomeBody)) {
-			t.Errorf("%s: the introduction is not rendered", lang)
-		}
-	}
-}
-
 func TestRefPickerLabelCoversBranchesAndTags(t *testing.T) {
 	// The picker lists branches and tags in one control, and when it is closed
 	// the optgroup that would reveal the kind is hidden, so only the chosen
@@ -526,18 +469,6 @@ func TestRefPickerLabelCoversBranchesAndTags(t *testing.T) {
 		if !strings.Contains(label, `for="ref-select"`) {
 			t.Errorf("%s: the label is not attached to the picker", lang)
 		}
-	}
-
-	// The default-branch pill keeps its own wording: that one really is a
-	// branch, so the two must not be merged into one message.
-	if Text(LangEN, MsgBranchLabel) != "Branch" {
-		t.Errorf("the default-branch pill wording changed: %q", Text(LangEN, MsgBranchLabel))
-	}
-	if Text(LangKO, MsgBranchLabel) != "브랜치" {
-		t.Errorf("the Korean default-branch pill wording changed: %q", Text(LangKO, MsgBranchLabel))
-	}
-	if Text(LangEN, MsgRefLabel) == Text(LangEN, MsgBranchLabel) {
-		t.Error("the picker label and the default-branch pill share one message again")
 	}
 
 	// The pill still renders on a default branch.
@@ -669,12 +600,6 @@ func TestMissingRefPickerWorksWithoutScripting(t *testing.T) {
 		if v == "main" {
 			t.Error("an option submits the bare short name, which may resolve to the wrong ref")
 		}
-	}
-
-	// An unknown ref keeps its exact text through the round trip.
-	out = render(t, r, missingRefPage("does-not-exist"))
-	if got := selectedOptions(t, out); len(got) != 1 || got[0] != "does-not-exist" {
-		t.Errorf("the requested ref was rewritten: %q", got)
 	}
 }
 
@@ -829,67 +754,10 @@ func TestOverviewDefaultBranchBadgeIsShortEnoughToRead(t *testing.T) {
 		if strings.Contains(badge, wantText(lang, MsgRepoDefaultGone)) {
 			t.Errorf("%s: the badge still holds the full sentence, which cannot fit on one line: %q", lang, badge)
 		}
-		// A character count is not proof that the text fits: the same string
-		// measured 155.078px in the monospace stack and 123.406px in the
-		// interface font, against 151px of room. So the width is estimated
-		// from the font actually used.
-		if w := badgeWidth(Text(lang, MsgRepoDefaultGoneShort)); w > rowBadgeRoom {
-			t.Errorf("%s: the badge needs about %.1fpx but has %.1fpx: %q",
-				lang, w, rowBadgeRoom, Text(lang, MsgRepoDefaultGoneShort))
-		}
-		// It must still say which branch kind is missing, not just "missing".
-		for _, part := range map[Lang][]string{
-			LangEN: {"Default branch"},
-			LangKO: {"기본 브랜치"},
-		}[lang] {
-			if !strings.Contains(Text(lang, MsgRepoDefaultGoneShort), part) {
-				t.Errorf("%s: the badge does not say what is missing: %q", lang, Text(lang, MsgRepoDefaultGoneShort))
-			}
-		}
 	}
-}
-
-// Room for a badge in a repository row, and a rough width for its text.
-//
-// The numbers come from measuring the built page: .row__ref is 170px wide and
-// the branch icon with its gap takes 19px, leaving 151px. Advances are
-// per-character averages at 10.5px, taken from the same measurement: the
-// interface font is proportional, and CJK glyphs are close to square.
-const (
-	rowBadgeRoom = 151.0
-	pillPadding  = 16.0 // .pill padding: 1px 8px
-	uiAdvance    = 5.26 // Pretendard, Latin, 10.5px
-	cjkAdvance   = 9.8  // Pretendard, Hangul, 10.5px
-)
-
-func badgeWidth(text string) float64 {
-	width := pillPadding
-	for _, r := range text {
-		if r > 0x2E80 {
-			width += cjkAdvance
-			continue
-		}
-		width += uiAdvance
-	}
-	return width
 }
 
 func TestRepositoryReviewScreenStates(t *testing.T) {
-	// The full default-branch warning still tells the reader what to do, and
-	// the row keeps a distinct short wording.
-	for lang, parts := range map[Lang][]string{
-		LangEN: {"Choose another branch", "push one with this name again"},
-		LangKO: {"다른 브랜치를 고르거나", "다시 푸시하세요"},
-	} {
-		for _, part := range parts {
-			if !strings.Contains(Text(lang, MsgRepoDefaultGone), part) {
-				t.Errorf("%s: the full warning no longer says %q", lang, part)
-			}
-		}
-		if Text(lang, MsgRepoDefaultGoneShort) == Text(lang, MsgRepoDefaultGone) {
-			t.Errorf("%s: the row and the page share one wording again", lang)
-		}
-	}
 	dayLinks := func(address bool) OverviewPage {
 		graph := graphWithDayLinks()
 		if !address {

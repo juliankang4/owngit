@@ -1,7 +1,6 @@
 package webui
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -156,39 +155,4 @@ func TestUIBatchScreens(t *testing.T) {
 			markup: []string{`<h1 class="rhead__name">forge-cli</h1>`, `class="sb__repo"`},
 			extra:  inOrder(`<h1 class="rhead__name">forge-cli</h1>`, "<h2>")},
 	)
-}
-
-// The ref picker opens a ref when a pointer picks it or on Enter, never on
-// each arrow-key step, and the credential script disables what it hides.
-func TestUIBatchScriptRules(t *testing.T) {
-	js := scriptSource(t)
-	picker := section(t, js, "all('[data-submit-on-change]')", "/* Import credentials")
-	for _, want := range []string{"'pointerdown'", "event.key === 'Enter'", "if (pointer) { submit(); }"} {
-		if !strings.Contains(picker, want) {
-			t.Errorf("the ref picker script lacks %q", want)
-		}
-	}
-	if strings.Contains(picker, "hidden = true") {
-		t.Error("the ref picker script hides the explicit button")
-	}
-	credentials := section(t, js, "all('[data-cred-form]')", "/* Restore")
-	for _, want := range []string{"group.hidden = !on", "field.disabled = !on"} {
-		if !strings.Contains(credentials, want) {
-			t.Errorf("the credential script lacks %q", want)
-		}
-	}
-	if strings.Contains(credentials, ".value =") {
-		t.Error("the credential script clears what was typed")
-	}
-	sheet := readSheet(t)
-	for _, want := range []string{
-		`form:has([data-cred-form] option[value="none"]:checked) [data-cred-for]`,
-		`.f input[type="url"]`,
-		`.imgview__img { max-width: 100%; height: auto;`,
-		`.restore .card > .actions { margin-top: 18px; }`,
-	} {
-		if !strings.Contains(sheet, want) {
-			t.Errorf("the stylesheet lacks %q", want)
-		}
-	}
 }

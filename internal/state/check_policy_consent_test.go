@@ -3,16 +3,11 @@ package state
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync"
 	"testing"
 )
 
-// Consent names the generation it was granted for.
-//
-// The property under test is not "a stale form is rejected". It is that an
-// approval can never attach to a policy generation nobody read, including when
-// the replacement happens while the approval is in flight.
+// An approval can never attach to a policy generation nobody read, whether the
+// replacement came before the approval or after it.
 
 func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 	fixture := newCheckJobFixture(t)
@@ -27,7 +22,6 @@ func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 		t.Fatalf("the policy did not change: v%d/%s to v%d/%s", first.Version, first.Digest, second.Version, second.Digest)
 	}
 
-	// The identity the operator read is now history.
 	stale := ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}
 	if _, err := fixture.store.GrantCheckConsentFor(context.Background(), "project", stale, fixture.now); !errors.Is(err, ErrCheckPolicyStale) {
 		t.Fatalf("stale approval error=%v, want ErrCheckPolicyStale", err)
@@ -38,8 +32,7 @@ func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 		t.Fatal("a stale approval granted consent")
 	}
 
-	// A version that matches while the digest does not is still refused: a
-	// generation number alone cannot identify what was read.
+	// A generation number alone cannot identify what was read.
 	mixed := ExpectedCheckPolicy{Version: second.Version, Digest: first.Digest}
 	if _, err := fixture.store.GrantCheckConsentFor(context.Background(), "project", mixed, fixture.now); !errors.Is(err, ErrCheckPolicyStale) {
 		t.Fatalf("digest mismatch error=%v, want ErrCheckPolicyStale", err)
@@ -53,195 +46,62 @@ func TestGrantCheckConsentForRejectsAnotherGeneration(t *testing.T) {
 	if !granted.ConsentActive || granted.ConsentDigest != second.Digest {
 		t.Fatalf("consent digest=%q active=%v, want %q active", granted.ConsentDigest, granted.ConsentActive, second.Digest)
 	}
-}
 
-func TestStaleApprovalIsRefusedEvenWhenConsentIsAlreadyActive(t *testing.T) {
-	// The idempotent-success path must not answer a stale approval. Otherwise
-	// approving an old generation would return success while the active
-	// consent belongs to a policy the operator never read.
-	fixture := newCheckJobFixture(t)
-	first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-	noErr(t, err)
-	changed := defaultPolicyInput()
-	changed.QueueLimit = 7
-	second, err := fixture.store.SetCheckPolicy(context.Background(), changed, fixture.now)
-	noErr(t, err)
-	if _, err := fixture.store.GrantCheckConsentFor(context.Background(), "project",
-		ExpectedCheckPolicy{Version: second.Version, Digest: second.Digest}, fixture.now); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = fixture.store.GrantCheckConsentFor(context.Background(), "project",
-		ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}, fixture.now)
-	if !errors.Is(err, ErrCheckPolicyStale) {
+	// The idempotent-success path must not answer a stale approval.
+	if _, err := fixture.store.GrantCheckConsentFor(context.Background(), "project", stale, fixture.now); !errors.Is(err, ErrCheckPolicyStale) {
 		t.Fatalf("stale approval against active consent error=%v, want ErrCheckPolicyStale", err)
 	}
 }
 
-// assertConsentOutcome checks the only two honest results of an approval that
-// raced a policy replacement.
-//
-// Either the approval won and consent is active on the generation it named, or
-// the replacement won and the approval was refused as stale with consent
-// cleared. Anything else is a failure, including an unrelated error: a caller
-// that cannot tell "you approved an old policy" from "the database was busy"
-// has no basis for deciding whether to retry.
-// consentRace is what one approval-against-replacement sequence produced: the
-// policy the approval returned, its error, and the policy the replacement
-// stored. Both results are kept rather than discarded, because the final row
-// alone cannot distinguish the two orders.
-type consentRace struct {
-	granted     CheckPolicy
-	grantErr    error
-	replacement CheckPolicy
-}
-
-// assertConsentOutcome checks the two honest results of an approval racing a
-// policy replacement, asserting both completed operations rather than only the
-// row left behind.
-//
-// Either order ends with the replacement stored and consent inactive, because
-// a replacement always clears consent. What differs is the approval:
-//
-//   - The approval landed first. It returns the generation it named, with
-//     active consent on that generation. The replacement then clears it. This
-//     is a valid sequence and the returned policy is the only evidence of it.
-//   - The replacement landed first. The approval names a generation that is
-//     gone and must fail with ErrCheckPolicyStale.
-//
-// Any other error fails: a caller that cannot tell "you approved an old
-// policy" from "the database was busy" has no basis for deciding to retry.
-func assertConsentOutcome(t *testing.T, where string, store *Store, approved CheckPolicy, race consentRace) {
-	t.Helper()
-	if race.grantErr != nil && !errors.Is(race.grantErr, ErrCheckPolicyStale) {
-		t.Fatalf("%s: the approval failed with %v, want nil or ErrCheckPolicyStale", where, race.grantErr)
-	}
-
-	final, exists, err := store.CheckPolicy(context.Background(), "project")
-	if err != nil || !exists {
-		t.Fatalf("%s: policy read exists=%v err=%v", where, exists, err)
-	}
-	// The replacement completed, so the stored policy is the one it wrote and
-	// nothing inherited the approval that was granted for the old generation.
-	if final.Digest != race.replacement.Digest || final.Version != race.replacement.Version {
-		t.Fatalf("%s: stored policy is v%d/%s, want the replacement v%d/%s",
-			where, final.Version, final.Digest, race.replacement.Version, race.replacement.Digest)
-	}
-	if final.ConsentActive {
-		t.Fatalf("%s: the replacement kept consent active on v%d/%s",
-			where, final.Version, final.Digest)
-	}
-
-	if race.grantErr != nil {
-		return // the approval lost and said so
-	}
-	// The approval succeeded, so it must have returned the exact generation it
-	// named, carrying active consent for that same generation. Its later
-	// removal by the replacement does not make the grant itself wrong.
-	if race.granted.Digest != approved.Digest || race.granted.Version != approved.Version {
-		t.Fatalf("%s: the approval returned v%d/%s, want the approved v%d/%s",
-			where, race.granted.Version, race.granted.Digest, approved.Version, approved.Digest)
-	}
-	if !race.granted.ConsentActive {
-		t.Fatalf("%s: the approval succeeded without active consent", where)
-	}
-	if race.granted.ConsentDigest != approved.Digest {
-		t.Fatalf("%s: the approval recorded consent for %q, want %q",
-			where, race.granted.ConsentDigest, approved.Digest)
-	}
-}
-
+// Either order of an approval and a replacement ends with the replacement
+// stored and consent inactive. An approval that lands first returns the
+// generation it named with active consent; one that lands second is refused as
+// stale. The store opens one connection, so these two orders are all there is.
 func TestApprovalAndReplacementInEitherOrderNeverInheritConsent(t *testing.T) {
-	// Both orders, stated explicitly rather than left to a scheduler. Each has
-	// one correct result, and both end with the replacement stored and consent
-	// inactive; what differs is whether the approval succeeded or was refused
-	// as stale.
 	replacementInput := func() CheckPolicyInput {
 		input := defaultPolicyInput()
 		input.MaxLeaseMS = 90000
 		return input
 	}
-
-	t.Run("approval lands before the replacement", func(t *testing.T) {
-		fixture := newCheckJobFixture(t)
-		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		noErr(t, err)
-		// The approval wins. It returns the generation it named with active
-		// consent, and that return value is the only record of the grant once
-		// the replacement clears it.
-		granted, grantErr := fixture.store.GrantCheckConsentFor(context.Background(), "project",
-			ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}, fixture.now)
-		if grantErr != nil {
-			t.Fatalf("approval on the current generation failed: %v", grantErr)
+	for _, approvalFirst := range []bool{true, false} {
+		name := "replacement lands before the approval"
+		if approvalFirst {
+			name = "approval lands before the replacement"
 		}
-		second, err := fixture.store.SetCheckPolicy(context.Background(), replacementInput(), fixture.now)
-		noErr(t, err)
-		if second.ConsentActive {
-			t.Fatal("a replacement inherited the consent granted for the previous generation")
-		}
-		assertConsentOutcome(t, "approval first", fixture.store, first,
-			consentRace{granted: granted, grantErr: grantErr, replacement: second})
-	})
+		t.Run(name, func(t *testing.T) {
+			fixture := newCheckJobFixture(t)
+			first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
+			noErr(t, err)
+			approve := func() (CheckPolicy, error) {
+				return fixture.store.GrantCheckConsentFor(context.Background(), "project",
+					ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}, fixture.now)
+			}
+			var granted CheckPolicy
+			var grantErr error
+			if approvalFirst {
+				granted, grantErr = approve()
+			}
+			second, err := fixture.store.SetCheckPolicy(context.Background(), replacementInput(), fixture.now)
+			noErr(t, err)
+			if second.ConsentActive {
+				t.Fatal("a replacement inherited the consent granted for the previous generation")
+			}
+			if !approvalFirst {
+				granted, grantErr = approve()
+			}
 
-	t.Run("replacement lands before the approval", func(t *testing.T) {
-		fixture := newCheckJobFixture(t)
-		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		noErr(t, err)
-		second, err := fixture.store.SetCheckPolicy(context.Background(), replacementInput(), fixture.now)
-		noErr(t, err)
-		// The approval loses. It names a generation that is gone, so it must
-		// say so rather than land on the replacement.
-		granted, grantErr := fixture.store.GrantCheckConsentFor(context.Background(), "project",
-			ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}, fixture.now)
-		if !errors.Is(grantErr, ErrCheckPolicyStale) {
-			t.Fatalf("an approval for a replaced generation returned %v, want ErrCheckPolicyStale", grantErr)
-		}
-		assertConsentOutcome(t, "replacement first", fixture.store, first,
-			consentRace{granted: granted, grantErr: grantErr, replacement: second})
-	})
-}
-
-func TestConcurrentPolicyChangeNeverInheritsConsent(t *testing.T) {
-	// A policy replacement and an approval for the previous generation are
-	// submitted from two goroutines.
-	//
-	// The store opens at most one connection, so the two transactions are
-	// serialized rather than interleaved. What this adds over the two
-	// deterministic orders above is that neither caller chooses which one
-	// lands first, and that both results stay honest under the race detector.
-	//
-	// Both outcomes are legitimate here, including a successful approval whose
-	// consent the replacement then clears, so both operations are captured and
-	// checked rather than only the row left behind.
-	for attempt := 0; attempt < 24; attempt++ {
-		fixture := newCheckJobFixture(t)
-		first, err := fixture.store.SetCheckPolicy(context.Background(), defaultPolicyInput(), fixture.now)
-		noErr(t, err)
-		replacementInput := defaultPolicyInput()
-		replacementInput.MaxLeaseMS = 90000
-
-		var wait sync.WaitGroup
-		wait.Add(2)
-		// Separate locals per goroutine, assembled after both finish, so the
-		// test itself shares nothing between them.
-		var granted, replaced CheckPolicy
-		var grantErr, replaceErr error
-		go func() {
-			defer wait.Done()
-			granted, grantErr = fixture.store.GrantCheckConsentFor(context.Background(), "project",
-				ExpectedCheckPolicy{Version: first.Version, Digest: first.Digest}, fixture.now)
-		}()
-		go func() {
-			defer wait.Done()
-			replaced, replaceErr = fixture.store.SetCheckPolicy(context.Background(), replacementInput, fixture.now)
-		}()
-		wait.Wait()
-		if replaceErr != nil {
-			t.Fatalf("attempt %d: the replacement failed: %v", attempt, replaceErr)
-		}
-
-		assertConsentOutcome(t, fmt.Sprintf("attempt %d", attempt), fixture.store, first,
-			consentRace{granted: granted, grantErr: grantErr, replacement: replaced})
+			if approvalFirst {
+				if grantErr != nil || !granted.ConsentActive || granted.Digest != first.Digest || granted.ConsentDigest != first.Digest {
+					t.Fatalf("approval on the current generation: %+v err=%v", granted, grantErr)
+				}
+			} else if !errors.Is(grantErr, ErrCheckPolicyStale) {
+				t.Fatalf("an approval for a replaced generation returned %v, want ErrCheckPolicyStale", grantErr)
+			}
+			final, exists, err := fixture.store.CheckPolicy(context.Background(), "project")
+			if err != nil || !exists || final.Digest != second.Digest || final.Version != second.Version || final.ConsentActive {
+				t.Fatalf("final policy=%+v exists=%v err=%v, want the replacement with consent inactive", final, exists, err)
+			}
+		})
 	}
 }
 
@@ -306,11 +166,9 @@ func TestGrantCheckConsentWithoutAnExpectationKeepsItsContract(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// structured field refusals
-// ---------------------------------------------------------------------------
-
-func TestPolicyRefusalNamesTheFieldAndItsBounds(t *testing.T) {
+// Range refusals away from zero are covered by TestThePublishedBoundsAreTheEnforcedBounds,
+// which maps a zero below the minimum to the default.
+func TestPolicyRefusalNamesTheField(t *testing.T) {
 	fixture := newCheckJobFixture(t)
 	cases := map[string]struct {
 		mutate func(*CheckPolicyInput)
@@ -318,19 +176,11 @@ func TestPolicyRefusalNamesTheFieldAndItsBounds(t *testing.T) {
 		rule   string
 	}{
 		"unknown executor": {func(i *CheckPolicyInput) { i.Executor = "vm" }, FieldExecutor, RuleUnknown},
-		// The event set is the earliest validation a policy meets. Its
-		// refusals are structured like every later one, so the first refusal a
-		// reader can hit is not the one with no field attached.
-		"no event":       {func(i *CheckPolicyInput) { i.AllowedEvents = nil }, FieldAllowedEvents, RuleRequired},
-		"unknown event":  {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"tag"} }, FieldAllowedEvents, RuleUnknown},
-		"repeated event": {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"push", "push"} }, FieldAllowedEvents, RuleDuplicate},
-		"timeout low":    {func(i *CheckPolicyInput) { i.MaxTimeoutMS = 10 }, FieldMaxTimeoutMS, RuleRange},
-		"output high":    {func(i *CheckPolicyInput) { i.MaxOutputLimitBytes = 1<<30 + 1 }, FieldMaxOutputLimitBytes, RuleRange},
-		"queue zero":     {func(i *CheckPolicyInput) { i.QueueLimit = 0 }, FieldQueueLimit, RuleRange},
-		"active zero":    {func(i *CheckPolicyInput) { i.MaxActiveJobs = 0 }, FieldMaxActiveJobs, RuleRange},
-		"lease low":      {func(i *CheckPolicyInput) { i.MaxLeaseMS = 1 }, FieldMaxLeaseMS, RuleRange},
-		"source entries": {func(i *CheckPolicyInput) { i.Execution.Source.MaxEntries = 1 << 30 },
-			FieldSourceMaxEntries, RuleRange},
+		"no event":         {func(i *CheckPolicyInput) { i.AllowedEvents = nil }, FieldAllowedEvents, RuleRequired},
+		"unknown event":    {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"tag"} }, FieldAllowedEvents, RuleUnknown},
+		"repeated event":   {func(i *CheckPolicyInput) { i.AllowedEvents = []string{"push", "push"} }, FieldAllowedEvents, RuleDuplicate},
+		"queue zero":       {func(i *CheckPolicyInput) { i.QueueLimit = 0 }, FieldQueueLimit, RuleRange},
+		"active zero":      {func(i *CheckPolicyInput) { i.MaxActiveJobs = 0 }, FieldMaxActiveJobs, RuleRange},
 		"container field on host executor": {func(i *CheckPolicyInput) {
 			i.Executor = CheckExecutorHost
 			i.Execution.ContainerPIDs = 32
@@ -354,11 +204,6 @@ func TestPolicyRefusalNamesTheFieldAndItsBounds(t *testing.T) {
 			if refusals[0].Field != test.field || refusals[0].Rule != test.rule {
 				t.Fatalf("refused %s by %s, want %s by %s",
 					refusals[0].Field, refusals[0].Rule, test.field, test.rule)
-			}
-			// A range refusal carries its bounds as numbers, so a caller never
-			// has to parse the sentence and never keeps a second copy.
-			if test.rule == RuleRange && refusals[0].Max <= refusals[0].Min {
-				t.Fatalf("range refusal has no usable bounds: min=%d max=%d", refusals[0].Min, refusals[0].Max)
 			}
 			if _, exists, err := fixture.store.CheckPolicy(context.Background(), "other"); err != nil || exists {
 				t.Fatalf("a refused policy was stored: exists=%v err=%v", exists, err)

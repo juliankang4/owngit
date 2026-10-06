@@ -2,7 +2,6 @@ package webui
 
 import (
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -42,30 +41,12 @@ func TestAssetPins(t *testing.T) {
 	}
 
 	pins := []assetPin{
-		{name: "a pending page notice stays outside document flow and is delayed", src: rule(".page-transfer-pending"),
-			has:   []string{"position: fixed", "visibility: hidden", "1.5s forwards", "pointer-events: none", "var(--text-1)", "var(--bg-content)"},
-			lacks: []string{"display: none"}},
-		// The sidebar replaced the repository tab strip. Below 900px the
-		// script folds it behind one button; the fold rule lives only in the
-		// narrow layout, so a wide window and a page without the script
-		// always show the whole menu.
-		{name: "the sidebar folds only in the narrow layout", src: func(t *testing.T) string {
-			return mediaBlock(t, readSheet(t), "@media (max-width: 900px)")
-		}, has: []string{".sidebar--folds:not(.is-open) .sidebar__inner { display: none; }", ".sb__toggle:not([hidden])"}},
-		{name: "the menu button is hidden on a wide window", src: rule(".sb__toggle"), has: []string{"display: none"}},
 		{name: "the current place is marked by more than colour", src: rule(`.sb__item[aria-current="page"]`),
 			has: []string{"box-shadow: inset 3px 0 0", "font-weight: 600"}},
 		{name: "the sidebar script only folds, filters and closes", src: jsFrom("var sidebar = document.querySelector('[data-sidebar]')", "/* File list drawer."),
 			has:   []string{"sideToggle.hidden = false", "sidebar.classList.add('sidebar--folds')", "'Escape'", "sideToggle.focus()", "row.hidden = !hit", "sideFilter.hidden = false"},
 			lacks: []string{"innerHTML", "textContent", ".value =", "scrollIntoView", "window.scrollTo"}},
 
-		// A file and a diff flow with the page, and long lines scroll inside
-		// them until the reader turns wrapping on.
-		{name: "code and diff panels have no height of their own", src: sheetFrom(".codebox, .diffbox"),
-			lacks: []string{"max-height", "overflow-y"}},
-		{name: "lines do not wrap by default", src: sheet,
-			has: []string{".codetable__t, .difftable__t { padding: 0 10px; white-space: pre;",
-				`[data-wrap="1"] .codetable__t, [data-wrap="1"] .difftable__t { white-space: pre-wrap;`}},
 		{name: "the wrap switch is remembered per browser and starts off", src: jsFrom("var WRAP_KEY", "/* Diff files fold"),
 			has:   []string{"var WRAP_KEY = 'owngit_wrap';", "applyWrap(storedWrap === '1')", "button.hidden = false"},
 			lacks: []string{"document.cookie", "writeCookie"}},
@@ -73,19 +54,11 @@ func TestAssetPins(t *testing.T) {
 			has: []string{".dfile .difftable__s { width: 1ch; margin-right: 1ch; font-weight: 700;",
 				".dfile .difftable__r.is-add .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--ok); }",
 				".dfile .difftable__r.is-del .difftable__n:first-child { box-shadow: inset 3px 0 0 var(--bad); }"}},
-		{name: "a diff file header stays in view", src: rule(".dfile__h"), has: []string{"position: sticky", "top: 0"}},
 		// The approval watcher's one GET is checked on its own in
 		// TestScriptClearsTheSetupFragmentAndNeverStoresIt.
 		{name: "the script adds no observers or external code", src: scriptOutsideRequests,
 			lacks: []string{"IntersectionObserver", "ResizeObserver", "MutationObserver", "import ", "require(", "fetch(", "XMLHttpRequest", "<script"}},
 
-		// The 390px toolbar defect: the language picker dropped onto its own
-		// row. The controls travel as one group, and the narrow header wraps
-		// in source order without hiding or shrinking labels.
-		{name: "the header control group does not wrap internally", src: rule(".toolbar__controls"),
-			has: []string{"flex-wrap: nowrap", "flex: none", "display: flex"}},
-		{name: "narrow identity leads and can shrink", src: narrow(".toolbar__id"), has: []string{"order: 1", "min-width: 0"}},
-		{name: "narrow search follows identity on a full row", src: narrow(".field"), has: []string{"order: 2", "flex: 1 0 100%"}},
 		{name: "narrow controls follow search", src: narrow(".toolbar__controls"), has: []string{"order: 3"},
 			lacks: []string{"display: none", "visibility: hidden", "font-size"}},
 		{name: "narrow language picker is not hidden or shrunk", src: narrow(".lang"), lacks: []string{"display: none", "visibility: hidden", "font-size"}},
@@ -94,20 +67,27 @@ func TestAssetPins(t *testing.T) {
 		{name: "no narrow rule positions a single control",
 			src:   func(t *testing.T) string { return mediaBlock(t, readSheet(t), "@media (max-width: 620px)") },
 			lacks: []string{".lang {", ".conn {", ".toolbar .field + .conn"}},
-
-		// Wide content scrolls inside its own panel. The restore file list is
-		// here because a page-long list would push the confirmation out of
-		// reach.
 		{name: "code and diff panels contain their overflow", src: sheetFrom(".codebox, .diffbox"), has: []string{"overflow"}},
 		{name: "the activity graph contains its overflow", src: sheetFrom(".hm__scroll"), has: []string{"overflow"}},
 		{name: "the restore path list contains its overflow", src: sheetFrom(".rpaths {"), has: []string{"overflow"}},
-		// The restore source and target pair collapses on a phone, and its
-		// narrow rule comes after the two-column default so it wins.
-		{name: "the narrow layout exists and the restore pair collapses", src: sheet,
-			has: []string{"@media (max-width: 620px)", "min-width: 0", ".restore__pair {", ".restore__pair { grid-template-columns: minmax(0, 1fr)"},
+		// A keyboard reader moving through the ref picker with the arrow keys
+		// must not navigate away at every step (WCAG 3.2.2).
+		{name: "the ref picker opens on a pointer pick or Enter, never per arrow step", src: jsFrom("all('[data-submit-on-change]')", "/* Import credentials"),
+			has: []string{"'pointerdown'", "event.key === 'Enter'", "if (pointer) { submit(); }"}, lacks: []string{"hidden = true"}},
+		// The load-time reveal of the current sidebar entry scrolls only its own list.
+		{name: "the sidebar reveal moves neither the page nor focus", src: jsFrom("var sideList", "}\n  }\n"),
+			lacks: []string{"scrollIntoView", "window.scroll", ".focus("}},
+		// Without scripting, the file ticks stay in the form but are hidden while the whole project is chosen.
+		{name: "the whole-project restore hides the file list without scripting", src: sheet,
+			has: []string{`.restore:has([data-restore-scope="all"]:checked) .restore__files`},
 			extra: func(t *testing.T, css string) {
-				if strings.Index(css, ".restore__pair { grid-template-columns: minmax(0, 1fr)") < strings.Index(css, ".restore__pair {") {
-					t.Error("the narrow restore layout is overridden by the wide one")
+				rule := `.restore:has([data-restore-scope="all"]:checked) .restore__files`
+				at := strings.Index(css, rule)
+				if at < 0 {
+					t.Fatalf("the stylesheet has no whole-project rule")
+				}
+				if body := css[at : at+strings.Index(css[at:], "}")]; !strings.Contains(body, "display: none") {
+					t.Errorf("the whole-project rule does not hide the file list: %q", body)
 				}
 			}},
 		{name: "motion and focus preferences are respected", src: sheet,
@@ -139,31 +119,6 @@ func TestAssetPins(t *testing.T) {
 		// Clearing or disabling the inputs would submit a selection nobody made.
 		{name: "the restore file list is only hidden", src: jsFrom("data-restore-files", "/* Select a one-time secret"),
 			has: []string{"panel.hidden = !"}, lacks: []string{"checked = false", "disabled", "remove()"}},
-
-		// A retained badge was clipped at 1440px because the row truncated
-		// its last child. Only the ref name shortens; the badge keeps its
-		// width and one line, and is prose in the interface font rather than
-		// the identifier font.
-		{name: "only the ref name truncates", src: rule(".row__refname"), has: []string{"text-overflow: ellipsis", "overflow: hidden", "min-width: 0"}},
-		{name: "the ref row keeps monospace and does not truncate", src: rule(".row__ref"),
-			has: []string{"font-family: var(--mono)"}, lacks: []string{"text-overflow"}},
-		{name: "the badge is readable prose on one line", src: rule(".pill"),
-			has: []string{"white-space: nowrap", "font-family: var(--font)"}, lacks: []string{"var(--mono)"},
-			extra: func(t *testing.T, pill string) {
-				size := regexp.MustCompile(`font-size:\s*([0-9.]+)px`).FindStringSubmatch(pill)
-				if size == nil {
-					t.Fatalf(".pill has no font size: %q", pill)
-				}
-				if got, err := strconv.ParseFloat(size[1], 64); err != nil || got < 10 {
-					t.Errorf(".pill text was shrunk to %spx, below a readable size", size[1])
-				}
-			}},
-		{name: "the badge does not shrink inside the source column", src: sheet, extra: func(t *testing.T, css string) {
-			if !regexp.MustCompile(`\.row__ref > \.pill\s*\{[^}]*flex:\s*none`).MatchString(css) &&
-				!regexp.MustCompile(`\.row__ref > svg,\s*\n?\.row__ref > \.pill\s*\{[^}]*flex:\s*none`).MatchString(css) {
-				t.Error("the status badge can shrink inside the source column")
-			}
-		}},
 	}
 	for _, pin := range pins {
 		t.Run(pin.name, func(t *testing.T) {

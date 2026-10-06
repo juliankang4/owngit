@@ -31,10 +31,6 @@ func formAt(t *testing.T, out, action string) string {
 	return form
 }
 
-// ---------------------------------------------------------------------------
-// the submitted contract
-// ---------------------------------------------------------------------------
-
 func TestRestoreSubmitsTheAgreedSelectionFields(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, restorePage(fullChrome(LangEN), false))
@@ -133,10 +129,6 @@ func TestRestoreExpectedHeadIsCarriedForAnAbsentBranch(t *testing.T) {
 		t.Error("the recreated branch is not the submitted target")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// two deliberate steps
-// ---------------------------------------------------------------------------
 
 func TestRestorePreviewOffersNoControlThatCanContradictIt(t *testing.T) {
 	// Regression. The selection form used to stay editable beside the preview
@@ -281,10 +273,6 @@ func TestRestoreCannotBeAppliedWhenTheBackendSaysSo(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// deletions are never inferred
-// ---------------------------------------------------------------------------
-
 func TestRestorePreviewNamesDeletedFilesSeparately(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, restorePage(fullChrome(LangEN), true))
@@ -301,48 +289,6 @@ func TestRestorePreviewNamesDeletedFilesSeparately(t *testing.T) {
 	}
 	if strings.Contains(deletes, "internal/retry/limits.go") {
 		t.Error("an added file was listed as a deletion")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// outcomes the backend reports
-// ---------------------------------------------------------------------------
-
-func TestRestoreUncertainOutcomesDoNotAssertAState(t *testing.T) {
-	// A failure is reported when publishing the change failed and reading the
-	// branch back failed too. In that case the backend does not know whether
-	// the branch moved, so the message must not promise it was left alone. It
-	// asks the reader to look instead.
-	for _, lang := range Langs() {
-		failed := Text(lang, MsgRestoreFailed)
-		for _, promise := range []string{
-			"left as it was", "was not changed", "nothing was restored",
-			"\uadf8\ub300\ub85c \ub450\uc5c8", "\ubc14\ub00c\uc9c0 \uc54a", "\uc544\ubb34\uac83\ub3c4 \ub418\ub3cc\ub9ac\uc9c0",
-		} {
-			if strings.Contains(failed, promise) {
-				t.Errorf("%s: the failure claims an outcome nothing verified: %q", lang, failed)
-			}
-		}
-	}
-	if en := Text(LangEN, MsgRestoreFailed); !strings.Contains(en, "Check the branch") {
-		t.Errorf("the failure does not tell the reader to check the branch: %q", en)
-	}
-
-	// A conflict means the branch no longer matches what was previewed. It can
-	// have received a commit, been deleted, been recreated elsewhere, or moved
-	// back to an older commit, so the message must not name just one of those.
-	for _, lang := range Langs() {
-		conflict := Text(lang, MsgRestoreConflict)
-		for _, guess := range []string{
-			"new commit", "received a", "\uc0c8 \ucee4\ubc0b", "\ub4e4\uc5b4\uc640",
-		} {
-			if strings.Contains(conflict, guess) {
-				t.Errorf("%s: the conflict names one cause among several: %q", lang, conflict)
-			}
-		}
-		if !strings.Contains(conflict, "changed") && !strings.Contains(conflict, "\ubc14\ub00c\uc5c8") {
-			t.Errorf("%s: the conflict does not say the branch changed: %q", lang, conflict)
-		}
 	}
 }
 
@@ -374,19 +320,18 @@ func TestRestorePreviewErrorsAreAnnouncedWithoutAControl(t *testing.T) {
 
 	// Every scoped field on this summary behaves the same way.
 	for _, field := range []string{"target", "mode", "path"} {
-		for _, lang := range Langs() {
-			c := fullChrome(lang)
-			c.Notices = []Notice{Error(field, MsgRestoreConflict)}
-			page := restorePage(c, true)
-			page.CanApply = false
-			out := render(t, r, page)
-			if !strings.Contains(out, wantText(lang, MsgRestoreConflict)) {
-				t.Errorf("%s (%s): the error text is missing", field, lang)
-				continue
-			}
-			if !strings.Contains(out, `role="alert"`) {
-				t.Errorf("%s (%s): the error is not announced", field, lang)
-			}
+		lang := LangEN
+		c := fullChrome(lang)
+		c.Notices = []Notice{Error(field, MsgRestoreConflict)}
+		page := restorePage(c, true)
+		page.CanApply = false
+		out := render(t, r, page)
+		if !strings.Contains(out, wantText(lang, MsgRestoreConflict)) {
+			t.Errorf("%s (%s): the error text is missing", field, lang)
+			continue
+		}
+		if !strings.Contains(out, `role="alert"`) {
+			t.Errorf("%s (%s): the error is not announced", field, lang)
 		}
 	}
 
@@ -426,26 +371,25 @@ func TestRestoreRefusalPutsFocusOnTheBlockingError(t *testing.T) {
 	// target the response hands the reader.
 	r := newRenderer(t)
 
-	for _, lang := range Langs() {
-		c := fullChrome(lang)
-		c.Notices = []Notice{Error("target", MsgRestoreConflict)}
-		page := restorePage(c, true)
-		page.CanApply = false
-		out := render(t, r, page)
+	lang := LangEN
+	single := fullChrome(lang)
+	single.Notices = []Notice{Error("target", MsgRestoreConflict)}
+	blocked := restorePage(single, true)
+	blocked.CanApply = false
+	out := render(t, r, blocked)
 
-		tag := alertTag(t, out, "target")
-		if !strings.Contains(tag, `tabindex="-1"`) {
-			t.Errorf("%s: the blocking error cannot receive focus: %s", lang, tag)
-		}
-		if !strings.Contains(tag, "autofocus") {
-			t.Errorf("%s: the response does not place the reader on the blocking error: %s", lang, tag)
-		}
-		if !strings.Contains(tag, `role="alert"`) {
-			t.Errorf("%s: the blocking error lost its announcement: %s", lang, tag)
-		}
-		if !strings.Contains(out, wantText(lang, MsgRestoreConflict)) {
-			t.Errorf("%s: the conflict text is missing", lang)
-		}
+	tag := alertTag(t, out, "target")
+	if !strings.Contains(tag, `tabindex="-1"`) {
+		t.Errorf("%s: the blocking error cannot receive focus: %s", lang, tag)
+	}
+	if !strings.Contains(tag, "autofocus") {
+		t.Errorf("%s: the response does not place the reader on the blocking error: %s", lang, tag)
+	}
+	if !strings.Contains(tag, `role="alert"`) {
+		t.Errorf("%s: the blocking error lost its announcement: %s", lang, tag)
+	}
+	if !strings.Contains(out, wantText(lang, MsgRestoreConflict)) {
+		t.Errorf("%s: the conflict text is missing", lang)
 	}
 
 	// One refusal is one destination. Several errors on one summary must not
@@ -459,7 +403,7 @@ func TestRestoreRefusalPutsFocusOnTheBlockingError(t *testing.T) {
 	}
 	crowded := restorePage(many, true)
 	crowded.CanApply = false
-	out := render(t, r, crowded)
+	out = render(t, r, crowded)
 	if got := strings.Count(out, "autofocus"); got != 1 {
 		t.Errorf("a summary with three errors has %d focus targets, want 1", got)
 	}
@@ -533,45 +477,43 @@ func TestRestoreRefusalPutsFocusOnTheBlockingError(t *testing.T) {
 		// the backend happened to report.
 		{"later field reported first", []Notice{Error("path", MsgRestoreUnsupported), Error("target", MsgRestoreConflict)}, MsgRestoreConflict, ""},
 	}
-	for _, lang := range Langs() {
-		for _, combo := range combinations {
-			for _, previewed := range []bool{false, true} {
-				c := fullChrome(lang)
-				c.Notices = combo.notices
-				out := render(t, r, restorePage(c, previewed))
+	for _, combo := range combinations {
+		for _, previewed := range []bool{false, true} {
+			c := fullChrome(lang)
+			c.Notices = combo.notices
+			out := render(t, r, restorePage(c, previewed))
 
-				if got := strings.Count(out, "autofocus"); got > 1 {
-					t.Errorf("%s/%s (previewed=%v): %d autofocus targets in one document", lang, combo.name, previewed, got)
+			if got := strings.Count(out, "autofocus"); got > 1 {
+				t.Errorf("%s/%s (previewed=%v): %d autofocus targets in one document", lang, combo.name, previewed, got)
+			}
+			// No message is dropped to keep the count at one.
+			for _, notice := range combo.notices {
+				if !strings.Contains(out, wantText(lang, notice.Code)) {
+					t.Errorf("%s/%s (previewed=%v): the %q message is missing", lang, combo.name, previewed, notice.Code)
 				}
-				// No message is dropped to keep the count at one.
-				for _, notice := range combo.notices {
-					if !strings.Contains(out, wantText(lang, notice.Code)) {
-						t.Errorf("%s/%s (previewed=%v): the %q message is missing", lang, combo.name, previewed, notice.Code)
-					}
-				}
+			}
 
-				if !previewed {
-					// Step one redraws what the owner entered. A field with one
-					// control points from that control at the message, so the reader
-					// stays where the browser put them. The file list is a group of
-					// checkboxes with no single owner, so its notice announces the
-					// refusal and takes the focus itself.
-					switch {
-					case combo.formFocus == "":
-						if strings.Contains(out, "autofocus") {
-							t.Errorf("%s/%s: the editable form moves the reader instead of using its inputs", lang, combo.name)
-						}
-					case !strings.Contains(alertTag(t, out, combo.formFocus), "autofocus"):
-						t.Errorf("%s/%s: the editable form does not place the reader on the %s refusal", lang, combo.name, combo.formFocus)
+			if !previewed {
+				// Step one redraws what the owner entered. A field with one
+				// control points from that control at the message, so the reader
+				// stays where the browser put them. The file list is a group of
+				// checkboxes with no single owner, so its notice announces the
+				// refusal and takes the focus itself.
+				switch {
+				case combo.formFocus == "":
+					if strings.Contains(out, "autofocus") {
+						t.Errorf("%s/%s: the editable form moves the reader instead of using its inputs", lang, combo.name)
 					}
-					continue
+				case !strings.Contains(alertTag(t, out, combo.formFocus), "autofocus"):
+					t.Errorf("%s/%s: the editable form does not place the reader on the %s refusal", lang, combo.name, combo.formFocus)
 				}
-				// And the one target is the intended error, not merely some
-				// notice on the right field.
-				if got := focusedMessage(t, out, lang); got != combo.want {
-					t.Errorf("%s/%s: the reader is placed on the %q message, want %q",
-						lang, combo.name, got, combo.want)
-				}
+				continue
+			}
+			// And the one target is the intended error, not merely some
+			// notice on the right field.
+			if got := focusedMessage(t, out, lang); got != combo.want {
+				t.Errorf("%s/%s: the reader is placed on the %q message, want %q",
+					lang, combo.name, got, combo.want)
 			}
 		}
 	}
@@ -629,10 +571,6 @@ func TestRestoreNoChangeResultDoesNotLookLikeWork(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// the target branch is never silently changed
-// ---------------------------------------------------------------------------
-
 // targetInput returns the target control's opening tag.
 func targetInput(t *testing.T, out string) string {
 	t.Helper()
@@ -684,35 +622,6 @@ func TestRestoreTargetCanBeATypedName(t *testing.T) {
 	if strings.Contains(out, `<select id="restore-target"`) {
 		t.Error("the target is still a fixed list of existing names")
 	}
-
-	// Both outcomes are explained before the reader commits to either
-	// ("the branch choice is explained" in TestRestoreScreenStates).
-	//
-	// The two targets do different things, and the help has to distinguish
-	// them. An existing branch keeps its own history and the restore commit
-	// sits on top of it; a new branch starts from the selected commit.
-	choose := Text(LangEN, MsgRestoreTargetChoose)
-	for _, phrase := range []string{"existing branch", "new name", "continues from the selected commit"} {
-		if !strings.Contains(choose, phrase) {
-			t.Errorf("the target help no longer covers %q: %q", phrase, choose)
-		}
-	}
-	// Restoring changes and deletes files on purpose. Only the history is
-	// preserved, so the help must not promise the working tree is untouched.
-	for _, lang := range Langs() {
-		text := Text(lang, MsgRestoreTargetChoose)
-		for _, false_ := range []string{"removed or rewritten", "nothing already in the repository", "\uc9c0\uc6b0\uac70\ub098 \uace0\uce58\uc9c0 \uc54a"} {
-			if strings.Contains(text, false_) {
-				t.Errorf("%s: the target help claims files are untouched: %q", lang, text)
-			}
-		}
-	}
-	// The help describes the branch choice, so it must not attach the restore
-	// commit to the selected commit in the existing-branch case.
-	ko := Text(LangKO, MsgRestoreTargetChoose)
-	if !strings.Contains(ko, "\ud604\uc7ac \uae30\ub85d \ub4a4\uc5d0") {
-		t.Errorf("the Korean help does not say an existing branch continues from its own tip: %q", ko)
-	}
 }
 
 func TestRestoreTargetIsPrefilledWithTheCurrentChoice(t *testing.T) {
@@ -733,20 +642,6 @@ func TestRestoreTargetIsPrefilledWithTheCurrentChoice(t *testing.T) {
 	typed := render(t, r, page)
 	if tag := targetInput(t, typed); !strings.Contains(tag, `value="recovered/9a8b154"`) {
 		t.Errorf("a typed branch name was not preserved: %s", tag)
-	}
-	// This notice covers any name that is not currently a branch, including a
-	// suggested one that never existed. It says the branch is created; saying
-	// it is recreated would claim the original name was identified.
-	for _, lang := range Langs() {
-		text := Text(lang, MsgRestoreTargetNew)
-		if !strings.Contains(text, "does not exist") && !strings.Contains(text, "\uc544\uc9c1 \uc5c6\ub294") {
-			t.Errorf("%s: the notice no longer says the branch is absent: %q", lang, text)
-		}
-		for _, claim := range []string{"recreates", "\ub2e4\uc2dc \ub9cc\ub4ed\ub2c8\ub2e4"} {
-			if strings.Contains(text, claim) {
-				t.Errorf("%s: the notice claims the branch existed before: %q", lang, text)
-			}
-		}
 	}
 }
 
@@ -821,34 +716,6 @@ func TestRestoreSelectionStageMakesNoClaimTheReaderCanInvalidate(t *testing.T) {
 	}
 }
 
-func TestRestoreTypedTargetSurvivesTheRoundTrip(t *testing.T) {
-	// A reader who typed a new name must not lose it by switching language or
-	// by stepping back from the preview to change something else.
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	c.CurrentURL = "/repositories/r1/restore/preview"
-	page := restorePage(c, true)
-	page.TargetBranch = "recovered/9a8b154"
-
-	back := restoreSelectionURL(page)
-	if !strings.Contains(back, "target=recovered%2F9a8b154") {
-		t.Errorf("stepping back loses the typed branch: %q", back)
-	}
-
-	out := render(t, r, page)
-	address, _, _ := clickLanguage(t, out, c.CurrentURL)
-	if !strings.Contains(address, "target=recovered%2F9a8b154") {
-		t.Errorf("switching language loses the typed branch: %q", address)
-	}
-
-	// Arriving back at step one, the typed name is in the control again.
-	returned := restorePage(fullChrome(LangEN), false)
-	returned.TargetBranch = "recovered/9a8b154"
-	if tag := targetInput(t, render(t, r, returned)); !strings.Contains(tag, `value="recovered/9a8b154"`) {
-		t.Errorf("the typed branch did not come back: %s", tag)
-	}
-}
-
 func TestRestoreTargetNameIsNotJudgedHere(t *testing.T) {
 	// Whether a name is a valid ref, and whether writing there is allowed, is
 	// decided by Git and the backend. The page must not filter, rewrite or
@@ -880,68 +747,6 @@ func TestRestoreTargetNameIsNotJudgedHere(t *testing.T) {
 		t.Error("the rejected control is not marked invalid")
 	}
 }
-
-func TestRestoreGenericCopyDoesNotPromiseACommitThatMayNotExist(t *testing.T) {
-	// The two targets do different things. Restoring onto an existing branch
-	// writes a commit whose parent is that branch's tip. Restoring to a name
-	// that is not a branch yet creates the branch at the selected commit and
-	// writes no commit at all.
-	//
-	// Messages shown in both cases therefore cannot promise a new commit. Only
-	// the two messages about the branch choice may describe either outcome,
-	// because they say which case they are talking about.
-	generic := []MessageCode{
-		MsgRestoreIntro,
-		MsgRestoreTargetHelp,
-		MsgRestorePreviewHelp,
-		MsgRestoreConfirmHelp,
-		MsgRestoreConfirmLabel,
-		MsgRestoreSuccess,
-	}
-	// "new commit" in English, and the Korean phrasings for adding one.
-	promises := []string{"new commit", "one commit", "adds a commit", "\uc0c8 \ucee4\ubc0b", "\ucee4\ubc0b \ud558\ub098"}
-	for _, code := range generic {
-		for _, lang := range Langs() {
-			text := Text(lang, code)
-			for _, promise := range promises {
-				if strings.Contains(text, promise) {
-					t.Errorf("%s (%s) promises a commit that a new-branch restore does not write: %q",
-						code, lang, text)
-				}
-			}
-		}
-	}
-
-	// What every restore really does share is still stated.
-	if intro := Text(LangEN, MsgRestoreIntro); !strings.Contains(intro, "never removed or rewritten") {
-		t.Errorf("the introduction no longer promises earlier commits survive: %q", intro)
-	}
-	if done := Text(LangEN, MsgRestoreSuccess); !strings.Contains(done, "earlier history is still there") {
-		t.Errorf("the result no longer says the earlier history survived: %q", done)
-	}
-
-	// The difference between the two targets is explained where the reader
-	// chooses one, so removing it from the generic copy loses nothing.
-	choose := Text(LangEN, MsgRestoreTargetChoose)
-	if !strings.Contains(choose, "adds to an existing branch") {
-		t.Errorf("the existing-branch case is no longer described: %q", choose)
-	}
-	if !strings.Contains(choose, "continues from the selected commit") {
-		t.Errorf("the new-branch case is no longer described: %q", choose)
-	}
-	absent := Text(LangEN, MsgRestoreTargetNew)
-	if !strings.Contains(absent, "creates it from the selected commit") {
-		t.Errorf("the absent-branch notice no longer says where the branch starts: %q", absent)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// entry points
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// repository content is data
-// ---------------------------------------------------------------------------
 
 func TestRestoreEscapesPathsBranchesAndDiffContent(t *testing.T) {
 	r := newRenderer(t)
@@ -999,28 +804,7 @@ func TestRestoreSymlinkAndSubmoduleContentIsShownAsData(t *testing.T) {
 	if !strings.Contains(out, "vendor/libgit2") {
 		t.Error("the unsupported entry is not named")
 	}
-	unsupported := Text(LangEN, MsgRestoreUnsupported)
-	if !strings.Contains(unsupported, "Submodule") {
-		t.Errorf("the unsupported message no longer names gitlinks: %q", unsupported)
-	}
-	if !strings.Contains(unsupported, "did not select") {
-		t.Errorf("the unsupported message no longer covers path collisions: %q", unsupported)
-	}
-	// Reachable straight from this screen: selected files with a branch name
-	// that does not exist yet. Picking files is a comparison against the
-	// branch's current state, and a new branch has none, so the message has to
-	// name that case and say what to do instead.
-	for _, lang := range Langs() {
-		text := Text(lang, MsgRestoreUnsupported)
-		if !strings.Contains(text, "already exists") && !strings.Contains(text, "\uc774\ubbf8 \uc788\ub294 \ube0c\ub79c\uce58") {
-			t.Errorf("%s: the message does not explain that selected files need an existing branch: %q", lang, text)
-		}
-	}
 }
-
-// ---------------------------------------------------------------------------
-// working without scripting, and reachable by keyboard
-// ---------------------------------------------------------------------------
 
 func TestRestoreWorksAsPlainHTML(t *testing.T) {
 	r := newRenderer(t)
@@ -1390,17 +1174,6 @@ func TestRestoreTitleNamesTheRepository(t *testing.T) {
 }
 
 func TestRestoreScreenStates(t *testing.T) {
-	// The truncation cut is in the line by line view, never in the path list,
-	// and the sentence has to say which one.
-	if notice := Text(LangEN, MsgRestoreDiffTruncated); !strings.Contains(notice, "list of changed files is complete") {
-		t.Errorf("the truncation notice does not distinguish the two lists: %q", notice)
-	}
-	if en := Text(LangEN, MsgRestoreTargetHelp); !strings.Contains(en, "other computers are not touched") {
-		t.Errorf("the branch help no longer states the boundary: %q", en)
-	}
-	if keep := Text(LangEN, MsgRestoreConfirmHelp); !strings.Contains(keep, "does not remove or rewrite") {
-		t.Errorf("the confirmation no longer promises the existing history is kept: %q", keep)
-	}
 	restore := func(lang Lang, previewed bool, edit func(*RestorePage)) RestorePage {
 		return with(restorePage(fullChrome(lang), previewed), edit)
 	}

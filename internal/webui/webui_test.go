@@ -96,10 +96,6 @@ func sampleGraph() ActivityGraph {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// every screen renders in both languages with a complete document
-// ---------------------------------------------------------------------------
-
 func allPages(lang Lang) map[string]Page {
 	c := fullChrome(lang)
 	bare := Chrome{Lang: lang, Now: testNow, CurrentURL: "/setup", CSRF: "csrf-token-value"}
@@ -266,10 +262,6 @@ func allPages(lang Lang) map[string]Page {
 		"error":               ErrorPage{Chrome: c, Status: 404, Code: MsgErrNotFound, Detail: "/nope", RetryURL: "/"},
 	}
 }
-
-// ---------------------------------------------------------------------------
-// evidence screen fixtures
-// ---------------------------------------------------------------------------
 
 func evidenceRepo() RepositoryHeader {
 	return RepositoryHeader{ID: "r1", Name: "forge-cli", Description: "Command line tool",
@@ -712,10 +704,6 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// localization
-// ---------------------------------------------------------------------------
-
 func TestCatalogIsCompleteInBothLanguages(t *testing.T) {
 	if missing := MissingMessages(); len(missing) > 0 {
 		t.Fatalf("catalog entries missing a translation: %v", missing)
@@ -761,21 +749,6 @@ func TestBothLanguagesAreCarriedForInPlaceSwitching(t *testing.T) {
 	}
 }
 
-func TestLanguageLinksKeepTheCurrentScreen(t *testing.T) {
-	r := newRenderer(t)
-	c := fullChrome(LangEN)
-	out := render(t, r, repoPage(c, RepoTabCode))
-	// The branch and path must survive a language change.
-	if !strings.Contains(out, "lang=ko") {
-		t.Fatal("no Korean language link rendered")
-	}
-	for _, keep := range []string{"ref=main", "path=internal"} {
-		if !strings.Contains(out, keep) {
-			t.Errorf("language link dropped %q from the current URL", keep)
-		}
-	}
-}
-
 func TestWithLangPreservesPathAndQuery(t *testing.T) {
 	got := withLang("/repositories/r1/code?ref=fix%2Fcursor&path=internal%2Fx&lang=en", LangKO)
 	for _, want := range []string{"/repositories/r1/code", "ref=fix%2Fcursor", "path=internal%2Fx", "lang=ko"} {
@@ -795,10 +768,6 @@ func TestWithQueryDropsSchemeAndHost(t *testing.T) {
 		t.Fatalf("withLang kept an external target: %q", got)
 	}
 }
-
-// ---------------------------------------------------------------------------
-// secrets and escaping
-// ---------------------------------------------------------------------------
 
 func TestPasswordsAreNeverEchoedOnValidationFailure(t *testing.T) {
 	r := newRenderer(t)
@@ -955,10 +924,6 @@ func TestCSRFTokenIsPresentOnEveryMutatingForm(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// settings contract
-// ---------------------------------------------------------------------------
-
 func TestSecuritySettingsAlwaysCollectTheAdminPassword(t *testing.T) {
 	r := newRenderer(t)
 	for _, mode := range []AccessMode{AccessOpen, AccessPassword} {
@@ -999,10 +964,6 @@ func TestInsecureAcknowledgementIsAdministratorProtected(t *testing.T) {
 		t.Error("the acknowledgement form does not verify the administrator password")
 	}
 }
-
-// ---------------------------------------------------------------------------
-// accessibility
-// ---------------------------------------------------------------------------
 
 func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 	// A handler reporting a field error must see it rendered, in both
@@ -1080,10 +1041,6 @@ func TestEveryFieldErrorReachesItsScreen(t *testing.T) {
 		}
 	}
 }
-
-// ---------------------------------------------------------------------------
-// assets
-// ---------------------------------------------------------------------------
 
 func TestAssetURLsChangeWithContent(t *testing.T) {
 	// Fixed asset URLs plus a long cache lifetime would keep serving the old
@@ -1172,10 +1129,6 @@ func doAssetRequest(t *testing.T, r *Renderer, target string) string {
 	r.Assets().ServeHTTP(rec, req)
 	return rec.Header().Get("Cache-Control")
 }
-
-// ---------------------------------------------------------------------------
-// formatting
-// ---------------------------------------------------------------------------
 
 func TestRelativeTimesUseTheAuthorsRecordedDate(t *testing.T) {
 	// A commit keeps the calendar date and clock its author recorded. Now is

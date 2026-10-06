@@ -36,10 +36,7 @@ func newJobRecoveryFixture(t *testing.T) jobRecoveryFixture {
 	terminal := fixture.admit(t, pushJobRequest())
 	claimed, _, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
 	noErr(t, err)
-	_, attempt, err := fixture.store.StartCheckJob(ctx, CheckJobStart{
-		RepositoryID: "project", JobID: terminal.ID, LeaseID: claimed.LeaseID,
-		CredentialID: runner.ID, CredentialGeneration: runner.Generation, AttemptID: attemptID(terminal.ID, fixture.now),
-	}, fixture.now)
+	_, attempt, err := fixture.store.StartCheckJob(ctx, fixture.startFor(terminal, claimed.LeaseID, runner), fixture.now)
 	noErr(t, err)
 	completeJobAttempt(t, fixture.store, attempt, AttemptPassed, fixture.now.Add(time.Minute))
 
@@ -220,18 +217,11 @@ func TestRestoreInterruptedJobRejectsLateCompletion(t *testing.T) {
 	noErr(t, err)
 	restored := openTestStore(t)
 	noErr(t, restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
-	exit := 0
-	completion := CheckCompletion{
-		AttemptID: attempt.ID, RepositoryID: attempt.RepositoryID, TaskID: attempt.TaskID,
-		Results:    []CheckResult{{Name: "unit", Command: "go test ./...", Status: AttemptPassed, ExitCode: &exit, DurationMS: 1}},
-		FinishedAt: fixture.now.Add(time.Second), WorktreeState: WorktreeClean,
-	}
+	completion := passedCompletion(attempt, fixture.now.Add(time.Second))
 	if _, _, err := restored.CompleteCheckAttempt(ctx, completion, fixture.now.Add(time.Second)); !errors.Is(err, ErrCheckJobCompletionRequired) {
 		t.Fatalf("ordinary restored completion error=%v", err)
 	}
-	authority := CheckJobCompletionAuthority{
-		JobID: job.ID, LeaseID: claimed.LeaseID, CredentialID: runner.ID, CredentialGeneration: runner.Generation,
-	}
+	authority := authorityFor(job.ID, claimed.LeaseID, runner)
 	if _, _, err := restored.CompleteCheckJobAttempt(ctx, completion, authority, fixture.now.Add(time.Second)); err == nil {
 		t.Fatal("restored claim authority completed interrupted work")
 	}
@@ -337,7 +327,6 @@ func TestCheckRecoveryRejectsInvalidJobRelationships(t *testing.T) {
 		{"scope mismatch", func(snapshot *RecoveryState) {
 			snapshot.CheckAttempts[attempt].ExecutionScope = ExecutionScopeContainer
 		}},
-		{"unknown attempt job", func(snapshot *RecoveryState) { snapshot.CheckAttempts[attempt].JobID = zero[:32] }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

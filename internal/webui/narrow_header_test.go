@@ -10,8 +10,9 @@ import (
 //
 // The controls were separate flex children, so the wrap could split them
 // anywhere. They now travel as one group. The markup checks run against
-// rendered pages; the layout checks read the stylesheet, since that is where
-// the defect was. A browser at the real widths confirms the pixels.
+// rendered pages. The stylesheet checks in asset_pins_test.go only keep the
+// narrow rules from hiding or shrinking a control; a browser at the real
+// widths confirms the pixels.
 
 func toolbarOf(t *testing.T, document string) string {
 	t.Helper()

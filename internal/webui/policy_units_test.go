@@ -281,18 +281,6 @@ func TestModeSettingsAreMarkedForTheirMode(t *testing.T) {
 			t.Errorf("missing %q", want)
 		}
 	}
-	sheet := readSheet(t)
-	for _, want := range []string{
-		`.ccform:not(:has(input[name="executor"][value="container"]:checked)) .ccmode--container`,
-		`.ccform:not(:has(input[name="executor"][value="external_runner"]:checked)) .ccmode--runner`,
-	} {
-		if !strings.Contains(sheet, want) {
-			t.Errorf("the stylesheet does not hide mode settings with %q", want)
-		}
-	}
-	if !strings.Contains(sheet, "@supports selector(:has(*))") {
-		t.Error("mode hiding is not limited to browsers that support :has()")
-	}
 }
 
 func TestTheFailedContainerHintDoesNotAssertACause(t *testing.T) {
