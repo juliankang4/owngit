@@ -687,8 +687,10 @@ Browsing limits cap how much one page reads to show a file, a diff or a pull req
 | Comparison time | 20 seconds | 5 seconds to 1 minute | `--browse-compare-time` |
 
 - A raw file above its limit cannot be downloaded from the browser; clone the repository to get it.
-- The file view shows the part that fits. A file whose diff is too large for a commit page links to its own diff page.
-- A page shows at most 10,000 lines of a file or diff and 1,000 entries of a folder, with First page and Next page links.
+- The file view shows the part that fits.
+- A commit or pull request shows at most 400 changed files per page. When a file's changes do not fit on the page, "Show this file's changes" opens that file alone.
+- A page shows at most 10,000 lines of a file or diff and 1,000 entries of a folder. These pages, and the pages of changed files, have First page and Next page links.
+- All commits shows 100 commits per page, with Older and Newer links.
 - `owngit pr diff`, the API and the MCP tool keep their own fixed limits, equal to the defaults.
 
 ## Check ceilings
