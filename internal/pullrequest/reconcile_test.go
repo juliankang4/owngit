@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/repository"
 )
 
 // TestReconcileAllReadsPullRequestRefsOnce proves that startup reconciliation
@@ -103,5 +104,20 @@ func TestReconcileAllNamesATimeoutCause(t *testing.T) {
 		if got != row.want {
 			t.Fatalf("%s deadline error = %q, want %q", row.code, got, row.want)
 		}
+	}
+}
+
+// The configured-check poller binds revisions under the repository write
+// lock, which refuses once the repository folder claim is lost.
+func TestPollerWritesNothingAfterTheStorageClaimIsLost(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows refuses to remove the held lock file")
+	}
+	fixture := newServiceFixture(t)
+	noErr(t, fixture.manager.ClaimStorage())
+	t.Cleanup(fixture.manager.ReleaseStorage)
+	noErr(t, os.Remove(filepath.Join(fixture.manager.RepositoryRoot(), ".owngit-serve.lock")))
+	if _, _, err := fixture.service.ObserveCurrentRevisionsAfter(fixture.ctx, fixture.repositoryID, 0, 10); !errors.Is(err, repository.ErrStorageChanged) {
+		t.Fatalf("poller error=%v, want ErrStorageChanged", err)
 	}
 }

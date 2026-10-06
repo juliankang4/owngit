@@ -64,7 +64,12 @@ func (s *Service) ResolveUnresolved(ctx context.Context, repositoryID string) (R
 // so a long writer such as a push cannot hold an owner request past its
 // deadline.
 func lockBeforeDeadline(ctx context.Context, lock *gitexec.RepositoryLock) error {
-	for !lock.TryLock() {
+	for {
+		if taken, err := lock.TryLockGated(); err != nil {
+			return err
+		} else if taken {
+			return nil
+		}
 		timer := time.NewTimer(20 * time.Millisecond)
 		select {
 		case <-ctx.Done():
@@ -73,7 +78,6 @@ func lockBeforeDeadline(ctx context.Context, lock *gitexec.RepositoryLock) error
 		case <-timer.C:
 		}
 	}
-	return nil
 }
 
 func (s *Service) resolveLocked(ctx context.Context, repositoryID, generation string, now time.Time) ([]string, error) {

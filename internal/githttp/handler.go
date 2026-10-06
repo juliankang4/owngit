@@ -372,6 +372,11 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 	refsUnchanged := request.Method == http.MethodGet
 	if route.service == "git-receive-pack" {
 		if err := lock.LockContext(lockWait); err != nil {
+			if errors.Is(err, repository.ErrStorageChanged) {
+				logCause(operationContext, fmt.Sprintf("Git push to repository %q refused", route.repositoryID), err)
+				http.Error(writer, storageChangedMessage, http.StatusConflict)
+				return
+			}
 			answerBusyLocked(writer, route, request.Method, lockWaitBound, lockWaitLimit, err)
 			return
 		}
@@ -875,6 +880,10 @@ func logGitFailure(route route, method string, reason string) {
 // or no repository within its bound. A Git client shows it for a refused ref
 // advertisement, and shows only the status for a refused transfer POST.
 const busyMessage = "Git service is busy with other transfers; try again shortly"
+
+// storageChangedMessage is the answer of a push refused because the repository
+// folder changed after OwnGit claimed it.
+const storageChangedMessage = "The repository folder changed after OwnGit started, so OwnGit stopped accepting pushes. Check the folder, then restart OwnGit."
 
 // answerBusyLocked answers a request that could not take its repository lock
 // within its own bound, or whose client left while it waited, with the same

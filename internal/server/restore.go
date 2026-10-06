@@ -290,6 +290,8 @@ func restoreURL(address, sourceOID, target, filePath string) string {
 // are fine, and the reader needs to hear what to do instead.
 func restoreMessage(step restoreStep, err error) webui.MessageCode {
 	switch {
+	case errors.Is(err, repository.ErrStorageChanged):
+		return webui.MsgStorageChanged
 	case errors.Is(err, repository.ErrRestoreFilesNone):
 		return webui.MsgRestoreFilesNone
 	case errors.Is(err, repository.ErrRestoreConflict):
@@ -319,7 +321,7 @@ func restoreStatus(request *http.Request, step restoreStep, err error) int {
 // completed.
 func restoreRefusal(err error) int {
 	switch {
-	case errors.Is(err, repository.ErrRestoreConflict):
+	case errors.Is(err, repository.ErrRestoreConflict), errors.Is(err, repository.ErrStorageChanged):
 		return http.StatusConflict
 	case errors.Is(err, repository.ErrRestoreInvalid), errors.Is(err, repository.ErrRestoreUnsupported), errors.Is(err, repository.ErrRestoreNoChanges):
 		return http.StatusUnprocessableEntity

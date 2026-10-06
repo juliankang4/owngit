@@ -74,6 +74,9 @@ func (app *App) handleRepositoryAdminAPI(writer http.ResponseWriter, request *ht
 		switch status {
 		case http.StatusConflict:
 			errorCode = "repository_busy"
+			if code == webui.MsgStorageChanged {
+				errorCode = "repository_storage_changed"
+			}
 		case http.StatusNotFound:
 			errorCode = "repository_not_found"
 		}

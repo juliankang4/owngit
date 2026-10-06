@@ -734,6 +734,8 @@ func browserPullRequestProblem(request *http.Request, step string, err error, ac
 				code = webui.MsgMergeBlockedTargetKind
 			}
 		}
+	case "storage_changed":
+		code = webui.MsgStorageChanged
 	case "pull_request_exists":
 		code = webui.MsgPRAlreadyOpen
 	case "pull_request_merged":

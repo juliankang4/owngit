@@ -560,6 +560,9 @@ func apiStatus(request *http.Request, step string, err error) int {
 		return http.StatusNotImplemented
 	case "state_unavailable", "repository_unavailable", "repository_preparing", "repository_busy", "merge_reconciliation_pending", "pull_request_creation_reconciliation_pending":
 		return unavailable(request, step, err)
+	case "storage_changed":
+		logFailure(request, step, err)
+		return http.StatusConflict
 	case "repository_integrity_error":
 		return internalError(request, step, err)
 	default:

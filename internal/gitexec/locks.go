@@ -10,6 +10,20 @@ import (
 type Locks struct {
 	mu    sync.Mutex
 	locks map[string]*RepositoryLock
+	// gate, when set, runs after every LockContext and TryLockGated takes the
+	// write lock. An error from it means the writer must not go on: the lock
+	// is released, with no ref change, and the error is returned.
+	gate atomic.Pointer[func() error]
+}
+
+// SetWriteGate installs the check that every write lock taken through
+// LockContext or TryLockGated passes. Passing nil removes it.
+func (l *Locks) SetWriteGate(gate func() error) {
+	if gate == nil {
+		l.gate.Store(nil)
+		return
+	}
+	l.gate.Store(&gate)
 }
 
 // RepositoryLock is one repository's reader and writer lock. Every release of
@@ -41,6 +55,9 @@ type RepositoryLock struct {
 	incarnation atomic.Uint64
 	// waiters counts callers blocked in Lock, RLock or a context wait.
 	waiters atomic.Int32
+
+	// owner supplies the write gate; nil for a lock made outside Locks.
+	owner *Locks
 }
 
 // lockWaiter is one queued caller. ready is closed when it holds the lock.
@@ -49,7 +66,7 @@ type lockWaiter struct {
 	ready chan struct{}
 }
 
-// Lock takes the write lock, counting the caller as waiting while the lock is
+// Lock takes the write lock without the write gate, counting the caller as waiting while the lock is
 // held by someone else.
 func (l *RepositoryLock) Lock() {
 	l.mu.Lock()
@@ -83,6 +100,13 @@ func (l *RepositoryLock) RLock() {
 // ctx's error and does not hold the lock. Release a lock it took through
 // Unlock or UnlockWithoutRefChanges.
 func (l *RepositoryLock) LockContext(ctx context.Context) error {
+	if err := l.lockContext(ctx); err != nil {
+		return err
+	}
+	return l.passGate()
+}
+
+func (l *RepositoryLock) lockContext(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -95,6 +119,35 @@ func (l *RepositoryLock) LockContext(ctx context.Context) error {
 	waiter := l.enqueueLocked(true)
 	l.mu.Unlock()
 	return l.waitForTurn(ctx, waiter)
+}
+
+// passGate runs the write gate of the lock's Locks for a caller that holds
+// the write lock, and releases the lock when the gate refuses.
+func (l *RepositoryLock) passGate() error {
+	if l.owner == nil {
+		return nil
+	}
+	gate := l.owner.gate.Load()
+	if gate == nil {
+		return nil
+	}
+	if err := (*gate)(); err != nil {
+		l.releaseWriteLock()
+		return err
+	}
+	return nil
+}
+
+// TryLockGated is TryLock followed by the write gate: it reports false when
+// the lock is not free, and an error, without the lock, when the gate refuses.
+func (l *RepositoryLock) TryLockGated() (bool, error) {
+	if !l.TryLock() {
+		return false, nil
+	}
+	if err := l.passGate(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // RLockContext takes the read lock unless ctx ends first. It then returns
@@ -318,7 +371,7 @@ func (l *Locks) For(repositoryID string) *RepositoryLock {
 	defer l.mu.Unlock()
 	lock := l.locks[repositoryID]
 	if lock == nil {
-		lock = &RepositoryLock{}
+		lock = &RepositoryLock{owner: l}
 		l.locks[repositoryID] = lock
 	}
 	return lock

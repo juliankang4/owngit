@@ -546,6 +546,39 @@ func removeOwnedHEADLock(path string, identity os.FileInfo) error {
 	return os.Remove(path)
 }
 
+// removeOwnedLockIn removes the lock file rel below the repository folder
+// held as repository. The folder is opened again by path, accepted only while
+// it is the held folder, and the file is removed relative to it, so a
+// replaced parent or link cannot redirect the removal.
+func removeOwnedLockIn(repositoryPath string, repository *os.File, rel string, identity os.FileInfo) error {
+	root, err := os.OpenRoot(repositoryPath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	opened, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	current, statErr := opened.Stat()
+	_ = opened.Close()
+	held, heldErr := repository.Stat()
+	if statErr != nil || heldErr != nil || !os.SameFile(current, held) {
+		return errors.New("the repository folder changed during lock recovery; the lock is left in place")
+	}
+	file, err := root.Lstat(rel)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if identity == nil || !file.Mode().IsRegular() || !os.SameFile(file, identity) {
+		return errors.New("HEAD lock ownership changed; preserving it")
+	}
+	return root.Remove(rel)
+}
+
 func refLockRecoveryMessage(name string) string {
 	return fmt.Sprintf("Lock ownership could not be confirmed. Stop OwnGit and all Git writers for this repository, move %s.lock to a safe location outside the repository, then restart OwnGit and resolve the import again. Do not move a live writer's lock.", name)
 }
@@ -704,7 +737,10 @@ func (s *Service) reconcileRecordedRefLocks(ctx context.Context, generation stri
 				continue
 			}
 			writer := s.Repositories.Locks.For(record.RepositoryID)
-			writer.Lock()
+			if err := writer.LockContext(ctx); err != nil {
+				problems = append(problems, &repositoryReconcileError{repositoryID: record.RepositoryID, err: err})
+				continue
+			}
 			err = s.reconcileRecordedRefLock(ctx, generation, path, record)
 			writer.Unlock()
 			if errors.Is(err, ErrRuntimeLost) {
@@ -745,7 +781,7 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 		if !directoryOwned || !refLockMatches(record, locked) {
 			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), nil)
 		}
-		releasePrivatePath, err := s.holdPrivateRepositoryPath(repositoryPath)
+		releasePrivatePath, heldRepository, err := s.holdPrivateRepositoryPath(repositoryPath)
 		if err != nil {
 			return newProblem(CodeUnresolved, "Automatic lock release was skipped because the repository folder is not private to this account. "+refLockRecoveryMessage(record.Name), nil)
 		}
@@ -761,7 +797,7 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 		if record.DirectoryID != directoryFileID(repositoryPath) {
 			return newProblem(CodeUnresolved, refLockRecoveryMessage(record.Name), errors.New("repository changed during lock recovery"))
 		}
-		if err := removeOwnedHEADLock(path+".lock", check.info); err != nil {
+		if err := removeOwnedLockIn(repositoryPath, heldRepository, filepath.FromSlash(record.Name)+".lock", check.info); err != nil {
 			return err
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -775,28 +811,28 @@ func (s *Service) reconcileRecordedRefLock(ctx context.Context, generation, repo
 // holdPrivateRepositoryPath only verifies existing permissions. It keeps the
 // verified directories open while recovery checks and removes its lock. Normal
 // publication and recording remain usable on shared repository storage.
-func (s *Service) holdPrivateRepositoryPath(repositoryPath string) (func(), error) {
+func (s *Service) holdPrivateRepositoryPath(repositoryPath string) (func(), *os.File, error) {
 	root, err := s.Repositories.CanonicalStorageRoot()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	relative, err := filepath.Rel(root, repositoryPath)
 	if err != nil || relative == "." || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return nil, errors.New("repository is outside its storage root")
+		return nil, nil, errors.New("repository is outside its storage root")
 	}
 	rootHandle, err := state.OpenDirectory(root, false)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rootHandle.Close()
 	parent, err := os.Open(filepath.Dir(rootHandle.Name()))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer parent.Close()
 	privateRoot, err := state.OpenPrivateFolderIn(parent, filepath.Base(rootHandle.Name()))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	held := []*os.File{privateRoot}
 	release := func() {
@@ -807,22 +843,22 @@ func (s *Service) holdPrivateRepositoryPath(repositoryPath string) (func(), erro
 	rootInfo, err := rootHandle.Stat()
 	if err != nil {
 		release()
-		return nil, err
+		return nil, nil, err
 	}
 	privateInfo, err := privateRoot.Stat()
 	if err != nil || !os.SameFile(rootInfo, privateInfo) {
 		release()
-		return nil, errors.New("repository storage root changed during privacy verification")
+		return nil, nil, errors.New("repository storage root changed during privacy verification")
 	}
 	for _, name := range strings.Split(relative, string(filepath.Separator)) {
 		child, err := state.OpenPrivateFolderIn(held[len(held)-1], name)
 		if err != nil {
 			release()
-			return nil, err
+			return nil, nil, err
 		}
 		held = append(held, child)
 	}
-	return release, nil
+	return release, held[len(held)-1], nil
 }
 
 func detachedHEADRetentionNames(oid string) []string {

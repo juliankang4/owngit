@@ -518,6 +518,9 @@ func (app *App) deleteFailure(request *http.Request, id string, err error) (webu
 	switch {
 	case errors.Is(err, repository.ErrRepositoryNotFound):
 		return webui.MsgRepoDeleteGone, http.StatusNotFound
+	case errors.Is(err, repository.ErrStorageChanged):
+		logFailure(request, "repository deletion", err)
+		return webui.MsgStorageChanged, http.StatusConflict
 	case errors.Is(err, repository.ErrDeletionRecordMismatch):
 		return webui.MsgRepoDeleteFailed, internalError(request, "repository deletion", err)
 	default:

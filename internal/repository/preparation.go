@@ -338,7 +338,9 @@ func (m *Manager) prepareAttempt(ctx context.Context, id string, job *preparatio
 	}
 	defer func() { <-p.slots }()
 	lock := m.Locks.For(id)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return err
+	}
 	defer lock.Unlock()
 	p.mu.Lock()
 	current := p.jobs[id] == job

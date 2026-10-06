@@ -932,7 +932,12 @@ func (m *Manager) maintenanceCommand(ctx context.Context, id string, kind Mainte
 		defer release()
 		ctx = gitexec.WithHeldGateSlot(ctx)
 	}
-	if lock.Waiting() || m.repositoryUses(id) != uses || !lock.TryLock() {
+	if lock.Waiting() || m.repositoryUses(id) != uses {
+		return errMaintenanceBusy
+	}
+	if taken, err := lock.TryLockGated(); err != nil {
+		return err
+	} else if !taken {
 		return errMaintenanceBusy
 	}
 	// A backup reads the repository's object files until its bundle is

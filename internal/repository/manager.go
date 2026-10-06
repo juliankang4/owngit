@@ -146,7 +146,7 @@ func (m *Manager) Create(ctx context.Context, name, description string) (state.R
 // The directory is visible at its final path before this method returns, so an
 // initial import uses InitBareRepository and records the repository row only
 // after refs and HEAD are ready.
-func (m *Manager) CreateWithOptions(ctx context.Context, name, description string, options CreateOptions) (state.Repository, error) {
+func (m *Manager) CreateWithOptions(ctx context.Context, name, description string, options CreateOptions) (_ state.Repository, err error) {
 	if options.ObjectFormat != "" && options.ObjectFormat != ObjectFormatSHA1 && options.ObjectFormat != ObjectFormatSHA256 {
 		return state.Repository{}, fmt.Errorf("%w: %q", ErrUnsupportedFormat, options.ObjectFormat)
 	}
@@ -158,7 +158,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	// Hold the repository lock from the existence check through the row write so
 	// an initial import cannot configure this id between those steps.
 	lock := m.Locks.For(id)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return state.Repository{}, err
+	}
 	defer lock.Unlock()
 	if taken, err := m.Store.RepositoryNameInUse(ctx, id, time.Now()); err != nil {
 		return state.Repository{}, err
@@ -210,10 +212,18 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		}
 		return state.Repository{}, fmt.Errorf("create temporary repository directory privately: %w", err)
 	}
+	// Staging is known by the identity of the directory just made, not by
+	// its path: a directory substituted at the path is neither published nor
+	// removed.
+	stagingInfo, err := captureDirectoryIdentity(temporaryPath)
+	if err != nil {
+		_ = os.Remove(temporaryPath)
+		return state.Repository{}, fmt.Errorf("inspect temporary repository directory: %w", err)
+	}
 	created := false
 	defer func() {
 		if !created {
-			_ = os.RemoveAll(temporaryPath)
+			err = errors.Join(err, removeStaging(temporaryPath, stagingInfo))
 		}
 	}()
 	if m.creationDirectoryHook != nil {
@@ -231,10 +241,18 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 		return state.Repository{}, fmt.Errorf("inspect new repository: %w", err)
 	}
 	defer creation.parent.Close()
+	if err := creation.stagingIs(filepath.Base(temporaryPath), stagingInfo); err != nil {
+		return state.Repository{}, err
+	}
 	if err := publishdir.Rename(ctx, temporaryPath, finalPath); err != nil {
 		return state.Repository{}, fmt.Errorf("publish repository directory: %w", err)
 	}
 	created = true
+	// The rename moved whatever had the staging name. If that was not this
+	// attempt's directory, record nothing and leave the folder for the owner.
+	if published, err := os.Lstat(finalPath); err != nil || !os.SameFile(published, stagingInfo) {
+		return state.Repository{}, fmt.Errorf("the new repository directory was replaced before publication; inspect %s", finalPath)
+	}
 	repository := state.Repository{ID: id, Name: name, Address: id, Description: strings.TrimSpace(description), CreatedAt: time.Now()}
 	// Publication has landed. Finish its durable record even if the client
 	// disconnects, but never keep recording alive without a bounded deadline.
@@ -290,6 +308,9 @@ type emptyCreation struct {
 	parent    *os.Root
 	entries   []creationEntry
 	preserved string
+	// beforeMove runs after the identity check and before the rename. Tests
+	// use it to replace the directory in that gap.
+	beforeMove func()
 }
 
 func captureEmptyCreation(path string) (*emptyCreation, error) {
@@ -337,6 +358,35 @@ func creationEntries(root *os.Root) ([]creationEntry, error) {
 		return nil
 	})
 	return entries, err
+}
+
+// stagingIs checks that the captured tree and the entry at name are both the
+// directory made for this attempt.
+func (creation *emptyCreation) stagingIs(name string, want os.FileInfo) error {
+	entry, err := creation.parent.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(creation.entries[0].info, want) || !os.SameFile(entry, want) {
+		return errors.New("the temporary repository directory was replaced; nothing was published")
+	}
+	return nil
+}
+
+// removeStaging removes the staging directory only while its path still names
+// the directory this attempt made.
+func removeStaging(path string, want os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect temporary repository directory: %w", err)
+	}
+	if !os.SameFile(current, want) {
+		return fmt.Errorf("the temporary repository directory %s was replaced and is left in place", path)
+	}
+	return os.RemoveAll(path)
 }
 
 func (creation *emptyCreation) unchanged(name string) error {
@@ -417,8 +467,22 @@ func (creation *emptyCreation) rollback(path string) error {
 	if _, err := creation.parent.Lstat(kept); !os.IsNotExist(err) {
 		return fmt.Errorf("failed-creation destination is not available: %v", err)
 	}
+	if creation.beforeMove != nil {
+		creation.beforeMove()
+	}
 	if err := creation.parent.Rename(name, kept); err != nil {
 		return fmt.Errorf("preserve unaccepted creation: %w", err)
+	}
+	// The rename is by name. If a replacement took the name after the check,
+	// put it back where its owner left it instead of keeping it as ours.
+	if landed, err := creation.parent.Lstat(kept); err != nil || !os.SameFile(landed, creation.entries[0].info) {
+		if _, err := creation.parent.Lstat(name); os.IsNotExist(err) {
+			if err := creation.parent.Rename(kept, name); err == nil {
+				return errors.New("the new repository directory was replaced during rollback; nothing was moved")
+			}
+		}
+		creation.preserved = filepath.Join(creation.parent.Name(), kept)
+		return fmt.Errorf("the new repository directory was replaced during rollback; it was left at %s", creation.preserved)
 	}
 	creation.preserved = filepath.Join(creation.parent.Name(), kept)
 	// Nothing is deleted, including files changed after the snapshot. Verify
@@ -637,7 +701,9 @@ func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime 
 		return err
 	}
 	lock := m.Locks.For(id)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return err
+	}
 	defer lock.Unlock()
 	return m.configureLocked(ctx, path, hookRuntime)
 }
@@ -854,11 +920,34 @@ fi
 		return err
 	}
 	for _, obsolete := range []string{"pre-receive", "reference-transaction"} {
-		if err := os.Remove(filepath.Join(hooks.Name(), obsolete)); err != nil && !os.IsNotExist(err) {
+		if err := removeInHeldDirectory(hooks, obsolete); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove obsolete Git hook %s: %w", obsolete, err)
 		}
 	}
 	return nil
+}
+
+// removeInHeldDirectory removes the file name from the held directory. The
+// directory's path is opened again and accepted only while it is the held
+// directory, so a renamed folder or a link on the way cannot redirect the
+// removal.
+func removeInHeldDirectory(directory *os.File, name string) error {
+	root, err := os.OpenRoot(directory.Name())
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	opened, err := root.Open(".")
+	if err != nil {
+		return err
+	}
+	current, statErr := opened.Stat()
+	_ = opened.Close()
+	held, heldErr := directory.Stat()
+	if statErr != nil || heldErr != nil || !os.SameFile(current, held) {
+		return errors.New("the Git hooks folder was replaced; nothing was removed")
+	}
+	return root.Remove(name)
 }
 
 func writeHookFile(hooks *os.File, name, content string) error {

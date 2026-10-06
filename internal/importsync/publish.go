@@ -493,6 +493,11 @@ func (s *Service) ensureObjects(ctx context.Context, run *runState, repositoryPa
 		if err := s.runtimeCurrentForRun(run); err != nil {
 			return err
 		}
+		// This write runs before the repository write lock, so it checks the
+		// storage claim itself: a folder that changed receives no pack.
+		if err := s.Repositories.VerifyStorageHold(); err != nil {
+			return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped before indexing its objects; restart OwnGit", err)
+		}
 		file, err := os.Open(packPath)
 		if err != nil {
 			return newProblem(CodePublishFailed, "staged pack could not be opened", err)
@@ -572,6 +577,12 @@ func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 	defer cancel()
 	if err := lock.RLockContext(ctx); err != nil {
 		s.logf("import %s left its pack keep file %s: the repository stayed locked for %s; it is safe to remove that file once no import is running", run.run.RepositoryID, path, destinationKeepCleanupTimeout)
+		return
+	}
+	// A folder that changed keeps the file: it is not the claimed one.
+	if err := s.Repositories.VerifyStorageHold(); err != nil {
+		lock.RUnlock()
+		s.logf("import %s left its pack keep file %s: %v", run.run.RepositoryID, path, err)
 		return
 	}
 	// A discarded unpublished directory no longer holds the file. The file is
@@ -1935,7 +1946,9 @@ func (s *Service) checkAuthority(ctx context.Context, run *runState, honorCancel
 func (s *Service) reconcileRepositoryIntents(ctx context.Context, repositoryPath, repositoryID, generation string) error {
 	now := s.clock()
 	lock := s.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return err
+	}
 	err := s.reconcileRepositoryIntentsLocked(ctx, repositoryPath, repositoryID, generation, now)
 	lock.Unlock()
 	return err

@@ -157,9 +157,12 @@ const (
 	// follows it.
 	MsgSetupStorageUnusable MessageCode = "setup.storage.unusable"
 	MsgSetupStorageInUse    MessageCode = "setup.storage.in_use"
-	MsgSetupStorageOverlap  MessageCode = "setup.storage.overlaps_state"
-	MsgSetupStorageRemote   MessageCode = "setup.storage.network_share"
-	MsgSetupStorageShared   MessageCode = "setup.storage.shared_warning"
+	// MsgStorageChanged answers a write refused because the repository
+	// folder or its claim changed while OwnGit was serving.
+	MsgStorageChanged      MessageCode = "storage.changed"
+	MsgSetupStorageOverlap MessageCode = "setup.storage.overlaps_state"
+	MsgSetupStorageRemote  MessageCode = "setup.storage.network_share"
+	MsgSetupStorageShared  MessageCode = "setup.storage.shared_warning"
 
 	MsgSetupAccessLabel     MessageCode = "setup.access.label"
 	MsgSetupAccessHelp      MessageCode = "setup.access.help"
@@ -678,6 +681,10 @@ var catalog = map[MessageCode]message{
 	MsgSetupStorageInUse: {
 		en: "Another OwnGit server is using that folder. Choose another folder, or stop that server and try again.",
 		ko: "다른 OwnGit 서버가 이 폴더를 사용 중입니다. 다른 폴더를 선택하거나, 해당 서버를 종료한 뒤 다시 시도하세요.",
+	},
+	MsgStorageChanged: {
+		en: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Check that the folder is the intended one, then restart OwnGit.",
+		ko: "OwnGit을 시작한 뒤 저장소 폴더가 바뀌어서 쓰기를 멈췄습니다. 올바른 폴더인지 확인한 다음 OwnGit을 다시 시작하세요.",
 	},
 	MsgSetupStorageOverlap: {
 		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",

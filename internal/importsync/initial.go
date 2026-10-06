@@ -74,6 +74,9 @@ type initialDestination struct {
 	repositoryID string
 	runID        string
 	rowRecorded  bool
+	// identity is the directory the ownership proof read, so removal acts on
+	// that directory and not on whatever the path names later.
+	identity os.FileInfo
 	// released is set once the unpublished directory was removed and its
 	// ownership row released.
 	released bool
@@ -192,6 +195,19 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 	path := filepath.Join(storageRoot, name)
 	if filepath.Dir(path) != storageRoot {
 		return "", newProblem(CodeRepositoryMissing, "unpublished destination path escapes the repository root", nil)
+	}
+	// Claim before the first write, so a folder another server holds gets no
+	// unpublished directory or marker.
+	if err := s.Repositories.ClaimStorageForWrite(); err != nil {
+		// Nothing was written, so the ownership row is released and a retry
+		// is not held back.
+		releaseCtx, cancelRelease := cleanupContext(ctx)
+		defer cancelRelease()
+		_ = s.setInitialDestinationState(releaseCtx, name, state.ImportInitialReleased, "", now)
+		if errors.Is(err, repository.ErrStorageInUse) {
+			return "", newProblem(CodeUnresolved, "the repository folder is in use by another OwnGit server, so the import did not start writing", err)
+		}
+		return "", newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import did not start writing; restart OwnGit", err)
 	}
 	mkdirPrivate := state.MkdirPrivate
 	if s.mkdirInitialDirectory != nil {
@@ -364,6 +380,10 @@ func (s *Service) proveInitialOwnership(ctx context.Context, dest *initialDestin
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 		return state.ImportInitialDestination{}, errors.New("initial destination path is not a directory")
 	}
+	// Through the storage folder's handle, Windows records the file ID now.
+	if dest.identity, err = directoryIdentityIn(dest.storageRoot, dest.name); err != nil {
+		return state.ImportInitialDestination{}, err
+	}
 	marker, err := readInitialMarker(dest.path)
 	if err != nil {
 		return state.ImportInitialDestination{}, fmt.Errorf("initial destination marker: %w", err)
@@ -387,12 +407,50 @@ func (s *Service) proveInitialOwnership(ctx context.Context, dest *initialDestin
 	return row, nil
 }
 
+// directoryIdentityIn returns the identity of the directory name in the
+// storage folder, read through an open handle.
+func directoryIdentityIn(storageRoot, name string) (os.FileInfo, error) {
+	parent, err := os.OpenRoot(storageRoot)
+	if err != nil {
+		return nil, err
+	}
+	defer parent.Close()
+	directory, err := parent.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	return directory.Stat()
+}
+
+// removeDirectoryWithIdentity removes the directory name below the storage
+// folder only while it is still the directory that was proven, and without
+// following a link.
+func removeDirectoryWithIdentity(storageRoot, name string, identity os.FileInfo) error {
+	parent, err := os.OpenRoot(storageRoot)
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	current, err := parent.Lstat(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if identity == nil || !os.SameFile(current, identity) {
+		return errors.New("the initial destination was replaced after its ownership was proven; it is left in place")
+	}
+	return parent.RemoveAll(name)
+}
+
 func (s *Service) removeOwnedInitialDirectory(ctx context.Context, dest *initialDestination, now time.Time) error {
 	if _, err := s.proveInitialOwnership(ctx, dest); err != nil {
 		_ = s.Store.SetImportInitialDestinationState(ctx, dest.name, state.ImportInitialCleanupFailed, boundedImportMessage(err.Error()), now)
 		return err
 	}
-	if err := os.RemoveAll(dest.path); err != nil {
+	if err := removeDirectoryWithIdentity(dest.storageRoot, dest.name, dest.identity); err != nil {
 		_ = s.setInitialDestinationState(ctx, dest.name, state.ImportInitialCleanupFailed, err.Error(), now)
 		return err
 	}
@@ -635,7 +693,9 @@ func (s *Service) reconcileOneInitialDestination(ctx context.Context, generation
 		return 1, nil
 	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer lock.Unlock()
 	if _, err := s.currentRuntime(generation); err != nil {
 		return 0, err
@@ -920,7 +980,9 @@ func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generat
 		return 1, nil
 	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return 0, err
+	}
 	defer lock.Unlock()
 	marker, err = readInitialMarker(finalPath)
 	if err != nil || marker.Token != row.Token || marker.Name != row.Name || marker.RunID != row.RunID || marker.RepositoryID != row.RepositoryID || marker.RootID != row.RootID {
@@ -1014,7 +1076,9 @@ func (s *Service) refuseTakenNewDestination(ctx context.Context, run *runState) 
 	}
 	lock := s.Repositories.Locks.For(run.run.RepositoryID)
 	if !run.credentialAuthorityLocked {
-		lock.Lock()
+		if err := lock.LockContext(ctx); err != nil {
+			return err
+		}
 		defer lock.Unlock()
 		release := s.Store.LockImportCredentialAuthority(run.run.RepositoryID)
 		defer release()

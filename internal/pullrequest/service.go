@@ -682,7 +682,9 @@ func (service *Service) ObserveCurrentRevisionsAfter(ctx context.Context, reposi
 		return nil, false, err
 	}
 	lock := service.Repositories.Locks.For(repositoryID)
-	lock.Lock()
+	if err := lock.LockContext(ctx); err != nil {
+		return nil, false, err
+	}
 	// The configured-check poller calls this every interval and after every
 	// push to any repository. A call that binds nothing changes no ref, so it
 	// releases the lock without invalidating the cached ref snapshot. The mark
@@ -740,7 +742,9 @@ func (service *Service) ReconcileAll(ctx context.Context) error {
 			return err
 		}
 		lock := service.Repositories.Locks.For(stored.ID)
-		lock.Lock()
+		if err := lock.LockContext(ctx); err != nil {
+			return err
+		}
 		err = service.RecoverRepositoryLocked(ctx, stored.ID, repositoryPath)
 		lock.Unlock()
 		if err != nil {
@@ -1194,6 +1198,9 @@ func (service *Service) requirePullRequest(ctx context.Context, repositoryID str
 // and then reports the repository as busy.
 func lockForRequest(ctx context.Context, take func(context.Context) error) error {
 	if err := take(ctx); err != nil {
+		if errors.Is(err, repository.ErrStorageChanged) {
+			return &Problem{Code: "storage_changed", Message: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Check the folder, then restart OwnGit.", Cause: err}
+		}
 		return &Problem{Code: "repository_busy", Message: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.", Cause: errors.Join(repository.ErrRepositoryInUse, err)}
 	}
 	return nil

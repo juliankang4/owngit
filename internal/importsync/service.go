@@ -1640,7 +1640,10 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 				// An initial import that never created its repository is
 				// settled once none of its unpublished directories remains.
 				lock := s.Repositories.Locks.For(repositoryID)
-				lock.Lock()
+				if err := lock.LockContext(ctx); err != nil {
+					*problems = append(*problems, &repositoryReconcileError{repositoryID: repositoryID, err: err})
+					continue
+				}
 				for _, intent := range grouped[repositoryID] {
 					if _, err := s.settleGoneInitialIntent(ctx, intent, now); err != nil {
 						*problems = append(*problems, &repositoryReconcileError{repositoryID: repositoryID, err: err})
@@ -1651,7 +1654,10 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 				continue
 			}
 			lock := s.Repositories.Locks.For(repositoryID)
-			lock.Lock()
+			if err := lock.LockContext(ctx); err != nil {
+				*problems = append(*problems, &repositoryReconcileError{repositoryID: repositoryID, err: err})
+				continue
+			}
 			err = s.reconcileIntentListLocked(ctx, path, repositoryID, generation, now, grouped[repositoryID])
 			lock.Unlock()
 			s.flushDeferredImportLogs(logs)

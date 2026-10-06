@@ -9,6 +9,7 @@ import (
 
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // The owner API for kept history and restoring files:
@@ -230,6 +231,9 @@ func writeRestoreAPIError(writer http.ResponseWriter, request *http.Request, ste
 	case errors.Is(err, repository.ErrRepositoryPreparing):
 		writer.Header().Set("Retry-After", "30")
 		writeAPIError(writer, unavailable(request, step.name, err), "repository_preparing", "The repository is being prepared. Try again later.", nil)
+	case errors.Is(err, repository.ErrStorageChanged):
+		logFailure(request, step.name, err)
+		writeAPIError(writer, http.StatusConflict, "repository_storage_changed", webui.Text(webui.LangEN, webui.MsgStorageChanged), nil)
 	case errors.Is(err, repository.ErrRestoreConflict):
 		writeAPIError(writer, http.StatusConflict, "stale_revision", "The target branch changed after the preview. Nothing was restored; preview again before restoring.", nil)
 	case errors.Is(err, repository.ErrRestoreNoChanges):

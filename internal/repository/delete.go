@@ -186,7 +186,10 @@ func (m *Manager) ReconcileDeletions(ctx context.Context) error {
 	var problems []error
 	for _, deletion := range deletions {
 		lock := m.Locks.For(deletion.RepositoryID)
-		lock.Lock()
+		if err := lock.LockContext(ctx); err != nil {
+			problems = append(problems, err)
+			continue
+		}
 		_, err := m.finishDeletion(ctx, root, deletion)
 		lock.Unlock()
 		if err != nil {
@@ -520,6 +523,9 @@ func (m *Manager) InUse(id string) bool {
 // writeLock is readLock for the write lock.
 func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
 	if err := lock.LockContext(ctx); err != nil {
+		if errors.Is(err, ErrStorageChanged) {
+			return err
+		}
 		return fmt.Errorf("%w (%w)", ErrRepositoryInUse, err)
 	}
 	return nil
@@ -528,7 +534,12 @@ func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
 // lockWithin takes the write lock unless wait or ctx ends first.
 func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock, wait time.Duration) error {
 	deadline := time.Now().Add(wait)
-	for !lock.TryLock() {
+	for {
+		if taken, err := lock.TryLockGated(); err != nil {
+			return err
+		} else if taken {
+			return nil
+		}
 		if time.Now().After(deadline) {
 			return ErrRepositoryInUse
 		}
@@ -540,7 +551,6 @@ func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock, wait time.Dur
 		case <-timer.C:
 		}
 	}
-	return nil
 }
 
 func (m *Manager) deletionNow() time.Time {

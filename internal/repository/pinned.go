@@ -97,7 +97,7 @@ func (m *Manager) PinRepository(ctx context.Context, id, baseOID, headOID string
 	if !exists {
 		return nil, errors.New("repository not found")
 	}
-	identity, err := capturePinnedRepositoryIdentity(path)
+	identity, err := captureDirectoryIdentity(path)
 	if err != nil {
 		return nil, fmt.Errorf("inspect repository identity: %w", err)
 	}
@@ -427,7 +427,7 @@ func (p *PinnedRepository) withReadLock(ctx context.Context, operation func(stri
 	if !exists || filepath.Clean(path) != p.path {
 		return ErrPinnedRepositoryChanged
 	}
-	identity, err := capturePinnedRepositoryIdentity(path)
+	identity, err := captureDirectoryIdentity(path)
 	if err != nil {
 		return fmt.Errorf("inspect pinned repository identity: %w", err)
 	}
@@ -437,11 +437,11 @@ func (p *PinnedRepository) withReadLock(ctx context.Context, operation func(stri
 	return operation(path)
 }
 
-// capturePinnedRepositoryIdentity uses handle-based Stat so Windows records
+// captureDirectoryIdentity uses handle-based Stat so Windows records
 // the volume and file index while this path still names the inspected
 // directory. Path-based Stat may defer that lookup until os.SameFile, after a
 // replacement has reused the path.
-func capturePinnedRepositoryIdentity(path string) (os.FileInfo, error) {
+func captureDirectoryIdentity(path string) (os.FileInfo, error) {
 	directory, err := os.Open(path)
 	if err != nil {
 		return nil, err

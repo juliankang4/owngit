@@ -9,6 +9,7 @@ import (
 
 	"owngit/internal/importfetch"
 	"owngit/internal/importgit"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 )
 
@@ -134,6 +135,9 @@ func joinDistinct(cause, reason error) error {
 // context ended: cancellation stays cancelled or superseded, and an expired
 // run deadline is a limit. stage names what the run was doing.
 func stoppedProblem(ctx context.Context, stage string, cause error) *Problem {
+	if errors.Is(cause, repository.ErrStorageChanged) {
+		return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped "+stage+"; restart OwnGit", cause)
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return newProblem(CodeLimit, "import run deadline expired "+stage, cause)
 	}
