@@ -54,20 +54,18 @@ func TestRefreshFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 			noErr(t, err, "refresh")
 			f.service.beforeStagingVerification = nil
 			refs := f.destinationRefs()
-			if run.RefsUpdated != 1 || refs["refs/heads/main"] != second || refs[repository.RetainedRefName("heads", first)] != first {
-				t.Fatalf("refresh that started with kept history: run=%+v refs=%v", run, refs)
-			}
+			require(t, run.RefsUpdated == 1 && refs["refs/heads/main"] == second &&
+				refs[repository.RetainedRefName("heads", first)] == first,
+				"refresh that started with kept history: run=%+v refs=%v", run, refs)
 			rewritten := amend("main", "rewritten main\n")
 			run, err = f.refresh()
 			noErr(t, err, "refresh")
 			refs = f.destinationRefs()
-			if run.RefsUpdated != 1 || refs["refs/heads/main"] != rewritten || refs[repository.RetainedRefName("heads", first)] != first {
-				t.Fatalf("run=%+v main=%s want %s", run, refs["refs/heads/main"], rewritten)
-			}
+			require(t, run.RefsUpdated == 1 && refs["refs/heads/main"] == rewritten &&
+				refs[repository.RetainedRefName("heads", first)] == first,
+				"run=%+v main=%s want %s", run, refs["refs/heads/main"], rewritten)
 			for _, name := range []string{repository.RetainedRefName("heads", second), repository.ProvenanceRefName("heads", "main", second)} {
-				if refs[name] != "" {
-					t.Fatalf("a replaced tip was kept while history is not: %s", name)
-				}
+				require(t, refs[name] == "", "a replaced tip was kept while history is not: %s", name)
 			}
 
 			protect, unprotect := true, false
@@ -79,12 +77,11 @@ func TestRefreshFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 				t.Helper()
 				_, err := f.refresh()
 				var problem *Problem
-				if !errors.As(err, &problem) || problem.Code != CodeProtectedBranch {
-					t.Fatalf("%s: err=%v, want %s", what, err, CodeProtectedBranch)
-				}
-				if refs := f.destinationRefs(); refs["refs/heads/main"] != rewritten || refs["refs/heads/dev"] != devBefore {
-					t.Fatalf("%s changed main=%s dev=%s", what, refs["refs/heads/main"], refs["refs/heads/dev"])
-				}
+				require(t, errors.As(err, &problem) && problem.Code == CodeProtectedBranch,
+					"%s: err=%v, want %s", what, err, CodeProtectedBranch)
+				refs := f.destinationRefs()
+				require(t, refs["refs/heads/main"] == rewritten && refs["refs/heads/dev"] == devBefore,
+					"%s changed main=%s dev=%s", what, refs["refs/heads/main"], refs["refs/heads/dev"])
 			}
 			refused("a rewrite of the protected default branch")
 			f.git(f.source, "checkout", "--quiet", "main")
@@ -100,31 +97,27 @@ func TestRefreshFollowsKeptHistoryAndDefaultBranchProtection(t *testing.T) {
 			run, err = f.refresh()
 			noErr(t, err, "refresh after protection was turned off")
 			refs = f.destinationRefs()
-			if run.RefsUpdated != 2 || refs["refs/heads/main"] != sourceMain || refs["refs/heads/dev"] == devBefore {
-				t.Fatalf("after protection off run=%+v main=%s want %s", run, refs["refs/heads/main"], sourceMain)
-			}
+			require(t, run.RefsUpdated == 2 && refs["refs/heads/main"] == sourceMain &&
+				refs["refs/heads/dev"] != devBefore,
+				"after protection off run=%+v main=%s want %s", run, refs["refs/heads/main"], sourceMain)
 			status, err := f.service.Status(ctx, "project")
 			noErr(t, err)
 			for _, ref := range status.Refs {
-				if ref.State != "tracked" {
-					t.Fatalf("ref %s is %s after following the source", ref.Name, ref.State)
-				}
+				require(t, ref.State == "tracked", "ref %s is %s after following the source", ref.Name, ref.State)
 			}
 
 			// A saved choice that cannot be read stops the refresh before it
 			// writes anything.
 			devTip := refs["refs/heads/dev"]
-			noErr(t, f.store.Exec(ctx, `PRAGMA ignore_check_constraints=ON; UPDATE repository_policies SET retain_history=3 WHERE repository_id='project'; PRAGMA ignore_check_constraints=OFF`))
+			noErr(t, f.store.Exec(ctx,
+				`PRAGMA ignore_check_constraints=ON; UPDATE repository_policies SET retain_history=3 WHERE repository_id='project'; PRAGMA ignore_check_constraints=OFF`))
 			f.git(f.source, "checkout", "--quiet", "dev")
 			f.commit("more dev", "more dev\n")
 			_, err = f.refresh()
 			var problem *Problem
-			if !errors.As(err, &problem) || problem.Code != CodeStateUnavailable {
-				t.Fatalf("refresh with an unreadable choice: err=%v", err)
-			}
-			if got := f.destinationRefs()["refs/heads/dev"]; got != devTip {
-				t.Fatalf("dev moved to %s while the choice could not be read", got)
-			}
+			require(t, errors.As(err, &problem) && problem.Code == CodeStateUnavailable,
+				"refresh with an unreadable choice: err=%v", err)
+			eq(t, "dev while the choice could not be read", f.destinationRefs()["refs/heads/dev"], devTip)
 		})
 	}
 }

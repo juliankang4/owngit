@@ -73,32 +73,24 @@ func TestExtraRefNamespacesArePublishedAndDroppingOneKeepsItsRefs(t *testing.T) 
 	if request := f.transport.requests[0]; !slices.Equal(request.ExtraRefPrefixes, []string{"refs/notes/"}) {
 		t.Fatalf("transport extra namespaces = %v", request.ExtraRefPrefixes)
 	}
-	if result.Run.RefsCreated != 2 || result.Run.RefsSkipped != 1 {
-		t.Fatalf("first import run = %+v", result.Run)
-	}
+	require(t, result.Run.RefsCreated == 2 && result.Run.RefsSkipped == 1, "first import run = %+v", result.Run)
 	notes := func() string {
 		records, _, err := f.manager.ReadRefs(ctx, f.destinationPath(), 0, "refs/notes", "refs/pull")
 		noErr(t, err)
 		for _, record := range records {
-			if record.Name == "refs/pull/1/head" {
-				t.Fatal("a ref outside the imported namespaces was published")
-			}
+			require(t, record.Name != "refs/pull/1/head", "a ref outside the imported namespaces was published")
 			if record.Name == "refs/notes/commits" {
 				return record.OID
 			}
 		}
 		return ""
 	}
-	if notes() != first {
-		t.Fatalf("notes = %q, want %s", notes(), first)
-	}
+	require(t, notes() == first, "notes = %q, want %s", notes(), first)
 	second := f.commit("two", "two\n")
 	f.git(f.source, "update-ref", "refs/notes/commits", second)
 	run, err := f.refresh()
 	noErr(t, err)
-	if run.RefsUpdated != 2 || notes() != second {
-		t.Fatalf("refresh run = %+v, notes = %s", run, notes())
-	}
+	require(t, run.RefsUpdated == 2 && notes() == second, "refresh run = %+v, notes = %s", run, notes())
 
 	// Dropping the namespace, even with upstream deletions followed, leaves
 	// its refs as they are.
@@ -106,23 +98,19 @@ func TestExtraRefNamespacesArePublishedAndDroppingOneKeepsItsRefs(t *testing.T) 
 	noErr(t, err)
 	dropped, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: prefixesPointer(), FollowUpstreamDeletions: boolPointer(true)})
 	noErr(t, err)
-	if dropped.AuthorityRevision != before.AuthorityRevision+1 || len(dropped.ExtraRefPrefixes) != 0 {
-		t.Fatalf("dropped namespace source = %+v", dropped)
-	}
+	require(t, dropped.AuthorityRevision == before.AuthorityRevision+1 && len(dropped.ExtraRefPrefixes) == 0,
+		"dropped namespace source = %+v", dropped)
 	f.git(f.source, "update-ref", "-d", "refs/notes/commits")
 	run, err = f.refresh()
 	noErr(t, err)
-	if run.RefsDeletedUpstream != 0 || notes() != second || f.refState("refs/notes/commits") != "not_imported" {
-		t.Fatalf("run = %+v, notes = %s, state = %s", run, notes(), f.refState("refs/notes/commits"))
-	}
-	if !slices.Equal(f.transport.requests[len(f.transport.requests)-1].ExtraRefPrefixes, nil) {
-		t.Fatal("a dropped namespace was still asked for")
-	}
+	require(t, run.RefsDeletedUpstream == 0 && notes() == second && f.refState("refs/notes/commits") == "not_imported",
+		"run = %+v, notes = %s, state = %s", run, notes(), f.refState("refs/notes/commits"))
+	require(t, slices.Equal(f.transport.requests[len(f.transport.requests)-1].ExtraRefPrefixes, nil),
+		"a dropped namespace was still asked for")
 
 	for _, prefixes := range [][]string{{"refs/heads/"}, {"refs/owngit/keep/"}, {"refs/notes"}, {"refs/notes/", "refs/notes/"}} {
-		if _, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: &prefixes}); problemCode(err) != CodeInvalidSource {
-			t.Fatalf("extra namespaces %v: %v", prefixes, err)
-		}
+		_, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: &prefixes})
+		require(t, problemCode(err) == CodeInvalidSource, "extra namespaces %v: %v", prefixes, err)
 	}
 }
 
@@ -144,41 +132,36 @@ func TestOverwriteDivergedReplacesTrackedRefs(t *testing.T) {
 
 	run, err := f.refresh()
 	noErr(t, err)
-	if run.RefsDivergent != 1 || f.destinationRefs()["refs/heads/dev"] != localDev {
-		t.Fatalf("without overwrite run = %+v", run)
-	}
+	require(t, run.RefsDivergent == 1 && f.destinationRefs()["refs/heads/dev"] == localDev,
+		"without overwrite run = %+v", run)
 	effects := f.refreshEffects()
-	if effect := effects["refs/heads/dev"]; len(effects) != 1 || effect.Effect != "replace" || effect.LocalOID != localDev || effect.History != "kept" {
-		t.Fatalf("refresh effects = %+v", effects)
-	}
+	effect := effects["refs/heads/dev"]
+	require(t, len(effects) == 1 && effect.Effect == "replace" && effect.LocalOID == localDev &&
+		effect.History == "kept", "refresh effects = %+v", effects)
 
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
 	noErr(t, err)
 	run, err = f.refresh()
 	noErr(t, err)
 	refs := f.destinationRefs()
-	if run.RefsUpdated != 1 || run.RefsDivergent != 0 || refs["refs/heads/dev"] != sourceDev || refs["refs/heads/mine"] != localOnly ||
-		refs[repository.RetainedRefName("heads", localDev)] != localDev || refs[repository.ProvenanceRefName("heads", "dev", localDev)] != localDev {
-		t.Fatalf("with overwrite run = %+v refs = %v", run, refs)
-	}
-	if len(f.refreshEffects()) != 0 {
-		t.Fatalf("effects after overwrite = %+v", f.refreshEffects())
-	}
+	require(t, run.RefsUpdated == 1 && run.RefsDivergent == 0 && refs["refs/heads/dev"] == sourceDev &&
+		refs["refs/heads/mine"] == localOnly && refs[repository.RetainedRefName("heads", localDev)] == localDev &&
+		refs[repository.ProvenanceRefName("heads", "dev", localDev)] == localDev,
+		"with overwrite run = %+v refs = %v", run, refs)
+	require(t, len(f.refreshEffects()) == 0, "effects after overwrite = %+v", f.refreshEffects())
 
 	// Without kept history the replaced tip is gone.
 	off := false
 	noErr(t, f.store.SavePolicies(ctx, state.PolicyChange{KeptHistory: &off}))
 	localAgain := f.localWork("dev", "local again\n")
-	if effect := f.refreshEffects()["refs/heads/dev"]; effect.History != "not_kept" {
-		t.Fatalf("effect without kept history = %+v", effect)
-	}
+	effect = f.refreshEffects()["refs/heads/dev"]
+	require(t, effect.History == "not_kept", "effect without kept history = %+v", effect)
 	sourceAgain := f.commit("source again", "source again\n")
 	_, err = f.refresh()
 	noErr(t, err)
 	refs = f.destinationRefs()
-	if refs["refs/heads/dev"] != sourceAgain || refs[repository.RetainedRefName("heads", localAgain)] != "" {
-		t.Fatalf("overwrite without kept history refs = %v", refs)
-	}
+	require(t, refs["refs/heads/dev"] == sourceAgain && refs[repository.RetainedRefName("heads", localAgain)] == "",
+		"overwrite without kept history refs = %v", refs)
 }
 
 // With overwrite on, a diverged protected default branch is still refused
@@ -197,12 +180,11 @@ func TestOverwriteDoesNotRewriteTheProtectedDefaultBranch(t *testing.T) {
 	f.git(f.source, "checkout", "--quiet", "dev")
 	f.commit("source dev", "source dev\n")
 	devBefore := f.destinationRefs()["refs/heads/dev"]
-	if _, err := f.refresh(); problemCode(err) != CodeProtectedBranch {
-		t.Fatalf("refresh err = %v", err)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/main"] != localMain || refs["refs/heads/dev"] != devBefore {
-		t.Fatalf("a refused refresh changed refs: %v", refs)
-	}
+	_, err = f.refresh()
+	require(t, problemCode(err) == CodeProtectedBranch, "refresh err = %v", err)
+	refs := f.destinationRefs()
+	require(t, refs["refs/heads/main"] == localMain && refs["refs/heads/dev"] == devBefore,
+		"a refused refresh changed refs: %v", refs)
 }
 
 // Upstream deletions remove only refs this source generation tracks that
@@ -229,14 +211,12 @@ func TestFollowUpstreamDeletionsRemovesEligibleTrackedRefs(t *testing.T) {
 
 	run, err := f.refresh()
 	noErr(t, err)
-	if run.RefsDeletedUpstream != 3 || f.destinationRefs()["refs/heads/topic"] != topic {
-		t.Fatalf("without the choice run = %+v", run)
-	}
+	require(t, run.RefsDeletedUpstream == 3 && f.destinationRefs()["refs/heads/topic"] == topic,
+		"without the choice run = %+v", run)
 	effects := f.refreshEffects()
-	if len(effects) != 3 || effects["refs/heads/topic"].Effect != "delete" || effects["refs/heads/topic"].LocalChanged ||
-		effects["refs/tags/v1"].History != "kept" || effects["refs/heads/dev"].Effect != "replace" {
-		t.Fatalf("refresh effects = %+v", effects)
-	}
+	require(t, len(effects) == 3 && effects["refs/heads/topic"].Effect == "delete" &&
+		!effects["refs/heads/topic"].LocalChanged && effects["refs/tags/v1"].History == "kept" &&
+		effects["refs/heads/dev"].Effect == "replace", "refresh effects = %+v", effects)
 
 	// The source moves HEAD to a new branch and deletes main and dev: main
 	// is still the branch the destination HEAD names during this refresh,
@@ -248,19 +228,13 @@ func TestFollowUpstreamDeletionsRemovesEligibleTrackedRefs(t *testing.T) {
 	run, err = f.refresh()
 	noErr(t, err)
 	refs = f.destinationRefs()
-	if refs["refs/heads/topic"] != "" || refs["refs/tags/v1"] != "" || refs["refs/heads/dev"] != localDev || refs["refs/heads/main"] != main ||
-		refs[repository.RetainedRefName("heads", topic)] != topic || refs[repository.RetainedRefName("tags", tag)] != tag {
-		t.Fatalf("with the choice run = %+v refs = %v", run, refs)
-	}
-	if target := f.git(f.destinationPath(), "symbolic-ref", "refs/heads/alias"); target != "refs/heads/topic" {
-		t.Fatalf("symbolic alias = %q", target)
-	}
-	if head := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); head != "refs/heads/next" {
-		t.Fatalf("destination HEAD = %s", head)
-	}
-	if state := f.refState("refs/heads/topic"); state != "" {
-		t.Fatalf("a deleted ref is still tracked as %q", state)
-	}
+	require(t, refs["refs/heads/topic"] == "" && refs["refs/tags/v1"] == "" && refs["refs/heads/dev"] == localDev &&
+		refs["refs/heads/main"] == main && refs[repository.RetainedRefName("heads", topic)] == topic &&
+		refs[repository.RetainedRefName("tags", tag)] == tag, "with the choice run = %+v refs = %v", run, refs)
+	eq(t, "symbolic alias", f.git(f.destinationPath(), "symbolic-ref", "refs/heads/alias"), "refs/heads/topic")
+	eq(t, "destination HEAD", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), "refs/heads/next")
+	state := f.refState("refs/heads/topic")
+	require(t, state == "", "a deleted ref is still tracked as %q", state)
 
 	// A local ref of the same name made later is local work, even with
 	// overwrite on. With overwrite, the locally changed dev follows the
@@ -271,10 +245,9 @@ func TestFollowUpstreamDeletionsRemovesEligibleTrackedRefs(t *testing.T) {
 	_, err = f.refresh()
 	noErr(t, err)
 	refs = f.destinationRefs()
-	if refs["refs/heads/topic"] != localDev || refs["refs/heads/dev"] != "" || refs["refs/heads/main"] != "" ||
-		refs[repository.RetainedRefName("heads", localDev)] != localDev || refs["refs/heads/next"] == "" {
-		t.Fatalf("with overwrite refs = %v", refs)
-	}
+	require(t, refs["refs/heads/topic"] == localDev && refs["refs/heads/dev"] == "" && refs["refs/heads/main"] == "" &&
+		refs[repository.RetainedRefName("heads", localDev)] == localDev && refs["refs/heads/next"] != "",
+		"with overwrite refs = %v", refs)
 
 	// A source that lists nothing is not read as deleting everything.
 	f.transport.mutateAdvertised = func(advertisement *importgit.Advertisement) {
@@ -282,9 +255,8 @@ func TestFollowUpstreamDeletionsRemovesEligibleTrackedRefs(t *testing.T) {
 	}
 	_, err = f.refresh()
 	f.transport.mutateAdvertised = nil
-	if refs := f.destinationRefs(); refs["refs/heads/next"] == "" {
-		t.Fatalf("an empty source deleted refs (err %v): %v", err, refs)
-	}
+	refs = f.destinationRefs()
+	require(t, refs["refs/heads/next"] != "", "an empty source deleted refs (err %v): %v", err, refs)
 }
 
 // Refresh choices changed while a run is in progress stop that run before
@@ -300,21 +272,17 @@ func TestRefreshChoicesAreRunAuthorityAndBelongToTheAddress(t *testing.T) {
 		_, err := f.service.ChangeOptions(ctx, "project", OptionsChange{FollowUpstreamDeletions: boolPointer(true)})
 		noErr(t, err)
 	}
-	if _, err := f.refresh(); problemCode(err) != CodeSuperseded {
-		t.Fatalf("refresh with a changed choice err = %v", err)
-	}
+	_, err := f.refresh()
+	require(t, problemCode(err) == CodeSuperseded, "refresh with a changed choice err = %v", err)
 	f.service.beforeStagingVerification = nil
-	if f.destinationRefs()["refs/heads/dev"] == "" {
-		t.Fatal("a superseded run deleted a ref")
-	}
+	require(t, f.destinationRefs()["refs/heads/dev"] != "", "a superseded run deleted a ref")
 
-	_, err := f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
 	noErr(t, err)
 	moved, err := f.service.ConfigureSource(ctx, ConfigureInput{RepositoryID: "project", URL: "https://example.invalid/other/project.git"})
 	noErr(t, err)
-	if moved.OverwriteDiverged || moved.FollowUpstreamDeletions || !slices.Equal(moved.ExtraRefPrefixes, []string{"refs/notes/"}) {
-		t.Fatalf("new address choices = %+v", moved)
-	}
+	require(t, !moved.OverwriteDiverged && !moved.FollowUpstreamDeletions &&
+		slices.Equal(moved.ExtraRefPrefixes, []string{"refs/notes/"}), "new address choices = %+v", moved)
 	// A form that repeats the saved choices for a new address keeps only
 	// the ones it changed.
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
@@ -324,16 +292,13 @@ func TestRefreshChoicesAreRunAuthorityAndBelongToTheAddress(t *testing.T) {
 		Options: OptionsChange{OverwriteDiverged: boolPointer(true), FollowUpstreamDeletions: boolPointer(true)},
 	})
 	noErr(t, err)
-	if repeated.OverwriteDiverged || !repeated.FollowUpstreamDeletions {
-		t.Fatalf("repeated form choices = %+v", repeated)
-	}
+	require(t, !repeated.OverwriteDiverged && repeated.FollowUpstreamDeletions, "repeated form choices = %+v", repeated)
 	// The new source generation observed nothing yet, so a ref only the
 	// earlier source had is not deleted.
 	_, err = f.refresh()
 	noErr(t, err)
-	if f.destinationRefs()["refs/heads/dev"] == "" {
-		t.Fatal("a refresh of a new source deleted a ref observed only by the earlier source")
-	}
+	require(t, f.destinationRefs()["refs/heads/dev"] != "",
+		"a refresh of a new source deleted a ref observed only by the earlier source")
 }
 
 // A saved list of extra namespaces that cannot be used is named: status
@@ -343,27 +308,22 @@ func TestUnusableSavedExtraNamespacesStopTheRun(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
-	noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes='["refs/heads/"]' WHERE repository_id='project'`))
+	noErr(t, f.store.Exec(ctx,
+		`UPDATE import_sources SET extra_ref_prefixes='["refs/heads/"]' WHERE repository_id='project'`))
 	status, err := f.service.Status(ctx, "project")
 	noErr(t, err)
-	if !strings.Contains(status.Options.Problem, "extra ref namespaces") || len(status.Options.ExtraRefPrefixes) != 0 {
-		t.Fatalf("status options = %+v", status.Options)
-	}
+	require(t, strings.Contains(status.Options.Problem, "extra ref namespaces") &&
+		len(status.Options.ExtraRefPrefixes) == 0, "status options = %+v", status.Options)
 	calls := f.transport.calls
-	if _, err := f.refresh(); err == nil || !strings.Contains(err.Error(), "extra ref namespaces cannot be used") {
-		t.Fatalf("refresh err = %v", err)
-	}
-	if f.transport.calls != calls {
-		t.Fatal("a run with unusable namespaces reached the transport")
-	}
-	if _, err := f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)}); err == nil {
-		t.Fatal("a change that leaves the unusable namespaces was saved")
-	}
+	_, err = f.refresh()
+	require(t, err != nil && strings.Contains(err.Error(), "extra ref namespaces cannot be used"),
+		"refresh err = %v", err)
+	require(t, f.transport.calls == calls, "a run with unusable namespaces reached the transport")
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
+	require(t, err != nil, "a change that leaves the unusable namespaces was saved")
 	repaired, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: prefixesPointer("refs/notes/")})
 	noErr(t, err)
-	if !slices.Equal(repaired.ExtraRefPrefixes, []string{"refs/notes/"}) {
-		t.Fatalf("repaired = %+v", repaired)
-	}
+	require(t, slices.Equal(repaired.ExtraRefPrefixes, []string{"refs/notes/"}), "repaired = %+v", repaired)
 	_, err = f.refresh()
 	noErr(t, err)
 }
@@ -375,17 +335,14 @@ func TestClearingUnusableSavedExtraNamespacesRepairsThem(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{Options: OptionsChange{FollowUpstreamDeletions: boolPointer(true)}})
-	noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET extra_ref_prefixes='["refs/heads/"]' WHERE repository_id='project'`))
+	noErr(t, f.store.Exec(ctx,
+		`UPDATE import_sources SET extra_ref_prefixes='["refs/heads/"]' WHERE repository_id='project'`))
 	repaired, err := f.service.ChangeOptions(ctx, "project", OptionsChange{ExtraRefPrefixes: prefixesPointer()})
 	noErr(t, err)
-	if len(repaired.ExtraRefPrefixes) != 0 || !repaired.FollowUpstreamDeletions {
-		t.Fatalf("repaired = %+v", repaired)
-	}
+	require(t, len(repaired.ExtraRefPrefixes) == 0 && repaired.FollowUpstreamDeletions, "repaired = %+v", repaired)
 	source, _, err := f.store.ImportSource(ctx, "project")
 	noErr(t, err)
-	if len(source.ExtraRefPrefixes) != 0 || !source.FollowUpstreamDeletions {
-		t.Fatalf("stored source = %+v", source)
-	}
+	require(t, len(source.ExtraRefPrefixes) == 0 && source.FollowUpstreamDeletions, "stored source = %+v", source)
 	_, err = f.refresh()
 	noErr(t, err)
 }
@@ -400,9 +357,8 @@ func TestReconciledDeletionIsCountedAsDeletedUpstream(t *testing.T) {
 		Desired:  map[string]string{"refs/heads/gone": "", "refs/heads/main": oid},
 		Observed: map[string]string{"refs/heads/main": oid},
 	}, time.Unix(1_800_000_000, 0))
-	if run.RefsDeletedUpstream != 1 || run.RefsUnchanged != 1 || run.Status != state.ImportRunComplete {
-		t.Fatalf("reconciled run = %+v", run)
-	}
+	require(t, run.RefsDeletedUpstream == 1 && run.RefsUnchanged == 1 && run.Status == state.ImportRunComplete,
+		"reconciled run = %+v", run)
 }
 
 // The preview is a plan by the run's own planner. A source that listed
@@ -419,16 +375,14 @@ func TestPreviewOfAnEmptySourceDeletesNothing(t *testing.T) {
 	}
 	_, err := f.refresh()
 	noErr(t, err)
-	if effects := f.refreshEffects(); len(effects) != 0 {
-		t.Fatalf("preview of an empty source = %+v", effects)
-	}
+	effects := f.refreshEffects()
+	require(t, len(effects) == 0, "preview of an empty source = %+v", effects)
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{FollowUpstreamDeletions: boolPointer(true)})
 	noErr(t, err)
 	_, err = f.refresh()
 	noErr(t, err)
-	if refs := f.destinationRefs(); refs["refs/heads/dev"] == "" || refs["refs/heads/main"] == "" {
-		t.Fatalf("an empty source deleted refs: %v", refs)
-	}
+	refs := f.destinationRefs()
+	require(t, refs["refs/heads/dev"] != "" && refs["refs/heads/main"] != "", "an empty source deleted refs: %v", refs)
 }
 
 // A diverged protected default branch makes overwriting refuse the whole
@@ -452,25 +406,23 @@ func TestPreviewShowsTheProtectedBranchRefusal(t *testing.T) {
 	noErr(t, err)
 
 	effects := f.refreshEffects()
-	if len(effects) != 2 || effects["refs/heads/main"].Effect != "refused" || effects["refs/heads/main"].LocalOID != localMain ||
-		effects["refs/heads/topic"].Effect != "delete" {
-		t.Fatalf("preview = %+v", effects)
-	}
+	require(t, len(effects) == 2 && effects["refs/heads/main"].Effect == "refused" &&
+		effects["refs/heads/main"].LocalOID == localMain && effects["refs/heads/topic"].Effect == "delete",
+		"preview = %+v", effects)
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true), FollowUpstreamDeletions: boolPointer(true)})
 	noErr(t, err)
-	if _, err := f.refresh(); problemCode(err) != CodeProtectedBranch {
-		t.Fatalf("refresh with overwrite err = %v", err)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/topic"] == "" || refs["refs/heads/dev"] != localDev {
-		t.Fatalf("a refused refresh changed refs: %v", refs)
-	}
+	_, err = f.refresh()
+	require(t, problemCode(err) == CodeProtectedBranch, "refresh with overwrite err = %v", err)
+	refs := f.destinationRefs()
+	require(t, refs["refs/heads/topic"] != "" && refs["refs/heads/dev"] == localDev,
+		"a refused refresh changed refs: %v", refs)
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(false)})
 	noErr(t, err)
 	_, err = f.refresh()
 	noErr(t, err)
-	if refs := f.destinationRefs(); refs["refs/heads/topic"] != "" || refs["refs/heads/dev"] != localDev || refs["refs/heads/main"] != localMain {
-		t.Fatalf("following deletions alone refs = %v", refs)
-	}
+	refs = f.destinationRefs()
+	require(t, refs["refs/heads/topic"] == "" && refs["refs/heads/dev"] == localDev &&
+		refs["refs/heads/main"] == localMain, "following deletions alone refs = %v", refs)
 }
 
 // The branch at the end of a symbolic HEAD chain is the default branch:
@@ -487,31 +439,26 @@ func TestSymbolicHEADChainKeepsAndProtectsItsBranch(t *testing.T) {
 	f.git(path, "symbolic-ref", "HEAD", "refs/heads/local-alias")
 	f.git(f.source, "branch", "-D", "dev")
 	dev := f.destinationRefs()["refs/heads/dev"]
-	if effects := f.refreshEffects(); len(effects) != 0 {
-		t.Fatalf("preview with HEAD through an alias = %+v", effects)
-	}
+	effects := f.refreshEffects()
+	require(t, len(effects) == 0, "preview with HEAD through an alias = %+v", effects)
 	_, err := f.refresh()
 	noErr(t, err)
-	if f.destinationRefs()["refs/heads/dev"] != dev || f.git(path, "rev-parse", "--verify", "HEAD") != dev {
-		t.Fatal("a refresh deleted the branch HEAD resolves to through an alias")
-	}
+	require(t, f.destinationRefs()["refs/heads/dev"] == dev && f.git(path, "rev-parse", "--verify", "HEAD") == dev,
+		"a refresh deleted the branch HEAD resolves to through an alias")
 
 	f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/main")
 	localMain := f.localWork("main", "local main\n")
 	protect := true
 	_, err = f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
 	noErr(t, err)
-	if effect := f.refreshEffects()["refs/heads/main"]; effect.Effect != "refused" {
-		t.Fatalf("preview of the protected branch behind an alias = %+v", effect)
-	}
+	effect := f.refreshEffects()["refs/heads/main"]
+	require(t, effect.Effect == "refused", "preview of the protected branch behind an alias = %+v", effect)
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{OverwriteDiverged: boolPointer(true)})
 	noErr(t, err)
-	if _, err := f.refresh(); problemCode(err) != CodeProtectedBranch {
-		t.Fatalf("refresh err = %v", err)
-	}
-	if f.destinationRefs()["refs/heads/main"] != localMain {
-		t.Fatal("overwrite rewrote the protected branch behind an alias")
-	}
+	_, err = f.refresh()
+	require(t, problemCode(err) == CodeProtectedBranch, "refresh err = %v", err)
+	require(t, f.destinationRefs()["refs/heads/main"] == localMain,
+		"overwrite rewrote the protected branch behind an alias")
 }
 
 // A HEAD moved onto a ref being deleted after the plan was made stops the
@@ -529,12 +476,11 @@ func TestDeletionStopsWhenHEADMovesOntoItsRef(t *testing.T) {
 		f.git(path, "symbolic-ref", "refs/heads/local-alias", "refs/heads/dev")
 		f.git(path, "symbolic-ref", "HEAD", "refs/heads/local-alias")
 	}
-	if _, err := f.refresh(); err == nil || !strings.Contains(err.Error(), `now resolves to "refs/heads/dev", which this refresh deletes`) {
-		t.Fatalf("refresh err = %v", err)
-	}
-	if f.destinationRefs()["refs/heads/dev"] != dev {
-		t.Fatal("the branch HEAD moved onto was deleted")
-	}
+	_, err := f.refresh()
+	require(t, err != nil &&
+		strings.Contains(err.Error(), `now resolves to "refs/heads/dev", which this refresh deletes`),
+		"refresh err = %v", err)
+	require(t, f.destinationRefs()["refs/heads/dev"] == dev, "the branch HEAD moved onto was deleted")
 }
 
 // Another sign-in may see fewer refs. A ref no run since the sign-in
@@ -565,38 +511,32 @@ func TestChangedSignInNeverDeletesRefsItCannotSee(t *testing.T) {
 			noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{RootCAPEM: []byte("synthetic CA")}))
 			same, _, err := f.store.ImportSource(ctx, "project")
 			noErr(t, err)
-			if same.SignInRevision != before.SignInRevision {
-				t.Fatalf("the same sign-in moved the sign-in revision %d to %d", before.SignInRevision, same.SignInRevision)
-			}
+			require(t, same.SignInRevision == before.SignInRevision,
+				"the same sign-in moved the sign-in revision %d to %d", before.SignInRevision, same.SignInRevision)
 			noErr(t, f.service.SetCredentials(ctx, "project", change.credential))
 			after, _, err := f.store.ImportSource(ctx, "project")
 			noErr(t, err)
-			if after.SignInRevision != after.AuthorityRevision || after.SourceGeneration != before.SourceGeneration || !after.FollowUpstreamDeletions {
-				t.Fatalf("after the sign-in change source = %+v", after)
-			}
+			require(t, after.SignInRevision == after.AuthorityRevision &&
+				after.SourceGeneration == before.SourceGeneration && after.FollowUpstreamDeletions,
+				"after the sign-in change source = %+v", after)
 			f.transport.mutateAdvertised = func(a *importgit.Advertisement) {
 				a.Refs = slices.DeleteFunc(a.Refs, func(ref importgit.Ref) bool { return ref.Name == "refs/heads/dev" })
 			}
-			if effect, listed := f.refreshEffects()["refs/heads/dev"]; listed {
-				t.Fatalf("preview before a run with the new sign-in = %+v", effect)
-			}
+			effect, listed := f.refreshEffects()["refs/heads/dev"]
+			require(t, !listed, "preview before a run with the new sign-in = %+v", effect)
 			_, err = f.refresh()
 			noErr(t, err)
-			if f.destinationRefs()["refs/heads/dev"] == "" {
-				t.Fatal("a ref the new sign-in cannot see was deleted")
-			}
-			if effect, listed := f.refreshEffects()["refs/heads/dev"]; listed {
-				t.Fatalf("preview of a ref the new sign-in cannot see = %+v", effect)
-			}
+			require(t, f.destinationRefs()["refs/heads/dev"] != "", "a ref the new sign-in cannot see was deleted")
+			effect, listed = f.refreshEffects()["refs/heads/dev"]
+			require(t, !listed, "preview of a ref the new sign-in cannot see = %+v", effect)
 			f.git(f.source, "branch", "-D", "topic")
-			if effect, listed := f.refreshEffects()["refs/heads/topic"]; listed {
-				t.Fatalf("preview before the deletion was observed = %+v", effect)
-			}
+			effect, listed = f.refreshEffects()["refs/heads/topic"]
+			require(t, !listed, "preview before the deletion was observed = %+v", effect)
 			_, err = f.refresh()
 			noErr(t, err)
-			if refs := f.destinationRefs(); refs["refs/heads/topic"] != "" || refs["refs/heads/dev"] == "" {
-				t.Fatalf("after a deletion the new sign-in saw refs = %v", refs)
-			}
+			refs := f.destinationRefs()
+			require(t, refs["refs/heads/topic"] == "" && refs["refs/heads/dev"] != "",
+				"after a deletion the new sign-in saw refs = %v", refs)
 		})
 	}
 }
@@ -613,9 +553,8 @@ func TestTokenRotationKeepsFollowingTheSource(t *testing.T) {
 		tip := f.commit(content, content)
 		_, err := f.refresh()
 		noErr(t, err)
-		if got := f.destinationRefs()["refs/heads/main"]; got != tip {
-			t.Fatalf("main = %s, want %s (%s)", got, tip, f.refState("refs/heads/main"))
-		}
+		got := f.destinationRefs()["refs/heads/main"]
+		require(t, got == tip, "main = %s, want %s (%s)", got, tip, f.refState("refs/heads/main"))
 	}
 }
 
@@ -635,9 +574,8 @@ func TestExtraNamespaceFolderInAnotherCaseIsNotWritten(t *testing.T) {
 			run, err := f.refresh()
 			noErr(t, err)
 			names := strings.Fields(f.git(f.destinationPath(), "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"))
-			if !slices.Equal(names, []string{existing}) || run.RefsDivergent != 1 || f.destinationRefs()["refs/heads/main"] != next {
-				t.Fatalf("run = %+v, namespace refs = %v", run, names)
-			}
+			require(t, slices.Equal(names, []string{existing}) && run.RefsDivergent == 1 &&
+				f.destinationRefs()["refs/heads/main"] == next, "run = %+v, namespace refs = %v", run, names)
 		})
 	}
 }
@@ -675,15 +613,13 @@ func TestHEADCannotMoveWhileRefsAreDeleted(t *testing.T) {
 			}
 			_, err := f.refresh()
 			noErr(t, err)
-			if moveErr == nil || !strings.Contains(string(moveOutput), ".lock") {
-				t.Fatalf("a Git process moved %s during the deletion: %v %s", test.name, moveErr, moveOutput)
-			}
-			if f.destinationRefs()["refs/heads/dev"] != "" || f.gitMaybe(path, "rev-parse", "--verify", "HEAD") == "" {
-				t.Fatalf("refs = %v, HEAD = %s", f.destinationRefs(), f.gitMaybe(path, "symbolic-ref", "HEAD"))
-			}
-			if _, err := os.Stat(filepath.Join(path, "HEAD.lock")); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("HEAD.lock left behind: %v", err)
-			}
+			require(t, moveErr != nil && strings.Contains(string(moveOutput), ".lock"),
+				"a Git process moved %s during the deletion: %v %s", test.name, moveErr, moveOutput)
+			require(t, f.destinationRefs()["refs/heads/dev"] == "" &&
+				f.gitMaybe(path, "rev-parse", "--verify", "HEAD") != "",
+				"refs = %v, HEAD = %s", f.destinationRefs(), f.gitMaybe(path, "symbolic-ref", "HEAD"))
+			_, err = os.Stat(filepath.Join(path, "HEAD.lock"))
+			require(t, errors.Is(err, os.ErrNotExist), "HEAD.lock left behind: %v", err)
 		})
 	}
 }
@@ -700,18 +636,15 @@ func TestDeletionKeepsARefRenamedIntoAnotherCase(t *testing.T) {
 	// Renamed through a third name, so storage that ignores case renames too.
 	noErr(t, os.Rename(filepath.Join(path, "refs", "notes"), filepath.Join(path, "refs", "renaming")))
 	noErr(t, os.Rename(filepath.Join(path, "refs", "renaming"), filepath.Join(path, "refs", "Notes")))
-	if names := f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"); names != "refs/Notes/commits" {
-		t.Fatalf("setup refs = %q", names)
-	}
+	eq(t, "setup refs",
+		f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"), "refs/Notes/commits")
 	f.git(f.source, "update-ref", "-d", "refs/notes/commits")
 	_, err := f.refresh()
 	noErr(t, err)
-	if names := f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"); names != "refs/Notes/commits" {
-		t.Fatalf("after refresh refs = %q", names)
-	}
-	if effects := f.refreshEffects(); len(effects) != 0 {
-		t.Fatalf("preview = %+v", effects)
-	}
+	eq(t, "after refresh refs",
+		f.git(path, "for-each-ref", "--format=%(refname)", "refs/Notes", "refs/notes"), "refs/Notes/commits")
+	effects := f.refreshEffects()
+	require(t, len(effects) == 0, "preview = %+v", effects)
 }
 
 // Repository storage that cannot be read gives no plan: the preview is
@@ -725,9 +658,7 @@ func TestPreviewIsUnknownWhenStorageCannotBeRead(t *testing.T) {
 	f.manager.SetRoot(obstruction)
 	status, err := f.service.Status(context.Background(), "project")
 	noErr(t, err)
-	if !status.RefreshEffectsUnknown || len(status.RefreshEffects) != 0 {
-		t.Fatalf("status = %+v", status)
-	}
+	require(t, status.RefreshEffectsUnknown && len(status.RefreshEffects) == 0, "status = %+v", status)
 }
 
 // A refresh that writes the branch HEAD names and deletes another ref
@@ -786,13 +717,13 @@ exec "$git" "$@"
 	if f.destinationRefs()["refs/heads/dev"] != "" && f.gitMaybe(path, "symbolic-ref", "HEAD") == "refs/heads/dev" {
 		return // HEAD reached dev and dev was kept.
 	}
-	if f.gitMaybe(path, "rev-parse", "--verify", "HEAD") == "" {
-		t.Fatalf("HEAD = %s no longer resolves, refresh err = %v", f.gitMaybe(path, "symbolic-ref", "HEAD"), err)
-	}
+	require(t, f.gitMaybe(path, "rev-parse", "--verify", "HEAD") != "",
+		"HEAD = %s no longer resolves, refresh err = %v", f.gitMaybe(path, "symbolic-ref", "HEAD"), err)
 	noErr(t, err)
-	if refs := f.destinationRefs(); refs["refs/heads/dev"] != "" || refs["refs/heads/main"] != next || f.gitMaybe(path, "symbolic-ref", "HEAD") != "refs/heads/main" {
-		t.Fatalf("refs = %v, HEAD = %s", refs, f.gitMaybe(path, "symbolic-ref", "HEAD"))
-	}
+	refs := f.destinationRefs()
+	require(t, refs["refs/heads/dev"] == "" && refs["refs/heads/main"] == next &&
+		f.gitMaybe(path, "symbolic-ref", "HEAD") == "refs/heads/main",
+		"refs = %v, HEAD = %s", refs, f.gitMaybe(path, "symbolic-ref", "HEAD"))
 }
 
 // When a refresh writes the branch HEAD names and deletes another ref, the
@@ -812,16 +743,15 @@ func TestFailureBetweenTheTwoTransactionsIsUnresolved(t *testing.T) {
 	f.service.whileRefsPrepared = func() {
 		transactions++
 		if transactions == 2 {
-			noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
+			noErr(t, f.store.Exec(ctx,
+				`UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
 		}
 	}
 	run, err := f.refresh()
-	if err == nil || run.Status != state.ImportRunUnresolved || transactions != 2 {
-		t.Fatalf("run = %s after %d transactions, err = %v", run.Status, transactions, err)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/dev"] != "" || refs["refs/heads/main"] != main {
-		t.Fatalf("refs = %v", refs)
-	}
+	require(t, err != nil && run.Status == state.ImportRunUnresolved && transactions == 2,
+		"run = %s after %d transactions, err = %v", run.Status, transactions, err)
+	refs := f.destinationRefs()
+	require(t, refs["refs/heads/dev"] == "" && refs["refs/heads/main"] == main, "refs = %v", refs)
 }
 
 // With default branch protection on, the branch HEAD resolves to when a
@@ -864,12 +794,13 @@ func TestProtectedRewriteFollowsHEADWhereItCommits(t *testing.T) {
 				}
 				// Nothing is written; as for any change made here during a
 				// publication, the moved HEAD leaves it for the owner.
-				if _, err := f.refresh(); err == nil || !strings.Contains(err.Error(), "the source rewrote refs/heads/dev, the protected default branch") {
-					t.Fatalf("refresh err = %v", err)
-				}
-				if refs := f.destinationRefs(); refs["refs/heads/dev"] != localDev || refs["refs/heads/main"] == sourceMain {
-					t.Fatalf("a refused refresh changed refs: %v", refs)
-				}
+				_, err := f.refresh()
+				require(t, err != nil &&
+					strings.Contains(err.Error(), "the source rewrote refs/heads/dev, the protected default branch"),
+					"refresh err = %v", err)
+				refs := f.destinationRefs()
+				require(t, refs["refs/heads/dev"] == localDev && refs["refs/heads/main"] != sourceMain,
+					"a refused refresh changed refs: %v", refs)
 				return
 			}
 			var moveErr error
@@ -880,12 +811,10 @@ func TestProtectedRewriteFollowsHEADWhereItCommits(t *testing.T) {
 			}
 			_, err = f.refresh()
 			noErr(t, err)
-			if moveErr == nil || !strings.Contains(string(moveOutput), ".lock") {
-				t.Fatalf("a Git process moved HEAD during a protected rewrite: %v %s", moveErr, moveOutput)
-			}
-			if refs := f.destinationRefs(); refs["refs/heads/dev"] != sourceDev || refs["refs/heads/main"] != sourceMain {
-				t.Fatalf("refs = %v", refs)
-			}
+			require(t, moveErr != nil && strings.Contains(string(moveOutput), ".lock"),
+				"a Git process moved HEAD during a protected rewrite: %v %s", moveErr, moveOutput)
+			refs := f.destinationRefs()
+			require(t, refs["refs/heads/dev"] == sourceDev && refs["refs/heads/main"] == sourceMain, "refs = %v", refs)
 		})
 	}
 }

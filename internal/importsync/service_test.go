@@ -186,6 +186,71 @@ func (f *fixture) refresh() (state.ImportRun, error) {
 	return f.service.Refresh(context.Background(), "project", Limits{})
 }
 
+// headRef returns the immediate target of the destination HEAD.
+func (f *fixture) headRef(path string) string {
+	f.t.Helper()
+	return f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD")
+}
+
+// rev resolves a ref in a destination repository.
+func (f *fixture) rev(path, name string) string {
+	f.t.Helper()
+	return f.git(path, "--git-dir", ".", "rev-parse", name)
+}
+
+// symref returns the immediate target of a symbolic ref in a destination.
+func (f *fixture) symref(path, name string) string {
+	f.t.Helper()
+	return f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", name)
+}
+
+// refreshFails runs a refresh that must fail with the given run status and,
+// when code is not empty, the given problem code.
+func (f *fixture) refreshFails(code, status string) state.ImportRun {
+	f.t.Helper()
+	run, err := f.refresh()
+	require(f.t, err != nil && run.Status == status && (code == "" || problemCode(err) == code), "refresh run=%+v err=%v, want %s/%s", run, err, status, code)
+	return run
+}
+
+// importOwned imports the source and marks the destination HEAD import-owned.
+func (f *fixture) importOwned() {
+	f.t.Helper()
+	markHEADOwnedForTest(f.t, f, f.mustImport(ImportInput{}).Run.ID)
+}
+
+// ownedDevCheckout imports an owned destination with branches main and dev at
+// one commit, checks dev out in the source and returns that commit.
+func (f *fixture) ownedDevCheckout() string {
+	f.t.Helper()
+	old := f.commit("initial", "initial\n")
+	f.git(f.source, "branch", "dev")
+	f.importOwned()
+	f.git(f.source, "checkout", "--quiet", "dev")
+	return old
+}
+
+// seedIntent stores an interrupted refresh run (id repeats the byte) with a
+// planning publication intent (id repeats the next byte) and returns the intent.
+func (f *fixture) seedIntent(id byte, expected, desired, observed map[string]string) state.ImportIntent {
+	f.t.Helper()
+	ctx := context.Background()
+	run := state.ImportRun{
+		ID: strings.Repeat(string(id), 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
+		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
+	}
+	noErr(f.t, f.store.BeginImportRun(ctx, run))
+	run.Status, run.FinishedAt = state.ImportRunInterrupted, f.now
+	noErr(f.t, f.store.FinishImportRun(ctx, run))
+	intent := state.ImportIntent{
+		ID: strings.Repeat(string(id+1), 32), RepositoryID: "project", RunID: run.ID,
+		SourceGeneration: 1, AuthorityRevision: 1, Status: state.ImportIntentPlanning,
+		Expected: expected, Desired: desired, Observed: observed, Retained: map[string]string{}, CreatedAt: f.now,
+	}
+	noErr(f.t, f.store.CreateImportIntent(ctx, intent))
+	return intent
+}
+
 // fakeTransport turns the local synthetic source into transport facts and one
 // complete pack, bypassing HTTPS without touching the process environment.
 type fakeTransport struct {
@@ -295,33 +360,22 @@ func TestImportPublishesBranchesAndTagsExactly(t *testing.T) {
 	f.git(f.source, "update-ref", "refs/owngit/keep", main)
 
 	result := f.mustImport(ImportInput{Description: "imported"})
-	if result.Run.Status != state.ImportRunComplete || result.Run.ErrorClass != "" {
-		t.Fatalf("run=%+v", result.Run)
-	}
-	if result.Run.RefsCreated != 3 || result.Run.RefsSkipped != 2 || result.Run.RefsDivergent != 0 {
-		t.Fatalf("counts created=%d skipped=%d divergent=%d", result.Run.RefsCreated, result.Run.RefsSkipped, result.Run.RefsDivergent)
-	}
-	if result.Run.HeadSymref != "refs/heads/main" || result.Run.ObjectFormat != importgit.FormatSHA1 {
-		t.Fatalf("head=%q format=%q", result.Run.HeadSymref, result.Run.ObjectFormat)
-	}
+	require(t, result.Run.Status == state.ImportRunComplete && result.Run.ErrorClass == "", "run=%+v", result.Run)
+	require(t, result.Run.RefsCreated == 3 && result.Run.RefsSkipped == 2 && result.Run.RefsDivergent == 0,
+		"counts created=%d skipped=%d divergent=%d", result.Run.RefsCreated, result.Run.RefsSkipped, result.Run.RefsDivergent)
+	require(t, result.Run.HeadSymref == "refs/heads/main" && result.Run.ObjectFormat == importgit.FormatSHA1,
+		"head=%q format=%q", result.Run.HeadSymref, result.Run.ObjectFormat)
 	destination := f.destinationRefs()
 	source := f.sourceRefs()
 	for ref, oid := range source {
-		if destination[ref] != oid {
-			t.Fatalf("destination %s=%s want %s", ref, destination[ref], oid)
-		}
+		require(t, destination[ref] == oid, "destination %s=%s want %s", ref, destination[ref], oid)
 	}
-	if len(destination) != len(source) {
-		t.Fatalf("destination refs=%v source refs=%v", sortedKeys(destination), sortedKeys(source))
-	}
+	require(t, len(destination) == len(source),
+		"destination refs=%v source refs=%v", sortedKeys(destination), sortedKeys(source))
 	headSymref, _, err := f.manager.ReadHead(context.Background(), f.destinationPath())
-	if err != nil || headSymref != "refs/heads/main" {
-		t.Fatalf("destination HEAD=%q err=%v", headSymref, err)
-	}
+	require(t, err == nil && headSymref == "refs/heads/main", "destination HEAD=%q err=%v", headSymref, err)
 	// The source repository was never written to.
-	if dirty := f.git(f.source, "status", "--porcelain"); dirty != "" {
-		t.Fatalf("source worktree is dirty: %q", dirty)
-	}
+	eq(t, "source worktree is dirty", f.git(f.source, "status", "--porcelain"), "")
 	// An initial import creates no check consent or attempt state.
 	for _, table := range []string{"check_policies", "check_jobs", "check_attempts"} {
 		count, err := f.store.TableRowCount(context.Background(), table)
@@ -329,14 +383,10 @@ func TestImportPublishesBranchesAndTagsExactly(t *testing.T) {
 			// Some tables may only exist after later migrations.
 			continue
 		}
-		if count != 0 {
-			t.Fatalf("%s has %d rows after an import", table, count)
-		}
+		require(t, count == 0, "%s has %d rows after an import", table, count)
 	}
 	observations, err := f.store.ImportObservations(context.Background(), "project", 1)
-	if err != nil || len(observations) != 4 {
-		t.Fatalf("observations=%d err=%v", len(observations), err)
-	}
+	require(t, err == nil && len(observations) == 4, "observations=%d err=%v", len(observations), err)
 	// The run staging is removed. Only the two private regular files that define
 	// the prepared runtime root remain; no run directory or unknown entry does.
 	entries, err := os.ReadDir(f.service.stagingRootPath())
@@ -345,64 +395,29 @@ func TestImportPublishesBranchesAndTagsExactly(t *testing.T) {
 		runtimeRootMarkerName: false,
 		runtimeRootLockName:   false,
 	}
-	if len(entries) != len(expectedMetadata) {
-		t.Fatalf("staging entries=%v", entries)
-	}
+	require(t, len(entries) == len(expectedMetadata), "staging entries=%v", entries)
 	for _, entry := range entries {
-		if _, expected := expectedMetadata[entry.Name()]; !expected {
-			t.Fatalf("unexpected staging entry %q", entry.Name())
-		}
+		_, expected := expectedMetadata[entry.Name()]
+		require(t, expected, "unexpected staging entry %q", entry.Name())
 		path := filepath.Join(f.service.stagingRootPath(), entry.Name())
 		info, err := os.Lstat(path)
-		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-			t.Fatalf("runtime metadata %q is not a regular file: info=%v err=%v", entry.Name(), info, err)
-		}
-		if err := state.ValidatePrivateFile(path); err != nil {
-			t.Fatalf("runtime metadata %q is not private: %v", entry.Name(), err)
-		}
+		require(t, err == nil && info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0,
+			"runtime metadata %q is not a regular file: info=%v err=%v", entry.Name(), info, err)
+		err = state.ValidatePrivateFile(path)
+		require(t, err == nil, "runtime metadata %q is not private: %v", entry.Name(), err)
 		expectedMetadata[entry.Name()] = true
 	}
 	for name, found := range expectedMetadata {
-		if !found {
-			t.Fatalf("runtime metadata %q is missing", name)
-		}
-	}
-}
-
-func TestImportKeepsUnrelatedLocalRefs(t *testing.T) {
-	f := newFixture(t)
-	first := f.commit("one", "one\n")
-	// Import refuses a repository that already exists. The local ref is added
-	// after the initial publication, which is the case this test observes.
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	f.git(path, "update-ref", "refs/heads/local-only", first)
-	// Rewrite upstream so the refresh publishes a new value for main.
-	noErr(t, os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600))
-	f.git(f.source, "add", "file.txt")
-	f.git(f.source, "commit", "--amend", "-m", "rewritten")
-	if _, err := f.refresh(); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	refs := f.destinationRefs()
-	if refs["refs/heads/local-only"] != first {
-		t.Fatalf("unrelated local ref was lost: %v", refs)
-	}
-	if refs["refs/heads/main"] == first {
-		t.Fatalf("main did not follow upstream: %v", refs)
+		require(t, found, "runtime metadata %q is missing", name)
 	}
 }
 
 func TestEmptySourceImportPublishesNothingHonestly(t *testing.T) {
 	f := newFixture(t)
 	result := f.mustImport(ImportInput{})
-	if result.Run.Status != state.ImportRunComplete || result.Run.RefsSeen != 0 {
-		t.Fatalf("run=%+v", result.Run)
-	}
+	require(t, result.Run.Status == state.ImportRunComplete && result.Run.RefsSeen == 0, "run=%+v", result.Run)
 	refs := f.destinationRefs()
-	if len(refs) != 0 {
-		t.Fatalf("empty import created refs=%v", refs)
-	}
+	require(t, len(refs) == 0, "empty import created refs=%v", refs)
 }
 
 func TestLFSGateNeedsExplicitGitOnlyConsent(t *testing.T) {
@@ -414,165 +429,94 @@ func TestLFSGateNeedsExplicitGitOnlyConsent(t *testing.T) {
 	f.commit("pointer", pointer)
 
 	refused, err := f.importProject(ImportInput{})
-	if err == nil {
-		t.Fatalf("import without consent succeeded: %+v", refused.Run)
-	}
-	if code := problemCode(err); code != CodeLFSRequired {
-		t.Fatalf("refusal code=%s err=%v", code, err)
-	}
-	if refused.Run.Status != state.ImportRunFailed || refused.Run.ErrorClass != CodeLFSRequired {
-		t.Fatalf("refused run=%+v", refused.Run)
-	}
-	if _, _, exists, err := f.manager.ExistingPath(context.Background(), "project"); err != nil || exists {
-		t.Fatalf("destination exists=%v err=%v", exists, err)
-	}
+	require(t, err != nil, "import without consent succeeded: %+v", refused.Run)
+	code := problemCode(err)
+	require(t, code == CodeLFSRequired, "refusal code=%s err=%v", code, err)
+	require(t, refused.Run.Status == state.ImportRunFailed && refused.Run.ErrorClass == CodeLFSRequired,
+		"refused run=%+v", refused.Run)
+	_, _, exists, err := f.manager.ExistingPath(context.Background(), "project")
+	require(t, err == nil && !exists, "destination exists=%v err=%v", exists, err)
 
 	accepted := f.mustImport(ImportInput{GitOnlyConsent: true})
-	if accepted.Run.Status != state.ImportRunComplete || accepted.Run.LFSDetected != 1 || !accepted.Run.LFSInspectionDone ||
-		accepted.Run.LFSScannedBlobs != 1 || accepted.Run.LFSScannedBytes != int64(len(pointer)) {
-		t.Fatalf("consented run=%+v", accepted.Run)
-	}
-	if refs := f.destinationRefs(); len(refs) != 1 {
-		t.Fatalf("published refs=%v", refs)
-	}
+	require(t, accepted.Run.Status == state.ImportRunComplete && accepted.Run.LFSDetected == 1 &&
+		accepted.Run.LFSInspectionDone && accepted.Run.LFSScannedBlobs == 1 &&
+		accepted.Run.LFSScannedBytes == int64(len(pointer)), "consented run=%+v", accepted.Run)
+	refs := f.destinationRefs()
+	require(t, len(refs) == 1, "published refs=%v", refs)
 	content := f.gitInput(f.destinationPath(), nil, "--git-dir", ".", "cat-file", "blob", "refs/heads/main:file.txt")
-	if !bytes.Equal(content, []byte(pointer)) {
-		t.Fatalf("pointer bytes changed: got %q want %q", content, pointer)
-	}
+	require(t, bytes.Equal(content, []byte(pointer)), "pointer bytes changed: got %q want %q", content, pointer)
 	status, err := f.service.Status(context.Background(), "project")
-	if err != nil || !status.Content.Incomplete || !status.Content.InspectionComplete || status.Content.LFSDetected != 1 {
-		t.Fatalf("content status=%+v err=%v", status.Content, err)
-	}
+	require(t, err == nil && status.Content.Incomplete && status.Content.InspectionComplete &&
+		status.Content.LFSDetected == 1, "content status=%+v err=%v", status.Content, err)
 }
 
 func TestRefreshReplacesRewrittenTipAndRetainsHistory(t *testing.T) {
 	f := newFixture(t)
 	first := f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
+	// A local ref the source never had is kept by the refresh.
+	f.git(f.destinationPath(), "update-ref", "refs/heads/local-only", first)
 	// Amend the root commit so the new tip is not a descendant of the imported
 	// history. The replaced tip must survive through retention refs.
 	noErr(t, os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600))
 	f.git(f.source, "add", "file.txt")
 	f.git(f.source, "commit", "--amend", "-m", "rewritten root")
 	third := f.git(f.source, "rev-parse", "HEAD")
-	if first == third || strings.Contains(f.git(f.source, "rev-list", "--all"), first) {
-		t.Fatalf("old tip first=%s new=%s is still reachable", first, third)
-	}
+	require(t, first != third && !strings.Contains(f.git(f.source, "rev-list", "--all"), first),
+		"old tip first=%s new=%s is still reachable", first, third)
 
 	run, err := f.refresh()
 	noErr(t, err, "refresh")
-	if run.Status != state.ImportRunComplete || run.RefsUpdated != 1 {
-		t.Fatalf("refresh run=%+v", run)
-	}
+	require(t, run.Status == state.ImportRunComplete && run.RefsUpdated == 1, "refresh run=%+v", run)
 	refs := f.destinationRefs()
-	if refs["refs/heads/main"] != third {
-		t.Fatalf("main=%s want %s", refs["refs/heads/main"], third)
-	}
+	require(t, refs["refs/heads/main"] == third, "main=%s want %s", refs["refs/heads/main"], third)
 	retained := refs[repository.RetainedRefName("heads", first)]
-	if retained != first {
-		t.Fatalf("retained ref=%q refs=%v", retained, sortedKeys(refs))
-	}
-	if refs[repository.ProvenanceRefName("heads", "main", first)] != first {
-		t.Fatalf("provenance ref missing: %v", sortedKeys(refs))
-	}
-	if f.gitMaybe(f.destinationPath(), "rev-parse", "--verify", first+"^{commit}") == "" {
-		t.Fatalf("retained object %s is unreachable", first)
-	}
+	require(t, retained == first, "retained ref=%q refs=%v", retained, sortedKeys(refs))
+	require(t, refs[repository.ProvenanceRefName("heads", "main", first)] == first,
+		"provenance ref missing: %v", sortedKeys(refs))
+	eq(t, "unrelated local ref", refs["refs/heads/local-only"], first)
+	require(t, f.gitMaybe(f.destinationPath(), "rev-parse", "--verify", first+"^{commit}") != "",
+		"retained object %s is unreachable", first)
 	// The observation now records the new source tip.
 	observations, err := f.store.ImportObservations(context.Background(), "project", 1)
-	if err != nil || len(observations) != 2 {
-		t.Fatalf("observations=%+v err=%v", observations, err)
-	}
+	require(t, err == nil && len(observations) == 2, "observations=%+v err=%v", observations, err)
 	for _, observation := range observations {
-		if observation.RefName == "refs/heads/main" && observation.OID != third {
-			t.Fatalf("main observation=%s want %s", observation.OID, third)
-		}
+		require(t, observation.RefName != "refs/heads/main" || observation.OID == third,
+			"main observation=%s want %s", observation.OID, third)
 	}
 }
 
-func TestRefreshLeavesLocalAheadBranchDiverged(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.git(f.source, "branch", "dev")
-	f.mustImport(ImportInput{})
-	f.commit("two", "two\n")
-
-	work := filepath.Join(f.root, "work")
-	f.git("", "clone", "--quiet", f.destinationPath(), work)
-	f.git(work, "checkout", "--quiet", "dev")
-	noErr(t, os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600))
-	f.git(work, "add", "local.txt")
-	f.git(work, "commit", "-m", "local only")
-	localTip := f.git(work, "rev-parse", "HEAD")
-	f.git(work, "push", "--quiet", "origin", "dev")
-
-	run, err := f.refresh()
-	noErr(t, err, "refresh")
-	if run.Status != state.ImportRunComplete || run.RefsDivergent != 1 {
-		t.Fatalf("refresh run=%+v", run)
-	}
-	refs := f.destinationRefs()
-	if refs["refs/heads/dev"] != localTip {
-		t.Fatalf("local dev=%s want %s", refs["refs/heads/dev"], localTip)
-	}
-	if refs["refs/heads/main"] != f.git(f.source, "rev-parse", "refs/heads/main") {
-		t.Fatalf("main did not follow the source: %v", refs["refs/heads/main"])
-	}
-}
-
-func TestRefreshDivergesWhenLocalAndSourceBothMoved(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-
-	work := filepath.Join(f.root, "work")
-	f.git("", "clone", "--quiet", f.destinationPath(), work)
-	noErr(t, os.WriteFile(filepath.Join(work, "local.txt"), []byte("local\n"), 0o600))
-	f.git(work, "add", "local.txt")
-	f.git(work, "commit", "-m", "local only")
-	localTip := f.git(work, "rev-parse", "HEAD")
-	f.git(work, "push", "--quiet", "origin", "main")
-
-	sourceTip := f.commit("source rewrite", "rewritten\n")
-	if strings.Contains(f.git(f.source, "rev-list", "--all"), sourceTip) == false {
-		t.Fatal("source tip missing")
-	}
-
-	run, err := f.refresh()
-	noErr(t, err, "refresh")
-	if run.Status != state.ImportRunComplete || run.RefsDivergent != 1 || run.RefsUpdated != 0 {
-		t.Fatalf("refresh run=%+v", run)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/main"] != localTip {
-		t.Fatalf("divergent local branch was overwritten: %v", refs["refs/heads/main"])
-	}
-	status, err := f.service.Status(context.Background(), "project")
-	noErr(t, err)
-	var divergent int
-	for _, ref := range status.Refs {
-		if ref.State == "diverged" {
-			divergent++
-		}
-	}
-	if divergent != 1 {
-		t.Fatalf("status divergent=%d refs=%+v", divergent, status.Refs)
-	}
-}
-
-func TestRefreshRetainsLocallyDeletedUpstreamRef(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.git(f.source, "branch", "dev")
-	f.mustImport(ImportInput{})
-	f.git(f.source, "branch", "-D", "dev")
-
-	run, err := f.refresh()
-	noErr(t, err, "refresh")
-	if run.RefsDeletedUpstream != 1 {
-		t.Fatalf("deleted-upstream count=%d", run.RefsDeletedUpstream)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/dev"] == "" {
-		t.Fatalf("upstream deletion removed the local ref: %v", sortedKeys(refs))
+// A local push to a branch the source also moved, or to a branch the source
+// left alone, keeps the local value and counts one divergent ref; the status
+// lists it as diverged and other branches still follow the source.
+func TestRefreshLeavesLocallyPushedBranchDiverged(t *testing.T) {
+	for _, test := range []struct {
+		name, branch      string
+		sourceMovesBranch bool
+	}{{"branch only the owner moved", "dev", false}, {"branch both moved", "main", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.git(f.source, "branch", "dev")
+			f.mustImport(ImportInput{})
+			localTip := f.localWork(test.branch, "local\n")
+			f.commit("two", "two\n")
+			run, err := f.refresh()
+			noErr(t, err, "refresh")
+			updated := int64(1)
+			if test.sourceMovesBranch {
+				updated = 0
+			}
+			require(t, run.Status == state.ImportRunComplete && run.RefsDivergent == 1 && run.RefsUpdated == updated,
+				"refresh run=%+v", run)
+			refs := f.destinationRefs()
+			eq(t, "local "+test.branch, refs["refs/heads/"+test.branch], localTip)
+			if !test.sourceMovesBranch {
+				eq(t, "main follows the source",
+					refs["refs/heads/main"], f.git(f.source, "rev-parse", "refs/heads/main"))
+			}
+			eq(t, "diverged state", f.refState("refs/heads/"+test.branch), "diverged")
+		})
 	}
 }
 
@@ -585,31 +529,23 @@ func TestImportRequestCarriesOnlyBoundCredentials(t *testing.T) {
 		Credentials:         &Credentials{Username: "user", Password: "secret"},
 	})
 	noErr(t, err)
-	if len(f.transport.requests) != 1 {
-		t.Fatalf("transport calls=%d", len(f.transport.requests))
-	}
+	require(t, len(f.transport.requests) == 1, "transport calls=%d", len(f.transport.requests))
 	request := f.transport.requests[0]
-	if request.Authentication.Basic == nil || request.Authentication.Basic.Password != "secret" || !request.AllowPrivateNetwork {
-		t.Fatalf("request=%+v", request)
-	}
+	require(t, request.Authentication.Basic != nil && request.Authentication.Basic.Password == "secret" &&
+		request.AllowPrivateNetwork, "request=%+v", request)
 	// A changed source URL must not receive the old credential.
 	if _, err := f.service.ConfigureSource(context.Background(), ConfigureInput{
 		RepositoryID: "project", URL: "https://example.invalid/other/project.git",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.service.Refresh(context.Background(), "project", Limits{}); err != nil {
-		t.Fatal(err)
-	}
-	if len(f.transport.requests) != 2 {
-		t.Fatalf("transport calls=%d", len(f.transport.requests))
-	}
-	if second := f.transport.requests[1]; second.Authentication.Basic != nil || second.URL != "https://example.invalid/other/project.git" {
-		t.Fatalf("second request=%+v", second)
-	}
-	if result.Run.SourceGeneration != 1 {
-		t.Fatalf("first run generation=%d", result.Run.SourceGeneration)
-	}
+	_, err = f.service.Refresh(context.Background(), "project", Limits{})
+	noErr(t, err)
+	require(t, len(f.transport.requests) == 2, "transport calls=%d", len(f.transport.requests))
+	second := f.transport.requests[1]
+	require(t, second.Authentication.Basic == nil && second.URL == "https://example.invalid/other/project.git",
+		"second request=%+v", second)
+	require(t, result.Run.SourceGeneration == 1, "first run generation=%d", result.Run.SourceGeneration)
 }
 
 func TestSupersededSourcePreventsStalePublication(t *testing.T) {
@@ -626,15 +562,9 @@ func TestSupersededSourcePreventsStalePublication(t *testing.T) {
 	f.git(f.source, "update-ref", "refs/heads/main", old)
 	newTip := f.commit("two", "two\n")
 	run, err := f.refresh()
-	if err == nil || problemCode(err) != CodeSuperseded {
-		t.Fatalf("refresh err=%v", err)
-	}
-	if run.Status != state.ImportRunSuperseded {
-		t.Fatalf("run=%+v", run)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/main"] != old {
-		t.Fatalf("stale publication applied: %v", refs["refs/heads/main"])
-	}
+	require(t, err != nil && problemCode(err) == CodeSuperseded, "refresh err=%v", err)
+	require(t, run.Status == state.ImportRunSuperseded, "run=%+v", run)
+	eq(t, "stale publication applied", f.destinationRefs()["refs/heads/main"], old)
 	_ = newTip
 }
 
@@ -658,101 +588,66 @@ func TestCancelPreventsPublication(t *testing.T) {
 	f.commit("two", "two\n")
 	f.transport.gate <- struct{}{}
 	<-done
-	if runErr == nil || problemCode(runErr) != CodeCancelled {
-		t.Fatalf("refresh err=%v", runErr)
-	}
-	if run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
-		t.Fatalf("run=%+v", run)
-	}
+	require(t, runErr != nil && problemCode(runErr) == CodeCancelled, "refresh err=%v", runErr)
+	require(t, run.Status == state.ImportRunCancelled && run.ErrorClass == CodeCancelled, "run=%+v", run)
 	if refs := f.destinationRefs(); refs["refs/heads/main"] != first {
 		// The cancelled refresh staged the new pack but never published.
 		t.Fatalf("cancelled run published: %v", refs["refs/heads/main"])
 	}
 	active, exists, err := f.store.ActiveImportRun(context.Background(), "project")
-	if err != nil || exists {
-		t.Fatalf("active run=%+v exists=%v err=%v", active, exists, err)
-	}
+	require(t, err == nil && !exists, "active run=%+v exists=%v err=%v", active, exists, err)
 }
 
-func TestReconcileConfirmsOrphansUnfinishedIntent(t *testing.T) {
-	f := newFixture(t)
-	old := f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	newTip := f.commit("two", "two\n")
-	// Push the object and ref so the destination holds neither the recorded
-	// expected value nor any receipt, exactly like a process that stopped after
-	// the Git write and before the intent receipt.
-	f.git(f.source, "push", "--quiet", path, newTip+":refs/heads/main", newTip+":refs/heads/staged")
-
-	run := state.ImportRun{
-		ID: strings.Repeat("1", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
-		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing,
-		StartedAt: f.now, CreatedAt: f.now,
-	}
-	noErr(t, f.store.BeginImportRun(context.Background(), run))
-	run.Status = state.ImportRunInterrupted
-	run.FinishedAt = f.now
-	noErr(t, f.store.FinishImportRun(context.Background(), run))
-	intent := state.ImportIntent{
-		ID: strings.Repeat("2", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
-		Status:   state.ImportIntentPlanning,
-		Expected: map[string]string{"refs/heads/main": old, state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: old}).encode()},
-		Desired:  map[string]string{"refs/heads/main": newTip, state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: newTip}).encode()},
-		Observed: map[string]string{"refs/heads/main": newTip, state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: newTip}).encode()},
-		Retained: map[string]string{}, CreatedAt: f.now,
-	}
-	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
-	noErr(t, f.service.Reconcile(context.Background()), "reconcile")
-	stored, exists, err := f.store.ImportIntent(context.Background(), intent.ID)
-	if err != nil || !exists || stored.Status != state.ImportIntentComplete || stored.ReceiptJSON == "" || stored.ReceiptDigest == "" {
-		t.Fatalf("intent=%+v exists=%v err=%v", stored, exists, err)
-	}
-	promoted, exists, err := f.store.ImportRun(context.Background(), run.ID)
-	if err != nil || !exists || promoted.Status != state.ImportRunComplete {
-		t.Fatalf("promoted run=%+v exists=%v err=%v", promoted, exists, err)
-	}
-}
-
-func TestReconcileMarksMismatchedIntentUnresolved(t *testing.T) {
-	f := newFixture(t)
-	old := f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	moved := f.commit("two", "two\n")
-	path := f.destinationPath()
-	// The destination holds neither the expected nor the desired value.
-	f.git(f.source, "push", "--quiet", path, moved+":refs/heads/main")
-	run := state.ImportRun{
-		ID: strings.Repeat("3", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
-		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing,
-		StartedAt: f.now, CreatedAt: f.now,
-	}
-	noErr(t, f.store.BeginImportRun(context.Background(), run))
-	run.Status = state.ImportRunInterrupted
-	run.FinishedAt = f.now
-	noErr(t, f.store.FinishImportRun(context.Background(), run))
-	intent := state.ImportIntent{
-		ID: strings.Repeat("4", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
-		Status:   state.ImportIntentPlanning,
-		Expected: map[string]string{"refs/heads/main": old, state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: old}).encode()},
-		Desired:  map[string]string{"refs/heads/main": strings.Repeat("b", 40), state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: strings.Repeat("b", 40)}).encode()},
-		Observed: map[string]string{"refs/heads/main": strings.Repeat("b", 40), state.ImportHeadRef: (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: strings.Repeat("b", 40)}).encode()},
-		Retained: map[string]string{}, CreatedAt: f.now,
-	}
-	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
-	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
-		t.Fatalf("mismatched intent reconciliation error=%v", err)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != moved {
-		t.Fatalf("reconciliation changed independent destination ref: got=%s want=%s", got, moved)
-	}
-	stored, _, err := f.store.ImportIntent(context.Background(), intent.ID)
-	if err != nil || stored.Status != state.ImportIntentUnresolved {
-		t.Fatalf("intent status=%q err=%v", stored.Status, err)
-	}
-	unresolved, _, err := f.store.ImportRun(context.Background(), run.ID)
-	if err != nil || unresolved.Status != state.ImportRunUnresolved {
-		t.Fatalf("run status=%q err=%v", unresolved.Status, err)
+// An interrupted refresh whose destination holds the desired refs (the process
+// stopped after the Git write, before the receipt) is confirmed and its run
+// completed. When the destination holds neither the expected nor the desired
+// value, the intent and the run are unresolved and the ref is left alone.
+func TestReconcileSettlesUnfinishedIntent(t *testing.T) {
+	for _, confirmed := range []bool{true, false} {
+		name := "mismatch is unresolved"
+		if confirmed {
+			name = "desired refs are confirmed"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			old := f.commit("one", "one\n")
+			f.mustImport(ImportInput{})
+			path := f.destinationPath()
+			newTip := f.commit("two", "two\n")
+			desired := newTip
+			if confirmed {
+				// Push the object and ref so the destination holds neither the
+				// recorded expected value nor any receipt.
+				f.git(f.source, "push", "--quiet", path, newTip+":refs/heads/main", newTip+":refs/heads/staged")
+			} else {
+				f.git(f.source, "push", "--quiet", path, newTip+":refs/heads/main")
+				desired = strings.Repeat("b", 40)
+			}
+			head := func(oid string) string {
+				return (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}).encode()
+			}
+			intent := f.seedIntent('1',
+				map[string]string{"refs/heads/main": old, state.ImportHeadRef: head(old)},
+				map[string]string{"refs/heads/main": desired, state.ImportHeadRef: head(desired)},
+				map[string]string{"refs/heads/main": desired, state.ImportHeadRef: head(desired)})
+			err := f.service.Reconcile(context.Background())
+			stored, exists, readErr := f.store.ImportIntent(context.Background(), intent.ID)
+			noErr(t, readErr)
+			run, _, readErr := f.store.ImportRun(context.Background(), intent.RunID)
+			noErr(t, readErr)
+			if confirmed {
+				noErr(t, err, "reconcile")
+				require(t, exists && stored.Status == state.ImportIntentComplete && stored.ReceiptJSON != "" &&
+					stored.ReceiptDigest != "", "intent=%+v exists=%v", stored, exists)
+				eq(t, "promoted run status", run.Status, state.ImportRunComplete)
+				return
+			}
+			require(t, err != nil && problemCode(err) == CodeUnresolved,
+				"mismatched intent reconciliation error=%v", err)
+			eq(t, "independent destination ref", f.destinationRefs()["refs/heads/main"], newTip)
+			eq(t, "intent status", stored.Status, state.ImportIntentUnresolved)
+			eq(t, "run status", run.Status, state.ImportRunUnresolved)
+		})
 	}
 }
 
@@ -766,47 +661,13 @@ func TestReconcilePreservesUnownedStagingContent(t *testing.T) {
 	valid := filepath.Join(f.service.stagingRootPath(), "run-"+strings.Repeat("5", 32))
 	noErr(t, os.Mkdir(valid, 0o700))
 	noErr(t, f.service.Reconcile(context.Background()), "reconcile")
-	if _, err := os.Stat(filepath.Join(unknown, "keep.txt")); err != nil {
-		t.Fatalf("unowned content removed: %v", err)
-	}
-	if _, err := os.Stat(valid); err != nil {
-		t.Fatalf("markerless staging removed: %v", err)
-	}
+	_, err := os.Stat(filepath.Join(unknown, "keep.txt"))
+	noErr(t, err, "unowned content removed")
+	_, err = os.Stat(valid)
+	noErr(t, err, "markerless staging removed")
 	row, exists, err := f.store.ImportStaging(context.Background(), filepath.Base(valid))
-	if err != nil || !exists || row.State != state.ImportStagingUnknown {
-		t.Fatalf("staging row=%+v exists=%v err=%v", row, exists, err)
-	}
-}
-
-func TestSchedulerRunsDueRefresh(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	if _, err := f.service.SetSchedule(context.Background(), "project", true, time.Minute); err != nil {
-		t.Fatal(err)
-	}
-	f.now = f.now.Add(2 * time.Minute)
-	scheduler := &Scheduler{Service: f.service, Interval: 10 * time.Millisecond}
-	noErr(t, scheduler.Start(context.Background()))
-	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := scheduler.Stop(ctx); err != nil {
-			t.Errorf("scheduler stop: %v", err)
-		}
-	}()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		runs, _, err := f.store.ImportRuns(context.Background(), "project", 1)
-		noErr(t, err)
-		if len(runs) > 0 && runs[0].Kind == state.ImportKindScheduled && runs[0].Status == state.ImportRunComplete {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("scheduled run never completed: %+v", runs)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+	require(t, err == nil && exists && row.State == state.ImportStagingUnknown,
+		"staging row=%+v exists=%v err=%v", row, exists, err)
 }
 
 func TestImportMatchesSha256SourceFormat(t *testing.T) {
@@ -816,16 +677,12 @@ func TestImportMatchesSha256SourceFormat(t *testing.T) {
 	f.initSource()
 	f.commit("one", "one\n")
 	result := f.mustImport(ImportInput{})
-	if result.Run.Status != state.ImportRunComplete || result.Run.ObjectFormat != importgit.FormatSHA256 {
-		t.Fatalf("run=%+v", result.Run)
-	}
+	require(t, result.Run.Status == state.ImportRunComplete && result.Run.ObjectFormat == importgit.FormatSHA256,
+		"run=%+v", result.Run)
 	format, err := f.manager.ObjectFormat(context.Background(), f.destinationPath())
-	if err != nil || format != importgit.FormatSHA256 {
-		t.Fatalf("destination format=%q err=%v", format, err)
-	}
-	if refs := f.destinationRefs(); len(refs) != 1 {
-		t.Fatalf("refs=%v", refs)
-	}
+	require(t, err == nil && format == importgit.FormatSHA256, "destination format=%q err=%v", format, err)
+	refs := f.destinationRefs()
+	require(t, len(refs) == 1, "refs=%v", refs)
 }
 
 func TestBusyRefusalDoesNotRecordASecondRun(t *testing.T) {
@@ -844,13 +701,11 @@ func TestBusyRefusalDoesNotRecordASecondRun(t *testing.T) {
 		done <- run
 	}()
 	<-started
-	if _, err := f.refresh(); problemCode(err) != CodeBusy {
-		t.Fatalf("second refresh err=%v", err)
-	}
+	_, err := f.refresh()
+	require(t, problemCode(err) == CodeBusy, "second refresh err=%v", err)
 	f.transport.gate <- struct{}{}
-	if run := <-done; run.Status != state.ImportRunComplete {
-		t.Fatalf("first run=%+v", run)
-	}
+	run := <-done
+	require(t, run.Status == state.ImportRunComplete, "first run=%+v", run)
 }
 
 // Every pre-write wait for a repository held by another writer ends at the
@@ -913,13 +768,11 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 			})
 			return err
 		})
-		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeBusy {
-			t.Fatalf("a source change queued behind a writer ended with %v", err)
-		}
+		require(t, errors.Is(err, context.DeadlineExceeded) && problemCode(err) == CodeBusy,
+			"a source change queued behind a writer ended with %v", err)
 		source, exists, readErr := f.store.ImportSource(context.Background(), "project")
-		if readErr != nil || !exists || source.URL != "https://example.invalid/team/project.git" {
-			t.Fatalf("the stopped source change stored %+v (exists=%v err=%v)", source, exists, readErr)
-		}
+		require(t, readErr == nil && exists && source.URL == "https://example.invalid/team/project.git",
+			"the stopped source change stored %+v (exists=%v err=%v)", source, exists, readErr)
 	})
 
 	t.Run("source change whose caller leaves", func(t *testing.T) {
@@ -934,31 +787,29 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 			})
 			return err
 		})
-		if !errors.Is(err, context.Canceled) || problemCode(err) != CodeCancelled {
-			t.Fatalf("a source change whose caller left ended with %v", err)
-		}
+		require(t, errors.Is(err, context.Canceled) && problemCode(err) == CodeCancelled,
+			"a source change whose caller left ended with %v", err)
 		source, exists, readErr := f.store.ImportSource(context.Background(), "project")
-		if readErr != nil || !exists || source.URL != "https://example.invalid/team/project.git" {
-			t.Fatalf("the abandoned source change stored %+v (exists=%v err=%v)", source, exists, readErr)
-		}
+		require(t, readErr == nil && exists && source.URL == "https://example.invalid/team/project.git",
+			"the abandoned source change stored %+v (exists=%v err=%v)", source, exists, readErr)
 	})
 
 	t.Run("credential change", func(t *testing.T) {
 		f := newFixture(t)
 		f.commit("one", "one\n")
 		f.mustImport(ImportInput{})
-		noErr(t, f.service.SetCredentials(context.Background(), "project", &Credentials{BearerToken: "synthetic-token"}))
+		noErr(t, f.service.SetCredentials(context.Background(),
+			"project", &Credentials{BearerToken: "synthetic-token"}))
 		lock := f.manager.Locks.For("project")
 		lock.Lock()
 		err := run(t, lock, false, func(ctx context.Context) error {
 			return f.service.SetCredentials(ctx, "project", nil)
 		})
-		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeBusy {
-			t.Fatalf("a credential change queued behind a writer ended with %v", err)
-		}
-		if _, stored, readErr := f.store.LoadImportCredentials(context.Background(), "project"); readErr != nil || !stored {
-			t.Fatalf("the stopped credential change removed the stored credential (stored=%v err=%v)", stored, readErr)
-		}
+		require(t, errors.Is(err, context.DeadlineExceeded) && problemCode(err) == CodeBusy,
+			"a credential change queued behind a writer ended with %v", err)
+		_, stored, readErr := f.store.LoadImportCredentials(context.Background(), "project")
+		require(t, readErr == nil && stored,
+			"the stopped credential change removed the stored credential (stored=%v err=%v)", stored, readErr)
 	})
 
 	t.Run("import add", func(t *testing.T) {
@@ -971,9 +822,7 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 			})
 			return err
 		})
-		if problemCode(err) != CodeBusy {
-			t.Fatalf("an import add queued behind a writer ended with %v", err)
-		}
+		require(t, problemCode(err) == CodeBusy, "an import add queued behind a writer ended with %v", err)
 		assertNoBinding(t, f, "queued")
 	})
 
@@ -988,12 +837,11 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 			forgotten, err = f.service.ForgetOrphanImport(ctx, "orphan")
 			return err
 		})
-		if problemCode(err) != CodeBusy || forgotten {
-			t.Fatalf("an orphan cleanup queued behind a writer ended with forgotten=%v err=%v", forgotten, err)
-		}
-		if _, exists, readErr := f.store.ImportSource(context.Background(), "orphan"); readErr != nil || !exists {
-			t.Fatalf("the stopped orphan cleanup removed the binding (exists=%v err=%v)", exists, readErr)
-		}
+		require(t, problemCode(err) == CodeBusy && !forgotten,
+			"an orphan cleanup queued behind a writer ended with forgotten=%v err=%v", forgotten, err)
+		_, exists, readErr := f.store.ImportSource(context.Background(), "orphan")
+		require(t, readErr == nil && exists,
+			"the stopped orphan cleanup removed the binding (exists=%v err=%v)", exists, readErr)
 	})
 
 	t.Run("refresh", func(t *testing.T) {
@@ -1007,15 +855,12 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 			_, err := f.service.Refresh(ctx, "project", Limits{})
 			return err
 		})
-		if !errors.Is(err, context.DeadlineExceeded) || problemCode(err) != CodeLimit {
-			t.Fatalf("a refresh queued behind a writer ended with %v", err)
-		}
-		if run := f.lastRun(); run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit {
-			t.Fatalf("the stopped refresh recorded %+v", run)
-		}
-		if refs := f.destinationRefs(); refs["refs/heads/main"] != first {
-			t.Fatalf("the stopped refresh published: %v", refs)
-		}
+		require(t, errors.Is(err, context.DeadlineExceeded) && problemCode(err) == CodeLimit,
+			"a refresh queued behind a writer ended with %v", err)
+		run := f.lastRun()
+		require(t, run.Status == state.ImportRunFailed && run.ErrorClass == CodeLimit,
+			"the stopped refresh recorded %+v", run)
+		eq(t, "main after the stopped refresh", f.destinationRefs()["refs/heads/main"], first)
 	})
 }
 
@@ -1059,21 +904,15 @@ func TestRefreshWaitingForTheRepositoryAtPublicationStopsWithTheRun(t *testing.T
 	case <-time.After(30 * time.Second):
 		t.Fatal("the refresh kept waiting for the writer instead of stopping with its run")
 	}
-	if problemCode(runErr) != CodeCancelled || run.Status != state.ImportRunCancelled {
-		t.Fatalf("run=%+v err=%v", run, runErr)
-	}
-	if refs := f.destinationRefs(); refs["refs/heads/main"] != first {
-		t.Fatalf("the stopped refresh published: %v", refs)
-	}
+	require(t, problemCode(runErr) == CodeCancelled && run.Status == state.ImportRunCancelled,
+		"run=%+v err=%v", run, runErr)
+	eq(t, "main after the stopped refresh", f.destinationRefs()["refs/heads/main"], first)
 	// The cleanup waited for the same writer, gave up within its bound, and left
 	// the keep file that names the run which created it.
 	keeps := destinationKeepFiles(t, f.destinationPath())
-	if len(keeps) != 1 {
-		t.Fatalf("keep files after the stopped refresh=%v, want the one it left", keeps)
-	}
+	require(t, len(keeps) == 1, "keep files after the stopped refresh=%v, want the one it left", keeps)
 	content, err := os.ReadFile(filepath.Join(f.destinationPath(), "objects", "pack", keeps[0]))
 	noErr(t, err)
-	if want := "owngit import " + run.ID + "\n"; string(content) != want {
-		t.Fatalf("left keep file content=%q want %q", content, want)
-	}
+	want := "owngit import " + run.ID + "\n"
+	require(t, string(content) == want, "left keep file content=%q want %q", content, want)
 }

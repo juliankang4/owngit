@@ -19,24 +19,16 @@ func TestRefreshReplacesExactlyOwnedTagAndRetainsTagObject(t *testing.T) {
 
 	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second upstream annotation", commit)
 	secondTag := f.git(f.source, "rev-parse", "refs/tags/v1")
-	if secondTag == firstTag {
-		t.Fatal("test did not replace the tag object")
-	}
+	require(t, secondTag != firstTag, "test did not replace the tag object")
 	run, err := f.refresh()
 	noErr(t, err, "refresh")
-	if run.RefsUpdated != 1 || run.RefsDivergent != 0 {
-		t.Fatalf("refresh run=%+v", run)
-	}
+	require(t, run.RefsUpdated == 1 && run.RefsDivergent == 0, "refresh run=%+v", run)
 	refs := f.destinationRefs()
-	if refs["refs/tags/v1"] != secondTag {
-		t.Fatalf("destination tag=%s want %s", refs["refs/tags/v1"], secondTag)
-	}
-	if refs[repository.RetainedRefName("tags", firstTag)] != firstTag {
-		t.Fatalf("replaced tag object was not retained: %v", sortedKeys(refs))
-	}
-	if refs[repository.ProvenanceRefName("tags", "v1", firstTag)] != firstTag {
-		t.Fatalf("tag provenance was not retained: %v", sortedKeys(refs))
-	}
+	require(t, refs["refs/tags/v1"] == secondTag, "destination tag=%s want %s", refs["refs/tags/v1"], secondTag)
+	require(t, refs[repository.RetainedRefName("tags", firstTag)] == firstTag,
+		"replaced tag object was not retained: %v", sortedKeys(refs))
+	require(t, refs[repository.ProvenanceRefName("tags", "v1", firstTag)] == firstTag,
+		"tag provenance was not retained: %v", sortedKeys(refs))
 }
 
 func TestRefreshRetainsReplacedTagChainObject(t *testing.T) {
@@ -49,16 +41,13 @@ func TestRefreshRetainsReplacedTagChainObject(t *testing.T) {
 
 	f.git(f.source, "tag", "-f", "-a", "release", "-m", "replacement outer annotation", "refs/tags/base")
 	replacement := f.git(f.source, "rev-parse", "refs/tags/release")
-	if replacement == firstOuter {
-		t.Fatal("test did not replace the outer tag object")
-	}
-	if _, err := f.refresh(); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
+	require(t, replacement != firstOuter, "test did not replace the outer tag object")
+	_, err := f.refresh()
+	noErr(t, err, "refresh")
 	refs := f.destinationRefs()
-	if refs["refs/tags/release"] != replacement || refs[repository.RetainedRefName("tags", firstOuter)] != firstOuter {
-		t.Fatalf("tag chain replacement was not exact and retained: %v", sortedKeys(refs))
-	}
+	require(t, refs["refs/tags/release"] == replacement &&
+		refs[repository.RetainedRefName("tags", firstOuter)] == firstOuter,
+		"tag chain replacement was not exact and retained: %v", sortedKeys(refs))
 }
 
 func TestNewSourceGenerationCannotInheritBranchAuthorityFromAncestry(t *testing.T) {
@@ -73,17 +62,14 @@ func TestNewSourceGenerationCannotInheritBranchAuthorityFromAncestry(t *testing.
 	second := f.commit("two", "two\n")
 	run, err := f.refresh()
 	noErr(t, err, "refresh")
-	if run.RefsDivergent != 1 || run.RefsUpdated != 0 {
-		t.Fatalf("new source inherited branch authority: %+v", run)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != first || got == second {
-		t.Fatalf("destination branch=%s first=%s second=%s", got, first, second)
-	}
+	require(t, run.RefsDivergent == 1 && run.RefsUpdated == 0, "new source inherited branch authority: %+v", run)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == first && got != second, "destination branch=%s first=%s second=%s", got, first, second)
 	secondRun, err := f.refresh()
 	noErr(t, err, "second refresh")
-	if secondRun.RefsDivergent != 1 || secondRun.RefsUpdated != 0 || f.destinationRefs()["refs/heads/main"] != first {
-		t.Fatalf("recording the new source observation manufactured authority: run=%+v", secondRun)
-	}
+	require(t, secondRun.RefsDivergent == 1 && secondRun.RefsUpdated == 0 &&
+		f.destinationRefs()["refs/heads/main"] == first,
+		"recording the new source observation manufactured authority: run=%+v", secondRun)
 }
 
 func TestAuthorityChangesCancelPinnedRuns(t *testing.T) {
@@ -148,19 +134,13 @@ func TestAuthorityChangesCancelPinnedRuns(t *testing.T) {
 				}
 			}
 			run, err := f.refresh()
-			if err == nil || problemCode(err) != CodeSuperseded {
-				t.Fatalf("refresh err=%v", err)
-			}
-			if run.Status != state.ImportRunSuperseded || run.CancelRequestedAt == nil {
-				t.Fatalf("run=%+v", run)
-			}
-			if got := f.destinationRefs()["refs/heads/main"]; got != first || got == second {
-				t.Fatalf("stale authority published branch=%s first=%s second=%s", got, first, second)
-			}
+			require(t, err != nil && problemCode(err) == CodeSuperseded, "refresh err=%v", err)
+			require(t, run.Status == state.ImportRunSuperseded && run.CancelRequestedAt != nil, "run=%+v", run)
+			got := f.destinationRefs()["refs/heads/main"]
+			require(t, got == first && got != second,
+				"stale authority published branch=%s first=%s second=%s", got, first, second)
 			for _, secret := range []string{"old-secret", "replacement-secret", "PRIVATE CA BYTES"} {
-				if strings.Contains(err.Error(), secret) {
-					t.Fatalf("error exposed secret material: %v", err)
-				}
+				require(t, !strings.Contains(err.Error(), secret), "error exposed secret material: %v", err)
 			}
 		})
 	}
@@ -181,16 +161,13 @@ func TestIdenticalCredentialsDoNotRevokePinnedRun(t *testing.T) {
 		}
 	}
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
 	after, _, err := f.store.ImportSource(context.Background(), "project")
-	if err != nil || after.AuthorityRevision != before.AuthorityRevision || after.CredentialGeneration != before.CredentialGeneration {
-		t.Fatalf("identical credential changed authority: before=%+v after=%+v err=%v", before, after, err)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != second {
-		t.Fatalf("identical credential blocked refresh: got %s want %s", got, second)
-	}
+	require(t, err == nil && after.AuthorityRevision == before.AuthorityRevision &&
+		after.CredentialGeneration == before.CredentialGeneration,
+		"identical credential changed authority: before=%+v after=%+v err=%v", before, after, err)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == second, "identical credential blocked refresh: got %s want %s", got, second)
 }
 
 // A credential change whose authority write fails must still stop a run that
@@ -218,9 +195,7 @@ func TestCredentialFailureStopsRunWhenDurableCancellationFails(t *testing.T) {
 			started, done, run, runErr := f.gatedRefresh(t)
 			<-started
 			active, exists, err := f.store.ActiveImportRun(ctx, "project")
-			if err != nil || !exists {
-				t.Fatalf("the gated refresh is not active: exists=%v err=%v", exists, err)
-			}
+			require(t, err == nil && exists, "the gated refresh is not active: exists=%v err=%v", exists, err)
 			released := false
 			defer func() {
 				if !released {
@@ -228,32 +203,30 @@ func TestCredentialFailureStopsRunWhenDurableCancellationFails(t *testing.T) {
 					<-done
 				}
 			}()
-			noErr(t, f.store.Exec(ctx, `CREATE TRIGGER fail_authority_write BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority write failure'); END`))
+			noErr(t, f.store.Exec(ctx,
+				`CREATE TRIGGER fail_authority_write BEFORE UPDATE OF authority_revision ON import_sources BEGIN SELECT RAISE(FAIL,'synthetic authority write failure'); END`))
 			if testCase.cancelFails {
-				noErr(t, f.store.Exec(ctx, `CREATE TRIGGER fail_cancel_write BEFORE UPDATE OF cancel_requested_at ON import_runs WHEN NEW.cancel_requested_at IS NOT OLD.cancel_requested_at BEGIN SELECT RAISE(FAIL,'synthetic cancel write failure'); END`))
+				noErr(t, f.store.Exec(ctx,
+					`CREATE TRIGGER fail_cancel_write BEFORE UPDATE OF cancel_requested_at ON import_runs WHEN NEW.cancel_requested_at IS NOT OLD.cancel_requested_at BEGIN SELECT RAISE(FAIL,'synthetic cancel write failure'); END`))
 			}
-			if err := f.service.SetCredentials(ctx, "project", testCase.replacement); err == nil {
-				t.Fatal("credential mutation unexpectedly succeeded")
-			}
+			err = f.service.SetCredentials(ctx, "project", testCase.replacement)
+			require(t, err != nil, "credential mutation unexpectedly succeeded")
 			if testCase.cancelFails {
 				// The failed change still stops the run in memory, so the run
 				// may already have ended: its record is read whatever its status.
 				persisted, exists, err := f.store.ImportRun(ctx, active.ID)
-				if err != nil || !exists || persisted.CancelRequestedAt != nil {
-					t.Fatalf("cancel persistence failure was not preserved: exists=%v cancel=%v err=%v", exists, persisted.CancelRequestedAt, err)
-				}
+				require(t, err == nil && exists && persisted.CancelRequestedAt == nil,
+					"cancel persistence failure was not preserved: exists=%v cancel=%v err=%v", exists, persisted.CancelRequestedAt, err)
 				noErr(t, f.store.Exec(ctx, `DROP TRIGGER fail_cancel_write`))
 			}
 			noErr(t, f.store.Exec(ctx, `DROP TRIGGER fail_authority_write`))
 			f.transport.gate <- struct{}{}
 			<-done
 			released = true
-			if *runErr == nil || run.Status == state.ImportRunComplete {
-				t.Fatalf("credential failure allowed stale completion: status=%s err=%v", run.Status, *runErr)
-			}
-			if after := f.destinationRefs()["refs/heads/main"]; after != before {
-				t.Fatalf("credential failure allowed ref publication: before=%s after=%s", before, after)
-			}
+			require(t, *runErr != nil && run.Status != state.ImportRunComplete,
+				"credential failure allowed stale completion: status=%s err=%v", run.Status, *runErr)
+			after := f.destinationRefs()["refs/heads/main"]
+			require(t, after == before, "credential failure allowed ref publication: before=%s after=%s", before, after)
 		})
 	}
 }
@@ -276,12 +249,9 @@ func TestUnchangedConfigurationDoesNotRevokePinnedRun(t *testing.T) {
 		}
 	}
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != second {
-		t.Fatalf("unchanged configuration blocked refresh: got %s want %s", got, second)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == second, "unchanged configuration blocked refresh: got %s want %s", got, second)
 }
 
 func TestFinalPublicationRejectsDirectAuthorityChange(t *testing.T) {
@@ -296,13 +266,8 @@ func TestFinalPublicationRejectsDirectAuthorityChange(t *testing.T) {
 		}
 	}
 	run, err := f.refresh()
-	if err == nil || problemCode(err) != CodeSuperseded {
-		t.Fatalf("refresh err=%v", err)
-	}
-	if run.Status != state.ImportRunSuperseded {
-		t.Fatalf("run=%+v", run)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != first || got == second {
-		t.Fatalf("final authority check allowed stale publication: got %s", got)
-	}
+	require(t, err != nil && problemCode(err) == CodeSuperseded, "refresh err=%v", err)
+	require(t, run.Status == state.ImportRunSuperseded, "run=%+v", run)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == first && got != second, "final authority check allowed stale publication: got %s", got)
 }

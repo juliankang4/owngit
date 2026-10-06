@@ -25,57 +25,130 @@ func renameAdvertisedRef(f *fixture, from, to string) {
 	}
 }
 
-// An upstream ref that differs only by case from a packed local ref is left
-// uncreated. On a case-insensitive filesystem its loose file would otherwise
-// answer for the packed local branch and silently replace it.
-func TestUpstreamCaseVariantOfPackedLocalRefStaysDivergent(t *testing.T) {
+type nameVariantArrange func(t *testing.T, f *fixture, path *string) (check func(listed string))
+
+// advanceBranch moves branch one commit ahead in the source.
+func advanceBranch(f *fixture, branch string) {
+	f.git(f.source, "checkout", "-q", branch)
+	f.commit("two", "two\n")
+	f.git(f.source, "checkout", "-q", "main")
+}
+
+// checkNameVariant runs a refresh after arrange (which imports, packs every
+// ref as git pack-refs --all leaves them, so a loose file cannot answer for a
+// packed ref, and changes the source) and checks the shared outcome: the
+// refresh completes, nothing is created or updated, one ref is divergent, and
+// crash reconciliation rebuilds the same counts from the recorded intent.
+func checkNameVariant(t *testing.T, arrange nameVariantArrange) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
-	f.git(f.source, "branch", "feature")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	local := f.git(path, "rev-parse", "refs/heads/feature")
-	// Operator maintenance packs every ref; auto gc is disabled, so this is
-	// the only compaction path.
-	f.git(path, "pack-refs", "--all")
-	if _, err := os.Stat(filepath.Join(path, "refs", "heads", "feature")); !os.IsNotExist(err) {
-		t.Fatalf("feature is still loose after pack-refs: %v", err)
-	}
-
-	f.git(f.source, "checkout", "-q", "feature")
-	upstream := f.commit("two", "two\n")
-	f.git(f.source, "checkout", "-q", "main")
-	renameAdvertisedRef(f, "refs/heads/feature", "refs/heads/Feature")
-
+	var path string
+	check := arrange(t, f, &path)
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
-		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
-	}
-	if got := f.git(path, "rev-parse", "refs/heads/feature"); got != local {
-		t.Fatalf("local feature now resolves to %s, want %s (upstream %s)", got, local, upstream)
-	}
-	listed := f.git(path, "for-each-ref", "--format=%(refname)", "refs/heads")
-	if strings.Contains(listed, "refs/heads/Feature") {
-		t.Fatalf("case variant was created: %q", listed)
-	}
-	if _, err := os.Stat(filepath.Join(path, "refs", "heads", "Feature")); !os.IsNotExist(err) {
-		t.Fatalf("a loose ref file answers for Feature: %v", err)
-	}
-	// Crash reconciliation rebuilds the counts from the recorded intent and
-	// must describe the case-blocked ref as the normal path did.
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
+	require(t, run.RefsDivergent == 1 && run.RefsCreated == 0 && run.RefsUpdated == 0,
+		"refresh counts created=%d updated=%d divergent=%d", run.RefsCreated, run.RefsUpdated, run.RefsDivergent)
+	check(f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"))
 	intent, exists, err := f.store.CompletedImportIntentForRun(context.Background(), run.ID)
-	if err != nil || !exists {
-		t.Fatalf("completed intent exists=%v err=%v", exists, err)
-	}
+	require(t, err == nil && exists, "completed intent exists=%v err=%v", exists, err)
 	var reconciled state.ImportRun
 	completeRunFromIntent(&reconciled, intent, f.now)
-	if reconciled.RefsCreated != run.RefsCreated || reconciled.RefsUpdated != run.RefsUpdated ||
-		reconciled.RefsUnchanged != run.RefsUnchanged || reconciled.RefsDivergent != run.RefsDivergent {
-		t.Fatalf("reconciled counts=%+v normal counts=%+v", reconciled, run)
+	require(t, reconciled.RefsCreated == run.RefsCreated && reconciled.RefsUpdated == run.RefsUpdated &&
+		reconciled.RefsUnchanged == run.RefsUnchanged && reconciled.RefsDivergent == run.RefsDivergent,
+		"reconciled counts=%+v normal counts=%+v", reconciled, run)
+}
+
+// An upstream ref whose name a file system would treat as another destination
+// ref (letter case, ß and ss) is left uncreated, and a destination pair that
+// already shares such a name keeps its local values, by the rule pushes
+// follow (repository.RefNameKey).
+func TestUpstreamNameVariantsOfPackedLocalRefsStayDivergent(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		arrange nameVariantArrange
+	}{
+		{"case variant", func(t *testing.T, f *fixture, path *string) func(string) {
+			f.git(f.source, "branch", "feature")
+			f.mustImport(ImportInput{})
+			*path = f.destinationPath()
+			local := f.git(*path, "rev-parse", "refs/heads/feature")
+			f.git(*path, "pack-refs", "--all")
+			_, err := os.Stat(filepath.Join(*path, "refs", "heads", "feature"))
+			require(t, os.IsNotExist(err), "feature is still loose after pack-refs: %v", err)
+			advanceBranch(f, "feature")
+			renameAdvertisedRef(f, "refs/heads/feature", "refs/heads/Feature")
+			return func(listed string) {
+				eq(t, "local feature", f.git(*path, "rev-parse", "refs/heads/feature"), local)
+				require(t, !strings.Contains(listed, "refs/heads/Feature"), "case variant was created: %q", listed)
+				_, err := os.Stat(filepath.Join(*path, "refs", "heads", "Feature"))
+				require(t, os.IsNotExist(err), "a loose ref file answers for Feature: %v", err)
+			}
+		}},
+		{"destination refs sharing a name", func(t *testing.T, f *fixture, path *string) func(string) {
+			f.git(f.source, "branch", "feature")
+			f.mustImport(ImportInput{})
+			*path = f.destinationPath()
+			local := f.git(*path, "rev-parse", "refs/heads/feature")
+			f.git(*path, "pack-refs", "--all")
+			f.git(*path, "update-ref", "refs/heads/Feature", local)
+			f.git(*path, "pack-refs", "--all")
+			advanceBranch(f, "feature")
+			return func(string) {
+				listed := f.git(*path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/feature", "refs/heads/Feature")
+				eq(t, "feature and Feature", listed, "refs/heads/Feature "+local+"\nrefs/heads/feature "+local)
+			}
+		}},
+		{"folded variant", func(t *testing.T, f *fixture, path *string) func(string) {
+			f.git(f.source, "branch", "strasse")
+			f.mustImport(ImportInput{})
+			*path = f.destinationPath()
+			local := f.git(*path, "rev-parse", "refs/heads/strasse")
+			f.git(*path, "pack-refs", "--all")
+			advanceBranch(f, "strasse")
+			renameAdvertisedRef(f, "refs/heads/strasse", "refs/heads/stra\u00dfe")
+			return func(listed string) {
+				require(t, !strings.Contains(listed, "stra\u00dfe") &&
+					strings.Contains(listed, "refs/heads/strasse "+local), "refs after refresh:\n%s", listed)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) { checkNameVariant(t, test.arrange) })
 	}
+}
+
+// A source ref in a folder spelled like a local destination ref apart from
+// letter case (topic/x beside a local branch Topic) is left uncreated.
+func TestUpstreamRefInAFolderSpelledLikeALocalRefStaysDivergent(t *testing.T) {
+	checkNameVariant(t, func(t *testing.T, f *fixture, path *string) func(string) {
+		f.mustImport(ImportInput{})
+		*path = f.destinationPath()
+		local := f.git(*path, "rev-parse", "refs/heads/main")
+		f.git(*path, "update-ref", "refs/heads/Topic", local)
+		f.git(*path, "pack-refs", "--all")
+		f.git(f.source, "branch", "topic/x")
+		return func(listed string) {
+			eq(t, "refs after refresh", listed, "refs/heads/Topic "+local+"\nrefs/heads/main "+local)
+		}
+	})
+}
+
+// A source that advertises the default branch under a spelling HFS+
+// compares as equal (Georgian U+10D0 for U+10A0) does not create it beside
+// the packed local branch.
+func TestUpstreamHFSPlusVariantOfPackedDefaultBranchStaysDivergent(t *testing.T) {
+	checkNameVariant(t, func(t *testing.T, f *fixture, path *string) func(string) {
+		f.git(f.source, "branch", "\u10a0\u10a1")
+		f.mustImport(ImportInput{})
+		*path = f.destinationPath()
+		local := f.git(*path, "rev-parse", "refs/heads/\u10a0\u10a1")
+		f.git(*path, "pack-refs", "--all")
+		advanceBranch(f, "\u10a0\u10a1")
+		renameAdvertisedRef(f, "refs/heads/\u10a0\u10a1", "refs/heads/\u10d0\u10d1")
+		return func(listed string) {
+			require(t, !strings.Contains(listed, "\u10d0") && strings.Contains(listed, "refs/heads/\u10a0\u10a1 "+local),
+				"refs after refresh:\n%s", listed)
+		}
+	})
 }
 
 // The reconciled counts for the intent shape of a case-blocked ref: observed
@@ -89,10 +162,8 @@ func TestReconciledCountsTreatCaseBlockedRefAsDivergent(t *testing.T) {
 	}
 	var run state.ImportRun
 	completeRunFromIntent(&run, intent, time.Unix(1, 0))
-	if run.RefsUnchanged != 1 || run.RefsDivergent != 1 || run.RefsCreated != 0 || run.RefsDeletedUpstream != 0 {
-		t.Fatalf("reconciled counts unchanged=%d created=%d divergent=%d deletedUpstream=%d",
-			run.RefsUnchanged, run.RefsCreated, run.RefsDivergent, run.RefsDeletedUpstream)
-	}
+	require(t, run.RefsUnchanged == 1 && run.RefsDivergent == 1 && run.RefsCreated == 0 && run.RefsDeletedUpstream == 0,
+		"reconciled counts unchanged=%d created=%d divergent=%d deletedUpstream=%d", run.RefsUnchanged, run.RefsCreated, run.RefsDivergent, run.RefsDeletedUpstream)
 }
 
 // When the source HEAD names such a variant, an owned destination HEAD stays
@@ -100,8 +171,7 @@ func TestReconciledCountsTreatCaseBlockedRefAsDivergent(t *testing.T) {
 func TestOwnedHEADDoesNotFollowCaseBlockedTarget(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
+	f.importOwned()
 	path := f.destinationPath()
 	f.git(path, "pack-refs", "--all")
 
@@ -113,139 +183,10 @@ func TestOwnedHEADDoesNotFollowCaseBlockedTarget(t *testing.T) {
 		advertisement.Head.SymrefTarget = "refs/heads/Main"
 	}
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if head := f.git(path, "symbolic-ref", "HEAD"); head != "refs/heads/main" {
-		t.Fatalf("destination HEAD=%s", head)
-	}
-	if got := f.git(path, "rev-parse", "refs/heads/main"); got == upstream {
-		t.Fatal("local main was replaced through its case variant")
-	}
-}
-
-// A source ref whose destination ref shares its name apart from letter case
-// with another destination ref keeps its local value, as a push to it would
-// be refused; both are packed, as git pack-refs --all leaves them.
-func TestRefreshLeavesRefsThatShareANameApartFromCase(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.git(f.source, "branch", "feature")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	local := f.git(path, "rev-parse", "refs/heads/feature")
-	f.git(path, "pack-refs", "--all")
-	f.git(path, "update-ref", "refs/heads/Feature", local)
-	f.git(path, "pack-refs", "--all")
-
-	f.git(f.source, "checkout", "-q", "feature")
-	f.commit("two", "two\n")
-	f.git(f.source, "checkout", "-q", "main")
-	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent != 1 || run.RefsUpdated != 0 {
-		t.Fatalf("refresh counts updated=%d divergent=%d", run.RefsUpdated, run.RefsDivergent)
-	}
-	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads/feature", "refs/heads/Feature")
-	if want := "refs/heads/Feature " + local + "\nrefs/heads/feature " + local; listed != want {
-		t.Fatalf("refs after refresh:\n%s\nwant\n%s", listed, want)
-	}
-	intent, exists, err := f.store.CompletedImportIntentForRun(context.Background(), run.ID)
-	if err != nil || !exists {
-		t.Fatalf("completed intent exists=%v err=%v", exists, err)
-	}
-	var reconciled state.ImportRun
-	completeRunFromIntent(&reconciled, intent, f.now)
-	if reconciled.RefsUpdated != run.RefsUpdated || reconciled.RefsDivergent != run.RefsDivergent {
-		t.Fatalf("reconciled counts=%+v normal counts=%+v", reconciled, run)
-	}
-}
-
-// A source ref whose name a file system treats as the same as a packed
-// local ref beyond letter case (here ß and ss) is left uncreated too, by
-// the rule pushes follow (repository.RefNameKey).
-func TestUpstreamFoldedVariantOfPackedLocalRefStaysDivergent(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.git(f.source, "branch", "strasse")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	local := f.git(path, "rev-parse", "refs/heads/strasse")
-	f.git(path, "pack-refs", "--all")
-
-	f.git(f.source, "checkout", "-q", "strasse")
-	f.commit("two", "two\n")
-	f.git(f.source, "checkout", "-q", "main")
-	renameAdvertisedRef(f, "refs/heads/strasse", "refs/heads/straße")
-
-	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
-		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
-	}
-	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
-	if strings.Contains(listed, "straße") || !strings.Contains(listed, "refs/heads/strasse "+local) {
-		t.Fatalf("refs after refresh:\n%s", listed)
-	}
-}
-
-// A source ref in a folder spelled like a local destination ref apart from
-// letter case (topic/x beside a local branch Topic) is left uncreated, by
-// the rule pushes follow.
-func TestUpstreamRefInAFolderSpelledLikeALocalRefStaysDivergent(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	local := f.git(path, "rev-parse", "refs/heads/main")
-	f.git(path, "update-ref", "refs/heads/Topic", local)
-	f.git(path, "pack-refs", "--all")
-
-	f.git(f.source, "branch", "topic/x")
-	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
-		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
-	}
-	want := "refs/heads/Topic " + local + "\nrefs/heads/main " + local
-	if listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); listed != want {
-		t.Fatalf("refs after refresh:\n%s\nwant\n%s", listed, want)
-	}
-}
-
-// A source that advertises the default branch under a spelling HFS+
-// compares as equal (Georgian U+10D0 for U+10A0) does not create it beside
-// the packed local branch.
-func TestUpstreamHFSPlusVariantOfPackedDefaultBranchStaysDivergent(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.git(f.source, "branch", "\u10a0\u10a1")
-	f.mustImport(ImportInput{})
-	path := f.destinationPath()
-	local := f.git(path, "rev-parse", "refs/heads/\u10a0\u10a1")
-	f.git(path, "pack-refs", "--all")
-
-	f.git(f.source, "checkout", "-q", "\u10a0\u10a1")
-	f.commit("two", "two\n")
-	f.git(f.source, "checkout", "-q", "main")
-	renameAdvertisedRef(f, "refs/heads/\u10a0\u10a1", "refs/heads/\u10d0\u10d1")
-	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent != 1 || run.RefsCreated != 0 {
-		t.Fatalf("refresh counts created=%d divergent=%d", run.RefsCreated, run.RefsDivergent)
-	}
-	listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads")
-	if strings.Contains(listed, "\u10d0") || !strings.Contains(listed, "refs/heads/\u10a0\u10a1 "+local) {
-		t.Fatalf("refs after refresh:\n%s", listed)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
+	eq(t, "destination HEAD", f.git(path, "symbolic-ref", "HEAD"), "refs/heads/main")
+	require(t, f.git(path, "rev-parse", "refs/heads/main") != upstream,
+		"local main was replaced through its case variant")
 }
 
 // A source that keeps advertising main but points its HEAD at an absent
@@ -261,8 +202,7 @@ func TestOwnedHEADDoesNotFollowAnUnadvertisedLookAlikeTarget(t *testing.T) {
 				f.initSource()
 			}
 			f.commit("one", "one\n")
-			initial := f.mustImport(ImportInput{})
-			markHEADOwnedForTest(t, f, initial.Run.ID)
+			f.importOwned()
 			path := f.destinationPath()
 			local := f.git(path, "rev-parse", "refs/heads/main")
 			f.git(path, "pack-refs", "--all")
@@ -272,15 +212,10 @@ func TestOwnedHEADDoesNotFollowAnUnadvertisedLookAlikeTarget(t *testing.T) {
 				advertisement.Head.SymrefTarget = "refs/heads/Main"
 			}
 			run, err := f.refresh()
-			if err != nil || run.Status != state.ImportRunComplete {
-				t.Fatalf("refresh run=%+v err=%v", run, err)
-			}
-			if head := f.git(path, "symbolic-ref", "HEAD"); head != "refs/heads/main" {
-				t.Fatalf("destination HEAD=%s", head)
-			}
-			if listed := f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"); listed != "refs/heads/main "+local {
-				t.Fatalf("refs after refresh:\n%s", listed)
-			}
+			require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
+			eq(t, "destination HEAD", f.git(path, "symbolic-ref", "HEAD"), "refs/heads/main")
+			eq(t, "refs after refresh",
+				f.git(path, "for-each-ref", "--format=%(refname) %(objectname)", "refs/heads"), "refs/heads/main "+local)
 		})
 	}
 }

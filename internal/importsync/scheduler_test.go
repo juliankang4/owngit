@@ -20,9 +20,8 @@ func TestSchedulerRunsAScheduleThatBecomesDueAfterStart(t *testing.T) {
 	now.Store(f.now.Unix())
 	f.service.Clock = func() time.Time { return time.Unix(now.Load(), 0).UTC() }
 	ctx := context.Background()
-	if _, err := f.service.SetSchedule(ctx, "project", true, time.Minute); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.service.SetSchedule(ctx, "project", true, time.Minute)
+	noErr(t, err)
 	scheduler := &Scheduler{Service: f.service, Interval: 10 * time.Millisecond}
 	noErr(t, scheduler.Start(ctx))
 	t.Cleanup(func() {
@@ -56,9 +55,7 @@ func awaitCompletedScheduledRuns(t *testing.T, f *fixture, count int) {
 		if completed >= count {
 			return
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("%d of %d scheduled runs completed: %+v", completed, count, runs)
-		}
+		require(t, !time.Now().After(deadline), "%d of %d scheduled runs completed: %+v", completed, count, runs)
 		time.Sleep(20 * time.Millisecond)
 	}
 }

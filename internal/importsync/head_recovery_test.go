@@ -26,29 +26,23 @@ func TestRecoveredPublicationKeepsProvenHEADOwnership(t *testing.T) {
 	noErr(t, f.store.Exec(ctx, `CREATE TRIGGER fail_receipt BEFORE UPDATE ON import_publication_intents
  WHEN NEW.status='complete' BEGIN SELECT RAISE(FAIL,'synthetic final receipt failure'); END`))
 	run, err := f.refresh()
-	if err == nil {
-		t.Fatal("fixture did not interrupt final bookkeeping")
-	}
+	require(t, err != nil, "fixture did not interrupt final bookkeeping")
 	intents, err := f.store.PendingImportIntents(ctx, "project")
 	noErr(t, err)
-	if len(intents) != 1 || !intents[0].HeadOwned {
-		t.Fatalf("missing pre-restart ownership: %+v", intents)
-	}
+	require(t, len(intents) == 1 && intents[0].HeadOwned, "missing pre-restart ownership: %+v", intents)
 	noErr(t, f.store.Exec(ctx, `DROP TRIGGER fail_receipt`))
 	noErr(t, f.service.Close())
 	f.service = &Service{Store: f.store, Repositories: f.manager, Fetch: f.transport.fetch, Clock: func() time.Time { return f.now }}
 	noErr(t, f.service.Reconcile(ctx))
 	recovered, exists, err := f.store.ImportRun(ctx, run.ID)
 	noErr(t, err)
-	if !exists || recovered.Status != state.ImportRunComplete {
-		t.Fatalf("recovered run: %+v", recovered)
-	}
+	require(t, exists && recovered.Status == state.ImportRunComplete, "recovered run: %+v", recovered)
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
 	next, err := f.refresh()
 	noErr(t, err)
-	if next.RefsDivergent != 0 || f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "HEAD") != "refs/heads/main" {
-		t.Fatalf("recovered source HEAD ownership was lost: %+v", next)
-	}
+	require(t, next.RefsDivergent == 0 &&
+		f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "HEAD") == "refs/heads/main",
+		"recovered source HEAD ownership was lost: %+v", next)
 }
 
 // This child uses real Git and pauses without changing any publication result.
@@ -166,11 +160,8 @@ func killedPublicationFixture(t *testing.T, phase string) *fixture {
 		t.Fatalf("publication pause not reached: %s", content)
 	}
 	noErr(t, cmd.Process.Kill())
-	if err := cmd.Wait(); err == nil {
-		t.Fatal("child was not killed")
-	}
+	require(t, cmd.Wait() != nil, "child was not killed")
 	stopped = true
-	t.Logf("reached %s and killed importer process", phase)
 	ctx := context.Background()
 	root := gate["root"]
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
@@ -201,25 +192,18 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 				if run.Kind == state.ImportKindInitial {
 					var exists bool
 					initial, exists, err = f.store.CompletedImportIntentForRun(ctx, run.ID)
-					noErr(t, err)
-					if !exists {
-						t.Fatal("initial receipt missing")
-					}
+					require(t, err == nil && exists, "initial receipt missing: %v", err)
 				}
 			}
 			err = f.service.Reconcile(ctx)
 			if phase == "after-refs" || phase == "before-head" || phase == "head-locked" {
-				if problemCode(err) != CodeUnresolved {
-					t.Fatalf("partial publication was not unresolved: %v", err)
-				}
+				require(t, problemCode(err) == CodeUnresolved, "partial publication was not unresolved: %v", err)
 				_, err = f.service.ResolveUnresolved(ctx, "project")
 				noErr(t, err)
 			} else {
 				noErr(t, err)
 			}
-			if _, err := os.Lstat(filepath.Join(f.destinationPath(), "HEAD.lock")); !os.IsNotExist(err) {
-				t.Fatalf("abandoned lock remains: %v", err)
-			}
+			absent(t, filepath.Join(f.destinationPath(), "HEAD.lock"))
 			_, err = f.refresh()
 			noErr(t, err)
 			refs := f.destinationRefs()
@@ -229,17 +213,12 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 					name = "refs/tags/v1"
 				}
 				tip := initial.Desired[name]
-				if tip == "" || refs[repository.RetainedRefName(kind, tip)] != tip {
-					t.Fatalf("replaced %s history was not retained: %s", kind, tip)
-				}
+				require(t, tip != "" && refs[repository.RetainedRefName(kind, tip)] == tip,
+					"replaced %s history was not retained: %s", kind, tip)
 			}
-			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/release" {
-				t.Fatalf("recovery HEAD=%s", got)
-			}
+			eq(t, "recovery HEAD", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), "refs/heads/release")
 			local := f.localWork("release", "owner work after recovery\n")
-			if f.destinationRefs()["refs/heads/release"] != local {
-				t.Fatal("owner push was not accepted")
-			}
+			eq(t, "owner push", f.destinationRefs()["refs/heads/release"], local)
 			f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
 			next, err := f.refresh()
 			noErr(t, err)
@@ -250,26 +229,19 @@ func TestImportPublicationCrashRecovery(t *testing.T) {
 				expectedHEAD = "refs/heads/release"
 				intent, exists, err := f.store.CompletedImportIntentForRun(ctx, next.ID)
 				noErr(t, err)
-				if !exists || intent.HeadOwned || next.RefsDivergent == 0 {
-					t.Fatalf("unrecorded HEAD write acquired ownership: %+v", intent)
-				}
+				require(t, exists && !intent.HeadOwned && next.RefsDivergent != 0,
+					"unrecorded HEAD write acquired ownership: %+v", intent)
 			}
-			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != expectedHEAD {
-				t.Fatalf("recovered HEAD=%s want=%s", got, expectedHEAD)
-			}
+			eq(t, "recovered HEAD", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), expectedHEAD)
 			noErr(t, f.manager.SetDefaultBranch(ctx, "project", "topic"))
 			f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/release")
 			_, err = f.refresh()
 			noErr(t, err)
-			if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/topic" {
-				t.Fatalf("owner default branch changed: %s", got)
-			}
+			eq(t, "owner default branch", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), "refs/heads/topic")
 			f.git(f.destinationPath(), "fsck", "--full")
 			records, err := f.store.ImportRefLocksPage(ctx, "", 100)
 			noErr(t, err)
-			if len(records) != 0 {
-				t.Fatalf("settled locks retained evidence: %+v", records)
-			}
+			require(t, len(records) == 0, "settled locks retained evidence: %+v", records)
 		})
 	}
 }
@@ -280,30 +252,21 @@ func TestLegacyImportLockRequiresOwnerRecovery(t *testing.T) {
 	path := filepath.Join(f.destinationPath(), "HEAD.lock")
 	before, err := os.ReadFile(path)
 	noErr(t, err)
-	if err := f.service.Reconcile(ctx); problemCode(err) != CodeUnresolved {
-		t.Fatalf("legacy state was not unresolved: %v", err)
-	}
-	after, err := os.ReadFile(path)
-	noErr(t, err)
-	if string(before) != string(after) {
-		t.Fatal("legacy lock was changed without proof")
-	}
+	err = f.service.Reconcile(ctx)
+	require(t, problemCode(err) == CodeUnresolved, "legacy state was not unresolved: %v", err)
+	fileIs(t, path, string(before))
 	records, err := f.store.ImportRefLocksPage(ctx, "", 100)
 	noErr(t, err)
-	if len(records) != 0 {
-		t.Fatal("legacy fixture unexpectedly had durable lock evidence")
-	}
+	require(t, len(records) == 0, "legacy fixture unexpectedly had durable lock evidence")
 	intents, err := f.store.UnresolvedImportIntents(ctx, "project")
 	noErr(t, err)
-	if len(intents) != 1 || !strings.Contains(intents[0].Reason, "Stop OwnGit and all Git writers") {
-		t.Fatalf("owner recovery route is missing: %+v", intents)
-	}
+	require(t, len(intents) == 1 && strings.Contains(intents[0].Reason, "Stop OwnGit and all Git writers"),
+		"owner recovery route is missing: %+v", intents)
 	noErr(t, f.service.Close())
 	noErr(t, os.Rename(path, filepath.Join(f.root, "preserved-legacy-lock")))
 	f.service = &Service{Store: f.store, Repositories: f.manager, Fetch: f.transport.fetch, Clock: func() time.Time { return f.now }}
-	if err := f.service.Reconcile(ctx); problemCode(err) != CodeUnresolved {
-		t.Fatalf("partial refs should still need acceptance: %v", err)
-	}
+	err = f.service.Reconcile(ctx)
+	require(t, problemCode(err) == CodeUnresolved, "partial refs should still need acceptance: %v", err)
 	_, err = f.service.ResolveUnresolved(ctx, "project")
 	noErr(t, err)
 	f.localWork("main", "owner push after legacy recovery\n")
@@ -320,14 +283,8 @@ func TestReplacedRecordedLockIsPreserved(t *testing.T) {
 	noErr(t, err)
 	noErr(t, os.Rename(path, path+".original"))
 	noErr(t, os.WriteFile(path, original, 0600))
-	if err := f.service.Reconcile(context.Background()); err == nil {
-		t.Fatal("replacement was accepted as owned")
-	}
-	actual, err := os.ReadFile(path)
-	noErr(t, err)
-	if string(actual) != string(original) {
-		t.Fatal("replacement was changed")
-	}
+	require(t, f.service.Reconcile(context.Background()) != nil, "replacement was accepted as owned")
+	fileIs(t, path, string(original))
 }
 
 func TestRecordedLockFingerprintChangesArePreserved(t *testing.T) {
@@ -337,9 +294,7 @@ func TestRecordedLockFingerprintChangesArePreserved(t *testing.T) {
 			path := filepath.Join(f.destinationPath(), "HEAD.lock")
 			records, err := f.store.ImportRefLocksPage(context.Background(), "", 100)
 			noErr(t, err)
-			if len(records) != 1 {
-				t.Fatalf("records=%+v", records)
-			}
+			require(t, len(records) == 1, "records=%+v", records)
 			record := records[0]
 			switch change {
 			case "content":
@@ -362,12 +317,9 @@ func TestRecordedLockFingerprintChangesArePreserved(t *testing.T) {
 				noErr(t, err)
 			}
 			noErr(t, f.store.SaveImportRefLock(context.Background(), record))
-			if err := f.service.Reconcile(context.Background()); err == nil {
-				t.Fatal("unproven lock was accepted")
-			}
-			if _, err := os.Stat(path); err != nil {
-				t.Fatalf("unproven lock removed: %v", err)
-			}
+			require(t, f.service.Reconcile(context.Background()) != nil, "unproven lock was accepted")
+			_, err = os.Stat(path)
+			require(t, err == nil, "unproven lock removed: %v", err)
 			// Follow the same safe owner route shown in the diagnostic. Preserve the
 			// lock outside the repository, rather than deleting an unknown resource.
 			noErr(t, os.Rename(path, filepath.Join(f.root, "preserved-lock")))
@@ -386,9 +338,7 @@ func TestAbsentRecordedLockDoesNotInspectOrAdoptHEAD(t *testing.T) {
 	noErr(t, err)
 	records, err := f.store.ImportRefLocksPage(ctx, "", 100)
 	noErr(t, err)
-	if len(records) != 1 {
-		t.Fatalf("records=%+v", records)
-	}
+	require(t, len(records) == 1, "records=%+v", records)
 	repositoryPath := f.destinationPath()
 	path := filepath.Join(repositoryPath, "HEAD")
 	noErr(t, os.Rename(path, path+".held"))
@@ -398,18 +348,16 @@ func TestAbsentRecordedLockDoesNotInspectOrAdoptHEAD(t *testing.T) {
 	noErr(t, f.service.reconcileRecordedRefLock(ctx, "", repositoryPath, records[0]))
 	retained, err := f.store.ImportRefLocksPage(ctx, "", 100)
 	noErr(t, err)
-	if len(retained) != 0 {
-		t.Error("absent resource retained lock evidence")
-	}
+	require(t, len(retained) == 0, "absent resource retained lock evidence")
 	noErr(t, os.Rename(path, filepath.Join(f.root, "preserved-unreadable-head")))
 	noErr(t, os.Rename(path+".held", path))
 	noErr(t, f.service.Reconcile(ctx))
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/main")
 	run, err := f.refresh()
 	noErr(t, err)
-	if got := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); got != "refs/heads/release" || run.RefsDivergent == 0 {
-		t.Errorf("unrecorded HEAD write acquired ownership: %s", got)
-	}
+	got := f.git(f.destinationPath(), "symbolic-ref", "HEAD")
+	require(t, got == "refs/heads/release" && run.RefsDivergent != 0,
+		"unrecorded HEAD write acquired ownership: %s", got)
 }
 
 func TestLiveRecordedLockIsPreserved(t *testing.T) {
@@ -421,17 +369,14 @@ func TestLiveRecordedLockIsPreserved(t *testing.T) {
 	f.service.beforeHEADRename = func() {
 		records, err := f.store.ImportRefLocksPage(context.Background(), "", 100)
 		noErr(t, err)
-		if len(records) != 1 {
-			t.Fatalf("records=%+v", records)
-		}
+		require(t, len(records) == 1, "records=%+v", records)
 		// Reconcile excludes this live run even with a record from another session.
 		record := records[0]
 		record.SessionID = strings.Repeat("f", 32)
 		noErr(t, f.store.SaveImportRefLock(context.Background(), record))
 		noErr(t, f.service.reconcileRecordedRefLocks(context.Background(), ""))
-		if _, err := os.Stat(filepath.Join(f.destinationPath(), "HEAD.lock")); err != nil {
-			t.Fatalf("live lock removed: %v", err)
-		}
+		_, err = os.Stat(filepath.Join(f.destinationPath(), "HEAD.lock"))
+		require(t, err == nil, "live lock removed: %v", err)
 	}
 	_, err := f.refresh()
 	noErr(t, err)

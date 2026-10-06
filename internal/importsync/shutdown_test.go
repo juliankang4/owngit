@@ -34,19 +34,14 @@ func TestShutdownDrainsInFlightRunBeforeReturning(t *testing.T) {
 	noErr(t, f.service.Shutdown(ctx), "shutdown")
 	// Shutdown returned, so the run is already terminal in durable state.
 	run := f.lastRun()
-	if run.Status != state.ImportRunCancelled || !strings.Contains(run.Message, ErrShuttingDown.Error()) {
-		t.Fatalf("drained run status=%s message=%q", run.Status, run.Message)
-	}
-	if active, exists, err := f.store.ActiveImportRun(context.Background(), "project"); err != nil || exists {
-		t.Fatalf("active run after shutdown=%+v err=%v", active, err)
-	}
-	if err := <-finished; problemCode(err) != CodeCancelled {
-		t.Fatalf("drained refresh err=%v", err)
-	}
-	if availability := f.service.Availability(context.Background()); availability.Prepared {
-		t.Fatal("shutdown kept the runtime lease")
-	}
-	if _, err := f.refresh(); problemCode(err) != CodeRuntimeUnavailable {
-		t.Fatalf("refresh after shutdown err=%v", err)
-	}
+	require(t, run.Status == state.ImportRunCancelled && strings.Contains(run.Message, ErrShuttingDown.Error()),
+		"drained run status=%s message=%q", run.Status, run.Message)
+	active, exists, err := f.store.ActiveImportRun(context.Background(), "project")
+	require(t, err == nil && !exists, "active run after shutdown=%+v err=%v", active, err)
+	err = <-finished
+	require(t, problemCode(err) == CodeCancelled, "drained refresh err=%v", err)
+	availability := f.service.Availability(context.Background())
+	require(t, !availability.Prepared, "shutdown kept the runtime lease")
+	_, err = f.refresh()
+	require(t, problemCode(err) == CodeRuntimeUnavailable, "refresh after shutdown err=%v", err)
 }

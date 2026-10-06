@@ -41,8 +41,9 @@ func TestStagingRefInventory(t *testing.T) {
 			err := f.service.verifyStagingRefs(context.Background(), run)
 			if test.detail == "" {
 				noErr(t, err)
-			} else if problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), test.detail) {
-				t.Fatalf("inventory error = %v, want %q", err, test.detail)
+			} else {
+				require(t, problemCode(err) == CodeVerifyFailed && strings.Contains(err.Error(), test.detail),
+					"inventory error = %v, want %q", err, test.detail)
 			}
 		})
 	}
@@ -51,7 +52,7 @@ func TestStagingRefInventory(t *testing.T) {
 	run := &runState{stagingPath: empty, advertisement: &importgit.Advertisement{}}
 	noErr(t, f.service.verifyStagingRefs(context.Background(), run))
 	run.stagingPath = filepath.Join(f.root, "missing.git")
-	if err := f.service.verifyStagingRefs(context.Background(), run); problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), "staged refs could not be read") {
-		t.Fatalf("Git read failure = %v", err)
-	}
+	err := f.service.verifyStagingRefs(context.Background(), run)
+	require(t, problemCode(err) == CodeVerifyFailed && strings.Contains(err.Error(), "staged refs could not be read"),
+		"Git read failure = %v", err)
 }

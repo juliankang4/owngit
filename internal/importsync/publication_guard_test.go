@@ -47,33 +47,21 @@ func TestPreparedCallbackLifetimeIsReportedAtTimeout(t *testing.T) {
 					<-release
 					return nil
 				})
-			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("expected deadline error: %v", err)
+			require(t, errors.Is(err, context.DeadlineExceeded), "expected deadline error: %v", err)
+			require(t, errors.Is(err, gitexec.ErrPreparedCallbackDetached) == !cooperative,
+				"callback detached report (cooperative=%v): %v", cooperative, err)
+			finished := false
+			select {
+			case <-callbackDone:
+				finished = true
+			default:
 			}
-			if cooperative {
-				if errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
-					t.Fatalf("joined callback reported detached: %v", err)
-				}
-				select {
-				case <-callbackDone:
-				default:
-					t.Fatal("runner returned before the cooperative callback finished")
-				}
-			} else {
-				if !errors.Is(err, gitexec.ErrPreparedCallbackDetached) {
-					t.Fatalf("running callback was not reported: %v", err)
-				}
-				select {
-				case <-callbackDone:
-					t.Fatal("detached callback finished before release")
-				default:
-				}
+			require(t, finished == cooperative, "callback finished at return=%v, cooperative=%v", finished, cooperative)
+			if !cooperative {
 				close(release)
 				<-callbackDone
 			}
-			if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/tags/v1"); got != old {
-				t.Fatalf("late callback committed: before=%s after=%s", old, got)
-			}
+			eq(t, "tag after a late callback", f.rev(path, "refs/tags/v1"), old)
 			f.git(path, "--git-dir", ".", "update-ref", "--no-deref", "refs/tags/v1", old, old)
 		})
 	}
@@ -97,22 +85,13 @@ func TestProductionPreparedCallbackJoinIsBoundedUnderCancellation(t *testing.T) 
 	started := time.Now()
 	run, err := f.service.Refresh(ctx, "project", Limits{})
 	elapsed := time.Since(started)
-	if err == nil || (run.Status != state.ImportRunFailed && run.Status != state.ImportRunCancelled) {
-		t.Fatalf("cancelled prepared run=%+v err=%v", run, err)
-	}
-	if !repositoryLockedInCallback {
-		t.Fatal("prepared callback ran outside the repository write lock")
-	}
-	if elapsed > 10*time.Second {
-		t.Fatalf("cancelled prepared callback join was not bounded: %s", elapsed)
-	}
+	require(t, err != nil && (run.Status == state.ImportRunFailed || run.Status == state.ImportRunCancelled),
+		"cancelled prepared run=%+v err=%v", run, err)
+	require(t, repositoryLockedInCallback, "prepared callback ran outside the repository write lock")
+	require(t, elapsed <= 10*time.Second, "cancelled prepared callback join was not bounded: %s", elapsed)
 	path := f.destinationPath()
-	if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/main"); got != old {
-		t.Fatalf("cancelled prepared transaction committed: got=%s want=%s", got, old)
-	}
-	if _, statErr := os.Lstat(filepath.Join(path, "refs", "heads", "main.lock")); !os.IsNotExist(statErr) {
-		t.Fatalf("prepared ref lock leaked after cancellation: %v", statErr)
-	}
+	eq(t, "main after a cancelled prepared transaction", f.rev(path, "refs/heads/main"), old)
+	absent(t, filepath.Join(path, "refs", "heads", "main.lock"))
 	f.git(path, "--git-dir", ".", "update-ref", "--no-deref", "refs/heads/main", old, old)
 }
 
@@ -141,21 +120,10 @@ func TestObserveIntentRequiresExactKindsForCreationAndRetention(t *testing.T) {
 		}
 		observation, err := f.service.observeIntent(context.Background(), path, intent)
 		noErr(t, err)
-		if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/created"); got != old {
-			t.Fatalf("fixture alias does not resolve to the desired object: %s", got)
-		}
-		if observation.matchesDesired {
-			t.Fatalf("resolved alias classified as exact publication: %+v", observation)
-		}
-		if observation.matchesExpected {
-			t.Fatalf("resolved alias classified as proven absence: %+v", observation)
-		}
-		if !observation.retentionComplete {
-			t.Fatalf("empty retention was not complete: %+v", observation)
-		}
-		if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "refs/heads/created"); got != protected {
-			t.Fatalf("independent alias changed: %s", got)
-		}
+		eq(t, "fixture alias referent", f.rev(path, "refs/heads/created"), old)
+		require(t, !observation.matchesDesired && !observation.matchesExpected && observation.retentionComplete,
+			"resolved alias must be neither exact publication nor proven absence, and empty retention complete: %+v", observation)
+		eq(t, "independent alias", f.symref(path, "refs/heads/created"), protected)
 	})
 
 	// retention: desired direct old object; installed as a dangling alias, so
@@ -178,18 +146,9 @@ func TestObserveIntentRequiresExactKindsForCreationAndRetention(t *testing.T) {
 		}
 		observation, err := f.service.observeIntent(context.Background(), path, intent)
 		noErr(t, err)
-		if observation.retentionComplete {
-			t.Fatalf("dangling alias classified as complete retention: %+v", observation)
-		}
-		if observation.matchesDesired {
-			t.Fatalf("dangling alias classified as exact publication: %+v", observation)
-		}
-		if observation.matchesExpected {
-			t.Fatalf("dangling alias classified as proven absence: %+v", observation)
-		}
-		if content, readErr := os.ReadFile(filepath.Join(path, filepath.FromSlash(retention))); readErr != nil || string(content) != string(raw) {
-			t.Fatalf("dangling retention alias changed: %q err=%v", content, readErr)
-		}
+		require(t, !observation.retentionComplete && !observation.matchesDesired && !observation.matchesExpected,
+			"dangling alias must be neither complete retention, exact publication nor proven absence: %+v", observation)
+		fileIs(t, filepath.Join(path, filepath.FromSlash(retention)), string(raw))
 	})
 }
 
@@ -204,34 +163,17 @@ func TestReconcileAbsentToDanglingAliasIsUnresolved(t *testing.T) {
 	path := f.destinationPath()
 	created := filepath.Join(path, "refs", "heads", "created")
 	noErr(t, os.WriteFile(created, []byte("ref: refs/heads/dangling\n"), 0o600))
-	run := state.ImportRun{
-		ID: strings.Repeat("e", 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
-		Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: f.now, CreatedAt: f.now,
-	}
-	noErr(t, f.store.BeginImportRun(context.Background(), run))
-	run.Status = state.ImportRunInterrupted
-	run.FinishedAt = f.now
-	noErr(t, f.store.FinishImportRun(context.Background(), run))
 	head := (headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: old}).encode()
-	intent := state.ImportIntent{
-		ID: strings.Repeat("f", 32), RepositoryID: "project", RunID: run.ID, SourceGeneration: 1, AuthorityRevision: 1,
-		Status:   state.ImportIntentPlanning,
-		Expected: map[string]string{"refs/heads/main": old, "refs/heads/created": "", state.ImportHeadRef: head},
-		Desired:  map[string]string{"refs/heads/main": old, "refs/heads/created": old, state.ImportHeadRef: head},
-		Observed: map[string]string{"refs/heads/main": old, "refs/heads/created": old, state.ImportHeadRef: head},
-		Retained: map[string]string{}, CreatedAt: f.now,
-	}
-	noErr(t, f.store.CreateImportIntent(context.Background(), intent))
-	if err := f.service.Reconcile(context.Background()); err == nil || problemCode(err) != CodeUnresolved {
-		t.Fatalf("absent-to-dangling reconciliation err=%v", err)
-	}
+	intent := f.seedIntent('e',
+		map[string]string{"refs/heads/main": old, "refs/heads/created": "", state.ImportHeadRef: head},
+		map[string]string{"refs/heads/main": old, "refs/heads/created": old, state.ImportHeadRef: head},
+		map[string]string{"refs/heads/main": old, "refs/heads/created": old, state.ImportHeadRef: head})
+	err := f.service.Reconcile(context.Background())
+	require(t, err != nil && problemCode(err) == CodeUnresolved, "absent-to-dangling reconciliation err=%v", err)
 	stored, _, err := f.store.ImportIntent(context.Background(), intent.ID)
-	if err != nil || stored.Status != state.ImportIntentUnresolved {
-		t.Fatalf("intent status=%q err=%v", stored.Status, err)
-	}
-	if content, readErr := os.ReadFile(created); readErr != nil || string(content) != "ref: refs/heads/dangling\n" {
-		t.Fatalf("dangling alias changed: %q err=%v", content, readErr)
-	}
+	require(t, err == nil && stored.Status == state.ImportIntentUnresolved,
+		"intent status=%q err=%v", stored.Status, err)
+	fileIs(t, created, "ref: refs/heads/dangling\n")
 }
 
 // Prepared validation and readback use fixed namespace arguments.
@@ -250,9 +192,8 @@ func TestPublicationRefQueriesUseFixedNamespaceArguments(t *testing.T) {
 		names = append(names, name)
 		fmt.Fprintf(&input, "create %s %s\n", name, oid)
 	}
-	if _, err := f.manager.Git.Run(context.Background(), path, strings.NewReader(input.String()), "--git-dir", ".", "update-ref", "--stdin"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.manager.Git.Run(context.Background(), path, strings.NewReader(input.String()), "--git-dir", ".", "update-ref", "--stdin")
+	noErr(t, err)
 	argumentBytes := 0
 	for _, prefix := range publicationRefPrefixes(names) {
 		argumentBytes += len(prefix) + 1
@@ -261,26 +202,22 @@ func TestPublicationRefQueriesUseFixedNamespaceArguments(t *testing.T) {
 	for _, name := range names {
 		nameBytes += len(name) + 1
 	}
-	if argumentBytes >= nameBytes/100 {
-		t.Fatalf("fixed namespace arguments are not independent of ref names: prefixes=%d names=%d", argumentBytes, nameBytes)
-	}
+	require(t, argumentBytes < nameBytes/100,
+		"fixed namespace arguments are not independent of ref names: prefixes=%d names=%d", argumentBytes, nameBytes)
 	refs, symrefs, err := f.service.readPublicationRefs(context.Background(), path, names)
-	if err != nil {
-		t.Fatalf("bounded read of %d wide names: %v", len(names), err)
-	}
+	noErr(t, err, "bounded read of wide names")
 	for _, name := range names {
-		if refs[name] != oid || symrefs[name] != "" {
-			t.Fatalf("exact read missed %s: oid=%q symref=%q", name, refs[name], symrefs[name])
-		}
+		require(t, refs[name] == oid && symrefs[name] == "",
+			"exact read missed %s: oid=%q symref=%q", name, refs[name], symrefs[name])
 	}
 	// Enumeration omits dangling aliases; the exact read still finds them.
 	dangling := "refs/heads/dangling-alias"
-	noErr(t, os.WriteFile(filepath.Join(path, filepath.FromSlash(dangling)), []byte("ref: refs/heads/nowhere\n"), 0o600))
+	noErr(t, os.WriteFile(filepath.Join(path, filepath.FromSlash(dangling)),
+		[]byte("ref: refs/heads/nowhere\n"), 0o600))
 	refs, symrefs, err = f.service.readPublicationRefs(context.Background(), path, []string{dangling})
 	noErr(t, err)
-	if symrefs[dangling] != "refs/heads/nowhere" || refs[dangling] != "" {
-		t.Fatalf("dangling alias omitted by bounded enumeration: oid=%q symref=%q", refs[dangling], symrefs[dangling])
-	}
+	require(t, symrefs[dangling] == "refs/heads/nowhere" && refs[dangling] == "",
+		"dangling alias omitted by bounded enumeration: oid=%q symref=%q", refs[dangling], symrefs[dangling])
 }
 
 // The platform indirect-path check applies to repository root, raw
@@ -300,12 +237,9 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 	t.Run("repository root link", func(t *testing.T) {
 		link := filepath.Join(f.root, "root-link")
 		noErr(t, os.Symlink(path, link))
-		if _, err := f.service.acquireHEADLock(context.Background(), run, link, expected); err == nil || problemCode(err) != CodeRepositoryMissing {
-			t.Fatalf("linked repository root accepted: %v", err)
-		}
-		if _, statErr := os.Lstat(filepath.Join(path, "HEAD.lock")); !os.IsNotExist(statErr) {
-			t.Fatalf("lock was created through the linked root: %v", statErr)
-		}
+		_, err := f.service.acquireHEADLock(context.Background(), run, link, expected)
+		require(t, err != nil && problemCode(err) == CodeRepositoryMissing, "linked repository root accepted: %v", err)
+		absent(t, filepath.Join(path, "HEAD.lock"))
 	})
 	t.Run("HEAD.lock link is preserved", func(t *testing.T) {
 		sentinel := filepath.Join(f.root, "lock-sentinel")
@@ -313,18 +247,11 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 		lockPath := filepath.Join(path, "HEAD.lock")
 		noErr(t, os.Symlink(sentinel, lockPath))
 		defer os.Remove(lockPath)
-		if _, err := f.service.acquireHEADLock(context.Background(), run, path, expected); err == nil || problemCode(err) != CodeDestinationChanged {
-			t.Fatalf("linked HEAD.lock accepted: %v", err)
-		}
-		if err := removeOwnedHEADLock(lockPath, nil); err == nil {
-			t.Fatal("cleanup removed a lock it never created")
-		}
-		if info, err := os.Lstat(lockPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("linked lock changed: %v %v", info, err)
-		}
-		if content, err := os.ReadFile(sentinel); err != nil || string(content) != "independent\n" {
-			t.Fatalf("lock target changed: %q %v", content, err)
-		}
+		_, err := f.service.acquireHEADLock(context.Background(), run, path, expected)
+		require(t, err != nil && problemCode(err) == CodeDestinationChanged, "linked HEAD.lock accepted: %v", err)
+		require(t, removeOwnedHEADLock(lockPath, nil) != nil, "cleanup removed a lock it never created")
+		isSymlink(t, lockPath)
+		fileIs(t, sentinel, "independent\n")
 	})
 	t.Run("owned lock replaced by link before rollback", func(t *testing.T) {
 		lock, err := f.service.acquireHEADLock(context.Background(), run, path, expected)
@@ -335,15 +262,9 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 		defer os.Remove(lock.path + ".moved")
 		noErr(t, os.Symlink(sentinel, lock.path))
 		defer os.Remove(lock.path)
-		if err := lock.rollback(); err == nil {
-			t.Fatal("rollback removed a replacement link")
-		}
-		if info, err := os.Lstat(lock.path); err != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("replacement link changed: %v %v", info, err)
-		}
-		if content, err := os.ReadFile(sentinel); err != nil || string(content) != "independent\n" {
-			t.Fatalf("replacement target changed: %q %v", content, err)
-		}
+		require(t, lock.rollback() != nil, "rollback removed a replacement link")
+		isSymlink(t, lock.path)
+		fileIs(t, sentinel, "independent\n")
 	})
 	t.Run("HEAD link refused before lock creation", func(t *testing.T) {
 		headPath := filepath.Join(path, "HEAD")
@@ -361,21 +282,14 @@ func TestHEADLockRefusesIndirectRootAndLockPaths(t *testing.T) {
 			_ = os.Remove(headPath)
 			_ = os.WriteFile(headPath, original, 0o600)
 		}()
-		if target, err := os.Readlink(headPath); err != nil || target != linkTarget {
-			t.Fatalf("HEAD symlink target=%q err=%v", target, err)
-		}
-		if bare := f.git(path, "--git-dir", ".", "config", "--local", "--get", "core.bare"); bare != "true" {
-			t.Fatalf("Git does not recognize the symlinked HEAD repository: core.bare=%q", bare)
-		}
-		if _, err := f.service.acquireHEADLock(context.Background(), run, path, expected); err == nil || problemCode(err) != CodePublishFailed {
-			t.Fatalf("linked HEAD accepted: %v", err)
-		}
-		if _, statErr := os.Lstat(filepath.Join(path, "HEAD.lock")); !os.IsNotExist(statErr) {
-			t.Fatalf("lock was created beside a linked HEAD: %v", statErr)
-		}
-		if content, err := os.ReadFile(sentinel); err != nil || string(content) != string(original) {
-			t.Fatalf("HEAD link target changed: %q %v", content, err)
-		}
+		target, err := os.Readlink(headPath)
+		require(t, err == nil && target == linkTarget, "HEAD symlink target=%q err=%v", target, err)
+		eq(t, "Git recognizes the symlinked HEAD repository (core.bare)",
+			f.git(path, "--git-dir", ".", "config", "--local", "--get", "core.bare"), "true")
+		_, err = f.service.acquireHEADLock(context.Background(), run, path, expected)
+		require(t, err != nil && problemCode(err) == CodePublishFailed, "linked HEAD accepted: %v", err)
+		absent(t, filepath.Join(path, "HEAD.lock"))
+		fileIs(t, sentinel, string(original))
 	})
 }
 
@@ -392,11 +306,7 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 		t.Skip("waits out publication deadlines plus a 5 second grace")
 	}
 	f := newFixture(t)
-	old := f.commit("initial", "initial\n")
-	f.git(f.source, "branch", "dev")
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
-	f.git(f.source, "checkout", "--quiet", "dev")
+	old := f.ownedDevCheckout()
 	f.commit("dev next", "next\n")
 	// The grace bounds each wait for the stopped transaction: first for the
 	// callback to abort it, then for the killed process to be reaped. Each
@@ -433,9 +343,8 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 		case <-done:
 			// Only a cleanly failed round leaves the repository ready for
 			// another attempt.
-			if round == len(publicationHoldDeadlines)-1 || run.Status != state.ImportRunFailed {
-				t.Fatalf("publication ended before its prepared callback ran with a %s deadline: run=%+v err=%v", timeout, run, runErr)
-			}
+			require(t, round != len(publicationHoldDeadlines)-1 && run.Status == state.ImportRunFailed,
+				"publication ended before its prepared callback ran with a %s deadline: run=%+v err=%v", timeout, run, runErr)
 			t.Logf("publication ended before its prepared callback ran with a %s deadline (run %s, err %v); retrying with a longer one", timeout, run.Status, runErr)
 			continue
 		case <-time.After(timeout + time.Minute):
@@ -456,27 +365,20 @@ func TestPublicationHoldsGuardsUntilPreparedCallbackFinishes(t *testing.T) {
 		f.manager.Locks.For("project").Unlock()
 		t.Fatal("repository write lock was released while the prepared callback was running")
 	}
-	if active, exists, err := f.store.ActiveImportRun(context.Background(), "project"); err != nil || !exists || active.Status != state.ImportRunPublishing {
-		t.Fatalf("run left publishing while the callback was running: active=%+v exists=%v err=%v", active, exists, err)
-	}
+	active, exists, err := f.store.ActiveImportRun(context.Background(), "project")
+	require(t, err == nil && exists && active.Status == state.ImportRunPublishing,
+		"run left publishing while the callback was running: active=%+v exists=%v err=%v", active, exists, err)
 	close(release)
 	select {
 	case <-done:
 	case <-time.After(time.Minute):
 		t.Fatal("publication did not return after the callback finished")
 	}
-	if runErr == nil || run.Status != state.ImportRunFailed || !errors.Is(runErr, context.DeadlineExceeded) {
-		t.Fatalf("late callback run=%+v err=%v", run, runErr)
-	}
+	require(t, runErr != nil && run.Status == state.ImportRunFailed && errors.Is(runErr, context.DeadlineExceeded),
+		"late callback run=%+v err=%v", run, runErr)
 	path := f.destinationPath()
-	if got := f.destinationRefs()["refs/heads/dev"]; got != old {
-		t.Fatalf("aborted transaction committed: got=%s want=%s", got, old)
-	}
-	if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/main" {
-		t.Fatalf("HEAD written after an aborted transaction: %s", got)
-	}
-	if _, statErr := os.Lstat(filepath.Join(path, "HEAD.lock")); !os.IsNotExist(statErr) {
-		t.Fatalf("HEAD.lock left behind: %v", statErr)
-	}
+	eq(t, "dev after an aborted transaction", f.destinationRefs()["refs/heads/dev"], old)
+	eq(t, "HEAD after an aborted transaction", f.headRef(path), "refs/heads/main")
+	absent(t, filepath.Join(path, "HEAD.lock"))
 	f.git(path, "--git-dir", ".", "update-ref", "--no-deref", "refs/heads/dev", old, old)
 }

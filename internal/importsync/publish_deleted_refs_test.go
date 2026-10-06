@@ -25,17 +25,12 @@ func TestSourceDeletionCountIncludesKeptAndRemovedRefs(t *testing.T) {
 			noErr(t, err)
 			run, err := f.refresh()
 			noErr(t, err)
-			if run.RefsDeletedUpstream != 3 {
-				t.Fatalf("source deletion count=%d", run.RefsDeletedUpstream)
-			}
+			eq(t, "source deletion count", run.RefsDeletedUpstream, 3)
 			refs := f.destinationRefs()
-			if refs["refs/heads/local"] != owner {
-				t.Fatal("independent owner work was deleted")
-			}
+			eq(t, "independent owner work", refs["refs/heads/local"], owner)
 			for _, name := range []string{"refs/heads/old", "refs/tags/old"} {
-				if (refs[name] == "") != follow {
-					t.Fatalf("wrong local deletion policy: %s=%s follow=%v", name, refs[name], follow)
-				}
+				require(t, (refs[name] == "") == follow,
+					"wrong local deletion policy: %s=%s follow=%v", name, refs[name], follow)
 			}
 		})
 	}

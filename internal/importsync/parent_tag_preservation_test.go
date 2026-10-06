@@ -11,21 +11,12 @@ func TestParentRefreshPreservesLocallyReannotatedTag(t *testing.T) {
 	upstreamTag := f.git(f.source, "rev-parse", "refs/tags/v1")
 	f.mustImport(ImportInput{})
 	destination := f.destinationPath()
-	if got := f.git(destination, "rev-parse", "refs/tags/v1"); got != upstreamTag {
-		t.Fatal("initial tag import was not exact")
-	}
+	eq(t, "initial tag import", f.git(destination, "rev-parse", "refs/tags/v1"), upstreamTag)
 	f.git(destination, "tag", "-f", "-a", "v1", "-m", "independent local annotation", commit)
 	localTag := f.git(destination, "rev-parse", "refs/tags/v1")
-	if localTag == upstreamTag {
-		t.Fatal("test did not create distinct local tag history")
-	}
-	if _, err := f.refresh(); err != nil {
-		t.Fatalf("refresh: %v", err)
-	}
-	if got := f.git(f.source, "rev-parse", "refs/tags/v1"); got != upstreamTag {
-		t.Fatal("upstream was unexpectedly modified")
-	}
-	if got := f.git(destination, "rev-parse", "refs/tags/v1"); got != localTag {
-		t.Fatalf("refresh overwrote independent local annotation: got %s want %s", got, localTag)
-	}
+	require(t, localTag != upstreamTag, "test did not create distinct local tag history")
+	_, err := f.refresh()
+	noErr(t, err)
+	eq(t, "upstream tag", f.git(f.source, "rev-parse", "refs/tags/v1"), upstreamTag)
+	eq(t, "local annotation after refresh", f.git(destination, "rev-parse", "refs/tags/v1"), localTag)
 }

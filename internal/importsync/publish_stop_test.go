@@ -18,27 +18,23 @@ import (
 func TestRefreshStoppedAtAPublicationStateReadIsCancelled(t *testing.T) {
 	f := newFixture(t)
 	f.commit("source", "initial\n")
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
-	before := f.git(f.destinationPath(), "--git-dir", ".", "rev-parse", "refs/heads/main")
+	f.importOwned()
+	before := f.rev(f.destinationPath(), "refs/heads/main")
 	f.commit("source", "next\n")
 	f.service.beforeObservationRead = func(ctx context.Context) {
 		f.service.beforeObservationRead = nil
-		if _, err := f.service.Cancel(context.Background(), "project"); err != nil {
-			t.Errorf("cancel: %v", err)
-		}
+		_, err := f.service.Cancel(context.Background(), "project")
+		noErr(t, err, "cancel")
 		<-ctx.Done()
 	}
 	run, err := f.refresh()
-	if problemCode(err) != CodeCancelled || run.Status != state.ImportRunCancelled || run.ErrorClass != CodeCancelled {
-		t.Fatalf("refresh stopped at a state read run=%s/%s err=%v", run.Status, run.ErrorClass, err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "rev-parse", "refs/heads/main"); got != before {
-		t.Fatalf("destination changed: %s want %s", got, before)
-	}
-	if status, err := f.service.Status(context.Background(), "project"); err != nil || status.UnresolvedIntents != 0 {
-		t.Fatalf("stopped refresh left unresolved=%d err=%v", status.UnresolvedIntents, err)
-	}
+	require(t, problemCode(err) == CodeCancelled && run.Status == state.ImportRunCancelled &&
+		run.ErrorClass == CodeCancelled,
+		"refresh stopped at a state read run=%s/%s err=%v", run.Status, run.ErrorClass, err)
+	eq(t, "destination main", f.rev(f.destinationPath(), "refs/heads/main"), before)
+	status, err := f.service.Status(context.Background(), "project")
+	require(t, err == nil && status.UnresolvedIntents == 0,
+		"stopped refresh left unresolved=%d err=%v", status.UnresolvedIntents, err)
 }
 
 // Only a state read that the run's own stop cut is reclassified. A genuine
@@ -162,9 +158,10 @@ func TestStopWithGenuineBookkeepingFailureStaysStateUnavailable(t *testing.T) {
 			} else {
 				_, err = f.importProject(ImportInput{})
 			}
-			if problemCode(err) != CodeStateUnavailable || !strings.Contains(err.Error(), "could not be recorded") || !strings.Contains(err.Error(), "database is closed") {
-				t.Fatalf("stop with a failed bookkeeping write code=%s err=%v", problemCode(err), err)
-			}
+			require(t, problemCode(err) == CodeStateUnavailable &&
+				strings.Contains(err.Error(), "could not be recorded") &&
+				strings.Contains(err.Error(), "database is closed"),
+				"stop with a failed bookkeeping write code=%s err=%v", problemCode(err), err)
 		})
 	}
 }

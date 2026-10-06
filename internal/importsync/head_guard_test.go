@@ -21,17 +21,11 @@ func (f fakeFileInfo) IsDir() bool        { return f.mode.IsDir() }
 func (f fakeFileInfo) Sys() any           { return nil }
 
 func TestDirectPathGuardsRejectIndirectModes(t *testing.T) {
-	if directRegularFile("", nil) || directDirectory("", nil) {
-		t.Fatal("nil file info was accepted")
-	}
+	require(t, !directRegularFile("", nil) && !directDirectory("", nil), "nil file info was accepted")
 	for _, mode := range []os.FileMode{os.ModeSymlink, os.ModeDir | os.ModeSymlink, os.ModeIrregular, os.ModeDir, os.ModeNamedPipe} {
-		if directRegularFile("", fakeFileInfo{mode: mode}) {
-			t.Fatalf("mode %v accepted as a direct regular file", mode)
-		}
+		require(t, !directRegularFile("", fakeFileInfo{mode: mode}), "mode %v accepted as a direct regular file", mode)
 	}
 	for _, mode := range []os.FileMode{os.ModeSymlink, os.ModeDir | os.ModeSymlink, os.ModeIrregular, 0} {
-		if directDirectory("", fakeFileInfo{mode: mode}) {
-			t.Fatalf("mode %v accepted as a direct directory", mode)
-		}
+		require(t, !directDirectory("", fakeFileInfo{mode: mode}), "mode %v accepted as a direct directory", mode)
 	}
 }

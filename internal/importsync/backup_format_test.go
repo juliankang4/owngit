@@ -44,9 +44,8 @@ func TestImportHistoryDecidesTheBackupFormat(t *testing.T) {
 		f.commit("two", "two\n")
 		_, err := f.refresh()
 		noErr(t, err)
-		if version := f.backupVersion(); version != 10 {
-			t.Fatalf("backup version = %d", version)
-		}
+		version := f.backupVersion()
+		require(t, version == 10, "backup version = %d", version)
 	})
 	t.Run("removed extra namespace", func(t *testing.T) {
 		f := newFixture(t)
@@ -57,9 +56,8 @@ func TestImportHistoryDecidesTheBackupFormat(t *testing.T) {
 		noErr(t, err)
 		_, err = f.refresh()
 		noErr(t, err)
-		if version := f.backupVersion(); version != 11 {
-			t.Fatalf("backup version = %d", version)
-		}
+		version := f.backupVersion()
+		require(t, version == 11, "backup version = %d", version)
 	})
 	t.Run("deletion followed, then turned off", func(t *testing.T) {
 		f := newFixture(t)
@@ -71,8 +69,7 @@ func TestImportHistoryDecidesTheBackupFormat(t *testing.T) {
 		noErr(t, err)
 		_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{FollowUpstreamDeletions: boolPointer(false)})
 		noErr(t, err)
-		if version := f.backupVersion(); version != 11 {
-			t.Fatalf("backup version = %d", version)
-		}
+		version := f.backupVersion()
+		require(t, version == 11, "backup version = %d", version)
 	})
 }

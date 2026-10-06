@@ -30,36 +30,27 @@ func TestImportRemovesItsDestinationPackKeep(t *testing.T) {
 	f := newFixture(t)
 	f.commit("one", "one\n")
 	initial := f.mustImport(ImportInput{})
-	if initial.Run.Status != state.ImportRunComplete {
-		t.Fatalf("initial run=%+v", initial.Run)
-	}
+	require(t, initial.Run.Status == state.ImportRunComplete, "initial run=%+v", initial.Run)
 	path := f.destinationPath()
-	if keeps := destinationKeepFiles(t, path); len(keeps) != 0 {
-		t.Fatalf("initial import left keep files %v", keeps)
-	}
+	keeps := destinationKeepFiles(t, path)
+	require(t, len(keeps) == 0, "initial import left keep files %v", keeps)
 	packs, err := filepath.Glob(filepath.Join(path, "objects", "pack", "pack-*.pack"))
-	if err != nil || len(packs) != 1 {
-		t.Fatalf("initial packs=%v err=%v", packs, err)
-	}
+	require(t, err == nil && len(packs) == 1, "initial packs=%v err=%v", packs, err)
 	// An operator's .keep file on an existing pack is not this run's to remove.
 	operatorKeep := packs[0][:len(packs[0])-len(".pack")] + ".keep"
 	noErr(t, os.WriteFile(operatorKeep, []byte("operator\n"), 0o600))
 
 	f.commit("two", "two\n")
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
 	packs, err = filepath.Glob(filepath.Join(path, "objects", "pack", "pack-*.pack"))
-	if err != nil || len(packs) != 2 {
-		t.Fatalf("refresh did not index a new destination pack: packs=%v err=%v", packs, err)
-	}
-	if keeps := destinationKeepFiles(t, path); len(keeps) != 1 || keeps[0] != filepath.Base(operatorKeep) {
-		t.Fatalf("keep files after refresh=%v want only %s", keeps, filepath.Base(operatorKeep))
-	}
-	if content, err := os.ReadFile(operatorKeep); err != nil || string(content) != "operator\n" {
-		t.Fatalf("operator keep file changed: %q err=%v", content, err)
-	}
+	require(t, err == nil && len(packs) == 2,
+		"refresh did not index a new destination pack: packs=%v err=%v", packs, err)
+	keeps = destinationKeepFiles(t, path)
+	require(t, len(keeps) == 1 && keeps[0] == filepath.Base(operatorKeep),
+		"keep files after refresh=%v want only %s", keeps, filepath.Base(operatorKeep))
+	content, err := os.ReadFile(operatorKeep)
+	require(t, err == nil && string(content) == "operator\n", "operator keep file changed: %q err=%v", content, err)
 }
 
 // The .keep file protects the pack while the ref transaction is prepared,
@@ -84,19 +75,15 @@ func TestFailedPublicationRemovesItsDestinationPackKeep(t *testing.T) {
 		}
 		cancel()
 	}
-	if run, err := f.service.Refresh(ctx, "project", Limits{}); err == nil || run.Status == state.ImportRunComplete {
-		t.Fatalf("cancelled refresh run=%+v err=%v", run, err)
-	}
+	run, err := f.service.Refresh(ctx, "project", Limits{})
+	require(t, err != nil && run.Status != state.ImportRunComplete, "cancelled refresh run=%+v err=%v", run, err)
 	path := f.destinationPath()
-	if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/main"); got != old {
-		t.Fatalf("cancelled refresh moved main to %s", got)
-	}
-	if keeps := destinationKeepFiles(t, path); len(keeps) != 0 {
-		t.Fatalf("failed refresh left keep files %v", keeps)
-	}
-	if want := "owngit import " + f.lastRun().ID + "\n"; len(preparedKeeps) != 1 || preparedContent != want {
-		t.Fatalf("keep files while prepared=%v content=%q want one with %q", preparedKeeps, preparedContent, want)
-	}
+	eq(t, "cancelled refresh moved main to", f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/main"), old)
+	keeps := destinationKeepFiles(t, path)
+	require(t, len(keeps) == 0, "failed refresh left keep files %v", keeps)
+	want := "owngit import " + f.lastRun().ID + "\n"
+	require(t, len(preparedKeeps) == 1 && preparedContent == want,
+		"keep files while prepared=%v content=%q want one with %q", preparedKeeps, preparedContent, want)
 }
 
 // A successful refresh removes its pack keep file while a reader holds the
@@ -128,15 +115,11 @@ func TestSuccessfulRefreshRemovesItsPackKeepBehindAReader(t *testing.T) {
 	started := time.Now()
 	run, err := f.refresh()
 	elapsed := time.Since(started)
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
-	if elapsed >= destinationKeepCleanupTimeout {
-		t.Fatalf("the refresh took %s with a reader holding the repository, so its keep cleanup waited out the %s bound", elapsed, destinationKeepCleanupTimeout)
-	}
-	if keeps := destinationKeepFiles(t, f.destinationPath()); len(keeps) != 0 {
-		t.Fatalf("the refresh left keep files %v while a reader held the repository", keeps)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
+	require(t, elapsed < destinationKeepCleanupTimeout,
+		"the refresh took %s with a reader holding the repository, so its keep cleanup waited out the %s bound", elapsed, destinationKeepCleanupTimeout)
+	keeps := destinationKeepFiles(t, f.destinationPath())
+	require(t, len(keeps) == 0, "the refresh left keep files %v while a reader held the repository", keeps)
 }
 
 func TestCreatedPackKeepOnlyTrustsKeepReports(t *testing.T) {
@@ -157,8 +140,7 @@ func TestCreatedPackKeepOnlyTrustsKeepReports(t *testing.T) {
 		{"", ""},
 	} {
 		got, created := createdPackKeep([]byte(test.stdout))
-		if got != test.want || created != (test.want != "") {
-			t.Fatalf("createdPackKeep(%q)=%q,%v want %q", test.stdout, got, created, test.want)
-		}
+		require(t, got == test.want && created == (test.want != ""),
+			"createdPackKeep(%q)=%q,%v want %q", test.stdout, got, created, test.want)
 	}
 }

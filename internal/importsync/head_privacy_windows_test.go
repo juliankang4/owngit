@@ -62,9 +62,7 @@ func TestWindowsRecoveryPreservesLockWithPermissiveDACL(t *testing.T) {
 			permitOtherRepositoryWriters(t, path)
 			before := repositoryDACL(t, path)
 			assertRecoveryPrivacyRefusal(t, f)
-			if after := repositoryDACL(t, path); after != before {
-				t.Fatal("recovery rewrote the repository DACL")
-			}
+			eq(t, "repository DACL after recovery", repositoryDACL(t, path), before)
 		})
 	}
 }

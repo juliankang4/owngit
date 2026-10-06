@@ -26,24 +26,19 @@ func TestDurableRefIdentityIsStableAndDetectsReplacement(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		prefix = "windows:"
 	}
-	if !strings.HasPrefix(first, prefix) || directoryFileID(directory) == "" {
-		t.Fatal("local volume did not provide durable identity")
-	}
+	require(t, strings.HasPrefix(first, prefix) && directoryFileID(directory) != "",
+		"local volume did not provide durable identity")
 	file, err = os.Open(path)
 	noErr(t, err)
 	second, err := durableFileID(file)
 	noErr(t, err)
 	noErr(t, file.Close())
-	if first != second {
-		t.Fatal("reopening changed the file identity")
-	}
+	eq(t, "file identity after reopening", second, first)
 	noErr(t, os.Rename(path, path+".original"))
 	file, err = os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0600)
 	noErr(t, err)
 	replacement, err := durableFileID(file)
 	noErr(t, err)
 	noErr(t, file.Close())
-	if replacement == first {
-		t.Fatal("replacement reused the still-existing original file identity")
-	}
+	require(t, replacement != first, "replacement reused the still-existing original file identity")
 }

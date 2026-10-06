@@ -29,57 +29,53 @@ func TestSavingOneCredentialPartKeepsTheOther(t *testing.T) {
 	stored := func() state.ImportCredentials {
 		t.Helper()
 		credential, exists, err := f.store.LoadImportCredentials(ctx, "project")
-		if err != nil || !exists {
-			t.Fatalf("stored credential exists=%v err=%v", exists, err)
-		}
+		require(t, err == nil && exists, "stored credential exists=%v err=%v", exists, err)
 		return credential
 	}
 
 	// A new token keeps the stored CA.
 	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "token-two"}))
-	if credential := stored(); credential.BearerToken != "token-two" || string(credential.RootCAPEM) != testCAPEM {
-		t.Fatalf("token rotation dropped the CA: token=%q ca=%q", credential.BearerToken, credential.RootCAPEM)
-	}
+	credential := stored()
+	require(t, credential.BearerToken == "token-two" && string(credential.RootCAPEM) == testCAPEM,
+		"token rotation dropped the CA: token=%q ca=%q", credential.BearerToken, credential.RootCAPEM)
 	// A CA alone keeps the stored secret.
 	otherCA := strings.Replace(testCAPEM, "c3ludGhldGlj", "b3RoZXI=", 1)
 	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{RootCAPEM: []byte(otherCA)}))
-	if credential := stored(); credential.BearerToken != "token-two" || string(credential.RootCAPEM) != otherCA {
-		t.Fatalf("CA change dropped the token: token=%q ca=%q", credential.BearerToken, credential.RootCAPEM)
-	}
+	credential = stored()
+	require(t, credential.BearerToken == "token-two" && string(credential.RootCAPEM) == otherCA,
+		"CA change dropped the token: token=%q ca=%q", credential.BearerToken, credential.RootCAPEM)
 	// A Basic pair replaces the bearer token and keeps the CA.
 	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{Username: "user", Password: "secret"}))
-	if credential := stored(); credential.BearerToken != "" || credential.Basic == nil || credential.Basic.Password != "secret" || string(credential.RootCAPEM) != otherCA {
-		t.Fatalf("Basic change: %+v", credential)
-	}
+	credential = stored()
+	require(t, credential.BearerToken == "" && credential.Basic != nil && credential.Basic.Password == "secret" &&
+		string(credential.RootCAPEM) == otherCA, "Basic change: %+v", credential)
 	status, err := f.service.Status(ctx, "project")
 	noErr(t, err)
-	if status.CredentialForm != "basic" || !status.CredentialBound || !status.CAPresent {
-		t.Fatalf("status after merges=%+v", status)
-	}
+	require(t, status.CredentialForm == "basic" && status.CredentialBound && status.CAPresent,
+		"status after merges=%+v", status)
 	// The refresh sends the merged credential.
 	_, err = f.refresh()
 	noErr(t, err, "refresh")
 	last := f.transport.requests[len(f.transport.requests)-1]
-	if last.Authentication.Basic == nil || last.Authentication.Basic.Password != "secret" || !bytes.Equal(last.RootCAPEM, []byte(otherCA)) {
-		t.Fatalf("refresh request auth=%+v ca=%q", last.Authentication, last.RootCAPEM)
-	}
+	require(t, last.Authentication.Basic != nil && last.Authentication.Basic.Password == "secret" &&
+		bytes.Equal(last.RootCAPEM, []byte(otherCA)),
+		"refresh request auth=%+v ca=%q", last.Authentication, last.RootCAPEM)
 
 	// Clear still removes everything.
 	noErr(t, f.service.SetCredentials(ctx, "project", nil))
-	if _, exists, err := f.store.LoadImportCredentials(ctx, "project"); err != nil || exists {
-		t.Fatalf("clear left a credential exists=%v err=%v", exists, err)
-	}
+	_, exists, err := f.store.LoadImportCredentials(ctx, "project")
+	require(t, err == nil && !exists, "clear left a credential exists=%v err=%v", exists, err)
 
 	// After a source change, material bound to the earlier source is not
 	// carried into the new binding.
-	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{BearerToken: "token-three", RootCAPEM: []byte(testCAPEM)}))
-	if _, err := f.service.ConfigureSource(ctx, ConfigureInput{RepositoryID: "project", URL: "https://example.invalid/other/project.git"}); err != nil {
-		t.Fatal(err)
-	}
+	noErr(t, f.service.SetCredentials(ctx,
+		"project", &Credentials{BearerToken: "token-three", RootCAPEM: []byte(testCAPEM)}))
+	_, err = f.service.ConfigureSource(ctx, ConfigureInput{RepositoryID: "project", URL: "https://example.invalid/other/project.git"})
+	noErr(t, err)
 	noErr(t, f.service.SetCredentials(ctx, "project", &Credentials{RootCAPEM: []byte(otherCA)}))
-	if credential := stored(); credential.BearerToken != "" || credential.Basic != nil {
-		t.Fatalf("a secret bound to the earlier source was carried over: %+v", credential)
-	}
+	credential = stored()
+	require(t, credential.BearerToken == "" && credential.Basic == nil,
+		"a secret bound to the earlier source was carried over: %+v", credential)
 }
 
 // A TLS failure is named instead of reported as a generic connection failure.
@@ -107,12 +103,12 @@ func TestTLSFailureIsNamed(t *testing.T) {
 func TestTooManyRefsIsExplained(t *testing.T) {
 	tooLarge := &importfetch.Error{Op: "read advertisement", Kind: importfetch.ErrResponseTooLarge}
 	problem := classifyFetchError(fmt.Errorf("%w: %w", tooLarge, importgit.ErrTooManyRefs), Limits{})
-	if problem.Code != CodeTooManyRefs || !strings.Contains(problem.Message, "more than 50000 refs") || !strings.Contains(problem.Message, "pull request refs") {
-		t.Fatalf("too many refs classified as %s %q", problem.Code, problem.Message)
-	}
-	if problem := classifyFetchError(tooLarge, Limits{}); problem.Code != CodeTooLarge || problem.Message != "source exceeds a configured transfer bound" {
-		t.Fatalf("other bound classified as %s %q", problem.Code, problem.Message)
-	}
+	require(t, problem.Code == CodeTooManyRefs && strings.Contains(problem.Message, "more than 50000 refs") &&
+		strings.Contains(problem.Message, "pull request refs"),
+		"too many refs classified as %s %q", problem.Code, problem.Message)
+	problem = classifyFetchError(tooLarge, Limits{})
+	require(t, problem.Code == CodeTooLarge && problem.Message == "source exceeds a configured transfer bound",
+		"other bound classified as %s %q", problem.Code, problem.Message)
 }
 
 // A failed first import leaves no source or secret behind, and a retry with
@@ -123,32 +119,24 @@ func TestFailedFirstImportForgetsItsBinding(t *testing.T) {
 	ctx := context.Background()
 	f.transport.fail = &importfetch.Error{Op: "request", Kind: importfetch.ErrHTTPStatus, StatusCode: 404}
 	result, err := f.importProject(ImportInput{Credentials: &Credentials{BearerToken: "old-token", RootCAPEM: []byte(testCAPEM)}})
-	if err == nil {
-		t.Fatal("the failing import succeeded")
-	}
-	if result.Run.Status != state.ImportRunFailed {
-		t.Fatalf("the result lost the failed run: %+v", result.Run)
-	}
-	if _, exists, err := f.store.ImportSource(ctx, "project"); err != nil || exists {
-		t.Fatalf("the failed import kept its source exists=%v err=%v", exists, err)
-	}
-	if _, exists, err := f.store.LoadImportCredentials(ctx, "project"); err != nil || exists {
-		t.Fatalf("the failed import kept its secret exists=%v err=%v", exists, err)
-	}
-	if run := f.lastRun(); run.Status != state.ImportRunFailed {
-		t.Fatalf("the failed run was not kept as history: %s", run.Status)
-	}
+	require(t, err != nil, "the failing import succeeded")
+	require(t, result.Run.Status == state.ImportRunFailed, "the result lost the failed run: %+v", result.Run)
+	_, exists, err := f.store.ImportSource(ctx, "project")
+	require(t, err == nil && !exists, "the failed import kept its source exists=%v err=%v", exists, err)
+	_, exists, err = f.store.LoadImportCredentials(ctx, "project")
+	require(t, err == nil && !exists, "the failed import kept its secret exists=%v err=%v", exists, err)
+	run := f.lastRun()
+	require(t, run.Status == state.ImportRunFailed, "the failed run was not kept as history: %s", run.Status)
 	status, err := f.service.Status(ctx, "project")
 	noErr(t, err)
-	if status.Configured || status.CredentialBound || status.CAPresent {
-		t.Fatalf("a later repository with this name would inherit: %+v", status)
-	}
+	require(t, !status.Configured && !status.CredentialBound && !status.CAPresent,
+		"a later repository with this name would inherit: %+v", status)
 
 	f.transport.fail = nil
 	f.mustImport(ImportInput{})
-	if request := f.transport.requests[len(f.transport.requests)-1]; request.Authentication.BearerToken != "" || len(request.RootCAPEM) != 0 {
-		t.Fatalf("the retry inherited the earlier credential: auth=%+v ca=%q", request.Authentication, request.RootCAPEM)
-	}
+	request := f.transport.requests[len(f.transport.requests)-1]
+	require(t, request.Authentication.BearerToken == "" && len(request.RootCAPEM) == 0,
+		"the retry inherited the earlier credential: auth=%+v ca=%q", request.Authentication, request.RootCAPEM)
 }
 
 // A binding left behind by an earlier version is not inherited by a new
@@ -167,12 +155,11 @@ func TestNewImportDoesNotInheritALeftoverCredential(t *testing.T) {
 	noErr(t, err)
 
 	f.mustImport(ImportInput{URL: url})
-	if request := f.transport.requests[len(f.transport.requests)-1]; request.Authentication.BearerToken != "" {
-		t.Fatalf("the new import sent a leftover credential: %+v", request.Authentication)
-	}
-	if _, exists, err := f.store.LoadImportCredentials(ctx, "project"); err != nil || exists {
-		t.Fatalf("the leftover credential stayed exists=%v err=%v", exists, err)
-	}
+	request := f.transport.requests[len(f.transport.requests)-1]
+	require(t, request.Authentication.BearerToken == "",
+		"the new import sent a leftover credential: %+v", request.Authentication)
+	_, exists, err := f.store.LoadImportCredentials(ctx, "project")
+	require(t, err == nil && !exists, "the leftover credential stayed exists=%v err=%v", exists, err)
 }
 
 // A ref deleted at the source is reported as such, not as tracked.
@@ -221,12 +208,10 @@ func bindOrphan(t *testing.T, f *fixture, name string) state.ImportSource {
 func assertNoBinding(t *testing.T, f *fixture, name string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, exists, err := f.store.ImportSource(ctx, name); err != nil || exists {
-		t.Fatalf("%s kept its import source exists=%v err=%v", name, exists, err)
-	}
-	if _, exists, err := f.store.LoadImportCredentials(ctx, name); err != nil || exists {
-		t.Fatalf("%s kept its credential exists=%v err=%v", name, exists, err)
-	}
+	_, exists, err := f.store.ImportSource(ctx, name)
+	require(t, err == nil && !exists, "%s kept its import source exists=%v err=%v", name, exists, err)
+	_, exists, err = f.store.LoadImportCredentials(ctx, name)
+	require(t, err == nil && !exists, "%s kept its credential exists=%v err=%v", name, exists, err)
 }
 
 // A first import killed during its run leaves its binding and an active run
@@ -252,25 +237,22 @@ func TestRestartForgetsTheBindingOfAnInterruptedFirstImport(t *testing.T) {
 	restartService(t, f)
 	assertNoBinding(t, f, "project")
 	assertNoBinding(t, f, "legacy")
-	if _, exists, err := f.store.LoadImportCredentials(ctx, "kept"); err != nil || !exists {
-		t.Fatalf("an existing repository lost its credential exists=%v err=%v", exists, err)
-	}
-	if run, exists, err := f.store.ImportRun(ctx, killed.ID); err != nil || !exists || run.Status != state.ImportRunInterrupted {
-		t.Fatalf("the killed run was not kept as interrupted history: %+v exists=%v err=%v", run, exists, err)
-	}
+	_, exists, err := f.store.LoadImportCredentials(ctx, "kept")
+	require(t, err == nil && exists, "an existing repository lost its credential exists=%v err=%v", exists, err)
+	run, exists, err := f.store.ImportRun(ctx, killed.ID)
+	require(t, err == nil && exists && run.Status == state.ImportRunInterrupted,
+		"the killed run was not kept as interrupted history: %+v exists=%v err=%v", run, exists, err)
 
-	if _, err := f.manager.Create(ctx, "project", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err = f.manager.Create(ctx, "project", "")
+	noErr(t, err)
 	status, err := f.service.Status(ctx, "project")
 	noErr(t, err)
-	if status.Configured || status.CredentialBound || status.CAPresent {
-		t.Fatalf("the new repository inherited the interrupted import: %+v", status)
-	}
+	require(t, !status.Configured && !status.CredentialBound && !status.CAPresent,
+		"the new repository inherited the interrupted import: %+v", status)
 	calls := f.transport.calls
-	if _, err := f.refresh(); problemCode(err) != CodeNotConfigured || f.transport.calls != calls {
-		t.Fatalf("refresh of the new repository err=%v calls=%d", err, f.transport.calls-calls)
-	}
+	_, err = f.refresh()
+	require(t, problemCode(err) == CodeNotConfigured && f.transport.calls == calls,
+		"refresh of the new repository err=%v calls=%d", err, f.transport.calls-calls)
 }
 
 // A first import that fails while another writer holds the repository removes
@@ -316,12 +298,11 @@ func TestFailedFirstImportCleansUpBehindAHeldWriter(t *testing.T) {
 		t.Fatal("the failed import kept waiting for the writer past its cleanup bound")
 	}
 	lock.Unlock()
-	if err == nil || result.Run.Status != state.ImportRunCancelled {
-		t.Fatalf("first import run=%+v err=%v", result.Run, err)
-	}
-	if _, exists, readErr := f.store.ImportSource(context.Background(), "queued"); readErr != nil || !exists {
-		t.Fatalf("the cleanup did not keep the binding for the next start to sweep exists=%v err=%v", exists, readErr)
-	}
+	require(t, err != nil && result.Run.Status == state.ImportRunCancelled,
+		"first import run=%+v err=%v", result.Run, err)
+	_, exists, readErr := f.store.ImportSource(context.Background(), "queued")
+	require(t, readErr == nil && exists,
+		"the cleanup did not keep the binding for the next start to sweep exists=%v err=%v", exists, readErr)
 	// The next start removes a binding that the cleanup bound left behind.
 	restartService(t, f)
 	assertNoBinding(t, f, "queued")
@@ -333,9 +314,8 @@ func TestRepositoryCreationDoesNotInheritAnImportBinding(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	bindOrphan(t, f, "leftover")
-	if _, err := f.manager.Create(ctx, "leftover", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.manager.Create(ctx, "leftover", "")
+	noErr(t, err)
 	assertNoBinding(t, f, "leftover")
 
 	source := bindOrphan(t, f, "running")
@@ -344,24 +324,21 @@ func TestRepositoryCreationDoesNotInheritAnImportBinding(t *testing.T) {
 		AuthorityRevision: source.AuthorityRevision, Kind: state.ImportKindInitial, Status: state.ImportRunFetching,
 		StartedAt: f.now, CreatedAt: f.now,
 	}))
-	if _, err := f.manager.Create(ctx, "running", ""); !errors.Is(err, repository.ErrImportInProgress) || !errors.Is(err, repository.ErrNameTaken) {
-		t.Fatalf("creation beside a running import err=%v", err)
-	}
-	if _, exists, err := f.store.LoadImportCredentials(ctx, "running"); err != nil || !exists {
-		t.Fatalf("a running import lost its credential exists=%v err=%v", exists, err)
-	}
+	_, err = f.manager.Create(ctx, "running", "")
+	require(t, errors.Is(err, repository.ErrImportInProgress) && errors.Is(err, repository.ErrNameTaken),
+		"creation beside a running import err=%v", err)
+	_, exists, err := f.store.LoadImportCredentials(ctx, "running")
+	require(t, err == nil && exists, "a running import lost its credential exists=%v err=%v", exists, err)
 }
 
 // A binding for a name without a repository can be cleared on request.
 func TestForgetOrphanImportClearsANameWithoutARepository(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if forgotten, err := f.service.ForgetOrphanImport(ctx, "orphan"); err != nil || forgotten {
-		t.Fatalf("nothing stored forgotten=%v err=%v", forgotten, err)
-	}
+	forgotten, err := f.service.ForgetOrphanImport(ctx, "orphan")
+	require(t, err == nil && !forgotten, "nothing stored forgotten=%v err=%v", forgotten, err)
 	bindOrphan(t, f, "orphan")
-	if forgotten, err := f.service.ForgetOrphanImport(ctx, "orphan"); err != nil || !forgotten {
-		t.Fatalf("orphan forgotten=%v err=%v", forgotten, err)
-	}
+	forgotten, err = f.service.ForgetOrphanImport(ctx, "orphan")
+	require(t, err == nil && forgotten, "orphan forgotten=%v err=%v", forgotten, err)
 	assertNoBinding(t, f, "orphan")
 }

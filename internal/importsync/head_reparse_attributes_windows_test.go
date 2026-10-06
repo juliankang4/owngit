@@ -32,39 +32,23 @@ func TestDirectPathGuardsCheckWindowsReparseAttributes(t *testing.T) {
 	makeJunction(t, junction, target)
 
 	junctionAttributes := lstatAttributes(t, junction)
-	if junctionAttributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-		t.Fatalf("junction attributes %#x are not a reparse point", junctionAttributes.FileAttributes)
-	}
+	require(t, junctionAttributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0,
+		"junction attributes %#x are not a reparse point", junctionAttributes.FileAttributes)
 	targetAttributes := lstatAttributes(t, target)
-	if targetAttributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
-		t.Fatalf("direct target attributes %#x are a reparse point", targetAttributes.FileAttributes)
-	}
+	require(t, targetAttributes.FileAttributes&syscall.FILE_ATTRIBUTE_REPARSE_POINT == 0,
+		"direct target attributes %#x are a reparse point", targetAttributes.FileAttributes)
 
 	reparseFile := attributeFileInfo{fakeFileInfo{mode: 0}, junctionAttributes}
 	reparseDirectory := attributeFileInfo{fakeFileInfo{mode: os.ModeDir}, junctionAttributes}
 	directFile := attributeFileInfo{fakeFileInfo{mode: 0}, targetAttributes}
 	directDir := attributeFileInfo{fakeFileInfo{mode: os.ModeDir}, targetAttributes}
 
-	t.Run("regular mode with a reparse attribute is refused", func(t *testing.T) {
-		if directRegularFile(junction, reparseFile) {
-			t.Fatal("regular mode with a reparse attribute passed directRegularFile")
-		}
-	})
-	t.Run("directory mode with a reparse attribute is refused", func(t *testing.T) {
-		if directDirectory(junction, reparseDirectory) {
-			t.Fatal("directory mode with a reparse attribute passed directDirectory")
-		}
-	})
-	t.Run("direct regular mode is accepted", func(t *testing.T) {
-		if !directRegularFile(target, directFile) {
-			t.Fatal("non-reparse regular mode failed directRegularFile")
-		}
-	})
-	t.Run("direct directory mode is accepted", func(t *testing.T) {
-		if !directDirectory(target, directDir) {
-			t.Fatal("non-reparse directory mode failed directDirectory")
-		}
-	})
+	require(t, !directRegularFile(junction, reparseFile),
+		"regular mode with a reparse attribute passed directRegularFile")
+	require(t, !directDirectory(junction, reparseDirectory),
+		"directory mode with a reparse attribute passed directDirectory")
+	require(t, directRegularFile(target, directFile), "non-reparse regular mode failed directRegularFile")
+	require(t, directDirectory(target, directDir), "non-reparse directory mode failed directDirectory")
 }
 
 func lstatAttributes(t *testing.T, path string) syscall.Win32FileAttributeData {
@@ -72,8 +56,6 @@ func lstatAttributes(t *testing.T, path string) syscall.Win32FileAttributeData {
 	info, err := os.Lstat(path)
 	noErr(t, err)
 	attributes, ok := info.Sys().(*syscall.Win32FileAttributeData)
-	if !ok || attributes == nil {
-		t.Fatalf("Lstat(%s) attributes type %T", path, info.Sys())
-	}
+	require(t, ok && attributes != nil, "Lstat(%s) attributes type %T", path, info.Sys())
 	return *attributes
 }

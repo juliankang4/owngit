@@ -100,9 +100,8 @@ func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 		RunID: strings.Repeat("7", 32), RepositoryID: "project", Token: strings.Repeat("6", 64),
 		CreatedAt: f.now.Unix(),
 	}))
-	if _, err := readStagingMarker(readable); err != nil {
-		t.Fatalf("fixture marker must be readable: %v", err)
-	}
+	_, err := readStagingMarker(readable)
+	noErr(t, err, "fixture marker must be readable")
 	preserved[f.writeSentinel(readable, "readable")] = "readable"
 	directories := []string{markerless, malformed, foreign, rootless, readable}
 
@@ -116,20 +115,17 @@ func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 			f.assertSentinel(path, payload)
 		}
 		for _, directory := range directories {
-			if _, err := os.Stat(directory); err != nil {
-				t.Fatalf("%s: marker directory %s was removed", label, directory)
-			}
+			_, err := os.Stat(directory)
+			require(t, err == nil, "%s: marker directory %s was removed", label, directory)
 		}
 		info, err := os.Lstat(root)
-		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			t.Fatalf("%s: staging root changed: %v %v", label, info, err)
-		}
+		require(t, err == nil && info.IsDir() && info.Mode()&os.ModeSymlink == 0,
+			"%s: staging root changed: %v %v", label, info, err)
 	}
 	check("initial")
 	for pass := 1; pass <= 2; pass++ {
-		if err := f.service.Reconcile(ctx); err != nil {
-			t.Fatalf("reconcile pass %d: %v", pass, err)
-		}
+		err := f.service.Reconcile(ctx)
+		require(t, err == nil, "reconcile pass %d: %v", pass, err)
 		check("same process")
 	}
 	// A restart takes the lease again and must not gain authority either.
@@ -137,18 +133,16 @@ func TestUnknownStagingNeverManufacturesCleanupAuthority(t *testing.T) {
 	second := &Service{Store: f.store, Repositories: f.manager, Clock: func() time.Time { return f.now }}
 	defer func() { _ = second.Close() }()
 	for pass := 1; pass <= 2; pass++ {
-		if err := second.Reconcile(ctx); err != nil {
-			t.Fatalf("restart reconcile pass %d: %v", pass, err)
-		}
+		err := second.Reconcile(ctx)
+		require(t, err == nil, "restart reconcile pass %d: %v", pass, err)
 		check("restarted process")
 	}
 	// Unknown rows stay informational.
 	for _, directory := range append(directories, stray) {
 		name := filepath.Base(directory)
 		row, exists, err := f.store.ImportStaging(ctx, name)
-		if err != nil || !exists || row.State != state.ImportStagingUnknown {
-			t.Fatalf("unknown row %s=%+v exists=%v err=%v", name, row, exists, err)
-		}
+		require(t, err == nil && exists && row.State == state.ImportStagingUnknown,
+			"unknown row %s=%+v exists=%v err=%v", name, row, exists, err)
 	}
 }
 
@@ -162,9 +156,8 @@ func TestAuthorizedTerminalStagingIsCleaned(t *testing.T) {
 	f.mustImport(ImportInput{})
 	root := f.service.stagingRootPath()
 	for _, entry := range mustReadDir(t, root) {
-		if strings.HasPrefix(entry.Name(), "run-") {
-			t.Fatalf("staging was not settled after the import: %s", entry.Name())
-		}
+		require(t, !strings.HasPrefix(entry.Name(), "run-"),
+			"staging was not settled after the import: %s", entry.Name())
 	}
 
 	runID := strings.Repeat("7", 32)
@@ -188,18 +181,15 @@ func TestAuthorizedTerminalStagingIsCleaned(t *testing.T) {
 	noErr(t, f.store.FinishImportRun(ctx, run))
 
 	noErr(t, f.service.Reconcile(ctx))
-	if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("authorized terminal staging survived: %v", err)
-	}
+	_, err = os.Stat(directory)
+	require(t, errors.Is(err, os.ErrNotExist), "authorized terminal staging survived: %v", err)
 	row, exists, err := f.store.ImportStaging(ctx, "run-"+runID)
-	if err != nil || !exists || row.State != state.ImportStagingReleased {
-		t.Fatalf("released row=%+v exists=%v err=%v", row, exists, err)
-	}
+	require(t, err == nil && exists && row.State == state.ImportStagingReleased,
+		"released row=%+v exists=%v err=%v", row, exists, err)
 	// The root marker and lease file stay in place.
 	for _, name := range []string{runtimeRootMarkerName, runtimeRootLockName} {
-		if _, err := os.Lstat(filepath.Join(root, name)); err != nil {
-			t.Fatalf("root %s missing after cleanup: %v", name, err)
-		}
+		_, err := os.Lstat(filepath.Join(root, name))
+		require(t, err == nil, "root %s missing after cleanup: %v", name, err)
 	}
 }
 
@@ -225,32 +215,22 @@ func TestReconcileLeavesLiveRunAlone(t *testing.T) {
 
 	noErr(t, f.service.Reconcile(ctx), "reconcile during live run")
 	active, exists, err := f.store.ActiveImportRun(ctx, "project")
-	if err != nil || !exists {
-		t.Fatalf("live run disappeared: exists=%v err=%v", exists, err)
-	}
-	if active.Status == state.ImportRunInterrupted {
-		t.Fatalf("live run was interrupted by reconciliation: %+v", active)
-	}
-	if active.StagingName == "" {
-		t.Fatal("live run has no staging record")
-	}
-	if _, err := os.Stat(filepath.Join(f.service.stagingRootPath(), active.StagingName)); err != nil {
-		t.Fatalf("live staging was removed: %v", err)
-	}
+	require(t, err == nil && exists, "live run disappeared: exists=%v err=%v", exists, err)
+	require(t, active.Status != state.ImportRunInterrupted, "live run was interrupted by reconciliation: %+v", active)
+	require(t, active.StagingName != "", "live run has no staging record")
+	_, err = os.Stat(filepath.Join(f.service.stagingRootPath(), active.StagingName))
+	noErr(t, err, "live staging was removed")
 
 	f.transport.gate <- struct{}{}
 	<-done
 	noErr(t, refreshErr, "refresh")
-	if refreshRun.ID != active.ID || refreshRun.Status != state.ImportRunComplete {
-		t.Fatalf("live run did not finish: %+v", refreshRun)
-	}
+	require(t, refreshRun.ID == active.ID && refreshRun.Status == state.ImportRunComplete,
+		"live run did not finish: %+v", refreshRun)
 	stored, _, err := f.store.ImportRun(ctx, active.ID)
-	if err != nil || stored.Status != state.ImportRunComplete {
-		t.Fatalf("live run did not finish: %+v err=%v", stored, err)
-	}
-	if _, err := os.Stat(filepath.Join(f.service.stagingRootPath(), active.StagingName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("finished staging survived: %v", err)
-	}
+	require(t, err == nil && stored.Status == state.ImportRunComplete,
+		"live run did not finish: %+v err=%v", stored, err)
+	_, err = os.Stat(filepath.Join(f.service.stagingRootPath(), active.StagingName))
+	require(t, errors.Is(err, os.ErrNotExist), "finished staging survived: %v", err)
 }
 
 // Two live services on one state directory cannot both own the root. The
@@ -262,15 +242,13 @@ func TestSecondRuntimeOwnershipIsRefused(t *testing.T) {
 	noErr(t, err)
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
-	if _, err := second.Prepare(ctx); !errors.Is(err, ErrRuntimeHeld) {
-		t.Fatalf("second prepare err=%v", err)
-	}
+	_, err = second.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeHeld), "second prepare err=%v", err)
 	f.service.Close()
 	recovered, err := second.Prepare(ctx)
 	noErr(t, err, "prepare after release")
-	if recovered.RootID != first.RootID {
-		t.Fatalf("root identity changed across ownership: %s then %s", first.RootID, recovered.RootID)
-	}
+	require(t, recovered.RootID == first.RootID,
+		"root identity changed across ownership: %s then %s", first.RootID, recovered.RootID)
 }
 
 // A same-user replacement of the lock file leaves the first process holding a
@@ -288,9 +266,7 @@ func TestReplacedRuntimeLockIsRevalidated(t *testing.T) {
 	lockPath := runtimeLockPath(f.service)
 	replaced := true
 	if err := os.Remove(lockPath); err != nil {
-		if !runtimeSharingViolation(err) {
-			t.Fatalf("remove runtime lock: %v", err)
-		}
+		require(t, runtimeSharingViolation(err), "remove runtime lock: %v", err)
 		replaced = false
 	} else if err := os.WriteFile(lockPath, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -299,9 +275,8 @@ func TestReplacedRuntimeLockIsRevalidated(t *testing.T) {
 
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
-	if _, err := second.Prepare(ctx); !errors.Is(err, ErrRuntimeHeld) {
-		t.Fatalf("second owner adopted a held root authority: err=%v", err)
-	}
+	_, err := second.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeHeld), "second owner adopted a held root authority: err=%v", err)
 	if replaced {
 		// A platform that permits unlinking the lock still relies on the held
 		// marker generation for authority.
@@ -312,9 +287,7 @@ func TestReplacedRuntimeLockIsRevalidated(t *testing.T) {
 	noErr(t, f.service.Close())
 	info, err := second.Prepare(ctx)
 	noErr(t, err, "next owner could not prepare after release")
-	if info.RootID != rootID {
-		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
-	}
+	require(t, info.RootID == rootID, "root identity changed: %s then %s", rootID, info.RootID)
 }
 
 // Replacement must not give a second service authority over a live run.
@@ -334,21 +307,16 @@ func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 		}
 	}()
 	ids := f.service.liveRunIDs()
-	if len(ids) != 1 {
-		t.Fatalf("expected one live run, got %d", len(ids))
-	}
+	require(t, len(ids) == 1, "expected one live run, got %d", len(ids))
 	before, exists, err := f.store.ImportRun(ctx, ids[0])
-	if err != nil || !exists || before.Status != state.ImportRunFetching {
-		t.Fatalf("run did not reach fetching: exists=%v status=%s err=%v", exists, before.Status, err)
-	}
+	require(t, err == nil && exists && before.Status == state.ImportRunFetching,
+		"run did not reach fetching: exists=%v status=%s err=%v", exists, before.Status, err)
 	staging := filepath.Join(f.service.stagingRootPath(), before.StagingName)
-	if _, err := os.Stat(staging); err != nil {
-		t.Fatal(err)
-	}
+	_, err = os.Stat(staging)
+	noErr(t, err)
 	lockPath := runtimeLockPath(f.service)
-	if err := os.Rename(lockPath, lockPath+".preserved"); err != nil && !runtimeSharingViolation(err) {
-		t.Fatalf("rename runtime lock: %v", err)
-	}
+	err = os.Rename(lockPath, lockPath+".preserved")
+	require(t, err == nil || runtimeSharingViolation(err), "rename runtime lock: %v", err)
 	noErr(t, assertRuntimeStillOwned(f.service), "live owner's runtime after replacement attempt")
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
@@ -356,9 +324,7 @@ func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 		t.Errorf("second owner was not refused: %v", err)
 	}
 	after, exists, err := f.store.ImportRun(ctx, ids[0])
-	if err != nil || !exists {
-		t.Fatalf("live run readback: exists=%v err=%v", exists, err)
-	}
+	require(t, err == nil && exists, "live run readback: exists=%v err=%v", exists, err)
 	if after.Status == state.ImportRunInterrupted {
 		t.Error("replacement let a second owner interrupt a genuinely fetching run")
 	}
@@ -369,14 +335,12 @@ func TestReplacementPreservesAnotherOwnersLiveRun(t *testing.T) {
 	f.transport.gate <- struct{}{}
 	<-done
 	released = true
-	if *refreshErr != nil || refreshRun.Status != state.ImportRunComplete {
-		t.Fatalf("live run did not finish: status=%q err=%v", refreshRun.Status, *refreshErr)
-	}
+	require(t, *refreshErr == nil && refreshRun.Status == state.ImportRunComplete,
+		"live run did not finish: status=%q err=%v", refreshRun.Status, *refreshErr)
 	noErr(t, f.service.Close(), "close first owner")
 	info, err := second.Prepare(ctx)
-	if err != nil || info.RootID != rootID {
-		t.Fatalf("next owner did not retain root identity: info=%+v err=%v", info, err)
-	}
+	require(t, err == nil && info.RootID == rootID,
+		"next owner did not retain root identity: info=%+v err=%v", info, err)
 }
 
 // Identity loss while a run is active stays latched after the same marker is
@@ -391,76 +355,57 @@ func TestIdentityLossLatchesWhileRunActive(t *testing.T) {
 	<-started
 
 	ids := f.service.liveRunIDs()
-	if len(ids) != 1 {
-		t.Fatalf("live runs=%v", ids)
-	}
+	require(t, len(ids) == 1, "live runs=%v", ids)
 	live, exists, err := f.store.ImportRun(ctx, ids[0])
-	if err != nil || !exists || live.Status != state.ImportRunFetching {
-		t.Fatalf("live run changed: %+v exists=%v err=%v", live, exists, err)
-	}
+	require(t, err == nil && exists && live.Status == state.ImportRunFetching,
+		"live run changed: %+v exists=%v err=%v", live, exists, err)
 	staging := filepath.Join(f.service.stagingRootPath(), live.StagingName)
 	entries := mustReadDir(t, staging)
-	if len(entries) != 1 || entries[0].Name() != stagingMarkerName || !entries[0].Type().IsRegular() {
-		t.Fatalf("staging was initialized before transport release: %v", entries)
-	}
+	require(t, len(entries) == 1 && entries[0].Name() == stagingMarkerName && entries[0].Type().IsRegular(),
+		"staging was initialized before transport release: %v", entries)
 	stagingMarkerPath := filepath.Join(staging, stagingMarkerName)
 	markerBefore, err := os.ReadFile(stagingMarkerPath)
 	noErr(t, err)
-	if _, err := os.Lstat(filepath.Join(staging, "HEAD")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("staging HEAD existed before transport release: %v", err)
-	}
+	_, err = os.Lstat(filepath.Join(staging, "HEAD"))
+	require(t, errors.Is(err, os.ErrNotExist), "staging HEAD existed before transport release: %v", err)
 
 	restore, err := induceRuntimeMarkerMismatch(f.service, ".identity-preserved")
 	noErr(t, err)
 	availability := f.service.Availability(ctx)
-	if availability.Available || availability.Code != CodeRuntimeUnavailable {
-		t.Fatalf("availability did not report ownership loss: %+v", availability)
-	}
+	require(t, !availability.Available && availability.Code == CodeRuntimeUnavailable,
+		"availability did not report ownership loss: %+v", availability)
 	noErr(t, restore(), "restore runtime marker")
-	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
-		t.Fatalf("restored marker cleared ownership loss: err=%v", err)
-	}
+	_, err = f.service.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeLost), "restored marker cleared ownership loss: err=%v", err)
 
 	f.transport.gate <- struct{}{}
 	<-done
-	if !errors.Is(*refreshErr, ErrRuntimeLost) || refreshRun.Status != state.ImportRunFailed {
-		t.Fatalf("run did not stop on ownership loss: status=%q err=%v", refreshRun.Status, *refreshErr)
-	}
-	if _, err := os.Stat(staging); err != nil {
-		t.Fatalf("lost run staging was removed: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(staging, "HEAD")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("pipeline initialized stale staging after runtime loss: %v", err)
-	}
+	require(t, errors.Is(*refreshErr, ErrRuntimeLost) && refreshRun.Status == state.ImportRunFailed,
+		"run did not stop on ownership loss: status=%q err=%v", refreshRun.Status, *refreshErr)
+	_, err = os.Stat(staging)
+	noErr(t, err, "lost run staging was removed")
+	_, err = os.Lstat(filepath.Join(staging, "HEAD"))
+	require(t, errors.Is(err, os.ErrNotExist), "pipeline initialized stale staging after runtime loss: %v", err)
 	entries = mustReadDir(t, staging)
-	if len(entries) != 1 || entries[0].Name() != stagingMarkerName || !entries[0].Type().IsRegular() {
-		t.Fatalf("pipeline changed stale staging contents: %v", entries)
-	}
+	require(t, len(entries) == 1 && entries[0].Name() == stagingMarkerName && entries[0].Type().IsRegular(),
+		"pipeline changed stale staging contents: %v", entries)
 	markerAfter, err := os.ReadFile(stagingMarkerPath)
-	if err != nil || string(markerAfter) != string(markerBefore) {
-		t.Fatalf("staging marker changed: err=%v", err)
-	}
-	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
-		t.Fatalf("completed run cleared ownership loss: err=%v", err)
-	}
+	require(t, err == nil && string(markerAfter) == string(markerBefore), "staging marker changed: err=%v", err)
+	_, err = f.service.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeLost), "completed run cleared ownership loss: err=%v", err)
 	noErr(t, f.service.Close(), "close lost idle runtime")
 	info, err := f.service.Prepare(ctx)
-	if err != nil || info.RootID != rootID {
-		t.Fatalf("explicit close did not recover the restored root: info=%+v err=%v", info, err)
-	}
+	require(t, err == nil && info.RootID == rootID,
+		"explicit close did not recover the restored root: info=%+v err=%v", info, err)
 }
 
 func TestHeldMarkerCanBeRevalidatedThroughOwningHandle(t *testing.T) {
 	f := newFixture(t)
 	f.prepareRuntime(t)
 	root, ok := f.service.preparedRuntime()
-	if !ok {
-		t.Fatal("runtime was not prepared")
-	}
+	require(t, ok, "runtime was not prepared")
 	owned, err := root.stillOwned()
-	if err != nil || !owned {
-		t.Fatalf("held marker revalidation: owned=%v err=%v", owned, err)
-	}
+	require(t, err == nil && owned, "held marker revalidation: owned=%v err=%v", owned, err)
 }
 
 func TestPartialRuntimeInitializationWithoutMarkerIsRefused(t *testing.T) {
@@ -470,12 +415,10 @@ func TestPartialRuntimeInitializationWithoutMarkerIsRefused(t *testing.T) {
 	generation := strings.Repeat("a", 32)
 	content := fmt.Sprintf("{\"version\":%d,\"generation\":%q}\n", runtimeLockRecordVersion, generation)
 	noErr(t, os.WriteFile(filepath.Join(root, runtimeRootLockName), []byte(content), 0o600))
-	if _, err := f.service.Prepare(context.Background()); !errors.Is(err, ErrRuntimeUnsafe) {
-		t.Fatalf("partial initialization was adopted: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(root, runtimeRootMarkerName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("partial initialization created a marker: %v", err)
-	}
+	_, err := f.service.Prepare(context.Background())
+	require(t, errors.Is(err, ErrRuntimeUnsafe), "partial initialization was adopted: %v", err)
+	_, err = os.Lstat(filepath.Join(root, runtimeRootMarkerName))
+	require(t, errors.Is(err, os.ErrNotExist), "partial initialization created a marker: %v", err)
 }
 
 // Passive reads never create the runtime tree; an explicit mutation does.
@@ -483,34 +426,23 @@ func TestAvailabilityIsPassive(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	runtimeRoot := f.service.runtimeRootPath()
-	if _, err := os.Lstat(runtimeRoot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("precondition: runtime root exists: %v", err)
-	}
+	_, err := os.Lstat(runtimeRoot)
+	require(t, errors.Is(err, os.ErrNotExist), "precondition: runtime root exists: %v", err)
 	availability := f.service.Availability(ctx)
-	if !availability.Available || availability.Prepared {
-		t.Fatalf("availability before prepare=%+v", availability)
-	}
-	if _, err := os.Lstat(runtimeRoot); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Availability created the runtime root: %v", err)
-	}
+	require(t, availability.Available && !availability.Prepared, "availability before prepare=%+v", availability)
+	_, err = os.Lstat(runtimeRoot)
+	require(t, errors.Is(err, os.ErrNotExist), "Availability created the runtime root: %v", err)
 
 	first := f.prepareRuntime(t)
 	second := f.prepareRuntime(t)
-	if first != second {
-		t.Fatalf("Prepare changed the root identity: %s then %s", first, second)
-	}
+	require(t, first == second, "Prepare changed the root identity: %s then %s", first, second)
 	availability = f.service.Availability(ctx)
-	if !availability.Prepared || availability.RootID != first {
-		t.Fatalf("availability after prepare=%+v", availability)
-	}
-	if _, err := os.Lstat(filepath.Join(f.service.stagingRootPath(), runtimeRootMarkerName)); err != nil {
-		t.Fatalf("root marker missing after prepare: %v", err)
-	}
+	require(t, availability.Prepared && availability.RootID == first, "availability after prepare=%+v", availability)
+	_, err = os.Lstat(filepath.Join(f.service.stagingRootPath(), runtimeRootMarkerName))
+	noErr(t, err, "root marker missing after prepare")
 	f.service.Close()
 	availability = f.service.Availability(ctx)
-	if !availability.Available || availability.Prepared {
-		t.Fatalf("availability after close=%+v", availability)
-	}
+	require(t, availability.Available && !availability.Prepared, "availability after close=%+v", availability)
 }
 
 // An unknown nonempty root is adopted without changing its mode, and every
@@ -529,25 +461,20 @@ func TestUnownedNonemptyRootIsAdoptedWithoutModeChange(t *testing.T) {
 	// Windows reports directory permissions from attributes, not from
 	// Chmod, so only the unchanged mode is portable. Unix also checks the
 	// exact mode the test set.
-	if runtime.GOOS != "windows" && before.Mode().Perm() != 0o755 {
-		t.Fatalf("fixture root mode=%v", before.Mode().Perm())
-	}
+	require(t, runtime.GOOS == "windows" || before.Mode().Perm() == 0o755, "fixture root mode=%v", before.Mode().Perm())
 
-	if _, err := f.service.Prepare(ctx); err != nil {
-		t.Fatalf("adopt unowned nonempty root: %v", err)
-	}
+	_, err = f.service.Prepare(ctx)
+	noErr(t, err, "adopt unowned nonempty root")
 	info, err := os.Stat(root)
-	if err != nil || info.Mode().Perm() != before.Mode().Perm() {
-		t.Fatalf("adopted root mode=%v before=%v err=%v", info.Mode().Perm(), before.Mode().Perm(), err)
-	}
+	require(t, err == nil && info.Mode().Perm() == before.Mode().Perm(),
+		"adopted root mode=%v before=%v err=%v", info.Mode().Perm(), before.Mode().Perm(), err)
 	f.assertSentinel(sentinel, "unowned")
 	for pass := 1; pass <= 2; pass++ {
 		noErr(t, f.service.Reconcile(ctx))
 		f.assertSentinel(sentinel, "unowned")
 	}
-	if _, err := os.Stat(filepath.Join(root, runtimeRootMarkerName)); err != nil {
-		t.Fatalf("root marker missing after adoption: %v", err)
-	}
+	_, err = os.Stat(filepath.Join(root, runtimeRootMarkerName))
+	noErr(t, err, "root marker missing after adoption")
 }
 
 // A symlinked staging root is refused instead of followed, and nothing inside
@@ -561,24 +488,18 @@ func TestLinkedStagingRootIsRefusedAndPreserved(t *testing.T) {
 	root := f.service.stagingRootPath()
 	noErr(t, os.MkdirAll(filepath.Dir(root), 0o700))
 	noErr(t, os.Symlink(target, root))
-	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeUnsafe) {
-		t.Fatalf("prepare linked root err=%v", err)
-	}
-	if err := f.service.Reconcile(ctx); !errors.Is(err, ErrRuntimeUnsafe) {
-		t.Fatalf("reconcile linked root err=%v", err)
-	}
+	_, err := f.service.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeUnsafe), "prepare linked root err=%v", err)
+	err = f.service.Reconcile(ctx)
+	require(t, errors.Is(err, ErrRuntimeUnsafe), "reconcile linked root err=%v", err)
 	info, err := os.Lstat(root)
-	if err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("staging root symlink was replaced: %v %v", info, err)
-	}
+	require(t, err == nil && info.Mode()&os.ModeSymlink != 0, "staging root symlink was replaced: %v %v", info, err)
 	f.assertSentinel(sentinel, "linked")
-	if _, err := os.Lstat(filepath.Join(target, runtimeRootMarkerName)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("marker was written through the link: %v", err)
-	}
+	_, err = os.Lstat(filepath.Join(target, runtimeRootMarkerName))
+	require(t, errors.Is(err, os.ErrNotExist), "marker was written through the link: %v", err)
 	availability := f.service.Availability(ctx)
-	if availability.Available || availability.Code != CodeRuntimeUnsafe {
-		t.Fatalf("availability on linked root=%+v", availability)
-	}
+	require(t, !availability.Available && availability.Code == CodeRuntimeUnsafe,
+		"availability on linked root=%+v", availability)
 }
 
 // A name collision refuses instead of adopting, so pre-existing content is
@@ -592,20 +513,17 @@ func TestStagingCollisionPreservesExistingDirectory(t *testing.T) {
 	noErr(t, os.Mkdir(collision, 0o700))
 	sentinel := f.writeSentinel(collision, "collision")
 
-	if _, err := f.service.acquireStaging(ctx, runID, "project", f.now); err == nil {
-		t.Fatal("collision was adopted by acquireStaging")
-	}
+	_, err := f.service.acquireStaging(ctx, runID, "project", f.now)
+	require(t, err != nil, "collision was adopted by acquireStaging")
 	f.assertSentinel(sentinel, "collision")
-	if _, exists, err := f.store.ImportStaging(ctx, "run-"+runID); err != nil || exists {
-		t.Fatalf("collision left an authorization row: exists=%v err=%v", exists, err)
-	}
+	_, exists, err := f.store.ImportStaging(ctx, "run-"+runID)
+	require(t, err == nil && !exists, "collision left an authorization row: exists=%v err=%v", exists, err)
 
 	noErr(t, f.service.Reconcile(ctx))
 	f.assertSentinel(sentinel, "collision")
 	row, exists, err := f.store.ImportStaging(ctx, "run-"+runID)
-	if err != nil || !exists || row.State != state.ImportStagingUnknown {
-		t.Fatalf("collision row=%+v exists=%v err=%v", row, exists, err)
-	}
+	require(t, err == nil && exists && row.State == state.ImportStagingUnknown,
+		"collision row=%+v exists=%v err=%v", row, exists, err)
 }
 
 // A root marker that does not parse is refused, never rewritten.
@@ -617,13 +535,10 @@ func TestMalformedRootMarkerIsRefusedAndPreserved(t *testing.T) {
 	markerPath := filepath.Join(root, runtimeRootMarkerName)
 	content := []byte(`{"version":1,"root_id":"short"}`)
 	noErr(t, os.WriteFile(markerPath, content, 0o600))
-	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeUnsafe) {
-		t.Fatalf("prepare with malformed root marker err=%v", err)
-	}
+	_, err := f.service.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeUnsafe), "prepare with malformed root marker err=%v", err)
 	after, err := os.ReadFile(markerPath)
-	if err != nil || string(after) != string(content) {
-		t.Fatalf("malformed root marker changed: %q err=%v", after, err)
-	}
+	require(t, err == nil && string(after) == string(content), "malformed root marker changed: %q err=%v", after, err)
 }
 
 func TestRuntimeDirectoryPreparation(t *testing.T) {
@@ -661,17 +576,15 @@ func TestRuntimeDirectoryPreparation(t *testing.T) {
 				}
 				_, err := f.service.Prepare(context.Background())
 				if want != "" {
-					if problemCode(err) != want || !strings.Contains(err.Error(), label) {
-						t.Fatalf("prepare error = %v, want %s with %s", err, want, label)
-					}
+					require(t, problemCode(err) == want && strings.Contains(err.Error(), label),
+						"prepare error = %v, want %s with %s", err, want, label)
 					return
 				}
 				noErr(t, err)
 				info, err := os.Stat(path)
 				noErr(t, err)
-				if runtime.GOOS != "windows" && info.Mode().Perm() != mode {
-					t.Fatalf("directory mode = %v, want %v", info.Mode().Perm(), mode)
-				}
+				require(t, runtime.GOOS == "windows" || info.Mode().Perm() == mode,
+					"directory mode = %v, want %v", info.Mode().Perm(), mode)
 			})
 		}
 	}

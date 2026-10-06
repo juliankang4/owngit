@@ -76,12 +76,11 @@ func assertStoppedRun(t *testing.T, f *fixture, name, stop string, err error) st
 	if stop == "cancel" {
 		wantCode, wantStatus, wantMessage = CodeCancelled, state.ImportRunCancelled, "cancel"
 	}
-	if problemCode(err) != wantCode || run.Status != wantStatus || run.ErrorClass != wantCode || !strings.Contains(run.Message, wantMessage) {
-		t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-	}
-	if strings.Count(run.Message, "import cancelled") > 2 {
-		t.Fatalf("%s: stored message repeats its cause: %q", name, run.Message)
-	}
+	require(t, problemCode(err) == wantCode && run.Status == wantStatus && run.ErrorClass == wantCode &&
+		strings.Contains(run.Message, wantMessage),
+		"%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+	require(t, strings.Count(run.Message, "import cancelled") <= 2,
+		"%s: stored message repeats its cause: %q", name, run.Message)
 	return run
 }
 
@@ -144,9 +143,9 @@ func TestAFailedStageWriteIsAStateFailure(t *testing.T) {
 			}
 			_, err := f.importProject(ImportInput{})
 			run := f.lastRun()
-			if problemCode(err) != CodeStateUnavailable || run.Status != state.ImportRunFailed || run.ErrorClass != CodeStateUnavailable || !strings.Contains(run.Message, "synthetic stage failure") {
-				t.Fatalf("failed stage write: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
-			}
+			require(t, problemCode(err) == CodeStateUnavailable && run.Status == state.ImportRunFailed &&
+				run.ErrorClass == CodeStateUnavailable && strings.Contains(run.Message, "synthetic stage failure"),
+				"failed stage write: err=%v status=%s class=%s message=%q", err, run.Status, run.ErrorClass, run.Message)
 		})
 	}
 }
@@ -164,12 +163,10 @@ func TestAFailedStartRecordIsAStateFailure(t *testing.T) {
 				f.service.beforeRunRecord = func(context.Context) { cancelAdmittedRun(t, f) }
 			}
 			_, err := f.importProject(ImportInput{})
-			if problemCode(err) != CodeStateUnavailable || !strings.Contains(err.Error(), "synthetic start failure") {
-				t.Fatalf("failed start record: err=%v", err)
-			}
-			if count, err := f.store.TableRowCount(context.Background(), "import_runs"); err != nil || count != 0 {
-				t.Fatalf("run rows after a failed start record=%d err=%v", count, err)
-			}
+			require(t, problemCode(err) == CodeStateUnavailable &&
+				strings.Contains(err.Error(), "synthetic start failure"), "failed start record: err=%v", err)
+			count, err := f.store.TableRowCount(context.Background(), "import_runs")
+			require(t, err == nil && count == 0, "run rows after a failed start record=%d err=%v", count, err)
 		})
 	}
 }
@@ -213,9 +210,9 @@ func TestDeadlineDuringAdmissionIsTheTimeLimit(t *testing.T) {
 		if rows == rowsBefore {
 			return
 		}
-		if run := f.lastRun(); rows != rowsBefore+1 || run.Status != state.ImportRunFailed || run.ErrorClass != CodeLimit {
-			t.Fatalf("%s with a %s deadline: %d new runs, last status=%s class=%s", what, timeout, rows-rowsBefore, run.Status, run.ErrorClass)
-		}
+		run := f.lastRun()
+		require(t, rows == rowsBefore+1 && run.Status == state.ImportRunFailed && run.ErrorClass == CodeLimit,
+			"%s with a %s deadline: %d new runs, last status=%s class=%s", what, timeout, rows-rowsBefore, run.Status, run.ErrorClass)
 	}
 	rows := func() int {
 		count, err := f.store.TableRowCount(context.Background(), "import_runs")
@@ -276,9 +273,7 @@ func TestStopWhileRecordingPublicationIsNotAStateFailure(t *testing.T) {
 					}
 				}
 				err := runUnder(f, deadline, test.refresh)
-				if !hit {
-					t.Fatalf("the run did not record the %s", test.record)
-				}
+				require(t, hit, "the run did not record the %s", test.record)
 				run := assertStoppedRun(t, f, name, stop, err)
 				assertIntentsSettled(t, f, name)
 				if !test.refresh {
@@ -286,9 +281,8 @@ func TestStopWhileRecordingPublicationIsNotAStateFailure(t *testing.T) {
 					rows, err := f.store.ImportInitialDestinationsForRun(context.Background(), run.ID)
 					noErr(t, err)
 					for _, row := range rows {
-						if row.State == state.ImportInitialPreparing || row.State == state.ImportInitialReady {
-							t.Fatalf("%s: initial destination %s left %s", name, row.Name, row.State)
-						}
+						require(t, row.State != state.ImportInitialPreparing && row.State != state.ImportInitialReady,
+							"%s: initial destination %s left %s", name, row.Name, row.State)
 					}
 				}
 			})
@@ -321,9 +315,9 @@ func TestAFailedPublicationRecordIsAStateFailure(t *testing.T) {
 				}
 				_, err := f.importProject(ImportInput{})
 				run := f.lastRun()
-				if problemCode(err) != CodeStateUnavailable || run.Status != state.ImportRunFailed || run.ErrorClass != CodeStateUnavailable || !strings.Contains(run.Message, "synthetic record failure") {
-					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-				}
+				require(t, problemCode(err) == CodeStateUnavailable && run.Status == state.ImportRunFailed &&
+					run.ErrorClass == CodeStateUnavailable && strings.Contains(run.Message, "synthetic record failure"),
+					"%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
 				// A stopped first import removes its unpublished directory
 				// itself; after a state failure the next reconciliation does.
 				if !stopped {
@@ -377,13 +371,11 @@ func TestStopWhileRecordingAnAppliedPublication(t *testing.T) {
 					}
 				}
 				err := runUnder(f, deadline, test.refresh)
-				if !hit {
-					t.Fatalf("%s: the run did not record the %s", name, test.record)
-				}
+				require(t, hit, "%s: the run did not record the %s", name, test.record)
 				if test.refresh {
-					if run := f.lastRun(); err != nil || run.Status != state.ImportRunComplete {
-						t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-					}
+					run := f.lastRun()
+					require(t, err == nil && run.Status == state.ImportRunComplete,
+						"%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
 				} else {
 					assertStoppedRun(t, f, name, stop, err)
 					assertNoLeftoverDirectories(t, f)
@@ -448,23 +440,17 @@ func TestStopBetweenARefreshsRefsAndItsHEADCompletesIt(t *testing.T) {
 					}
 				}
 				err := runUnder(f, deadline, true)
-				if !hit {
-					t.Fatalf("%s: the run did not reach the stop point", name)
-				}
+				require(t, hit, "%s: the run did not reach the stop point", name)
 				run := f.lastRun()
-				if err != nil || run.Status != state.ImportRunComplete {
-					t.Fatalf("%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
-				}
-				if head := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); head != "refs/heads/trunk" {
-					t.Fatalf("%s: destination HEAD=%s, want refs/heads/trunk", name, head)
-				}
+				require(t, err == nil && run.Status == state.ImportRunComplete,
+					"%s: err=%v status=%s class=%s message=%q", name, err, run.Status, run.ErrorClass, run.Message)
+				eq(t, "destination HEAD", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), "refs/heads/trunk")
 				assertIntentsSettled(t, f, name)
 				// Nothing is left for the owner to resolve: the next refresh runs.
 				f.service.beforeRecord, f.service.beforeFinalHEADLock = nil, nil
 				f.commit("three", "three\n")
-				if _, err := f.service.Refresh(context.Background(), "project", Limits{}); err != nil {
-					t.Fatalf("%s: the next refresh: %v", name, err)
-				}
+				_, err = f.service.Refresh(context.Background(), "project", Limits{})
+				require(t, err == nil, "%s: the next refresh: %v", name, err)
 			})
 		}
 	}
@@ -481,13 +467,10 @@ func TestAuthorityChangeBeforeARefreshsHEADWriteStopsIt(t *testing.T) {
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/trunk")
 	f.service.beforeFinalHEADLock = func() {
 		f.service.beforeFinalHEADLock = nil
-		noErr(t, f.store.Exec(context.Background(), `UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
+		noErr(t, f.store.Exec(context.Background(),
+			`UPDATE import_sources SET authority_revision=authority_revision+1 WHERE repository_id='project'`))
 	}
 	_, err := f.service.Refresh(context.Background(), "project", Limits{})
-	if !errors.Is(err, ErrSuperseded) {
-		t.Fatalf("authority change before the HEAD write: err=%v", err)
-	}
-	if head := f.git(f.destinationPath(), "symbolic-ref", "HEAD"); head != "refs/heads/main" {
-		t.Fatalf("destination HEAD=%s after the authority changed, want refs/heads/main", head)
-	}
+	require(t, errors.Is(err, ErrSuperseded), "authority change before the HEAD write: err=%v", err)
+	eq(t, "destination HEAD", f.git(f.destinationPath(), "symbolic-ref", "HEAD"), "refs/heads/main")
 }

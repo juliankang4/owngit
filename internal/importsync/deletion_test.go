@@ -29,15 +29,12 @@ func TestInitialImportRefusesNameWithUnfinishedDeletion(t *testing.T) {
 	}))
 	noErr(t, os.Rename(path, path+".aside"))
 
-	if _, err := f.importProject(ImportInput{}); problemCode(err) != CodeRepositoryTaken {
-		t.Fatalf("import during an unfinished deletion err=%v", err)
-	}
-	if _, exists, err := f.store.ImportSource(ctx, "project"); err != nil || exists {
-		t.Fatalf("refused import configured a source exists=%v err=%v", exists, err)
-	}
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
-		t.Fatalf("refused import created a directory: %v", err)
-	}
+	_, err = f.importProject(ImportInput{})
+	require(t, problemCode(err) == CodeRepositoryTaken, "import during an unfinished deletion err=%v", err)
+	_, exists, err := f.store.ImportSource(ctx, "project")
+	require(t, err == nil && !exists, "refused import configured a source exists=%v err=%v", exists, err)
+	_, err = os.Lstat(path)
+	require(t, os.IsNotExist(err), "refused import created a directory: %v", err)
 }
 
 // A repository deleted after a refresh passed its admission checks, but before
@@ -56,13 +53,9 @@ func TestRefreshAdmittedBeforeDeletionIsSuperseded(t *testing.T) {
 		}
 		deleted = true
 	}
-	if _, err := f.refresh(); problemCode(err) != CodeSuperseded {
-		t.Fatalf("refresh err=%v", err)
-	}
-	if !deleted {
-		t.Fatal("the deletion did not run inside the admission window")
-	}
-	if count, err := f.store.TableRowCount(ctx, "import_runs"); err != nil || count != 0 {
-		t.Fatalf("run rows after deletion=%d err=%v", count, err)
-	}
+	_, err := f.refresh()
+	require(t, problemCode(err) == CodeSuperseded, "refresh err=%v", err)
+	require(t, deleted, "the deletion did not run inside the admission window")
+	count, err := f.store.TableRowCount(ctx, "import_runs")
+	require(t, err == nil && count == 0, "run rows after deletion=%d err=%v", count, err)
 }

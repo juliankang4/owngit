@@ -62,59 +62,46 @@ func TestCancellingAFirstImportLeavesNothingBehindOrCompletes(t *testing.T) {
 				cancelled = true
 			})
 			result, err := f.importProject(ImportInput{Credentials: &Credentials{BearerToken: "first-import-token"}})
-			if !cancelled {
-				t.Fatalf("the cancellation point was not reached: run=%+v err=%v", result.Run, err)
-			}
+			require(t, cancelled, "the cancellation point was not reached: run=%+v err=%v", result.Run, err)
 			_, repositoryExists, readErr := f.store.Repository(ctx, "project")
 			noErr(t, readErr)
 			if test.published {
-				if err != nil || result.Run.Status != state.ImportRunComplete || !repositoryExists || result.Run.CancelRequestedAt == nil {
-					t.Fatalf("a cancel after publication: status=%s message=%q repository=%v err=%v", result.Run.Status, result.Run.Message, repositoryExists, err)
-				}
-				if refs := f.destinationRefs(); refs["refs/heads/main"] == "" {
-					t.Fatalf("published refs=%v", refs)
-				}
-				if _, exists, err := f.store.LoadImportCredentials(ctx, "project"); err != nil || !exists {
-					t.Fatalf("a published import lost its credential exists=%v err=%v", exists, err)
-				}
+				require(t, err == nil && result.Run.Status == state.ImportRunComplete && repositoryExists &&
+					result.Run.CancelRequestedAt != nil,
+					"a cancel after publication: status=%s message=%q repository=%v err=%v", result.Run.Status, result.Run.Message, repositoryExists, err)
+				refs := f.destinationRefs()
+				require(t, refs["refs/heads/main"] != "", "published refs=%v", refs)
+				_, exists, err := f.store.LoadImportCredentials(ctx, "project")
+				require(t, err == nil && exists, "a published import lost its credential exists=%v err=%v", exists, err)
 				assertNoLeftoverDirectories(t, f)
 				return
 			}
-			if problemCode(err) != CodeCancelled || result.Run.Status != state.ImportRunCancelled {
-				t.Fatalf("cancelled first import: run=%+v err=%v", result.Run, err)
-			}
+			require(t, problemCode(err) == CodeCancelled && result.Run.Status == state.ImportRunCancelled,
+				"cancelled first import: run=%+v err=%v", result.Run, err)
 			stored, exists, readErr := f.store.ImportRun(ctx, result.Run.ID)
-			if readErr != nil || !exists || stored.Status != state.ImportRunCancelled {
-				t.Fatalf("stored run=%+v exists=%v err=%v", stored, exists, readErr)
-			}
-			if repositoryExists {
-				t.Fatal("a cancelled first import created its repository")
-			}
+			require(t, readErr == nil && exists && stored.Status == state.ImportRunCancelled,
+				"stored run=%+v exists=%v err=%v", stored, exists, readErr)
+			require(t, !repositoryExists, "a cancelled first import created its repository")
 			finalPath, pathErr := f.manager.Path("project")
 			noErr(t, pathErr)
-			if _, statErr := os.Lstat(finalPath); !os.IsNotExist(statErr) {
-				t.Fatalf("a cancelled first import left its final path: %v", statErr)
-			}
+			_, statErr := os.Lstat(finalPath)
+			require(t, os.IsNotExist(statErr), "a cancelled first import left its final path: %v", statErr)
 			assertNoLeftoverDirectories(t, f)
 			assertNoBinding(t, f, "project")
 			rows, readErr := f.store.ImportInitialDestinationsForRun(ctx, result.Run.ID)
 			noErr(t, readErr)
 			for _, row := range rows {
-				if row.State != state.ImportInitialReleased {
-					t.Fatalf("destination %s stayed %s", row.Name, row.State)
-				}
+				require(t, row.State == state.ImportInitialReleased, "destination %s stayed %s", row.Name, row.State)
 			}
 			pending, readErr := f.store.PendingImportIntents(ctx, "project")
 			noErr(t, readErr)
 			for _, intent := range pending {
-				if intent.Status == state.ImportIntentPlanning || intent.Status == state.ImportIntentApplied || intent.Status == state.ImportIntentUnresolved {
-					t.Fatalf("intent %s stayed %s", intent.ID, intent.Status)
-				}
+				require(t, intent.Status != state.ImportIntentPlanning && intent.Status != state.ImportIntentApplied &&
+					intent.Status != state.ImportIntentUnresolved, "intent %s stayed %s", intent.ID, intent.Status)
 			}
 			// Nothing blocks the name.
-			if _, err := f.manager.Create(ctx, "project", ""); err != nil {
-				t.Fatalf("the name stayed blocked: %v", err)
-			}
+			_, err = f.manager.Create(ctx, "project", "")
+			noErr(t, err, "the name stayed blocked")
 		})
 	}
 }
@@ -134,9 +121,8 @@ func assertNoLeftoverDirectories(t *testing.T, f *fixture) {
 	entries, err := os.ReadDir(f.manager.Root)
 	noErr(t, err)
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), unpublishedDirectoryPrefix) {
-			t.Fatalf("an unpublished directory was left behind: %s", entry.Name())
-		}
+		require(t, !strings.HasPrefix(entry.Name(), unpublishedDirectoryPrefix),
+			"an unpublished directory was left behind: %s", entry.Name())
 	}
 }
 
@@ -174,16 +160,12 @@ func TestClearingAStrandedFirstImportSettlesIt(t *testing.T) {
 	ctx := context.Background()
 	run := strandFirstImport(t, f)
 	forgotten, err := f.service.ForgetOrphanImport(ctx, "project")
-	if err != nil || !forgotten {
-		t.Fatalf("clear forgotten=%v err=%v", forgotten, err)
-	}
+	require(t, err == nil && forgotten, "clear forgotten=%v err=%v", forgotten, err)
 	assertNoBinding(t, f, "project")
-	if stored, _, err := f.store.ImportRun(ctx, run.ID); err != nil || stored.Status != state.ImportRunFailed {
-		t.Fatalf("stranded run=%+v err=%v", stored, err)
-	}
-	if _, err := f.manager.Create(ctx, "project", ""); err != nil {
-		t.Fatalf("the name stayed blocked: %v", err)
-	}
+	stored, _, err := f.store.ImportRun(ctx, run.ID)
+	require(t, err == nil && stored.Status == state.ImportRunFailed, "stranded run=%+v err=%v", stored, err)
+	_, err = f.manager.Create(ctx, "project", "")
+	noErr(t, err, "the name stayed blocked")
 }
 
 // The next start settles it too.
@@ -193,7 +175,6 @@ func TestRestartSettlesAStrandedFirstImport(t *testing.T) {
 	run := strandFirstImport(t, f)
 	restartService(t, f)
 	assertNoBinding(t, f, "project")
-	if stored, _, err := f.store.ImportRun(ctx, run.ID); err != nil || stored.Status != state.ImportRunFailed {
-		t.Fatalf("stranded run=%+v err=%v", stored, err)
-	}
+	stored, _, err := f.store.ImportRun(ctx, run.ID)
+	require(t, err == nil && stored.Status == state.ImportRunFailed, "stranded run=%+v err=%v", stored, err)
 }

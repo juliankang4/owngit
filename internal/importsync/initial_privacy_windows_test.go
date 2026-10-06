@@ -17,27 +17,20 @@ func TestWindowsInitialImportHasOwnerOnlyDACL(t *testing.T) {
 	f.service.afterInitialDirectoryCreated = func() {
 		inspectedStaging = true
 		directories := unpublishedInitialDirectories(t, f)
-		if len(directories) != 1 {
-			t.Fatalf("unpublished directories=%v", directories)
-		}
+		require(t, len(directories) == 1, "unpublished directories=%v", directories)
 		info, err := os.Stat(directories[0])
 		noErr(t, err)
 		changeable, _, err := state.OthersCanChange(directories[0], info)
-		if err != nil || changeable {
-			t.Fatalf("import staging changeable before verification=%v err=%v", changeable, err)
-		}
+		require(t, err == nil && !changeable,
+			"import staging changeable before verification=%v err=%v", changeable, err)
 	}
 	f.mustImport(ImportInput{})
 	path := repositoryFinalPath(t, f, "project")
 	info, err := os.Stat(path)
 	noErr(t, err)
 	changeable, _, err := state.OthersCanChange(path, info)
-	if err != nil || changeable {
-		t.Fatalf("imported repository changeable=%v err=%v", changeable, err)
-	}
-	if !inspectedStaging {
-		t.Fatal("import staging was not inspected before verification")
-	}
+	require(t, err == nil && !changeable, "imported repository changeable=%v err=%v", changeable, err)
+	require(t, inspectedStaging, "import staging was not inspected before verification")
 }
 
 func setImportInheritedWriteDACL(t *testing.T, path string) {

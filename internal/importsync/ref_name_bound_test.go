@@ -34,25 +34,20 @@ func TestLongestSelectedBranchKeepsRetentionWithinStateBound(t *testing.T) {
 	first := f.commit("one", "one\n")
 	name := longBranchName(maxSelectedRefNameBytes)
 	f.git(f.source, "update-ref", name, first)
-	if result := f.mustImport(ImportInput{}); result.Run.Status != state.ImportRunComplete {
-		t.Fatalf("initial run=%+v", result.Run)
-	}
+	eq(t, "initial run status", f.mustImport(ImportInput{}).Run.Status, state.ImportRunComplete)
 	// Replace the long branch with unrelated history, so the refresh retains
 	// the old tip under its provenance name.
 	rewritten := f.git(f.source, "commit-tree", "-m", "unrelated", first+"^{tree}")
 	f.git(f.source, "update-ref", name, rewritten)
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete || run.RefsUpdated != 1 {
-		t.Fatalf("refresh run=%+v err=%v", run, err)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete && run.RefsUpdated == 1,
+		"refresh run=%+v err=%v", run, err)
 	provenance := repository.ProvenanceRefName("heads", strings.TrimPrefix(name, "refs/heads/"), first)
-	if len(provenance) != state.MaxImportRefNameBytes {
-		t.Fatalf("provenance name has %d bytes; the bound is no longer tight", len(provenance))
-	}
+	require(t, len(provenance) == state.MaxImportRefNameBytes,
+		"provenance name has %d bytes; the bound is no longer tight", len(provenance))
 	refs := f.destinationRefs()
-	if refs[name] != rewritten || refs[provenance] != first {
-		t.Fatalf("long branch=%s provenance=%s", refs[name], refs[provenance])
-	}
+	require(t, refs[name] == rewritten && refs[provenance] == first,
+		"long branch=%s provenance=%s", refs[name], refs[provenance])
 }
 
 // A longer upstream branch is refused as an unsupported ref before any pack is
@@ -73,22 +68,16 @@ func TestOverlongSelectedRefIsRefusedBeforeIndexing(t *testing.T) {
 			name := longBranchName(size)
 			f.git(f.source, "update-ref", name, f.commit("two", "two\n"))
 			run, err := f.refresh()
-			if code := problemCode(err); err == nil || code != CodeUnsupportedRefs {
-				t.Fatalf("refresh code=%s err=%v", code, err)
-			}
-			if run.Status != state.ImportRunFailed || run.ErrorClass != CodeUnsupportedRefs || !strings.Contains(run.Message, strconv.Itoa(size)+" bytes") {
-				t.Fatalf("refresh run=%+v", run)
-			}
+			require(t, err != nil && problemCode(err) == CodeUnsupportedRefs, "refresh err=%v", err)
+			require(t, run.Status == state.ImportRunFailed && run.ErrorClass == CodeUnsupportedRefs &&
+				strings.Contains(run.Message, strconv.Itoa(size)+" bytes"), "refresh run=%+v", run)
 			stored := f.lastRun()
-			if stored.ID != run.ID || stored.ErrorClass != CodeUnsupportedRefs {
-				t.Fatalf("stored run=%+v", stored)
-			}
-			if after := f.destinationRefs(); len(after) != len(before) || after["refs/heads/main"] != first {
-				t.Fatalf("destination changed: before=%v after=%v", before, after)
-			}
-			if f.gitMaybe(path, "cat-file", "-t", f.git(f.source, "rev-parse", "refs/heads/main")) != "" {
-				t.Fatal("refused refresh indexed the new source commit into the destination")
-			}
+			require(t, stored.ID == run.ID && stored.ErrorClass == CodeUnsupportedRefs, "stored run=%+v", stored)
+			after := f.destinationRefs()
+			require(t, len(after) == len(before) && after["refs/heads/main"] == first,
+				"destination changed: before=%v after=%v", before, after)
+			require(t, f.gitMaybe(path, "cat-file", "-t", f.git(f.source, "rev-parse", "refs/heads/main")) == "",
+				"refused refresh indexed the new source commit into the destination")
 		})
 	}
 }
@@ -104,11 +93,8 @@ func TestOverlongSourceHEADTargetIsRefused(t *testing.T) {
 		advertisement.Head.SymrefTarget = target
 	}
 	run, err := f.refresh()
-	if code := problemCode(err); code != CodeUnsupportedRefs {
-		t.Fatalf("refresh code=%s err=%v", code, err)
-	}
+	require(t, problemCode(err) == CodeUnsupportedRefs, "refresh err=%v", err)
 	stored := f.lastRun()
-	if stored.ID != run.ID || stored.Status != state.ImportRunFailed || stored.ErrorClass != CodeUnsupportedRefs || stored.HeadSymref != "" {
-		t.Fatalf("stored run=%+v", stored)
-	}
+	require(t, stored.ID == run.ID && stored.Status == state.ImportRunFailed &&
+		stored.ErrorClass == CodeUnsupportedRefs && stored.HeadSymref == "", "stored run=%+v", stored)
 }

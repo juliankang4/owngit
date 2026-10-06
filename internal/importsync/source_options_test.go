@@ -30,41 +30,33 @@ func TestSourceOptionsReachTheTransport(t *testing.T) {
 	})
 	noErr(t, err)
 	request := f.transport.requests[0]
-	if !request.AllowPlainHTTP || !request.AllowReservedAddresses || request.Redirects != state.ImportRedirectApproved ||
-		request.ApprovedRedirectOrigin != "https://mirror.example" {
-		t.Fatalf("transport options = %+v", request)
-	}
+	require(t, request.AllowPlainHTTP && request.AllowReservedAddresses &&
+		request.Redirects == state.ImportRedirectApproved && request.ApprovedRedirectOrigin == "https://mirror.example",
+		"transport options = %+v", request)
 	limits := request.Limits
-	if limits.MaxPackBytes != 64<<30 || limits.Advertisement.MaxRefRecords != 100_000 || limits.TotalTimeout != 2*time.Hour {
-		t.Fatalf("transport limits = %+v", limits)
-	}
+	require(t, limits.MaxPackBytes == 64<<30 && limits.Advertisement.MaxRefRecords == 100_000 &&
+		limits.TotalTimeout == 2*time.Hour, "transport limits = %+v", limits)
 	// The total body follows the larger pack instead of the default bound.
-	if limits.MaxTotalBodyBytes <= 64<<30 {
-		t.Fatalf("total body bound %d does not cover the pack", limits.MaxTotalBodyBytes)
-	}
+	require(t, limits.MaxTotalBodyBytes > 64<<30,
+		"total body bound %d does not cover the pack", limits.MaxTotalBodyBytes)
 	status, err := f.service.Status(context.Background(), "project")
 	noErr(t, err)
-	if status.Options == nil || status.Options.Limits.RunSeconds != 3*3600 || status.Options.Limits.VerifySeconds != 600 ||
-		strings.Join(status.Options.ChangedLimits, ",") != "pack_bytes,run_seconds,fetch_seconds,refs,lfs_objects" {
-		t.Fatalf("status options = %+v", status.Options)
-	}
+	require(t, status.Options != nil && status.Options.Limits.RunSeconds == 3*3600 &&
+		status.Options.Limits.VerifySeconds == 600 &&
+		strings.Join(status.Options.ChangedLimits, ",") == "pack_bytes,run_seconds,fetch_seconds,refs,lfs_objects",
+		"status options = %+v", status.Options)
 }
 
 func TestPlainHTTPSourceNeedsConsent(t *testing.T) {
 	f := newFixture(t)
 	_, err := f.service.Import(context.Background(), ImportInput{Name: "project", URL: "http://example.invalid/team/project.git"})
-	if problemCode(err) != CodeInvalidSource || !strings.Contains(err.Error(), "plain HTTP") {
-		t.Fatalf("plain HTTP import without consent = %v", err)
-	}
-	if len(f.transport.requests) != 0 {
-		t.Fatal("a refused source reached the transport")
-	}
+	require(t, problemCode(err) == CodeInvalidSource && strings.Contains(err.Error(), "plain HTTP"),
+		"plain HTTP import without consent = %v", err)
+	require(t, len(f.transport.requests) == 0, "a refused source reached the transport")
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
 	_, err = f.service.ConfigureSource(context.Background(), ConfigureInput{RepositoryID: "project", URL: "http://example.invalid/team/project.git"})
-	if problemCode(err) != CodeInvalidSource {
-		t.Fatalf("plain HTTP configuration without consent = %v", err)
-	}
+	require(t, problemCode(err) == CodeInvalidSource, "plain HTTP configuration without consent = %v", err)
 }
 
 func TestChangedURLResetsTransportConsentsAndKeepsLimits(t *testing.T) {
@@ -77,23 +69,20 @@ func TestChangedURLResetsTransportConsentsAndKeepsLimits(t *testing.T) {
 	ctx := context.Background()
 	kept, err := f.service.ConfigureSource(ctx, ConfigureInput{RepositoryID: "project", URL: "https://example.invalid/team/project.git", Mode: ModeCoexistence})
 	noErr(t, err)
-	if !kept.Options.AllowReservedAddresses || kept.Options.Redirects != state.ImportRedirectSameOrigin || kept.Options.Limits.Refs != 10 {
-		t.Fatalf("same URL options = %+v", kept.Options)
-	}
+	require(t, kept.Options.AllowReservedAddresses && kept.Options.Redirects == state.ImportRedirectSameOrigin &&
+		kept.Options.Limits.Refs == 10, "same URL options = %+v", kept.Options)
 	moved, err := f.service.ConfigureSource(ctx, ConfigureInput{RepositoryID: "project", URL: "https://example.invalid/other/project.git"})
 	noErr(t, err)
-	if moved.Options.AllowReservedAddresses || moved.Options.Redirects != state.ImportRedirectRefuse || moved.Options.Limits.Refs != 10 {
-		t.Fatalf("changed URL options = %+v", moved.Options)
-	}
+	require(t, !moved.Options.AllowReservedAddresses && moved.Options.Redirects == state.ImportRedirectRefuse &&
+		moved.Options.Limits.Refs == 10, "changed URL options = %+v", moved.Options)
 	// A consent given with the new URL in the same change applies to it.
 	withConsent, err := f.service.ConfigureSource(ctx, ConfigureInput{
 		RepositoryID: "project", URL: "http://example.invalid/third/project.git",
 		Options: OptionsChange{AllowPlainHTTP: boolPointer(true)},
 	})
 	noErr(t, err)
-	if !withConsent.Options.AllowPlainHTTP || withConsent.SourceGeneration != moved.SourceGeneration+1 {
-		t.Fatalf("new URL with consent = %+v", withConsent)
-	}
+	require(t, withConsent.Options.AllowPlainHTTP && withConsent.SourceGeneration == moved.SourceGeneration+1,
+		"new URL with consent = %+v", withConsent)
 	// A form repeats every saved choice: with a new URL, only the ones it
 	// changed count. The redirect policy and origin count together.
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{
@@ -108,10 +97,10 @@ func TestChangedURLResetsTransportConsentsAndKeepsLimits(t *testing.T) {
 		},
 	})
 	noErr(t, err)
-	if repeated.Options.AllowPlainHTTP || repeated.Options.AllowReservedAddresses ||
-		repeated.Options.Redirects != state.ImportRedirectApproved || repeated.Options.ApprovedRedirectOrigin != "https://other.example" {
-		t.Fatalf("repeated form choices = %+v", repeated.Options)
-	}
+	require(t, !repeated.Options.AllowPlainHTTP && !repeated.Options.AllowReservedAddresses &&
+		repeated.Options.Redirects == state.ImportRedirectApproved &&
+		repeated.Options.ApprovedRedirectOrigin == "https://other.example",
+		"repeated form choices = %+v", repeated.Options)
 }
 
 func TestOptionChangesAreCheckedAndStoredCanonically(t *testing.T) {
@@ -127,21 +116,18 @@ func TestOptionChangesAreCheckedAndStoredCanonically(t *testing.T) {
 	// stored.
 	limited, err := f.service.ChangeOptions(ctx, "project", OptionsChange{Limits: map[string]int64{"pack_bytes": 1 << 30, "verify_seconds": 600}})
 	noErr(t, err)
-	if limited.AuthorityRevision != before.AuthorityRevision || limited.Options.Limits != (state.ImportLimits{PackBytes: 1 << 30}) {
-		t.Fatalf("limits change = %+v", limited)
-	}
+	require(t, limited.AuthorityRevision == before.AuthorityRevision &&
+		limited.Options.Limits == (state.ImportLimits{PackBytes: 1 << 30}), "limits change = %+v", limited)
 	approved, err := f.service.ChangeOptions(ctx, "project", OptionsChange{
 		Redirects: stringPointer(state.ImportRedirectApproved), ApprovedRedirectOrigin: stringPointer("https://Mirror.Example/"),
 	})
 	noErr(t, err)
-	if approved.AuthorityRevision != before.AuthorityRevision+1 || approved.Options.ApprovedRedirectOrigin != "https://mirror.example" || approved.Options.Limits.PackBytes != 1<<30 {
-		t.Fatalf("redirect change = %+v", approved)
-	}
+	require(t, approved.AuthorityRevision == before.AuthorityRevision+1 &&
+		approved.Options.ApprovedRedirectOrigin == "https://mirror.example" &&
+		approved.Options.Limits.PackBytes == 1<<30, "redirect change = %+v", approved)
 	refused, err := f.service.ChangeOptions(ctx, "project", OptionsChange{Redirects: stringPointer(state.ImportRedirectRefuse)})
 	noErr(t, err)
-	if refused.Options.ApprovedRedirectOrigin != "" {
-		t.Fatalf("an unused origin was kept: %+v", refused.Options)
-	}
+	require(t, refused.Options.ApprovedRedirectOrigin == "", "an unused origin was kept: %+v", refused.Options)
 
 	for name, change := range map[string]OptionsChange{
 		"fetch longer than run":   {Limits: map[string]int64{"fetch_seconds": 2 * 3600}},
@@ -164,9 +150,7 @@ func TestOptionChangesAreCheckedAndStoredCanonically(t *testing.T) {
 	}
 	after, _, err := f.store.ImportSource(ctx, "project")
 	noErr(t, err)
-	if after.Options != refused.Options {
-		t.Fatalf("refused changes altered the options: %+v", after.Options)
-	}
+	require(t, after.Options == refused.Options, "refused changes altered the options: %+v", after.Options)
 	// A deliberate policy change that drops a stored plain HTTP origin, sent
 	// back with the change as a form does, is allowed.
 	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{
@@ -176,13 +160,11 @@ func TestOptionChangesAreCheckedAndStoredCanonically(t *testing.T) {
 	dropped, err := f.service.ChangeOptions(ctx, "project", OptionsChange{
 		AllowPlainHTTP: boolPointer(false), Redirects: stringPointer(state.ImportRedirectRefuse), ApprovedRedirectOrigin: stringPointer("http://mirror.example"),
 	})
-	if err != nil || dropped.Options.ApprovedRedirectOrigin != "" || dropped.Options.AllowPlainHTTP {
-		t.Fatalf("policy change dropping the origin = %+v, %v", dropped.Options, err)
-	}
+	require(t, err == nil && dropped.Options.ApprovedRedirectOrigin == "" && !dropped.Options.AllowPlainHTTP,
+		"policy change dropping the origin = %+v, %v", dropped.Options, err)
 	// Raising the run time with the fetch time is coherent.
-	if _, err := f.service.ChangeOptions(ctx, "project", OptionsChange{Limits: map[string]int64{"fetch_seconds": 2 * 3600, "run_seconds": 3 * 3600}}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{Limits: map[string]int64{"fetch_seconds": 2 * 3600, "run_seconds": 3 * 3600}})
+	noErr(t, err)
 }
 
 func TestSourceLimitsBoundTheRun(t *testing.T) {
@@ -200,19 +182,14 @@ func TestSourceLimitsBoundTheRun(t *testing.T) {
 		return previous(ctx, request, consume)
 	}
 	started := time.Now()
-	if _, err := f.refresh(); err != nil {
-		t.Fatal(err)
-	}
-	if deadline.IsZero() || deadline.Sub(started) > 121*time.Second {
-		t.Fatalf("run deadline %v after start, want the source's 120 s", deadline.Sub(started))
-	}
+	_, err = f.refresh()
+	noErr(t, err)
+	require(t, !deadline.IsZero() && deadline.Sub(started) <= 121*time.Second,
+		"run deadline %v after start, want the source's 120 s", deadline.Sub(started))
 	// A caller's own run time wins, so a server keeps its request bound.
-	if _, err := f.service.Refresh(ctx, "project", Limits{RunTimeout: time.Hour}); err != nil {
-		t.Fatal(err)
-	}
-	if deadline.Sub(started) < 59*time.Minute {
-		t.Fatalf("caller run time was not used: %v", deadline.Sub(started))
-	}
+	_, err = f.service.Refresh(ctx, "project", Limits{RunTimeout: time.Hour})
+	noErr(t, err)
+	require(t, deadline.Sub(started) >= 59*time.Minute, "caller run time was not used: %v", deadline.Sub(started))
 }
 
 func TestUnreadableSavedLimitsAreNamedAndRepaired(t *testing.T) {
@@ -228,17 +205,15 @@ func TestUnreadableSavedLimitsAreNamedAndRepaired(t *testing.T) {
 			t.Fatalf("refresh with limits %s = %v", stored, err)
 		}
 		status, err := f.service.Status(ctx, "project")
-		if err != nil || status.Options == nil || !strings.Contains(status.Options.Problem, "import limits cannot be used") {
-			t.Fatalf("status with limits %s = %+v, %v", stored, status.Options, err)
-		}
+		require(t, err == nil && status.Options != nil &&
+			strings.Contains(status.Options.Problem, "import limits cannot be used"),
+			"status with limits %s = %+v, %v", stored, status.Options, err)
 		// A change that leaves the limits alone keeps the refusal.
-		if _, err := f.service.ChangeOptions(ctx, "project", OptionsChange{AllowReservedAddresses: boolPointer(true)}); !errors.As(err, &setting) {
-			t.Fatalf("unrelated change with unreadable limits = %v", err)
-		}
+		_, err = f.service.ChangeOptions(ctx, "project", OptionsChange{AllowReservedAddresses: boolPointer(true)})
+		require(t, errors.As(err, &setting), "unrelated change with unreadable limits = %v", err)
 		repaired, err := f.service.ChangeOptions(ctx, "project", OptionsChange{Limits: map[string]int64{"refs": 1000}})
-		if err != nil || repaired.Options.Limits != (state.ImportLimits{Refs: 1000}) {
-			t.Fatalf("repair = %+v, %v", repaired.Options, err)
-		}
+		require(t, err == nil && repaired.Options.Limits == (state.ImportLimits{Refs: 1000}),
+			"repair = %+v, %v", repaired.Options, err)
 	}
 }
 
@@ -263,9 +238,11 @@ func TestUnusableSavedOptionsAreNamedBeforeARun(t *testing.T) {
 			OptionsChange{Limits: map[string]int64{"run_seconds": 3600}}},
 	} {
 		if test.column == "approved_redirect_origin" {
-			noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET redirect_policy='approved', approved_redirect_origin=? WHERE repository_id='project'`, test.value))
+			noErr(t, f.store.Exec(ctx,
+				`UPDATE import_sources SET redirect_policy='approved', approved_redirect_origin=? WHERE repository_id='project'`, test.value))
 		} else {
-			noErr(t, f.store.Exec(ctx, `UPDATE import_sources SET limits_json=? WHERE repository_id='project'`, test.value))
+			noErr(t, f.store.Exec(ctx,
+				`UPDATE import_sources SET limits_json=? WHERE repository_id='project'`, test.value))
 		}
 		requests := len(f.transport.requests)
 		_, err := f.refresh()
@@ -273,22 +250,16 @@ func TestUnusableSavedOptionsAreNamedBeforeARun(t *testing.T) {
 		if !errors.As(err, &setting) || setting.Setting != test.setting || setting.RepositoryID != "project" || !strings.Contains(err.Error(), test.advice) {
 			t.Fatalf("%s: refresh = %v", test.name, err)
 		}
-		if len(f.transport.requests) != requests {
-			t.Fatalf("%s: the run reached the transport", test.name)
-		}
+		require(t, len(f.transport.requests) == requests, "%s: the run reached the transport", test.name)
 		status, err := f.service.Status(ctx, "project")
-		if err != nil || status.Options == nil || !strings.Contains(status.Options.Problem, "cannot be used") {
-			t.Fatalf("%s: status = %+v, %v", test.name, status.Options, err)
-		}
-		if _, err := f.service.SavedLimits(ctx, "project"); !errors.As(err, &setting) {
-			t.Fatalf("%s: saved limits = %v", test.name, err)
-		}
-		if _, err := f.service.ChangeOptions(ctx, "project", test.repair); err != nil {
-			t.Fatalf("%s: repair = %v", test.name, err)
-		}
-		if _, err := f.refresh(); err != nil {
-			t.Fatalf("%s: refresh after repair = %v", test.name, err)
-		}
+		require(t, err == nil && status.Options != nil && strings.Contains(status.Options.Problem, "cannot be used"),
+			"%s: status = %+v, %v", test.name, status.Options, err)
+		_, err = f.service.SavedLimits(ctx, "project")
+		require(t, errors.As(err, &setting), "%s: saved limits = %v", test.name, err)
+		_, err = f.service.ChangeOptions(ctx, "project", test.repair)
+		require(t, err == nil, "%s: repair = %v", test.name, err)
+		_, err = f.refresh()
+		require(t, err == nil, "%s: refresh after repair = %v", test.name, err)
 	}
 }
 

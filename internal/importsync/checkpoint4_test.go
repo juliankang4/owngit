@@ -55,33 +55,23 @@ func TestReconcilePagesPendingIntentsAndDefersLockLogs(t *testing.T) {
 		}
 		return now
 	}
-	if _, err := f.service.Prepare(ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.service.Prepare(ctx)
+	noErr(t, err)
 	noErr(t, os.Mkdir(filepath.Join(f.service.stagingRootPath(), "odd"), 0o700))
 	noErr(t, f.service.Reconcile(ctx))
-	if loggedUnderLock {
-		t.Fatal("reconciliation logged while a repository lock was held")
-	}
-	if len(pages) != 2 || len(pages[0]) != 2 || len(pages[1]) != 1 {
-		t.Fatalf("intent pages=%v", pages)
-	}
+	require(t, !loggedUnderLock, "reconciliation logged while a repository lock was held")
+	require(t, len(pages) == 2 && len(pages[0]) == 2 && len(pages[1]) == 1, "intent pages=%v", pages)
 	again := len(pages)
 	noErr(t, f.service.Reconcile(ctx))
-	if len(pages) != again {
-		t.Fatal("second reconcile re-read resolved intents")
-	}
+	require(t, len(pages) == again, "second reconcile re-read resolved intents")
 }
 
 func TestSetScheduleRefusesRepositoryWithoutSource(t *testing.T) {
 	f := newFixture(t)
-	if _, err := f.manager.Create(context.Background(), "project", "Project"); err != nil {
-		t.Fatal(err)
-	}
-	_, err := f.service.SetSchedule(context.Background(), "project", true, time.Minute)
-	if problemCode(err) != CodeNotConfigured {
-		t.Fatalf("schedule without source error=%v", err)
-	}
+	_, err := f.manager.Create(context.Background(), "project", "Project")
+	noErr(t, err)
+	_, err = f.service.SetSchedule(context.Background(), "project", true, time.Minute)
+	require(t, problemCode(err) == CodeNotConfigured, "schedule without source error=%v", err)
 }
 
 // scheduleOtherAndProject imports project and schedules it and an unimported
@@ -131,12 +121,12 @@ func TestFailedScheduledRunLetsTheNextRepositoryRun(t *testing.T) {
 	f.pump(scheduler, 1)
 	f.transport.fail = nil
 	f.pump(scheduler, 1)
-	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunFailed {
-		t.Fatalf("the failed run was not recorded: runs=%+v", other)
-	}
-	if project := f.scheduledRuns("project"); len(project) != 1 || project[0].Status != state.ImportRunComplete {
-		t.Fatalf("the later repository did not run after the earlier failure: runs=%+v", project)
-	}
+	other := f.scheduledRuns("other")
+	require(t, len(other) == 1 && other[0].Status == state.ImportRunFailed,
+		"the failed run was not recorded: runs=%+v", other)
+	project := f.scheduledRuns("project")
+	require(t, len(project) == 1 && project[0].Status == state.ImportRunComplete,
+		"the later repository did not run after the earlier failure: runs=%+v", project)
 }
 
 // A claimed schedule whose refresh is refused before it records a run, here
@@ -148,12 +138,12 @@ func TestRefusedScheduledRefreshIsRecordedAsFailed(t *testing.T) {
 	noErr(t, f.service.Shutdown(context.Background()))
 	f.pump(&Scheduler{Service: f.service, Batch: 1}, 1)
 	schedule, exists, err := f.store.ImportSchedule(context.Background(), "other")
-	if err != nil || !exists || schedule.LastStartedAt == nil {
-		t.Fatalf("the schedule was not claimed: exists=%v schedule=%+v err=%v", exists, schedule, err)
-	}
-	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunFailed || !strings.Contains(other[0].Message, "shutting down") {
-		t.Fatalf("the refused refresh was not recorded as failed: runs=%+v", other)
-	}
+	require(t, err == nil && exists && schedule.LastStartedAt != nil,
+		"the schedule was not claimed: exists=%v schedule=%+v err=%v", exists, schedule, err)
+	other := f.scheduledRuns("other")
+	require(t, len(other) == 1 && other[0].Status == state.ImportRunFailed &&
+		strings.Contains(other[0].Message, "shutting down"),
+		"the refused refresh was not recorded as failed: runs=%+v", other)
 }
 
 // With every run slot taken, a pass leaves the due schedules untouched and
@@ -168,27 +158,22 @@ func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 	scheduler.pump(ctx, full)
 	for _, id := range []string{"other", "project"} {
 		schedule, exists, err := f.store.ImportSchedule(ctx, id)
-		if err != nil || !exists || schedule.LastStartedAt != nil {
-			t.Fatalf("%s schedule was claimed with no free slot: exists=%v schedule=%+v err=%v", id, exists, schedule, err)
-		}
-		if runs := f.scheduledRuns(id); len(runs) != 0 {
-			t.Fatalf("%s recorded a run that never started: %+v", id, runs)
-		}
+		require(t, err == nil && exists && schedule.LastStartedAt == nil,
+			"%s schedule was claimed with no free slot: exists=%v schedule=%+v err=%v", id, exists, schedule, err)
+		runs := f.scheduledRuns(id)
+		require(t, len(runs) == 0, "%s recorded a run that never started: %+v", id, runs)
 	}
-	if len(full) != 1 {
-		t.Fatal("a full pass changed the slots it did not own")
-	}
+	require(t, len(full) == 1, "a full pass changed the slots it did not own")
 	f.pump(scheduler, 1)
-	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].Status != state.ImportRunComplete {
-		t.Fatalf("the first due schedule did not run first: runs=%+v", other)
-	}
-	if project := f.scheduledRuns("project"); len(project) != 0 {
-		t.Fatalf("the second schedule ran in the single slot's first pass: runs=%+v", project)
-	}
+	other := f.scheduledRuns("other")
+	require(t, len(other) == 1 && other[0].Status == state.ImportRunComplete,
+		"the first due schedule did not run first: runs=%+v", other)
+	project := f.scheduledRuns("project")
+	require(t, len(project) == 0, "the second schedule ran in the single slot's first pass: runs=%+v", project)
 	f.pump(scheduler, 1)
-	if project := f.scheduledRuns("project"); len(project) != 1 || project[0].Status != state.ImportRunComplete {
-		t.Fatalf("the waiting schedule starved: runs=%+v", project)
-	}
+	project = f.scheduledRuns("project")
+	require(t, len(project) == 1 && project[0].Status == state.ImportRunComplete,
+		"the waiting schedule starved: runs=%+v", project)
 }
 
 // Stop returns only after a scheduled run in flight finished.
@@ -208,17 +193,16 @@ func TestSchedulerStopJoinsItsRun(t *testing.T) {
 	stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	noErr(t, scheduler.Stop(stop))
-	if other := f.scheduledRuns("other"); len(other) != 1 || other[0].FinishedAt.IsZero() {
-		t.Fatalf("Stop returned before the run in flight finished: runs=%+v", other)
-	}
+	other := f.scheduledRuns("other")
+	require(t, len(other) == 1 && !other[0].FinishedAt.IsZero(),
+		"Stop returned before the run in flight finished: runs=%+v", other)
 }
 
 func TestUnclaimedDueQueryStaysOnTheSameRepository(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	if _, err := f.manager.Create(ctx, "other", "Other"); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.manager.Create(ctx, "other", "Other")
+	noErr(t, err)
 	if _, err := f.service.ConfigureSource(ctx, ConfigureInput{
 		RepositoryID: "other", URL: "https://example.invalid/team/other.git",
 		Mode: ModeStandalone, GitOnlyConsent: true, AllowPrivateNetwork: true,
@@ -227,16 +211,15 @@ func TestUnclaimedDueQueryStaysOnTheSameRepository(t *testing.T) {
 	}
 	f.mustImport(ImportInput{})
 	for _, id := range []string{"other", "project"} {
-		if _, err := f.service.SetSchedule(ctx, id, true, time.Minute); err != nil {
-			t.Fatal(err)
-		}
+		_, err := f.service.SetSchedule(ctx, id, true, time.Minute)
+		noErr(t, err)
 	}
 	now := f.service.clock()
 	first, err := f.store.DueImportSchedulesAfter(ctx, now, nil, 1)
 	second, secondErr := f.store.DueImportSchedulesAfter(ctx, now, nil, 1)
-	if err != nil || secondErr != nil || len(first) != 1 || len(second) != 1 || first[0].RepositoryID != "other" || second[0].RepositoryID != "other" {
-		t.Fatalf("unclaimed due query did not stay on the same repository: first=%+v second=%+v err=%v/%v", first, second, err, secondErr)
-	}
+	require(t, err == nil && secondErr == nil && len(first) == 1 && len(second) == 1 &&
+		first[0].RepositoryID == "other" && second[0].RepositoryID == "other",
+		"unclaimed due query did not stay on the same repository: first=%+v second=%+v err=%v/%v", first, second, err, secondErr)
 }
 
 func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
@@ -253,9 +236,8 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 	}
 	noErr(t, f.store.RecordImportObservations(ctx, observations))
 	status, err := f.service.Status(ctx, "project")
-	if err != nil || !status.RefsTruncated || len(status.Refs) > statusRefLimit {
-		t.Fatalf("status did not bound observations: truncated=%v refs=%d err=%v", status.RefsTruncated, len(status.Refs), err)
-	}
+	require(t, err == nil && status.RefsTruncated && len(status.Refs) <= statusRefLimit,
+		"status did not bound observations: truncated=%v refs=%d err=%v", status.RefsTruncated, len(status.Refs), err)
 	for index := 0; index < 3; index++ {
 		run := state.ImportRun{
 			ID: strings.Repeat(string(rune('a'+index)), 32), RepositoryID: "project", SourceGeneration: 1, AuthorityRevision: 1,
@@ -271,13 +253,11 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 		noErr(t, f.store.FinishImportRun(ctx, run))
 	}
 	page, more, err := f.service.History(ctx, "project", 1)
-	if err != nil || len(page) != 1 || !more || page[0].RowID == 0 {
-		t.Fatalf("history page=%+v more=%v err=%v", page, more, err)
-	}
+	require(t, err == nil && len(page) == 1 && more && page[0].RowID != 0,
+		"history page=%+v more=%v err=%v", page, more, err)
 	next, _, err := f.service.HistoryBefore(ctx, "project", 10000, page[0].RowID)
-	if err != nil || len(next) == 0 || next[0].RowID >= page[0].RowID || len(next) > maxHistoryPage {
-		t.Fatalf("history cursor did not move older: next=%+v err=%v", next, err)
-	}
+	require(t, err == nil && len(next) != 0 && next[0].RowID < page[0].RowID && len(next) <= maxHistoryPage,
+		"history cursor did not move older: next=%+v err=%v", next, err)
 }
 
 // History above one page must return every run exactly once, newest first,
@@ -287,9 +267,7 @@ func TestHistoryPagingReturnsEveryRunBeyondOnePage(t *testing.T) {
 	f.mustImport(ImportInput{})
 	ctx := context.Background()
 	existing, more, err := f.service.History(ctx, "project", maxHistoryPage)
-	if err != nil || more {
-		t.Fatalf("initial history=%+v more=%v err=%v", existing, more, err)
-	}
+	require(t, err == nil && !more, "initial history=%+v more=%v err=%v", existing, more, err)
 	const added = 2*maxHistoryPage + 37
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
 	want := make([]string, 0, added+len(existing))
@@ -317,14 +295,11 @@ func TestHistoryPagingReturnsEveryRunBeyondOnePage(t *testing.T) {
 	for {
 		page, more, err := f.service.HistoryBefore(ctx, "project", 10000, cursor)
 		noErr(t, err)
-		if len(page) == 0 || len(page) > maxHistoryPage {
-			t.Fatalf("page %d has %d runs", len(pages), len(page))
-		}
+		require(t, len(page) != 0 && len(page) <= maxHistoryPage, "page %d has %d runs", len(pages), len(page))
 		pages = append(pages, len(page))
 		for _, run := range page {
-			if cursor != 0 && run.RowID >= cursor {
-				t.Fatalf("run %s rowid %d is not older than cursor %d", run.ID, run.RowID, cursor)
-			}
+			require(t, cursor == 0 || run.RowID < cursor,
+				"run %s rowid %d is not older than cursor %d", run.ID, run.RowID, cursor)
 			cursor = run.RowID
 			got = append(got, run.ID)
 		}
@@ -333,12 +308,9 @@ func TestHistoryPagingReturnsEveryRunBeyondOnePage(t *testing.T) {
 		}
 	}
 	wantPages := []int{maxHistoryPage, maxHistoryPage, len(want) - 2*maxHistoryPage}
-	if !slices.Equal(pages, wantPages) {
-		t.Fatalf("page sizes=%v, want %v", pages, wantPages)
-	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("paged history has %d runs, want %d in newest-first order without duplicates or gaps", len(got), len(want))
-	}
+	require(t, slices.Equal(pages, wantPages), "page sizes=%v, want %v", pages, wantPages)
+	require(t, slices.Equal(got, want),
+		"paged history has %d runs, want %d in newest-first order without duplicates or gaps", len(got), len(want))
 }
 
 func padObservation(index int) string {

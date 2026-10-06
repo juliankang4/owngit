@@ -51,7 +51,8 @@ func TestBlockedPublicationCallbackAllowsOtherRepositoryConfiguration(t *testing
 		}},
 		{"Logf", func(t *testing.T, f *fixture, block func()) {
 			// A failed observation write makes publication log.
-			noErr(t, f.store.Exec(context.Background(), `CREATE TRIGGER fail_observation_write BEFORE INSERT ON import_ref_observations BEGIN SELECT RAISE(FAIL,'synthetic observation failure'); END`))
+			noErr(t, f.store.Exec(context.Background(),
+				`CREATE TRIGGER fail_observation_write BEFORE INSERT ON import_ref_observations BEGIN SELECT RAISE(FAIL,'synthetic observation failure'); END`))
 			f.service.Logf = func(format string, _ ...any) {
 				if strings.Contains(format, "import publication") {
 					block()
@@ -148,10 +149,9 @@ func TestPublicationClockCanReenterStateAuthorityHelper(t *testing.T) {
 	}
 	run, err := f.refresh()
 	noErr(t, callbackErr)
-	if err == nil || problemCode(err) != CodeSuperseded || run.Status != state.ImportRunSuperseded {
-		t.Fatalf("reentrant authority change did not supersede publication: run=%+v err=%v", run, err)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != first || got == second {
-		t.Fatalf("reentrant authority change allowed stale publication: got=%s first=%s second=%s", got, first, second)
-	}
+	require(t, err != nil && problemCode(err) == CodeSuperseded && run.Status == state.ImportRunSuperseded,
+		"reentrant authority change did not supersede publication: run=%+v err=%v", run, err)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == first && got != second,
+		"reentrant authority change allowed stale publication: got=%s first=%s second=%s", got, first, second)
 }

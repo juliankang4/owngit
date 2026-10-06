@@ -31,9 +31,8 @@ func (f *fixture) gitInput(directory string, input []byte, arguments ...string) 
 
 func assertImportDestinationAbsent(t *testing.T, f *fixture) {
 	t.Helper()
-	if _, _, exists, err := f.manager.ExistingPath(context.Background(), "project"); err != nil || exists {
-		t.Fatalf("destination exists=%v err=%v", exists, err)
-	}
+	_, _, exists, err := f.manager.ExistingPath(context.Background(), "project")
+	require(t, err == nil && !exists, "destination exists=%v err=%v", exists, err)
 }
 
 func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
@@ -50,13 +49,10 @@ func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
 		}
 
 		result, err := f.importProject(ImportInput{})
-		if err == nil || problemCode(err) != CodeVerifyFailed {
-			t.Fatalf("missing skipped object result=%+v err=%v", result.Run, err)
-		}
+		require(t, err != nil && problemCode(err) == CodeVerifyFailed,
+			"missing skipped object result=%+v err=%v", result.Run, err)
 		assertImportDestinationAbsent(t, f)
-		if actual := f.git(f.source, "rev-parse", "refs/notes/review"); actual != tip {
-			t.Fatalf("source note changed to %s, want %s", actual, tip)
-		}
+		eq(t, "source note changed to", f.git(f.source, "rev-parse", "refs/notes/review"), tip)
 	})
 
 	t.Run("malformed skipped object", func(t *testing.T) {
@@ -72,13 +68,10 @@ func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
 		}
 
 		result, err := f.importProject(ImportInput{})
-		if err == nil || problemCode(err) != CodeIndexFailed {
-			t.Fatalf("malformed skipped object result=%+v err=%v", result.Run, err)
-		}
+		require(t, err != nil && problemCode(err) == CodeIndexFailed,
+			"malformed skipped object result=%+v err=%v", result.Run, err)
 		assertImportDestinationAbsent(t, f)
-		if refs := f.git(f.source, "for-each-ref", "--format=%(refname)"); refs != "" {
-			t.Fatalf("synthetic advertisement wrote source refs: %q", refs)
-		}
+		eq(t, "synthetic advertisement wrote source refs", f.git(f.source, "for-each-ref", "--format=%(refname)"), "")
 	})
 
 	t.Run("false skipped peel", func(t *testing.T) {
@@ -88,9 +81,7 @@ func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
 		tagOID := f.git(f.source, "rev-parse", "refs/tags/v1")
 		f.git(f.source, "update-ref", "refs/notes/release", tagOID)
 		second := f.commit("two", "two\n")
-		if first == second {
-			t.Fatal("fixture commits unexpectedly match")
-		}
+		require(t, first != second, "fixture commits unexpectedly match")
 		f.transport.mutateAdvertised = func(advertisement *importgit.Advertisement) {
 			for index := range advertisement.Refs {
 				if advertisement.Refs[index].Name == "refs/notes/release" {
@@ -100,13 +91,10 @@ func TestImportValidatesSkippedAdvertisedObjectsAndPeels(t *testing.T) {
 		}
 
 		result, err := f.importProject(ImportInput{})
-		if err == nil || problemCode(err) != CodeVerifyFailed {
-			t.Fatalf("false skipped peel result=%+v err=%v", result.Run, err)
-		}
+		require(t, err != nil && problemCode(err) == CodeVerifyFailed,
+			"false skipped peel result=%+v err=%v", result.Run, err)
 		assertImportDestinationAbsent(t, f)
-		if actual := f.git(f.source, "rev-parse", "refs/notes/release"); actual != tagOID {
-			t.Fatalf("source note changed to %s, want %s", actual, tagOID)
-		}
+		eq(t, "source note changed to", f.git(f.source, "rev-parse", "refs/notes/release"), tagOID)
 	})
 }
 
@@ -121,22 +109,17 @@ func TestImportRejectsUnsupportedHEADTargetsAndRecordsRawFact(t *testing.T) {
 			f.git(f.source, "symbolic-ref", "HEAD", target)
 			before := f.sourceRefs()
 			result, err := f.importProject(ImportInput{})
-			if err == nil || problemCode(err) != CodeUnsupportedRefs {
-				t.Fatalf("unsupported HEAD result=%+v err=%v", result.Run, err)
-			}
-			if result.Run.HeadSymref != target || !result.Run.HeadAdvertised {
-				t.Fatalf("raw HEAD facts were lost: %+v", result.Run)
-			}
-			if stored := f.lastRun(); stored.HeadSymref != target || stored.Status != state.ImportRunFailed {
-				t.Fatalf("stored raw HEAD facts were lost: %+v", stored)
-			}
+			require(t, err != nil && problemCode(err) == CodeUnsupportedRefs,
+				"unsupported HEAD result=%+v err=%v", result.Run, err)
+			require(t, result.Run.HeadSymref == target && result.Run.HeadAdvertised,
+				"raw HEAD facts were lost: %+v", result.Run)
+			stored := f.lastRun()
+			require(t, stored.HeadSymref == target && stored.Status == state.ImportRunFailed,
+				"stored raw HEAD facts were lost: %+v", stored)
 			assertImportDestinationAbsent(t, f)
-			if after := f.sourceRefs(); !reflect.DeepEqual(before, after) {
-				t.Fatalf("source refs changed: before=%v after=%v", before, after)
-			}
-			if got := f.git(f.source, "symbolic-ref", "HEAD"); got != target {
-				t.Fatalf("source HEAD changed: got=%s want=%s", got, target)
-			}
+			after := f.sourceRefs()
+			require(t, reflect.DeepEqual(before, after), "source refs changed: before=%v after=%v", before, after)
+			eq(t, "source HEAD changed", f.git(f.source, "symbolic-ref", "HEAD"), target)
 		})
 	}
 }
@@ -156,9 +139,7 @@ func TestImportValidatesAdvertisedHEADTypeAndPeel(t *testing.T) {
 		}
 
 		result, err := f.importProject(ImportInput{})
-		if err == nil || problemCode(err) != CodeVerifyFailed {
-			t.Fatalf("blob HEAD result=%+v err=%v", result.Run, err)
-		}
+		require(t, err != nil && problemCode(err) == CodeVerifyFailed, "blob HEAD result=%+v err=%v", result.Run, err)
 		assertImportDestinationAbsent(t, f)
 	})
 
@@ -176,9 +157,8 @@ func TestImportValidatesAdvertisedHEADTypeAndPeel(t *testing.T) {
 		}
 
 		result, err := f.importProject(ImportInput{})
-		if err == nil || problemCode(err) != CodeVerifyFailed {
-			t.Fatalf("false HEAD peel result=%+v err=%v", result.Run, err)
-		}
+		require(t, err != nil && problemCode(err) == CodeVerifyFailed,
+			"false HEAD peel result=%+v err=%v", result.Run, err)
 		assertImportDestinationAbsent(t, f)
 	})
 }
@@ -192,46 +172,36 @@ func TestSourceReplacementCannotChangeConsentedImportBytes(t *testing.T) {
 	replacement := f.git(f.source, "commit-tree", tree, "-m", "replacement root")
 	f.git(f.source, "update-ref", "refs/heads/main", original)
 	f.git(f.source, "update-ref", "refs/replace/"+original, replacement)
-	if got := f.git(f.source, "show", "refs/heads/main:file.txt"); got != "ordinary bytes" {
-		t.Fatalf("replacement fixture did not mask original: %q", got)
-	}
+	eq(t, "replacement fixture did not mask original",
+		f.git(f.source, "show", "refs/heads/main:file.txt"), "ordinary bytes")
 	before := f.sourceRefs()
 
 	// Without consent the masked pointer still requires it.
 	result, err := f.importProject(ImportInput{})
-	if err == nil || problemCode(err) != CodeLFSRequired {
-		t.Fatalf("replacement hid original LFS content: status=%s pointers=%d complete=%v err=%v", result.Run.Status, result.Run.LFSDetected, result.Run.LFSInspectionDone, err)
-	}
+	require(t, err != nil && problemCode(err) == CodeLFSRequired,
+		"replacement hid original LFS content: status=%s pointers=%d complete=%v err=%v", result.Run.Status, result.Run.LFSDetected, result.Run.LFSInspectionDone, err)
 	assertImportDestinationAbsent(t, f)
-	if after := f.sourceRefs(); !reflect.DeepEqual(before, after) {
-		t.Fatalf("source refs changed: before=%v after=%v", before, after)
-	}
+	after := f.sourceRefs()
+	require(t, reflect.DeepEqual(before, after), "source refs changed: before=%v after=%v", before, after)
 
 	result = f.mustImport(ImportInput{GitOnlyConsent: true})
-	if result.Run.LFSDetected != 1 || !result.Run.LFSInspectionDone {
-		t.Fatalf("replacement changed inspection=%+v", result.Run)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != original {
-		t.Fatalf("destination main=%s want %s", got, original)
-	}
+	require(t, result.Run.LFSDetected == 1 && result.Run.LFSInspectionDone,
+		"replacement changed inspection=%+v", result.Run)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == original, "destination main=%s want %s", got, original)
 	content := f.gitInput(f.destinationPath(), nil, "--no-replace-objects", "--git-dir", ".", "cat-file", "blob", original+":file.txt")
-	if !bytes.Equal(content, []byte(pointer)) {
-		t.Fatalf("original pointer bytes changed: got=%q want=%q", content, pointer)
-	}
-	if refs := f.git(f.destinationPath(), "--git-dir", ".", "for-each-ref", "--format=%(refname)", "refs/replace"); refs != "" {
-		t.Fatalf("source replacement refs were published: %q", refs)
-	}
-	if got := f.git(f.source, "rev-parse", "refs/replace/"+original); got != replacement {
-		t.Fatalf("source replacement changed to %s, want %s", got, replacement)
-	}
+	require(t, bytes.Equal(content, []byte(pointer)),
+		"original pointer bytes changed: got=%q want=%q", content, pointer)
+	eq(t, "source replacement refs were published",
+		f.git(f.destinationPath(), "--git-dir", ".", "for-each-ref", "--format=%(refname)", "refs/replace"), "")
+	eq(t, "source replacement changed to", f.git(f.source, "rev-parse", "refs/replace/"+original), replacement)
 }
 
 func TestDestinationReplacementCannotStandInForMissingAdvertisedObject(t *testing.T) {
 	f := newFixture(t)
 	original := f.commit("source", "source bytes\n")
-	if _, err := f.manager.Create(context.Background(), "project", ""); err != nil {
-		t.Fatal(err)
-	}
+	_, err := f.manager.Create(context.Background(), "project", "")
+	noErr(t, err)
 	if _, err := f.service.ConfigureSource(context.Background(), ConfigureInput{
 		RepositoryID: "project", URL: "https://example.invalid/team/project.git",
 	}); err != nil {
@@ -241,30 +211,21 @@ func TestDestinationReplacementCannotStandInForMissingAdvertisedObject(t *testin
 	replacement := strings.TrimSpace(string(f.gitInput(destination, []byte("replacement bytes\n"),
 		"--git-dir", ".", "hash-object", "-w", "--stdin")))
 	f.git(destination, "--git-dir", ".", "update-ref", "refs/replace/"+original, replacement)
-	if kind := f.git(destination, "--git-dir", ".", "cat-file", "-t", original); kind != "blob" {
-		t.Fatalf("replacement fixture type=%q", kind)
-	}
-	if raw := f.gitMaybe(destination, "--no-replace-objects", "--git-dir", ".", "cat-file", "-t", original); raw != "" {
-		t.Fatalf("destination unexpectedly contained original object: %q", raw)
-	}
+	eq(t, "replacement fixture type", f.git(destination, "--git-dir", ".", "cat-file", "-t", original), "blob")
+	raw := f.gitMaybe(destination, "--no-replace-objects", "--git-dir", ".", "cat-file", "-t", original)
+	require(t, raw == "", "destination unexpectedly contained original object: %q", raw)
 
 	// Import refuses this existing destination. Refresh is the publication
 	// that must still ignore the local replacement ref.
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh=%+v err=%v", run, err)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != original {
-		t.Fatalf("destination main=%s want %s", got, original)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh=%+v err=%v", run, err)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == original, "destination main=%s want %s", got, original)
 	sourceObject := f.gitInput(f.source, nil, "--no-replace-objects", "cat-file", "commit", original)
 	destinationObject := f.gitInput(destination, nil, "--no-replace-objects", "--git-dir", ".", "cat-file", "commit", original)
-	if !bytes.Equal(destinationObject, sourceObject) {
-		t.Fatal("destination original object bytes differ from source")
-	}
-	if got := f.git(destination, "--git-dir", ".", "rev-parse", "refs/replace/"+original); got != replacement {
-		t.Fatalf("local replacement changed to %s, want %s", got, replacement)
-	}
+	require(t, bytes.Equal(destinationObject, sourceObject), "destination original object bytes differ from source")
+	eq(t, "local replacement changed to",
+		f.git(destination, "--git-dir", ".", "rev-parse", "refs/replace/"+original), replacement)
 }
 
 func TestStrictPackIndexingRejectsMalformedObject(t *testing.T) {
@@ -282,9 +243,8 @@ func TestStrictPackIndexingRejectsMalformedObject(t *testing.T) {
 	limits, err := (Limits{}).effective()
 	noErr(t, err)
 	noErr(t, f.service.createStagingRepository(context.Background(), staging, importgit.FormatSHA1, limits))
-	if err := f.service.indexStagingPack(context.Background(), staging, bytes.NewReader(pack), limits); err == nil || problemCode(err) != CodeIndexFailed {
-		t.Fatalf("strict indexing error=%v", err)
-	}
+	err = f.service.indexStagingPack(context.Background(), staging, bytes.NewReader(pack), limits)
+	require(t, err != nil && problemCode(err) == CodeIndexFailed, "strict indexing error=%v", err)
 }
 
 func TestIncompleteLFSInspectionRequiresConsentForInitialImport(t *testing.T) {
@@ -293,25 +253,19 @@ func TestIncompleteLFSInspectionRequiresConsentForInitialImport(t *testing.T) {
 	limits := Limits{LFS: LFSLimits{MaxObjects: 1}}
 
 	refused, err := f.importProject(ImportInput{Limits: limits})
-	if err == nil || problemCode(err) != CodeLFSRequired {
-		t.Fatalf("incomplete import result=%+v err=%v", refused.Run, err)
-	}
-	if refused.Run.LFSDetected != 0 || refused.Run.LFSInspectionDone {
-		t.Fatalf("refused inspection=%+v", refused.Run)
-	}
+	require(t, err != nil && problemCode(err) == CodeLFSRequired,
+		"incomplete import result=%+v err=%v", refused.Run, err)
+	require(t, refused.Run.LFSDetected == 0 && !refused.Run.LFSInspectionDone, "refused inspection=%+v", refused.Run)
 	assertImportDestinationAbsent(t, f)
 
 	accepted := f.mustImport(ImportInput{GitOnlyConsent: true, Limits: limits})
-	if accepted.Run.Status != state.ImportRunComplete || accepted.Run.LFSDetected != 0 || accepted.Run.LFSInspectionDone {
-		t.Fatalf("consented run=%+v", accepted.Run)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != tip {
-		t.Fatalf("destination main=%s want %s", got, tip)
-	}
+	require(t, accepted.Run.Status == state.ImportRunComplete && accepted.Run.LFSDetected == 0 &&
+		!accepted.Run.LFSInspectionDone, "consented run=%+v", accepted.Run)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == tip, "destination main=%s want %s", got, tip)
 	status, err := f.service.Status(context.Background(), "project")
-	if err != nil || !status.Content.Incomplete || status.Content.InspectionComplete || status.Content.LFSDetected != 0 {
-		t.Fatalf("content status=%+v err=%v", status.Content, err)
-	}
+	require(t, err == nil && status.Content.Incomplete && !status.Content.InspectionComplete &&
+		status.Content.LFSDetected == 0, "content status=%+v err=%v", status.Content, err)
 }
 
 func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
@@ -324,26 +278,21 @@ func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
 	limits := Limits{LFS: LFSLimits{MaxObjects: 1}}
 
 	refused, err := f.service.Refresh(context.Background(), "project", limits)
-	if err == nil || problemCode(err) != CodeLFSRequired {
-		t.Fatalf("incomplete refresh result=%+v err=%v", refused, err)
-	}
-	if refused.LFSDetected != 0 || refused.LFSInspectionDone {
-		t.Fatalf("refused inspection=%+v", refused)
-	}
-	if after := f.destinationRefs(); !reflect.DeepEqual(after, beforeDestination) || after["refs/heads/main"] != first {
-		t.Fatalf("destination changed on refusal: before=%v after=%v", beforeDestination, after)
-	}
-	if after := f.sourceRefs(); !reflect.DeepEqual(after, beforeSource) {
-		t.Fatalf("source changed on refusal: before=%v after=%v", beforeSource, after)
-	}
+	require(t, err != nil && problemCode(err) == CodeLFSRequired, "incomplete refresh result=%+v err=%v", refused, err)
+	require(t, refused.LFSDetected == 0 && !refused.LFSInspectionDone, "refused inspection=%+v", refused)
+	after := f.destinationRefs()
+	require(t, reflect.DeepEqual(after, beforeDestination) && after["refs/heads/main"] == first,
+		"destination changed on refusal: before=%v after=%v", beforeDestination, after)
+	after = f.sourceRefs()
+	require(t, reflect.DeepEqual(after, beforeSource),
+		"source changed on refusal: before=%v after=%v", beforeSource, after)
 	refusedStatus, err := f.service.Status(context.Background(), "project")
 	noErr(t, err)
-	if refusedStatus.LastRun == nil || refusedStatus.LastRun.Status != state.ImportRunFailed || refusedStatus.LastRun.LFSInspectionDone {
-		t.Fatalf("last attempt=%+v", refusedStatus.LastRun)
-	}
-	if !refusedStatus.Content.InspectionComplete || refusedStatus.Content.Incomplete || refusedStatus.Content.LFSDetected != 0 {
-		t.Fatalf("failed refresh replaced accepted content status: %+v", refusedStatus.Content)
-	}
+	require(t, refusedStatus.LastRun != nil && refusedStatus.LastRun.Status == state.ImportRunFailed &&
+		!refusedStatus.LastRun.LFSInspectionDone, "last attempt=%+v", refusedStatus.LastRun)
+	require(t, refusedStatus.Content.InspectionComplete && !refusedStatus.Content.Incomplete &&
+		refusedStatus.Content.LFSDetected == 0,
+		"failed refresh replaced accepted content status: %+v", refusedStatus.Content)
 
 	if _, err := f.service.ConfigureSource(context.Background(), ConfigureInput{
 		RepositoryID: "project", URL: "https://example.invalid/team/project.git", GitOnlyConsent: true,
@@ -352,15 +301,12 @@ func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {
 	}
 	accepted, err := f.service.Refresh(context.Background(), "project", limits)
 	noErr(t, err, "consented refresh")
-	if accepted.Status != state.ImportRunComplete || accepted.LFSDetected != 0 || accepted.LFSInspectionDone {
-		t.Fatalf("consented refresh=%+v", accepted)
-	}
-	if got := f.destinationRefs()["refs/heads/main"]; got != second {
-		t.Fatalf("destination main=%s want %s", got, second)
-	}
+	require(t, accepted.Status == state.ImportRunComplete && accepted.LFSDetected == 0 && !accepted.LFSInspectionDone,
+		"consented refresh=%+v", accepted)
+	got := f.destinationRefs()["refs/heads/main"]
+	require(t, got == second, "destination main=%s want %s", got, second)
 	status, err := f.service.Status(context.Background(), "project")
 	noErr(t, err)
-	if !status.Content.Incomplete || status.Content.InspectionComplete || status.Content.LFSDetected != 0 {
-		t.Fatalf("content status=%+v", status.Content)
-	}
+	require(t, status.Content.Incomplete && !status.Content.InspectionComplete && status.Content.LFSDetected == 0,
+		"content status=%+v", status.Content)
 }

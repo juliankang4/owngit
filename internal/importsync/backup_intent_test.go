@@ -48,35 +48,33 @@ func TestBackupCarriesSettledIntentOfAnInitialImportThatNeverPublished(t *testin
 			t.Errorf("cancel during prepared publication: %v", err)
 		}
 	}
-	if _, err := f.importProject(ImportInput{}); problemCode(err) != CodeCancelled {
-		t.Fatalf("cancelled initial import err=%v", err)
-	}
+	_, err := f.importProject(ImportInput{})
+	require(t, problemCode(err) == CodeCancelled, "cancelled initial import err=%v", err)
 	f.service.whileRefsPrepared = nil
 	// A restart reconciles what the stopped run left behind.
 	noErr(t, f.service.Reconcile(context.Background()))
-	if _, _, exists, err := f.manager.ExistingPath(context.Background(), "project"); err != nil || exists {
-		t.Fatalf("cancelled initial import created a repository exists=%v err=%v", exists, err)
-	}
+	_, _, exists, err := f.manager.ExistingPath(context.Background(), "project")
+	require(t, err == nil && !exists, "cancelled initial import created a repository exists=%v err=%v", exists, err)
 	intents := portableImportIntents(t, f.store, "project")
-	if len(intents) != 1 || (intents[0].Status != state.ImportIntentNotApplied && intents[0].Status != state.ImportIntentInvalidated) {
-		t.Fatalf("settled initial intents=%+v", intents)
-	}
+	require(t, len(intents) == 1 &&
+		(intents[0].Status == state.ImportIntentNotApplied || intents[0].Status == state.ImportIntentInvalidated),
+		"settled initial intents=%+v", intents)
 	settled := intents[0].Status
 
 	output := filepath.Join(f.root, "backup")
-	noErr(t, recovery.Create(context.Background(), f.store, f.manager, output), "backup refused a settled intent without a repository")
+	noErr(t, recovery.Create(context.Background(), f.store, f.manager, output),
+		"backup refused a settled intent without a repository")
 	restoredState := filepath.Join(f.root, "restored-state")
-	noErr(t, recovery.Restore(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath), "restore")
+	noErr(t, recovery.Restore(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath),
+		"restore")
 	restored, err := state.Open(context.Background(), restoredState)
 	noErr(t, err)
 	defer restored.Close()
 	after := portableImportIntents(t, restored, "project")
-	if len(after) != 1 || after[0].ID != intents[0].ID || after[0].Status != settled {
-		t.Fatalf("restored intents=%+v want %s %s", after, intents[0].ID, settled)
-	}
-	if count, err := restored.UnresolvedImportIntentCount(context.Background(), "project"); err != nil || count != 0 {
-		t.Fatalf("restored unresolved count=%d err=%v", count, err)
-	}
+	require(t, len(after) == 1 && after[0].ID == intents[0].ID && after[0].Status == settled,
+		"restored intents=%+v want %s %s", after, intents[0].ID, settled)
+	count, err := restored.UnresolvedImportIntentCount(context.Background(), "project")
+	require(t, err == nil && count == 0, "restored unresolved count=%d err=%v", count, err)
 }
 
 // portableImportIntentsAllowingFailure reads intents directly, because the
@@ -93,25 +91,23 @@ func TestBackupCarriesOwnerResolvedIntent(t *testing.T) {
 	completeFixtureSetup(t, f)
 	ctx := context.Background()
 	result, err := f.service.ResolveUnresolved(ctx, "project")
-	if err != nil || len(result.Resolved) != 1 {
-		t.Fatalf("resolve result=%+v err=%v", result, err)
-	}
+	require(t, err == nil && len(result.Resolved) == 1, "resolve result=%+v err=%v", result, err)
 	resolved, _, err := f.store.ImportIntent(ctx, result.Resolved[0])
 	noErr(t, err)
 	output := filepath.Join(f.root, "backup")
 	noErr(t, recovery.Create(ctx, f.store, f.manager, output), "backup with an owner-resolved intent")
 	restoredState := filepath.Join(f.root, "restored-state")
-	noErr(t, recovery.Restore(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath), "restore")
+	noErr(t, recovery.Restore(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath),
+		"restore")
 	restored, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restored.Close()
 	intent, exists, err := restored.ImportIntent(ctx, resolved.ID)
-	if err != nil || !exists || intent.Status != state.ImportIntentOwnerResolved || intent.ReceiptJSON != resolved.ReceiptJSON || intent.Reason != resolved.Reason {
-		t.Fatalf("restored intent=%+v exists=%v err=%v", intent, exists, err)
-	}
-	if count, err := restored.UnresolvedImportIntentCount(ctx, "project"); err != nil || count != 0 {
-		t.Fatalf("restored unresolved count=%d err=%v", count, err)
-	}
+	require(t, err == nil && exists && intent.Status == state.ImportIntentOwnerResolved &&
+		intent.ReceiptJSON == resolved.ReceiptJSON && intent.Reason == resolved.Reason,
+		"restored intent=%+v exists=%v err=%v", intent, exists, err)
+	count, err := restored.UnresolvedImportIntentCount(ctx, "project")
+	require(t, err == nil && count == 0, "restored unresolved count=%d err=%v", count, err)
 }
 
 // An import refresh whose ref update process could not be stopped may still
@@ -123,22 +119,15 @@ func TestBackupRefusesARepositoryWithAnUnstoppedRefWriter(t *testing.T) {
 	f.commit("one", "one\n")
 	f.mustImport(ImportInput{})
 	f.commit("two", "two\n")
-	if f.manager.UnsettledRefWriter("project") {
-		t.Fatal("a finished import left the repository marked")
-	}
+	require(t, !f.manager.UnsettledRefWriter("project"), "a finished import left the repository marked")
 	unreapedRefTransaction(f, nil)
-	if _, err := f.refresh(); !errors.Is(err, gitexec.ErrPreparedProcessNotReaped) {
-		t.Fatalf("unreaped refresh err=%v", err)
-	}
-	if !f.manager.UnsettledRefWriter("project") {
-		t.Fatal("the unreaped refresh did not mark the repository")
-	}
+	_, err := f.refresh()
+	require(t, errors.Is(err, gitexec.ErrPreparedProcessNotReaped), "unreaped refresh err=%v", err)
+	require(t, f.manager.UnsettledRefWriter("project"), "the unreaped refresh did not mark the repository")
 	output := filepath.Join(f.root, "backup")
-	_, err := recovery.CreateWhileServing(context.Background(), f.store, f.manager, output)
-	if err == nil || !strings.Contains(err.Error(), `repository "project"`) || !strings.Contains(err.Error(), "could not be stopped") {
-		t.Fatalf("backup err=%v", err)
-	}
-	if _, statErr := os.Lstat(output); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("a refused backup was published: %v", statErr)
-	}
+	_, err = recovery.CreateWhileServing(context.Background(), f.store, f.manager, output)
+	require(t, err != nil && strings.Contains(err.Error(), `repository "project"`) &&
+		strings.Contains(err.Error(), "could not be stopped"), "backup err=%v", err)
+	_, statErr := os.Lstat(output)
+	require(t, errors.Is(statErr, os.ErrNotExist), "a refused backup was published: %v", statErr)
 }

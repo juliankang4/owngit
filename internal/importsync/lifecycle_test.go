@@ -52,12 +52,10 @@ func TestAdmissionAndReconcileShareOneBarrier(t *testing.T) {
 		defer close(reconcileDone)
 		reconcileErr <- f.service.Reconcile(ctx)
 	}()
-	if ids := f.service.liveRunIDs(); len(ids) != 0 {
-		t.Fatalf("run registered while the barrier was held: %v", ids)
-	}
-	if _, exists, err := f.store.ActiveImportRun(ctx, "project"); err != nil || exists {
-		t.Fatalf("run row exists while the barrier is held: exists=%v err=%v", exists, err)
-	}
+	ids := f.service.liveRunIDs()
+	require(t, len(ids) == 0, "run registered while the barrier was held: %v", ids)
+	_, exists, err := f.store.ActiveImportRun(ctx, "project")
+	require(t, err == nil && !exists, "run row exists while the barrier is held: exists=%v err=%v", exists, err)
 	f.service.lifecycle.Unlock()
 
 	select {
@@ -68,13 +66,10 @@ func TestAdmissionAndReconcileShareOneBarrier(t *testing.T) {
 	<-reconcileDone
 	noErr(t, <-reconcileErr, "reconciliation")
 	active, exists, err := f.store.ActiveImportRun(ctx, "project")
-	if err != nil || !exists {
-		t.Fatalf("live run missing after reconciliation: exists=%v err=%v", exists, err)
-	}
+	require(t, err == nil && exists, "live run missing after reconciliation: exists=%v err=%v", exists, err)
 	staging := filepath.Join(f.service.stagingRootPath(), active.StagingName)
-	if _, err := os.Stat(staging); err != nil {
-		t.Fatalf("live staging was removed: %v", err)
-	}
+	_, err = os.Stat(staging)
+	noErr(t, err, "live staging was removed")
 
 	// Fetch is outside the barrier, so a second reconciliation does not wait.
 	second := make(chan error, 1)
@@ -86,21 +81,15 @@ func TestAdmissionAndReconcileShareOneBarrier(t *testing.T) {
 		t.Fatalf("refresh ended before the second reconciliation: %v", *refreshErr)
 	}
 	again, _, err := f.store.ImportRun(ctx, active.ID)
-	if err != nil || again.Status != active.Status || again.Status == state.ImportRunInterrupted {
-		t.Fatalf("live run status changed: %q then %q error=%v", active.Status, again.Status, err)
-	}
+	require(t, err == nil && again.Status == active.Status && again.Status != state.ImportRunInterrupted,
+		"live run status changed: %q then %q error=%v", active.Status, again.Status, err)
 
 	f.transport.gate <- struct{}{}
 	<-runDone
-	if *refreshErr != nil {
-		t.Fatalf("refresh: %v", *refreshErr)
-	}
-	if refreshRun.Status != state.ImportRunComplete {
-		t.Fatalf("refresh status=%q", refreshRun.Status)
-	}
-	if _, err := os.Stat(staging); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("finished staging survived: %v", err)
-	}
+	require(t, *refreshErr == nil, "refresh: %v", *refreshErr)
+	require(t, refreshRun.Status == state.ImportRunComplete, "refresh status=%q", refreshRun.Status)
+	_, err = os.Stat(staging)
+	require(t, errors.Is(err, os.ErrNotExist), "finished staging survived: %v", err)
 }
 
 // Releasing the lease while a run is still active would let another process
@@ -119,41 +108,29 @@ func TestCloseRefusesWhileRunActiveAndKeepsOwnership(t *testing.T) {
 		t.Fatalf("refresh ended before the transport: %v", *refreshErr)
 	}
 
-	if err := f.service.Close(); !errors.Is(err, ErrRuntimeActive) {
-		t.Fatalf("close while a run is active: err=%v", err)
-	}
-	if _, ok := f.service.preparedRuntime(); !ok {
-		t.Fatal("close released the lease while a run was active")
-	}
+	err := f.service.Close()
+	require(t, errors.Is(err, ErrRuntimeActive), "close while a run is active: err=%v", err)
+	_, ok := f.service.preparedRuntime()
+	require(t, ok, "close released the lease while a run was active")
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
-	if _, err := second.Prepare(ctx); !errors.Is(err, ErrRuntimeHeld) {
-		t.Fatalf("second owner while the first still runs: err=%v", err)
-	}
-	if ids := f.service.liveRunIDs(); len(ids) != 1 {
-		t.Fatalf("live runs=%v", ids)
-	}
-	if _, exists, err := f.store.ActiveImportRun(ctx, "project"); err != nil || !exists {
-		t.Fatalf("live run missing: exists=%v err=%v", exists, err)
-	}
+	_, err = second.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeHeld), "second owner while the first still runs: err=%v", err)
+	ids := f.service.liveRunIDs()
+	require(t, len(ids) == 1, "live runs=%v", ids)
+	_, exists, err := f.store.ActiveImportRun(ctx, "project")
+	require(t, err == nil && exists, "live run missing: exists=%v err=%v", exists, err)
 
 	f.transport.gate <- struct{}{}
 	<-runDone
-	if *refreshErr != nil {
-		t.Fatalf("refresh: %v", *refreshErr)
-	}
-	if refreshRun.Status != state.ImportRunComplete {
-		t.Fatalf("refresh status=%q", refreshRun.Status)
-	}
+	require(t, *refreshErr == nil, "refresh: %v", *refreshErr)
+	require(t, refreshRun.Status == state.ImportRunComplete, "refresh status=%q", refreshRun.Status)
 	noErr(t, f.service.Close(), "close after the run finished")
 	info, err := second.Prepare(ctx)
 	noErr(t, err, "second prepare after release")
-	if info.RootID != rootID {
-		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
-	}
-	if ids := second.liveRunIDs(); len(ids) != 0 {
-		t.Fatalf("second owner inherited live runs: %v", ids)
-	}
+	require(t, info.RootID == rootID, "root identity changed: %s then %s", rootID, info.RootID)
+	ids = second.liveRunIDs()
+	require(t, len(ids) == 0, "second owner inherited live runs: %v", ids)
 }
 
 // A run admitted while reconciliation sits between its liveness snapshot and
@@ -228,22 +205,15 @@ func TestReconcileSnapshotAndInterruptShareTheBarrier(t *testing.T) {
 		t.Fatalf("admission ended before the transport: %v", *runErr)
 	}
 	liveIDs := f.service.liveRunIDs()
-	if len(liveIDs) != 1 {
-		t.Fatalf("live runs=%v", liveIDs)
-	}
+	require(t, len(liveIDs) == 1, "live runs=%v", liveIDs)
 	live, exists, err := f.store.ImportRun(ctx, liveIDs[0])
-	if err != nil || !exists {
-		t.Fatalf("live run exists=%v err=%v", exists, err)
-	}
-	if live.Status == state.ImportRunInterrupted {
-		t.Fatalf("reconciliation interrupted a run admitted inside its window: %+v", live)
-	}
+	require(t, err == nil && exists, "live run exists=%v err=%v", exists, err)
+	require(t, live.Status != state.ImportRunInterrupted,
+		"reconciliation interrupted a run admitted inside its window: %+v", live)
 
 	f.transport.gate <- struct{}{}
 	<-runDone
-	if *runErr != nil {
-		t.Fatalf("refresh: %v", *runErr)
-	}
+	require(t, *runErr == nil, "refresh: %v", *runErr)
 }
 
 // A reconciliation keeps its starting generation. If marker loss is detected
@@ -276,24 +246,17 @@ func TestReconcileLatchesRestoredMarkerLossBeforeMutation(t *testing.T) {
 	reconcileErr := f.service.Reconcile(ctx)
 	noErr(t, stimulusErr, "induce operation marker mismatch")
 	noErr(t, restoreErr, "restore operation marker")
-	if !lossReported {
-		t.Fatal("operation did not report runtime ownership loss")
-	}
-	if !errors.Is(reconcileErr, ErrRuntimeLost) {
-		t.Fatalf("reconcile after restored marker: %v", reconcileErr)
-	}
+	require(t, lossReported, "operation did not report runtime ownership loss")
+	require(t, errors.Is(reconcileErr, ErrRuntimeLost), "reconcile after restored marker: %v", reconcileErr)
 	stored, exists, err := f.store.ImportRun(ctx, runID)
-	if err != nil || !exists || stored.Status != state.ImportRunPreparing {
-		t.Fatalf("lost reconciliation mutated the run: %+v exists=%v err=%v", stored, exists, err)
-	}
-	if _, err := f.service.Prepare(ctx); !errors.Is(err, ErrRuntimeLost) {
-		t.Fatalf("completed operation cleared ownership loss: %v", err)
-	}
+	require(t, err == nil && exists && stored.Status == state.ImportRunPreparing,
+		"lost reconciliation mutated the run: %+v exists=%v err=%v", stored, exists, err)
+	_, err = f.service.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeLost), "completed operation cleared ownership loss: %v", err)
 	noErr(t, f.service.Close(), "close lost idle runtime")
 	info, err := f.service.Prepare(ctx)
-	if err != nil || info.RootID != rootID {
-		t.Fatalf("explicit close did not recover restored root: info=%+v err=%v", info, err)
-	}
+	require(t, err == nil && info.RootID == rootID,
+		"explicit close did not recover restored root: info=%+v err=%v", info, err)
 }
 
 // Close must keep the lease while reconciliation still scans staging or
@@ -320,23 +283,19 @@ func TestCloseRefusesWhileReconciliationInFlight(t *testing.T) {
 	go func() { reconcileErr <- f.service.Reconcile(ctx) }()
 	<-clockReached
 
-	if err := f.service.Close(); !errors.Is(err, ErrRuntimeActive) {
-		t.Fatalf("close during reconciliation: err=%v", err)
-	}
+	err := f.service.Close()
+	require(t, errors.Is(err, ErrRuntimeActive), "close during reconciliation: err=%v", err)
 	second := &Service{Store: f.store, Repositories: f.manager}
 	defer func() { _ = second.Close() }()
-	if _, err := second.Prepare(ctx); !errors.Is(err, ErrRuntimeHeld) {
-		t.Fatalf("second owner during reconciliation: err=%v", err)
-	}
+	_, err = second.Prepare(ctx)
+	require(t, errors.Is(err, ErrRuntimeHeld), "second owner during reconciliation: err=%v", err)
 
 	close(continueReconcile)
 	noErr(t, <-reconcileErr, "reconciliation")
 	noErr(t, f.service.Close(), "close after reconciliation")
 	info, err := f.service.Prepare(ctx)
 	noErr(t, err, "prepare after close")
-	if info.RootID != rootID {
-		t.Fatalf("root identity changed: %s then %s", rootID, info.RootID)
-	}
+	require(t, info.RootID == rootID, "root identity changed: %s then %s", rootID, info.RootID)
 }
 
 // A row authorized by another run keeps its identity; the fresh directory is
@@ -354,16 +313,13 @@ func TestAcquireStagingRefusesForeignAuthorizedRow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.service.acquireStaging(ctx, runID, "project", f.now); err == nil {
-		t.Fatal("foreign authorized row was adopted")
-	}
-	if _, err := os.Stat(filepath.Join(f.service.stagingRootPath(), name)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("refused staging directory survived: %v", err)
-	}
+	_, err := f.service.acquireStaging(ctx, runID, "project", f.now)
+	require(t, err != nil, "foreign authorized row was adopted")
+	_, err = os.Stat(filepath.Join(f.service.stagingRootPath(), name))
+	require(t, errors.Is(err, os.ErrNotExist), "refused staging directory survived: %v", err)
 	row, exists, err := f.store.ImportStaging(ctx, name)
-	if err != nil || !exists || row.RunID != foreignRunID || row.RepositoryID != "other" || row.State != state.ImportStagingActive {
-		t.Fatalf("foreign row changed: %+v exists=%v err=%v", row, exists, err)
-	}
+	require(t, err == nil && exists && row.RunID == foreignRunID && row.RepositoryID == "other" &&
+		row.State == state.ImportStagingActive, "foreign row changed: %+v exists=%v err=%v", row, exists, err)
 }
 
 // Close must keep the lease while reconciliation is past its barrier and the
@@ -396,9 +352,7 @@ func TestCloseRefusesAfterReconciliationScan(t *testing.T) {
 		}
 	}()
 	// This callback is after the scan and outside the snapshot/update barrier.
-	if !f.service.lifecycle.TryLock() {
-		t.Fatal("post-scan boundary unexpectedly holds the lifecycle barrier")
-	}
+	require(t, f.service.lifecycle.TryLock(), "post-scan boundary unexpectedly holds the lifecycle barrier")
 	f.service.lifecycle.Unlock()
 	if err := f.service.Close(); !errors.Is(err, ErrRuntimeActive) {
 		t.Errorf("close during post-scan reconciliation: %v", err)
@@ -454,9 +408,7 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 	case <-reconcileStopped:
 		t.Fatalf("reconciliation ended before the Clock callback: %v", <-reconcileErr)
 	}
-	if !f.service.lifecycle.TryLock() {
-		t.Fatal("the lifecycle barrier is held while the clock callback runs")
-	}
+	require(t, f.service.lifecycle.TryLock(), "the lifecycle barrier is held while the clock callback runs")
 	f.service.lifecycle.Unlock()
 
 	started, done, _, runErr := f.gatedRefresh(t)
@@ -474,19 +426,15 @@ func TestClockCallbackRunsOutsideLifecycleBarrier(t *testing.T) {
 		t.Fatalf("admission ended before the transport: %v", *runErr)
 	}
 	ids := f.service.liveRunIDs()
-	if len(ids) != 1 {
-		t.Fatalf("expected one live run, got %d", len(ids))
-	}
+	require(t, len(ids) == 1, "expected one live run, got %d", len(ids))
 	before, exists, err := f.store.ImportRun(ctx, ids[0])
-	if err != nil || !exists || terminalImportRun(before.Status) {
-		t.Fatalf("precondition: live run status=%q exists=%v error=%v", before.Status, exists, err)
-	}
+	require(t, err == nil && exists && !terminalImportRun(before.Status),
+		"precondition: live run status=%q exists=%v error=%v", before.Status, exists, err)
 	release()
 	noErr(t, <-reconcileErr, "reconciliation")
 	after, exists, err := f.store.ImportRun(ctx, ids[0])
-	if err != nil || !exists || after.Status != before.Status {
-		t.Fatalf("reconciliation changed a live run: before=%q after=%q exists=%v error=%v", before.Status, after.Status, exists, err)
-	}
+	require(t, err == nil && exists && after.Status == before.Status,
+		"reconciliation changed a live run: before=%q after=%q exists=%v error=%v", before.Status, after.Status, exists, err)
 	f.transport.gate <- struct{}{}
 	<-done
 	noErr(t, *runErr, "refresh")
@@ -519,15 +467,11 @@ func TestAcquireStagingClaimsExistingInformationalRow(t *testing.T) {
 	dir, err := f.service.acquireStaging(ctx, runID, "project", f.now)
 	noErr(t, err, "acquire with an informational row")
 	row, exists, err := f.store.ImportStaging(ctx, name)
-	if err != nil || !exists {
-		t.Fatalf("claimed row exists=%v err=%v", exists, err)
-	}
-	if row.State != state.ImportStagingActive || row.Token != dir.token || row.RunID != runID || row.RepositoryID != "project" {
-		t.Fatalf("claim did not take ownership: %+v", row)
-	}
-	if _, err := f.service.proveStagingOwnership(ctx, dir); err != nil {
-		t.Fatalf("marker and row disagree after the claim: %v", err)
-	}
+	require(t, err == nil && exists, "claimed row exists=%v err=%v", exists, err)
+	require(t, row.State == state.ImportStagingActive && row.Token == dir.token && row.RunID == runID &&
+		row.RepositoryID == "project", "claim did not take ownership: %+v", row)
+	_, err = f.service.proveStagingOwnership(ctx, dir)
+	noErr(t, err, "marker and row disagree after the claim")
 }
 
 // The scan tolerates a row that appeared between its existence check and its
@@ -542,7 +486,5 @@ func TestUnknownStagingRegistrationToleratesConcurrentClaim(t *testing.T) {
 	second := state.ImportStaging{Name: name, Token: strings.Repeat("c", 32), State: state.ImportStagingUnknown, CreatedAt: f.now}
 	noErr(t, f.service.registerUnknownStaging(ctx, second), "second registration")
 	row, _, err := f.store.ImportStaging(ctx, name)
-	if err != nil || row.Token != first.Token {
-		t.Fatalf("informational row was replaced: %+v err=%v", row, err)
-	}
+	require(t, err == nil && row.Token == first.Token, "informational row was replaced: %+v err=%v", row, err)
 }

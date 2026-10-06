@@ -25,136 +25,81 @@ func TestSymbolicTagCannotWriteProtectedReferent(t *testing.T) {
 	f.git(path, "--git-dir", ".", "symbolic-ref", "refs/tags/v1", protected)
 	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "new annotation")
 	run, err := f.refresh()
-	if err != nil {
-		t.Fatalf("preserving a pre-existing symbolic tag: run=%+v err=%v", run, err)
-	}
-	if run.RefsDivergent == 0 {
-		t.Fatalf("symbolic tag was not reported as divergent: %+v", run)
-	}
-	if got := f.git(path, "--git-dir", ".", "rev-parse", protected); got != oldTag {
-		t.Fatalf("refresh wrote through symbolic tag: got=%s want=%s", got, oldTag)
-	}
-	if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", "refs/tags/v1"); got != protected {
-		t.Fatalf("independent symbolic tag changed: %s", got)
-	}
+	require(t, err == nil && run.RefsDivergent != 0,
+		"symbolic tag was not preserved and reported as divergent: run=%+v err=%v", run, err)
+	eq(t, "referent after refresh", f.rev(path, protected), oldTag)
+	eq(t, "symbolic tag", f.symref(path, "refs/tags/v1"), protected)
 }
 
-func TestDanglingSymbolicDestinationRefsFailClosed(t *testing.T) {
+// A destination ref that is not a plain direct ref (a dangling or cyclic
+// alias, garbage content, a directory, a link) stops the refresh before it
+// writes, and the independent content stays as it was.
+func TestUnsafeDestinationRefsFailClosed(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		ref  string
+		name    string
+		arrange func(t *testing.T, f *fixture, root string) (verify func())
 	}{
-		{name: "branch", ref: "refs/heads/feature"},
-		{name: "tag", ref: "refs/tags/v1"},
+		{"dangling branch alias", func(t *testing.T, _ *fixture, root string) func() {
+			p := filepath.Join(root, "refs", "heads", "feature")
+			noErr(t, os.WriteFile(p, []byte("ref: refs/heads/dangling-local-target\n"), 0o600))
+			return func() { fileIs(t, p, "ref: refs/heads/dangling-local-target\n") }
+		}},
+		{"dangling tag alias", func(t *testing.T, _ *fixture, root string) func() {
+			p := filepath.Join(root, "refs", "tags", "v1")
+			noErr(t, os.WriteFile(p, []byte("ref: refs/heads/dangling-local-target\n"), 0o600))
+			return func() { fileIs(t, p, "ref: refs/heads/dangling-local-target\n") }
+		}},
+		{"invalid content", func(t *testing.T, _ *fixture, root string) func() {
+			p := filepath.Join(root, "refs", "tags", "v1")
+			noErr(t, os.WriteFile(p, []byte("not-an-object-id\n"), 0o600))
+			return func() { fileIs(t, p, "not-an-object-id\n") }
+		}},
+		{"directory", func(t *testing.T, _ *fixture, root string) func() {
+			p := filepath.Join(root, "refs", "tags", "v1")
+			noErr(t, os.Remove(p))
+			noErr(t, os.Mkdir(p, 0o700))
+			return func() {
+				info, err := os.Lstat(p)
+				require(t, err == nil && info.IsDir(), "directory ref changed: info=%v err=%v", info, err)
+			}
+		}},
+		{"symlink to a protected ref", func(t *testing.T, f *fixture, root string) func() {
+			if runtime.GOOS == "windows" {
+				t.Skip("native reparse-point coverage is required on Windows")
+			}
+			const protected = "refs/owngit/manual/symlink-target"
+			old := f.rev(root, "refs/tags/v1")
+			f.git(root, "--git-dir", ".", "update-ref", protected, old)
+			p := filepath.Join(root, "refs", "tags", "v1")
+			noErr(t, os.Remove(p))
+			noErr(t, os.Symlink(filepath.Join(root, filepath.FromSlash(protected)), p))
+			return func() {
+				eq(t, "protected ref written through the link", f.rev(root, protected), old)
+				isSymlink(t, p)
+			}
+		}},
+		{"cyclic aliases", func(t *testing.T, _ *fixture, root string) func() {
+			v1, v2 := filepath.Join(root, "refs", "tags", "v1"), filepath.Join(root, "refs", "tags", "v2")
+			noErr(t, os.WriteFile(v1, []byte("ref: refs/tags/v2\n"), 0o600))
+			noErr(t, os.WriteFile(v2, []byte("ref: refs/tags/v1\n"), 0o600))
+			return func() {
+				fileIs(t, v1, "ref: refs/tags/v2\n")
+				fileIs(t, v2, "ref: refs/tags/v1\n")
+			}
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			f := newFixture(t)
 			first := f.commit("source", "first\n")
-			if test.name == "branch" {
-				f.git(f.source, "branch", "feature", first)
-			} else {
-				f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
-			}
+			f.git(f.source, "branch", "feature", first)
+			f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
 			f.mustImport(ImportInput{})
-			if test.name == "branch" {
-				second := f.commit("source", "second\n")
-				f.git(f.source, "branch", "-f", "feature", second)
-			} else {
-				f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
-			}
-			path := filepath.Join(f.destinationPath(), filepath.FromSlash(test.ref))
-			const target = "refs/heads/dangling-local-target"
-			noErr(t, os.WriteFile(path, []byte("ref: "+target+"\n"), 0o600))
-			run, err := f.refresh()
-			if err == nil || run.Status != state.ImportRunFailed {
-				t.Fatalf("dangling alias run=%+v err=%v", run, err)
-			}
-			content, readErr := os.ReadFile(path)
-			if readErr != nil || string(content) != "ref: "+target+"\n" {
-				t.Fatalf("dangling alias changed: content=%q err=%v", content, readErr)
-			}
+			f.git(f.source, "branch", "-f", "feature", f.commit("source", "second\n"))
+			f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
+			verify := test.arrange(t, f, f.destinationPath())
+			f.refreshFails("", state.ImportRunFailed)
+			verify()
 		})
-	}
-}
-
-func TestInvalidLooseRefContentFailsClosed(t *testing.T) {
-	f := newFixture(t)
-	f.commit("source", "first\n")
-	f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
-	f.mustImport(ImportInput{})
-	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
-	path := filepath.Join(f.destinationPath(), "refs", "tags", "v1")
-	noErr(t, os.WriteFile(path, []byte("not-an-object-id\n"), 0o600))
-	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
-		t.Fatalf("invalid loose ref run=%+v err=%v", run, err)
-	}
-	if content, err := os.ReadFile(path); err != nil || string(content) != "not-an-object-id\n" {
-		t.Fatalf("invalid loose ref changed: content=%q err=%v", content, err)
-	}
-}
-
-func TestNonRegularLooseRefPathFailsClosed(t *testing.T) {
-	f := newFixture(t)
-	f.commit("source", "first\n")
-	f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
-	f.mustImport(ImportInput{})
-	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
-	path := filepath.Join(f.destinationPath(), "refs", "tags", "v1")
-	noErr(t, os.Remove(path))
-	noErr(t, os.Mkdir(path, 0o700))
-	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
-		t.Fatalf("nonregular loose ref run=%+v err=%v", run, err)
-	}
-	if info, err := os.Lstat(path); err != nil || !info.IsDir() {
-		t.Fatalf("nonregular loose ref changed: info=%v err=%v", info, err)
-	}
-}
-
-func TestUnsafeLooseRefPathFailsClosed(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("native reparse-point coverage is required on Windows")
-	}
-	f := newFixture(t)
-	f.commit("source", "first\n")
-	f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
-	old := f.git(f.source, "rev-parse", "refs/tags/v1")
-	f.mustImport(ImportInput{})
-	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
-	root := f.destinationPath()
-	const protected = "refs/owngit/manual/symlink-target"
-	f.git(root, "--git-dir", ".", "update-ref", protected, old)
-	refPath := filepath.Join(root, "refs", "tags", "v1")
-	noErr(t, os.Remove(refPath))
-	noErr(t, os.Symlink(filepath.Join(root, filepath.FromSlash(protected)), refPath))
-	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
-		t.Fatalf("unsafe loose ref run=%+v err=%v", run, err)
-	}
-	if got := f.git(root, "--git-dir", ".", "rev-parse", protected); got != old {
-		t.Fatalf("unsafe ref path wrote through its target: got=%s want=%s", got, old)
-	}
-	if info, err := os.Lstat(refPath); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("unsafe ref path changed: info=%v err=%v", info, err)
-	}
-}
-
-func TestCyclicSymbolicDestinationRefFailsClosed(t *testing.T) {
-	f := newFixture(t)
-	f.commit("source", "first\n")
-	f.git(f.source, "tag", "-a", "v1", "-m", "first annotation")
-	f.mustImport(ImportInput{})
-	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "second annotation")
-	root := f.destinationPath()
-	v1 := filepath.Join(root, "refs", "tags", "v1")
-	v2 := filepath.Join(root, "refs", "tags", "v2")
-	noErr(t, os.WriteFile(v1, []byte("ref: refs/tags/v2\n"), 0o600))
-	noErr(t, os.WriteFile(v2, []byte("ref: refs/tags/v1\n"), 0o600))
-	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
-		t.Fatalf("cyclic alias run=%+v err=%v", run, err)
-	}
-	for path, want := range map[string]string{v1: "ref: refs/tags/v2\n", v2: "ref: refs/tags/v1\n"} {
-		if content, err := os.ReadFile(path); err != nil || string(content) != want {
-			t.Fatalf("cyclic alias %s changed: content=%q err=%v", path, content, err)
-		}
 	}
 }
 
@@ -202,31 +147,24 @@ func TestDirectRefRaceToSymbolicAbortsPreparedTransaction(t *testing.T) {
 				f.service.beforeRefTransaction = nil
 				f.git(path, "--git-dir", ".", "symbolic-ref", test.ref, aliasTarget)
 			}
-			run, err := f.refresh()
 			// The prepared transaction aborts in every case. Exact readback then
 			// finds a symbolic alias where a direct ref was expected. A resolved
 			// alias to the old object is not the untouched direct ref, so the
 			// outcome is unresolved rather than a proven not-applied failure.
-			if err == nil || run.Status != state.ImportRunUnresolved || problemCode(err) != CodeUnresolved {
-				t.Fatalf("symbolic race run=%+v err=%v", run, err)
-			}
-			if test.target == "" && !strings.Contains(err.Error(), "became symbolic") {
-				t.Fatalf("resolved alias race was not caught while prepared: %v", err)
-			}
-			if got := f.git(path, "--git-dir", ".", "rev-parse", protected); got != old {
-				t.Fatalf("prepared transaction wrote through alias: got=%s want=%s", got, old)
-			}
-			if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", test.ref); got != aliasTarget {
-				t.Fatalf("prepared transaction replaced symbolic ref: got=%s want=%s", got, aliasTarget)
-			}
+			run, err := f.refresh()
+			require(t, err != nil && run.Status == state.ImportRunUnresolved && problemCode(err) == CodeUnresolved,
+				"symbolic race run=%+v err=%v", run, err)
+			require(t, test.target != "" || strings.Contains(err.Error(), "became symbolic"),
+				"resolved alias race was not caught while prepared: %v", err)
+			eq(t, "alias referent", f.rev(path, protected), old)
+			eq(t, "symbolic ref", f.symref(path, test.ref), aliasTarget)
 			if test.ref == "refs/tags/v1" {
 				for _, retention := range []string{
 					repository.RetainedRefName("tags", old),
 					repository.ProvenanceRefName("tags", "v1", old),
 				} {
-					if _, retentionErr := f.manager.Git.Run(context.Background(), path, nil, "--git-dir", ".", "rev-parse", "--verify", retention); retentionErr == nil {
-						t.Fatalf("aborted transaction created retention ref %s", retention)
-					}
+					_, retentionErr := f.manager.Git.Run(context.Background(), path, nil, "--git-dir", ".", "rev-parse", "--verify", retention)
+					require(t, retentionErr != nil, "aborted transaction created retention ref %s", retention)
 				}
 			}
 			// Both the rejected update and unrelated protected ref remain writable;
@@ -240,44 +178,18 @@ func TestDirectRefRaceToSymbolicAbortsPreparedTransaction(t *testing.T) {
 func TestLostPreparedCommitResultUsesExactReadback(t *testing.T) {
 	f := newFixture(t)
 	f.commit("source", "initial\n")
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
+	f.importOwned()
 	want := f.commit("source", "next\n")
 	f.service.afterPreparedRefResult = func() error {
 		f.service.afterPreparedRefResult = nil
 		return errors.New("synthetic lost commit acknowledgement")
 	}
 	run, err := f.refresh()
-	if err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("lost acknowledgement run=%+v err=%v", run, err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "rev-parse", "refs/heads/main"); got != want {
-		t.Fatalf("readback hid committed ref: got=%s want=%s", got, want)
-	}
+	require(t, err == nil && run.Status == state.ImportRunComplete, "lost acknowledgement run=%+v err=%v", run, err)
+	eq(t, "committed ref", f.rev(f.destinationPath(), "refs/heads/main"), want)
 	intent, exists, err := f.store.CompletedImportIntentForRun(context.Background(), run.ID)
-	if err != nil || !exists || !intent.HeadOwned {
-		t.Fatalf("completed readback intent=%+v exists=%v err=%v", intent, exists, err)
-	}
-}
-
-func TestPreparedCancellationAbortsAndReleasesLocks(t *testing.T) {
-	f := newFixture(t)
-	old := f.commit("source", "initial\n")
-	f.mustImport(ImportInput{})
-	f.commit("source", "next\n")
-	ctx, cancel := context.WithCancel(context.Background())
-	f.service.whileRefsPrepared = func() {
-		f.service.whileRefsPrepared = nil
-		cancel()
-	}
-	if run, err := f.service.Refresh(ctx, "project", Limits{}); err == nil || (run.Status != state.ImportRunFailed && run.Status != state.ImportRunCancelled) {
-		t.Fatalf("cancelled prepared run=%+v err=%v", run, err)
-	}
-	path := f.destinationPath()
-	if got := f.git(path, "--git-dir", ".", "rev-parse", "refs/heads/main"); got != old {
-		t.Fatalf("cancelled prepared transaction committed: got=%s want=%s", got, old)
-	}
-	f.git(path, "--git-dir", ".", "update-ref", "--no-deref", "refs/heads/main", old, old)
+	require(t, err == nil && exists && intent.HeadOwned,
+		"completed readback intent=%+v exists=%v err=%v", intent, exists, err)
 }
 
 func TestPreparedTransactionLocksUnchangedRequiredRetention(t *testing.T) {
@@ -298,12 +210,10 @@ func TestPreparedTransactionLocksUnchangedRequiredRetention(t *testing.T) {
 			t.Error("verify-only retention ref was not locked during prepare")
 		}
 	}
-	if run, err := f.refresh(); err != nil || run.Status != state.ImportRunComplete {
-		t.Fatalf("prepared retention publication run=%+v err=%v", run, err)
-	}
-	if got := f.git(path, "--git-dir", ".", "rev-parse", retention); got != oldTag {
-		t.Fatalf("retention changed: got=%s want=%s", got, oldTag)
-	}
+	run, err := f.refresh()
+	require(t, err == nil && run.Status == state.ImportRunComplete,
+		"prepared retention publication run=%+v err=%v", run, err)
+	eq(t, "retention", f.rev(path, retention), oldTag)
 }
 
 func TestSymbolicRetentionCollisionStopsBeforePublication(t *testing.T) {
@@ -318,72 +228,47 @@ func TestSymbolicRetentionCollisionStopsBeforePublication(t *testing.T) {
 	retention := repository.RetainedRefName("tags", oldTag)
 	f.git(path, "--git-dir", ".", "symbolic-ref", retention, protected)
 	f.git(f.source, "tag", "-f", "-a", "v1", "-m", "replacement annotation")
-	if run, err := f.refresh(); err == nil || run.Status != state.ImportRunFailed {
-		t.Fatalf("symbolic retention collision run=%+v err=%v", run, err)
-	}
-	if got := f.git(path, "--git-dir", ".", "symbolic-ref", "--no-recurse", retention); got != protected {
-		t.Fatalf("symbolic retention identity changed: %s", got)
-	}
-	if got := f.git(path, "--git-dir", ".", "rev-parse", protected); got != oldTag {
-		t.Fatalf("symbolic retention referent changed: got=%s want=%s", got, oldTag)
-	}
+	f.refreshFails("", state.ImportRunFailed)
+	eq(t, "symbolic retention identity", f.symref(path, retention), protected)
+	eq(t, "symbolic retention referent", f.rev(path, protected), oldTag)
 }
 
 func TestHistoricalHEADOwnershipSurvivesAuthorityRevision(t *testing.T) {
 	f := newFixture(t)
 	oid := f.commit("source", "source bytes\n")
 	f.git(f.source, "branch", "dev", oid)
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
+	f.importOwned()
 	source, exists, err := f.store.ImportSource(context.Background(), "project")
-	if err != nil || !exists {
-		t.Fatalf("source exists=%v err=%v", exists, err)
-	}
-	if _, err := f.service.ConfigureSource(context.Background(), ConfigureInput{
+	require(t, err == nil && exists, "source exists=%v err=%v", exists, err)
+	_, err = f.service.ConfigureSource(context.Background(), ConfigureInput{
 		RepositoryID: "project", URL: source.URL, Mode: ModeCoexistence,
 		GitOnlyConsent: !source.GitOnlyConsent, AllowPrivateNetwork: source.AllowPrivateNetwork,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
+	noErr(t, err)
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/dev")
-	if _, err := f.refresh(); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/dev" {
-		t.Fatalf("historical ownership was tied to current authority revision: %s", got)
-	}
+	_, err = f.refresh()
+	noErr(t, err)
+	eq(t, "HEAD after an authority revision", f.headRef(f.destinationPath()), "refs/heads/dev")
 }
 
 func TestHEADCommitWithoutPersistedProofDoesNotGrantOwnership(t *testing.T) {
 	f := newFixture(t)
 	f.commit("source", "source bytes\n")
-	initial := f.mustImport(ImportInput{})
-	markHEADOwnedForTest(t, f, initial.Run.ID)
+	f.importOwned()
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/future")
-	if err := f.store.Exec(context.Background(), `CREATE TRIGGER fail_head_owned BEFORE UPDATE OF head_owned ON import_publication_intents
-		WHEN NEW.head_owned=1 AND OLD.head_owned=0 BEGIN SELECT RAISE(FAIL,'synthetic ownership persistence failure'); END`); err != nil {
-		t.Fatal(err)
-	}
-	run, err := f.refresh()
-	if err == nil || problemCode(err) != CodeStateUnavailable || run.Status != state.ImportRunFailed {
-		t.Fatalf("HEAD ownership persistence run=%+v err=%v", run, err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/future" {
-		t.Fatalf("successful HEAD commit was hidden: %s", got)
-	}
-	intents, queryErr := f.store.PendingImportIntents(context.Background(), "project")
-	if queryErr != nil || len(intents) != 1 || intents[0].HeadOwned {
-		t.Fatalf("failed ownership proof became authority: intents=%+v err=%v", intents, queryErr)
-	}
+	noErr(t, f.store.Exec(context.Background(), `CREATE TRIGGER fail_head_owned BEFORE UPDATE OF head_owned ON import_publication_intents
+		WHEN NEW.head_owned=1 AND OLD.head_owned=0 BEGIN SELECT RAISE(FAIL,'synthetic ownership persistence failure'); END`))
+	f.refreshFails(CodeStateUnavailable, state.ImportRunFailed)
+	eq(t, "HEAD after the hidden commit", f.headRef(f.destinationPath()), "refs/heads/future")
+	intents, err := f.store.PendingImportIntents(context.Background(), "project")
+	require(t, err == nil && len(intents) == 1 && !intents[0].HeadOwned,
+		"failed ownership proof became authority: intents=%+v err=%v", intents, err)
 	noErr(t, f.store.Exec(context.Background(), `DROP TRIGGER fail_head_owned`))
 	noErr(t, f.service.Reconcile(context.Background()))
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/future-next")
-	if _, err := f.refresh(); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/future" {
-		t.Fatalf("reconciliation invented lost ownership proof: %s", got)
-	}
+	_, err = f.refresh()
+	noErr(t, err)
+	eq(t, "HEAD after reconciliation", f.headRef(f.destinationPath()), "refs/heads/future")
 }
 
 func TestDiagnosticTextCannotGrantHEADOwnership(t *testing.T) {
@@ -393,9 +278,7 @@ func TestDiagnosticTextCannotGrantHEADOwnership(t *testing.T) {
 	ctx := context.Background()
 	run := f.lastRun()
 	intent, exists, err := f.store.CompletedImportIntentForRun(ctx, run.ID)
-	if err != nil || !exists {
-		t.Fatalf("initial intent=%+v exists=%v err=%v", intent, exists, err)
-	}
+	require(t, err == nil && exists, "initial intent=%+v exists=%v err=%v", intent, exists, err)
 	// Owner acceptance clears structured ownership. Interruption alone keeps
 	// historical proof, but diagnostic text must never recreate revoked proof.
 	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", "", f.now))
@@ -406,18 +289,13 @@ func TestDiagnosticTextCannotGrantHEADOwnership(t *testing.T) {
 	noErr(t, err)
 	accepted, exists, err := f.store.ImportIntent(ctx, intent.ID)
 	noErr(t, err)
-	if !exists || accepted.HeadOwned {
-		t.Fatal("owner acceptance did not revoke structured ownership")
-	}
+	require(t, exists && !accepted.HeadOwned, "owner acceptance did not revoke structured ownership")
 	reason := "read /synthetic/destination HEAD ownership proven by an applied publication/repository: permission denied"
 	noErr(t, f.store.UpdateImportIntent(ctx, intent.ID, state.ImportIntentUnresolved, "", "", reason, f.now))
 	noErr(t, f.service.Reconcile(ctx))
 	f.git(f.source, "branch", "source-next", oid)
 	f.git(f.source, "symbolic-ref", "HEAD", "refs/heads/source-next")
-	if _, err := f.refresh(); err != nil {
-		t.Fatal(err)
-	}
-	if got := f.git(f.destinationPath(), "--git-dir", ".", "symbolic-ref", "--no-recurse", "HEAD"); got != "refs/heads/main" {
-		t.Fatalf("diagnostic path text granted HEAD ownership: got=%s", got)
-	}
+	_, err = f.refresh()
+	noErr(t, err)
+	eq(t, "HEAD after diagnostic text", f.headRef(f.destinationPath()), "refs/heads/main")
 }

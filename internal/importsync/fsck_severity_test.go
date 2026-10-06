@@ -46,9 +46,8 @@ func TestImportAcceptsHistoricFormatFaults(t *testing.T) {
 
 	f.mustImport(ImportInput{})
 	refs := f.destinationRefs()
-	if refs["refs/heads/main"] != commit || refs["refs/heads/old"] != old || refs["refs/tags/v1"] != tag {
-		t.Fatalf("destination refs = %v, want main %s, old %s and v1 %s", refs, commit, old, tag)
-	}
+	require(t, refs["refs/heads/main"] == commit && refs["refs/heads/old"] == old && refs["refs/tags/v1"] == tag,
+		"destination refs = %v, want main %s, old %s and v1 %s", refs, commit, old, tag)
 	for _, oid := range []string{commit, tag, base, old, padded} {
 		f.git(f.destinationPath(), "--git-dir", ".", "cat-file", "-e", oid)
 	}
@@ -88,9 +87,8 @@ func TestImportStillRefusesOtherObjectFaults(t *testing.T) {
 			f.git(f.source, "update-ref", "refs/heads/main", commit)
 
 			result, err := f.importProject(ImportInput{})
-			if err == nil || problemCode(err) != CodeIndexFailed {
-				t.Fatalf("import result=%+v err=%v, want %s", result.Run, err, CodeIndexFailed)
-			}
+			require(t, err != nil && problemCode(err) == CodeIndexFailed,
+				"import result=%+v err=%v, want %s", result.Run, err, CodeIndexFailed)
 			assertImportDestinationAbsent(t, f)
 		})
 	}
@@ -123,9 +121,8 @@ func TestImportRefusesCommitDatesOwnGitCannotShow(t *testing.T) {
 			}
 
 			result, err := f.importProject(ImportInput{})
-			if err == nil || problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), bad) {
-				t.Fatalf("import result=%+v err=%v, want %s naming %s", result.Run, err, CodeVerifyFailed, bad)
-			}
+			require(t, err != nil && problemCode(err) == CodeVerifyFailed && strings.Contains(err.Error(), bad),
+				"import result=%+v err=%v, want %s naming %s", result.Run, err, CodeVerifyFailed, bad)
 			assertImportDestinationAbsent(t, f)
 		})
 	}
@@ -151,9 +148,8 @@ func TestCommitDateCheckCoversEveryBatch(t *testing.T) {
 	}
 	f.gitInput(f.source, []byte(stream.String()), "fast-import", "--quiet")
 	f.mustImport(ImportInput{})
-	if got, want := f.destinationRefs()["refs/heads/long"], f.git(f.source, "rev-parse", "refs/heads/long"); got != want {
-		t.Fatalf("long history = %s, want %s", got, want)
-	}
+	got, want := f.destinationRefs()["refs/heads/long"], f.git(f.source, "rev-parse", "refs/heads/long")
+	require(t, got == want, "long history = %s, want %s", got, want)
 
 	f.git(f.source, "commit", "--allow-empty", "-m", "two")
 	// Git packs recent commits first, so the newest bad commit lands in the
@@ -163,8 +159,8 @@ func TestCommitDateCheckCoversEveryBatch(t *testing.T) {
 		f.transport.packOverride = func() []byte {
 			return f.gitInput(f.source, []byte("refs/heads/main\nrefs/heads/long\n"+bad+"\n"), "pack-objects", "--revs", "--stdout")
 		}
-		if _, err := f.refresh(); err == nil || problemCode(err) != CodeVerifyFailed || !strings.Contains(err.Error(), bad) {
-			t.Fatalf("refresh with a bad commit at %s: err=%v, want %s naming %s", committed, err, CodeVerifyFailed, bad)
-		}
+		_, err := f.refresh()
+		require(t, err != nil && problemCode(err) == CodeVerifyFailed && strings.Contains(err.Error(), bad),
+			"refresh with a bad commit at %s: err=%v, want %s naming %s", committed, err, CodeVerifyFailed, bad)
 	}
 }

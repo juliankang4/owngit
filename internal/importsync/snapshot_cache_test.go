@@ -24,25 +24,20 @@ func TestImportPublicationRefreshesTheRefSnapshot(t *testing.T) {
 	ctx := context.Background()
 	imported, err := f.manager.RefSnapshot(ctx, "project")
 	noErr(t, err, "snapshot after import")
-	if imported.Summary.DefaultOID != f.sourceRefs()["refs/heads/main"] {
-		t.Fatalf("snapshot after import=%+v", imported.Summary)
-	}
+	require(t, imported.Summary.DefaultOID == f.sourceRefs()["refs/heads/main"],
+		"snapshot after import=%+v", imported.Summary)
 
 	second := f.commit("two", "two\n")
 	f.git(f.source, "tag", "v2")
 	run, err := f.refresh()
 	noErr(t, err, "refresh")
-	if run.Status != state.ImportRunComplete {
-		t.Fatalf("refresh run=%+v", run)
-	}
+	require(t, run.Status == state.ImportRunComplete, "refresh run=%+v", run)
 	refreshed, err := f.manager.RefSnapshot(ctx, "project")
 	noErr(t, err, "snapshot after refresh")
-	if refreshed.Summary.DefaultOID != second || refreshed.Head.OID != second || refreshed.Head.Subject != "two" {
-		t.Fatalf("snapshot after refresh=%+v head=%+v, want main at %s", refreshed.Summary, refreshed.Head, second)
-	}
-	if len(refreshed.Summary.Tags) != 1 || refreshed.Summary.Tags[0].Name != "v2" {
-		t.Fatalf("snapshot after refresh tags=%+v, want v2", refreshed.Summary.Tags)
-	}
+	require(t, refreshed.Summary.DefaultOID == second && refreshed.Head.OID == second && refreshed.Head.Subject == "two",
+		"snapshot after refresh=%+v head=%+v, want main at %s", refreshed.Summary, refreshed.Head, second)
+	require(t, len(refreshed.Summary.Tags) == 1 && refreshed.Summary.Tags[0].Name == "v2",
+		"snapshot after refresh tags=%+v, want v2", refreshed.Summary.Tags)
 }
 
 // A scheduled import that finds every ref unchanged writes no ref, so the
@@ -61,28 +56,24 @@ func TestScheduledImportWithoutRefChangesKeepsTheRefSnapshot(t *testing.T) {
 		t.Helper()
 		result, err := f.manager.RefSnapshot(ctx, "project")
 		noErr(t, err, "snapshot")
-		if got := reads(); got != wantReads {
-			t.Fatalf("snapshot for-each-ref runs=%d, want %d", got, wantReads)
-		}
+		got := reads()
+		require(t, got == wantReads, "snapshot for-each-ref runs=%d, want %d", got, wantReads)
 		return result
 	}
 	snapshot(1)
 	run, err := f.service.RefreshScheduled(ctx, "project", Limits{})
 	noErr(t, err, "unchanged scheduled import")
-	if run.Status != state.ImportRunComplete || run.RefsUnchanged == 0 || run.RefsCreated != 0 || run.RefsUpdated != 0 {
-		t.Fatalf("unchanged scheduled import=%+v", run)
-	}
+	require(t, run.Status == state.ImportRunComplete && run.RefsUnchanged != 0 && run.RefsCreated == 0 &&
+		run.RefsUpdated == 0, "unchanged scheduled import=%+v", run)
 	snapshot(1)
 
 	second := f.commit("two", "two\n")
 	run, err = f.service.RefreshScheduled(ctx, "project", Limits{})
 	noErr(t, err, "changed scheduled import")
-	if run.Status != state.ImportRunComplete || run.RefsUpdated != 1 {
-		t.Fatalf("changed scheduled import=%+v", run)
-	}
-	if changed := snapshot(2); changed.Summary.DefaultOID != second {
-		t.Fatalf("snapshot after a changed import=%+v, want main at %s", changed.Summary, second)
-	}
+	require(t, run.Status == state.ImportRunComplete && run.RefsUpdated == 1, "changed scheduled import=%+v", run)
+	changed := snapshot(2)
+	require(t, changed.Summary.DefaultOID == second,
+		"snapshot after a changed import=%+v, want main at %s", changed.Summary, second)
 }
 
 // countSnapshotReads makes the manager run Git through a wrapper that counts
@@ -159,12 +150,11 @@ func TestFailedImportPublicationInvalidatesTheRefSnapshot(t *testing.T) {
 	_, err = f.store.SaveRepositoryRefPolicy(ctx, "project", state.RepositoryRefPolicyChange{ProtectDefaultBranch: &protect})
 	noErr(t, err)
 	f.commit("source main", "source main\n")
-	if run, err := f.refresh(); problemCode(err) != CodeProtectedBranch || run.Status == state.ImportRunComplete {
-		t.Fatalf("refused refresh run=%+v err=%v", run, err)
-	}
+	run, err := f.refresh()
+	require(t, problemCode(err) == CodeProtectedBranch && run.Status != state.ImportRunComplete,
+		"refused refresh run=%+v err=%v", run, err)
 	_, err = f.manager.RefSnapshot(ctx, "project")
 	noErr(t, err, "snapshot after a failed publication")
-	if got := reads(); got != 2 {
-		t.Fatalf("snapshot for-each-ref runs=%d, want 2", got)
-	}
+	got := reads()
+	require(t, got == 2, "snapshot for-each-ref runs=%d, want 2", got)
 }

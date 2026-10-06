@@ -25,14 +25,9 @@ func TestParentPreparedValidationHandlesRefsBeyondArgvBudget(t *testing.T) {
 	}
 	command := exec.Command(f.gitPath, "update-ref", "--stdin")
 	command.Dir, command.Env, command.Stdin = f.source, f.env, strings.NewReader(input.String())
-	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("create valid source ref fixture: %v %s", err, output)
-	}
-	result, err := f.importProject(ImportInput{})
-	if err != nil {
-		t.Fatalf("valid %d-ref import exceeded process argument budget during publication: %v (result=%+v)", count+1, err, result)
-	}
-	if got := len(f.destinationRefs()); got != count+1 {
-		t.Fatalf("published refs=%d want=%d", got, count+1)
-	}
+	output, err := command.CombinedOutput()
+	require(t, err == nil, "create valid source ref fixture: %v %s", err, output)
+	_, err = f.importProject(ImportInput{})
+	noErr(t, err, "import of 5001 refs (process argument budget)")
+	eq(t, "published refs", len(f.destinationRefs()), count+1)
 }

@@ -29,11 +29,8 @@ func TestReplacedRuntimeDirectoryEndsOwnership(t *testing.T) {
 	noErr(t, os.Rename(filepath.Join(moved, filepath.Base(f.service.stagingRootPath())), f.service.stagingRootPath()))
 
 	root, prepared := f.service.preparedRuntime()
-	if !prepared {
-		t.Fatal("runtime was not prepared")
-	}
+	require(t, prepared, "runtime was not prepared")
 	owned, err := root.stillOwned()
-	if owned || err == nil || !strings.Contains(err.Error(), "import runtime directory was replaced") {
-		t.Fatalf("stillOwned after the runtime directory was replaced: owned=%v err=%v", owned, err)
-	}
+	require(t, !owned && err != nil && strings.Contains(err.Error(), "import runtime directory was replaced"),
+		"stillOwned after the runtime directory was replaced: owned=%v err=%v", owned, err)
 }

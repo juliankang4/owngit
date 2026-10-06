@@ -20,9 +20,8 @@ func TestImportRefreshesSnapshotDerivedReads(t *testing.T) {
 		noErr(t, err, "tips")
 		kept, err := f.manager.RetainedRefsAt(ctx, "project", snapshot)
 		noErr(t, err, "retained")
-		if snapshot.Summary.DefaultOID != want || tips["main"].OID != want || len(kept) != retained {
-			t.Fatalf("listing=%s tip=%s retained=%d, want %s and %d", snapshot.Summary.DefaultOID, tips["main"].OID, len(kept), want, retained)
-		}
+		require(t, snapshot.Summary.DefaultOID == want && tips["main"].OID == want && len(kept) == retained,
+			"listing=%s tip=%s retained=%d, want %s and %d", snapshot.Summary.DefaultOID, tips["main"].OID, len(kept), want, retained)
 	}
 	observe(old, 0)
 	noErr(t, os.WriteFile(filepath.Join(f.source, "file.txt"), []byte("rewritten\n"), 0o600), "rewrite")

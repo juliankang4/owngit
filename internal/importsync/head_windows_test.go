@@ -24,9 +24,8 @@ func makeJunction(t *testing.T, junction, target string) {
 	name, err := windows.UTF16PtrFromString(junction)
 	noErr(t, err)
 	attributes, err := windows.GetFileAttributes(name)
-	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-		t.Fatalf("junction attributes=%#x err=%v", attributes, err)
-	}
+	require(t, err == nil && attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0,
+		"junction attributes=%#x err=%v", attributes, err)
 }
 
 func TestWindowsJunctionRepositoryRootIsRefusedForHEADLock(t *testing.T) {
@@ -38,16 +37,11 @@ func TestWindowsJunctionRepositoryRootIsRefusedForHEADLock(t *testing.T) {
 	makeJunction(t, junction, path)
 	info, err := os.Lstat(junction)
 	noErr(t, err)
-	if directDirectory(junction, info) {
-		t.Fatal("junction root passed the direct directory guard")
-	}
+	require(t, !directDirectory(junction, info), "junction root passed the direct directory guard")
 	expected := headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}
-	if _, err := f.service.acquireHEADLock(context.Background(), &runState{limits: DefaultLimits()}, junction, expected); err == nil || problemCode(err) != CodeRepositoryMissing {
-		t.Fatalf("junction root accepted: %v", err)
-	}
-	if _, statErr := os.Lstat(filepath.Join(path, "HEAD.lock")); !os.IsNotExist(statErr) {
-		t.Fatalf("lock created through junction root: %v", statErr)
-	}
+	_, err = f.service.acquireHEADLock(context.Background(), &runState{limits: DefaultLimits()}, junction, expected)
+	require(t, err != nil && problemCode(err) == CodeRepositoryMissing, "junction root accepted: %v", err)
+	absent(t, filepath.Join(path, "HEAD.lock"))
 }
 
 func TestWindowsJunctionHEADLockPathIsPreserved(t *testing.T) {
@@ -60,19 +54,14 @@ func TestWindowsJunctionHEADLockPathIsPreserved(t *testing.T) {
 	lockPath := filepath.Join(path, "HEAD.lock")
 	makeJunction(t, lockPath, target)
 	expected := headIdentity{kind: headSymbolic, target: "refs/heads/main", oid: oid}
-	if _, err := f.service.acquireHEADLock(context.Background(), &runState{limits: DefaultLimits()}, path, expected); err == nil || problemCode(err) != CodeDestinationChanged {
-		t.Fatalf("junction HEAD.lock accepted: %v", err)
-	}
-	if err := removeOwnedHEADLock(lockPath, nil); err == nil {
-		t.Fatal("cleanup removed a junction it never created")
-	}
+	_, err := f.service.acquireHEADLock(context.Background(), &runState{limits: DefaultLimits()}, path, expected)
+	require(t, err != nil && problemCode(err) == CodeDestinationChanged, "junction HEAD.lock accepted: %v", err)
+	require(t, removeOwnedHEADLock(lockPath, nil) != nil, "cleanup removed a junction it never created")
 	name, err := windows.UTF16PtrFromString(lockPath)
 	noErr(t, err)
 	attributes, err := windows.GetFileAttributes(name)
-	if err != nil || attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-		t.Fatalf("junction lock changed: attributes=%#x err=%v", attributes, err)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("junction target removed: %v", err)
-	}
+	require(t, err == nil && attributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0,
+		"junction lock changed: attributes=%#x err=%v", attributes, err)
+	_, err = os.Stat(target)
+	require(t, err == nil, "junction target removed: %v", err)
 }

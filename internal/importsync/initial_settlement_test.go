@@ -42,14 +42,13 @@ func restartService(t *testing.T, f *fixture) {
 func reimportLeavesNothingUnresolved(t *testing.T, f *fixture) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := f.importProject(ImportInput{}); err != nil {
-		t.Fatalf("import of the same name again: %v", err)
-	}
+	_, err := f.importProject(ImportInput{})
+	noErr(t, err, "import of the same name again")
 	status, err := f.service.Status(ctx, "project")
-	if err != nil || status.UnresolvedIntents != 0 {
-		t.Fatalf("status after the new import unresolved=%d err=%v", status.UnresolvedIntents, err)
-	}
-	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport")), "backup after the new import")
+	require(t, err == nil && status.UnresolvedIntents == 0,
+		"status after the new import unresolved=%d err=%v", status.UnresolvedIntents, err)
+	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport")),
+		"backup after the new import")
 }
 
 // A cancel or a shutdown that stops an initial import after its ref
@@ -106,27 +105,25 @@ func TestStoppedInitialPublicationIsSettledByTheRun(t *testing.T) {
 			}
 			ctx := context.Background()
 			run := f.lastRun()
-			if run.Status != state.ImportRunCancelled {
-				t.Fatalf("stopped initial run=%s/%s", run.Status, run.ErrorClass)
-			}
+			require(t, run.Status == state.ImportRunCancelled, "stopped initial run=%s/%s", run.Status, run.ErrorClass)
 			intent := initialIntentOf(t, f, run.ID)
-			if intent.Status != state.ImportIntentInvalidated || !strings.Contains(intent.Reason, "nothing was published") {
-				t.Fatalf("stopped initial intent=%s reason=%q", intent.Status, intent.Reason)
-			}
-			if dirs := unpublishedInitialDirectories(t, f); len(dirs) != 0 {
-				t.Fatalf("unpublished directories left: %v", dirs)
-			}
-			if _, _, exists, err := f.manager.ExistingPath(ctx, "project"); err != nil || exists {
-				t.Fatalf("stopped initial import created a repository exists=%v err=%v", exists, err)
-			}
-			noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after the stopped initial import")
+			require(t, intent.Status == state.ImportIntentInvalidated &&
+				strings.Contains(intent.Reason, "nothing was published"),
+				"stopped initial intent=%s reason=%q", intent.Status, intent.Reason)
+			dirs := unpublishedInitialDirectories(t, f)
+			require(t, len(dirs) == 0, "unpublished directories left: %v", dirs)
+			_, _, exists, err := f.manager.ExistingPath(ctx, "project")
+			require(t, err == nil && !exists,
+				"stopped initial import created a repository exists=%v err=%v", exists, err)
+			noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")),
+				"backup after the stopped initial import")
 			if mode == "shutdown" {
 				waitForShutdownClose(t, f)
 			}
 			restartService(t, f)
-			if after := initialIntentOf(t, f, run.ID); after.Status != state.ImportIntentInvalidated {
-				t.Fatalf("restart changed the settled intent to %s", after.Status)
-			}
+			after := initialIntentOf(t, f, run.ID)
+			require(t, after.Status == state.ImportIntentInvalidated,
+				"restart changed the settled intent to %s", after.Status)
 			reimportLeavesNothingUnresolved(t, f)
 		})
 	}
@@ -173,13 +170,11 @@ func unreadableInitialPublication(t *testing.T, f *fixture) (state.ImportRun, st
 			t.Error(err)
 		}
 	}
-	if _, err := f.importProject(ImportInput{}); problemCode(err) != CodeUnresolved {
-		t.Fatalf("unreadable initial publication err=%v", err)
-	}
+	_, err := f.importProject(ImportInput{})
+	require(t, problemCode(err) == CodeUnresolved, "unreadable initial publication err=%v", err)
 	run := f.lastRun()
-	if intent := initialIntentOf(t, f, run.ID); intent.Status != state.ImportIntentUnresolved {
-		t.Fatalf("unreadable initial intent=%s", intent.Status)
-	}
+	intent := initialIntentOf(t, f, run.ID)
+	require(t, intent.Status == state.ImportIntentUnresolved, "unreadable initial intent=%s", intent.Status)
 	restore := func() {
 		noErr(t, os.Rename(hidden, filepath.Join(directory, "refs")))
 		noErr(t, os.Remove(filepath.Join(directory, "HEAD.lock")))
@@ -196,26 +191,23 @@ func TestReconciliationSettlesUnresolvedInitialPublicationItRemoves(t *testing.T
 	run, directory, restore := unreadableInitialPublication(t, f)
 	ctx := context.Background()
 	err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
-	if err == nil || !strings.Contains(err.Error(), `"project"`) || !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "Start and stop OwnGit once") {
-		t.Fatalf("backup of an unresolved intent without a repository err=%v", err)
-	}
-	if _, statErr := os.Stat(filepath.Join(f.root, "backup-refused")); !os.IsNotExist(statErr) {
-		t.Fatalf("refused backup left output: %v", statErr)
-	}
+	require(t, err != nil && strings.Contains(err.Error(), `"project"`) &&
+		strings.Contains(err.Error(), "unresolved") && strings.Contains(err.Error(), "Start and stop OwnGit once"),
+		"backup of an unresolved intent without a repository err=%v", err)
+	_, statErr := os.Stat(filepath.Join(f.root, "backup-refused"))
+	require(t, os.IsNotExist(statErr), "refused backup left output: %v", statErr)
 	restore()
 
 	restartService(t, f)
-	if _, statErr := os.Stat(directory); !os.IsNotExist(statErr) {
-		t.Fatalf("reconciliation kept the owned incomplete directory: %v", statErr)
-	}
+	_, statErr = os.Stat(directory)
+	require(t, os.IsNotExist(statErr), "reconciliation kept the owned incomplete directory: %v", statErr)
 	intent := initialIntentOf(t, f, run.ID)
-	if intent.Status != state.ImportIntentInvalidated || !strings.Contains(intent.Reason, "nothing was published") {
-		t.Fatalf("reconciled intent=%s reason=%q", intent.Status, intent.Reason)
-	}
+	require(t, intent.Status == state.ImportIntentInvalidated &&
+		strings.Contains(intent.Reason, "nothing was published"),
+		"reconciled intent=%s reason=%q", intent.Status, intent.Reason)
 	stored, _, err := f.store.ImportRun(ctx, run.ID)
-	if err != nil || stored.Status != state.ImportRunFailed || stored.ErrorClass != CodePublishFailed || !strings.Contains(stored.Message, "earlier outcome") {
-		t.Fatalf("reconciled run=%+v err=%v", stored, err)
-	}
+	require(t, err == nil && stored.Status == state.ImportRunFailed && stored.ErrorClass == CodePublishFailed &&
+		strings.Contains(stored.Message, "earlier outcome"), "reconciled run=%+v err=%v", stored, err)
 	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after reconciliation")
 	reimportLeavesNothingUnresolved(t, f)
 }
@@ -233,38 +225,32 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	// directory instead of removing it.
 	noErr(t, os.WriteFile(filepath.Join(directory, initialMarkerName), []byte("{}\n"), 0o600))
 	restartService(t, f)
-	if _, statErr := os.Stat(directory); statErr != nil {
-		t.Fatalf("an unproven directory was not preserved: %v", statErr)
-	}
-	if intent := initialIntentOf(t, f, run.ID); intent.Status != state.ImportIntentUnresolved {
-		t.Fatalf("intent of a preserved directory=%s", intent.Status)
-	}
+	_, statErr := os.Stat(directory)
+	require(t, statErr == nil, "an unproven directory was not preserved: %v", statErr)
+	intent := initialIntentOf(t, f, run.ID)
+	require(t, intent.Status == state.ImportIntentUnresolved, "intent of a preserved directory=%s", intent.Status)
 	err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
-	if err == nil || !strings.Contains(err.Error(), "move that directory out of the repository root") {
-		t.Fatalf("backup advice for a preserved directory err=%v", err)
-	}
+	require(t, err != nil && strings.Contains(err.Error(), "move that directory out of the repository root"),
+		"backup advice for a preserved directory err=%v", err)
 	// A newer import takes the name while the old directory is preserved.
-	if _, err := f.importProject(ImportInput{}); err != nil {
-		t.Fatalf("new import while the old directory is preserved: %v", err)
-	}
-	if _, err := f.service.ResolveUnresolved(ctx, "project"); problemCode(err) != CodeUnresolved || !strings.Contains(err.Error(), "move it out of the repository root") {
-		t.Fatalf("resolve of an earlier import's intent err=%v", err)
-	}
+	_, err = f.importProject(ImportInput{})
+	noErr(t, err, "new import while the old directory is preserved")
+	_, err = f.service.ResolveUnresolved(ctx, "project")
+	require(t, problemCode(err) == CodeUnresolved && strings.Contains(err.Error(), "move it out of the repository root"),
+		"resolve of an earlier import's intent err=%v", err)
 
 	moved := filepath.Join(f.root, "inspected")
 	noErr(t, os.Rename(directory, moved))
 	restartService(t, f)
-	if intent := initialIntentOf(t, f, run.ID); intent.Status != state.ImportIntentInvalidated {
-		t.Fatalf("intent after its directory was moved away=%s", intent.Status)
-	}
+	intent = initialIntentOf(t, f, run.ID)
+	require(t, intent.Status == state.ImportIntentInvalidated,
+		"intent after its directory was moved away=%s", intent.Status)
 	status, err := f.service.Status(ctx, "project")
-	if err != nil || status.UnresolvedIntents != 0 {
-		t.Fatalf("status after settlement unresolved=%d err=%v", status.UnresolvedIntents, err)
-	}
+	require(t, err == nil && status.UnresolvedIntents == 0,
+		"status after settlement unresolved=%d err=%v", status.UnresolvedIntents, err)
 	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after settlement")
-	if _, err := f.service.ResolveUnresolved(ctx, "project"); problemCode(err) != CodeNothingToResolve {
-		t.Fatalf("resolve after settlement err=%v", errors.Unwrap(err))
-	}
+	_, err = f.service.ResolveUnresolved(ctx, "project")
+	require(t, problemCode(err) == CodeNothingToResolve, "resolve after settlement err=%v", errors.Unwrap(err))
 }
 
 // unreapedRefTransaction makes the next ref transaction report, after it
@@ -316,50 +302,42 @@ func TestUnreapedRefTransactionLeavesInitialPublicationToReconciliation(t *testi
 			}
 			_, err := f.importProject(ImportInput{})
 			f.service.beforeInitialRename = nil
-			if problemCode(err) != CodeUnresolved || !errors.Is(err, gitexec.ErrPreparedProcessNotReaped) {
-				t.Fatalf("unreaped ref transaction err=%v", err)
-			}
+			require(t, problemCode(err) == CodeUnresolved && errors.Is(err, gitexec.ErrPreparedProcessNotReaped),
+				"unreaped ref transaction err=%v", err)
 			run := f.lastRun()
-			if run.Status != state.ImportRunUnresolved {
-				t.Fatalf("unreaped run=%s/%s", run.Status, run.ErrorClass)
-			}
+			require(t, run.Status == state.ImportRunUnresolved, "unreaped run=%s/%s", run.Status, run.ErrorClass)
 			intent := initialIntentOf(t, f, run.ID)
-			if intent.Status != state.ImportIntentUnresolved || !strings.Contains(intent.Reason, "could not be reaped") {
-				t.Fatalf("unreaped intent=%s reason=%q, want unresolved", intent.Status, intent.Reason)
-			}
-			if dirs := unpublishedInitialDirectories(t, f); len(dirs) != 1 {
-				t.Fatalf("unpublished directories=%v, want the kept directory", dirs)
-			}
-			if _, _, exists, err := f.manager.ExistingPath(ctx, "project"); err != nil || exists {
-				t.Fatalf("unreaped run created a repository exists=%v err=%v", exists, err)
-			}
+			require(t, intent.Status == state.ImportIntentUnresolved &&
+				strings.Contains(intent.Reason, "could not be reaped"),
+				"unreaped intent=%s reason=%q, want unresolved", intent.Status, intent.Reason)
+			dirs := unpublishedInitialDirectories(t, f)
+			require(t, len(dirs) == 1, "unpublished directories=%v, want the kept directory", dirs)
+			_, _, exists, err := f.manager.ExistingPath(ctx, "project")
+			require(t, err == nil && !exists, "unreaped run created a repository exists=%v err=%v", exists, err)
 
 			restartService(t, f)
 			_, _, published, err := f.manager.ExistingPath(ctx, "project")
-			if err != nil || published != (outcome == "matching") {
-				t.Fatalf("after reconciliation repository exists=%v err=%v", published, err)
-			}
-			if dirs := unpublishedInitialDirectories(t, f); len(dirs) != 0 {
-				t.Fatalf("unpublished directories after reconciliation: %v", dirs)
-			}
+			require(t, err == nil && published == (outcome == "matching"),
+				"after reconciliation repository exists=%v err=%v", published, err)
+			dirs = unpublishedInitialDirectories(t, f)
+			require(t, len(dirs) == 0, "unpublished directories after reconciliation: %v", dirs)
 			status, err := f.service.Status(ctx, "project")
-			if err != nil || status.UnresolvedIntents != 0 {
-				t.Fatalf("status after reconciliation unresolved=%d err=%v", status.UnresolvedIntents, err)
-			}
+			require(t, err == nil && status.UnresolvedIntents == 0,
+				"status after reconciliation unresolved=%d err=%v", status.UnresolvedIntents, err)
 			settledRun := f.lastRun()
 			settledIntent, exists, err := f.store.ImportIntent(ctx, intent.ID)
-			if err != nil || !exists || settledRun.ID != run.ID {
-				t.Fatalf("settled run=%s intent exists=%v err=%v", settledRun.ID, exists, err)
-			}
+			require(t, err == nil && exists && settledRun.ID == run.ID,
+				"settled run=%s intent exists=%v err=%v", settledRun.ID, exists, err)
 			if outcome == "matching" {
-				if settledRun.Status != state.ImportRunComplete || settledIntent.Status != state.ImportIntentComplete {
-					t.Fatalf("reconciled matching run=%s intent=%s, want complete", settledRun.Status, settledIntent.Status)
-				}
+				require(t, settledRun.Status == state.ImportRunComplete &&
+					settledIntent.Status == state.ImportIntentComplete,
+					"reconciled matching run=%s intent=%s, want complete", settledRun.Status, settledIntent.Status)
 				return
 			}
-			if settledRun.Status != state.ImportRunFailed || settledIntent.Status != state.ImportIntentInvalidated || !strings.Contains(settledIntent.Reason, "nothing was published") {
-				t.Fatalf("reconciled %s run=%s/%s intent=%s reason=%q", outcome, settledRun.Status, settledRun.ErrorClass, settledIntent.Status, settledIntent.Reason)
-			}
+			require(t, settledRun.Status == state.ImportRunFailed &&
+				settledIntent.Status == state.ImportIntentInvalidated &&
+				strings.Contains(settledIntent.Reason, "nothing was published"),
+				"reconciled %s run=%s/%s intent=%s reason=%q", outcome, settledRun.Status, settledRun.ErrorClass, settledIntent.Status, settledIntent.Reason)
 		})
 	}
 }
@@ -378,24 +356,19 @@ func TestUnreapedRefreshTransactionStaysResolvable(t *testing.T) {
 	repositoryPath := f.destinationPath()
 	unreapedRefTransaction(f, func() { f.git(repositoryPath, "update-ref", "refs/heads/main", middle) })
 	run, err := f.refresh()
-	if problemCode(err) != CodeUnresolved || !errors.Is(err, gitexec.ErrPreparedProcessNotReaped) {
-		t.Fatalf("unreaped refresh err=%v", err)
-	}
+	require(t, problemCode(err) == CodeUnresolved && errors.Is(err, gitexec.ErrPreparedProcessNotReaped),
+		"unreaped refresh err=%v", err)
 	intent := initialIntentOf(t, f, run.ID)
-	if run.Status != state.ImportRunUnresolved || intent.Status != state.ImportIntentUnresolved {
-		t.Fatalf("unreaped refresh run=%s intent=%s", run.Status, intent.Status)
-	}
-	if got := strings.TrimSpace(f.git(repositoryPath, "rev-parse", "refs/heads/main")); got != middle {
-		t.Fatalf("destination main=%s, want it left at %s", got, middle)
-	}
-	if err := f.service.Reconcile(ctx); problemCode(err) != CodeUnresolved {
-		t.Fatalf("reconcile of a partial refresh err=%v", err)
-	}
+	require(t, run.Status == state.ImportRunUnresolved && intent.Status == state.ImportIntentUnresolved,
+		"unreaped refresh run=%s intent=%s", run.Status, intent.Status)
+	got := strings.TrimSpace(f.git(repositoryPath, "rev-parse", "refs/heads/main"))
+	require(t, got == middle, "destination main=%s, want it left at %s", got, middle)
+	err = f.service.Reconcile(ctx)
+	require(t, problemCode(err) == CodeUnresolved, "reconcile of a partial refresh err=%v", err)
 	result, err := f.service.ResolveUnresolved(ctx, "project")
-	if err != nil || len(result.Resolved) != 1 || result.Resolved[0] != intent.ID {
-		t.Fatalf("resolve result=%+v err=%v", result, err)
-	}
-	if status, err := f.service.Status(ctx, "project"); err != nil || status.UnresolvedIntents != 0 {
-		t.Fatalf("status after resolve unresolved=%d err=%v", status.UnresolvedIntents, err)
-	}
+	require(t, err == nil && len(result.Resolved) == 1 && result.Resolved[0] == intent.ID,
+		"resolve result=%+v err=%v", result, err)
+	status, err := f.service.Status(ctx, "project")
+	require(t, err == nil && status.UnresolvedIntents == 0,
+		"status after resolve unresolved=%d err=%v", status.UnresolvedIntents, err)
 }
