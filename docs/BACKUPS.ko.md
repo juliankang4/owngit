@@ -199,8 +199,11 @@ owngit restore \
 
 1. OwnGit을 멈춥니다. `owngit service stop`을 실행하거나 `owngit serve`를 Ctrl+C로 끝냅니다.
 2. 지금 쓰는 상태 디렉터리와 저장소 폴더 이름 뒤에 `.before-restore`를 붙입니다.
-3. 화면에 나온 `owngit restore ... --verify` 명령을 실행합니다. 원래 폴더 이름이 복원 대상입니다. Linux 시스템 서비스라면 명령이 `sudo -u owngit`으로 시작합니다. Windows에서는 PowerShell에서 실행하세요.
-4. OwnGit을 다시 시작합니다. `owngit service start`를 실행하거나 전에 시작하던 방법을 쓰세요.
+3. 화면에 나온 `owngit restore ... --verify` 명령을 실행합니다. 원래 폴더 이름이 복원 대상입니다. Linux에서 root로 설치해 OwnGit이 `owngit` 계정으로 실행된다면 명령이 `runuser -u owngit --`로 시작하니 root로 실행하세요. Windows에서는 PowerShell에서 실행하세요.
+4. 리버스 프록시 뒤에서 쓴다면 `owngit network set --state-dir <상태 폴더> --base-url <공개 주소> --trusted-proxy <프록시 주소>`로 공개 주소와 프록시를 다시 저장합니다. 복원 단계 화면에 상태 폴더를 채운 이 명령이 나오니 복사해서 쓰세요. `--state-dir`을 붙여야 복원한 상태 폴더에 저장됩니다. 복원하면 네트워크 설정이 초기화되고, 저장한 설정은 다음에 시작할 때부터 적용됩니다.
+5. OwnGit을 다시 시작합니다. `owngit service start`를 실행하거나 전에 시작하던 방법을 쓰세요.
+
+명령은 `owngit`을 직접 입력하지 말고 화면에서 복사하세요. 압축 파일이나 소스로 설치해서 PATH의 `owngit`이 지금 OwnGit을 실행하는 프로그램이 아니면, 화면은 프로그램을 전체 경로로 적습니다.
 
 `.before-restore` 폴더는 직접 지울 때까지 남습니다. 복원한 서버를 확인할 때까지는 지우지 마세요.
 
@@ -230,6 +233,8 @@ OwnGit은 올린 백업을 검사합니다. 통과하면 화면에 위의 복원
 - 백업 예약. 예전 백업은 목록에서 사라지지만 폴더는 남아 있고 `owngit restore`로 여전히 복원할 수 있습니다.
 - 업그레이드 전 백업이 다시 켜집니다. 꺼 두었었다면 다시 끄세요.
 - 서버 전체 설정이 기본값으로 돌아갑니다. 설정 화면이나 `owngit settings set`으로 다시 정하세요.
+
+리버스 프록시 뒤에서는 네트워크 설정을 다시 저장하기 전까지 OwnGit이 프록시를 거친 화면과 Git 요청을 거부합니다. 응답은 421(`unrecognized host`)이나 403(`origin does not match this server`)입니다. `owngit network set --state-dir <상태 폴더> --base-url <공개 주소> --trusted-proxy <프록시 주소>`로 공개 주소와 프록시를 저장한 뒤 OwnGit을 다시 시작하세요. OwnGit이 기본 위치가 아닌 상태 폴더를 쓴다면 `--state-dir`을 꼭 붙이세요.
 
 ### 백업이나 복원이 중간에 멈추면
 

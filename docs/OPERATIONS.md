@@ -544,6 +544,7 @@ owngit network set --base-url https://git.example.internal --trusted-proxy 127.0
 - Keep OwnGit on `127.0.0.1:7654` when the proxy runs on this computer, so other devices cannot bypass it.
 - The proxy must pass the original Host, set `X-Forwarded-Proto`, and add the client's address to `X-Forwarded-For`. It must not pass a client's own `X-Forwarded-For` through.
 - The proxy's body size and timeouts must be at least OwnGit's [Git transfer limits](#git-transfer-limits) (4 GB and 30 minutes by default).
+- A backup does not hold these settings. After a restore, save them again before you start OwnGit, as in [Backups](BACKUPS.md#after-a-restore). Until then, requests through the proxy are refused with 421 or 403.
 
 Caddy does all of this with no extra settings. `tls internal` signs the certificate with Caddy's local authority, which each device must trust:
 

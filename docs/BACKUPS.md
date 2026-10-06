@@ -199,8 +199,11 @@ owngit restore \
 
 1. Stop OwnGit: `owngit service stop`, or end `owngit serve` with Ctrl+C.
 2. Rename the current state directory and repository folder by adding `.before-restore` to their names.
-3. Run the `owngit restore ... --verify` command shown, with the original folder names as targets. For a Linux system service it starts with `sudo -u owngit`. On Windows, run it in PowerShell.
-4. Start OwnGit again: `owngit service start`, or the way you started it before.
+3. Run the `owngit restore ... --verify` command shown, with the original folder names as targets. On a Linux root install, where OwnGit runs as the `owngit` account, it starts with `runuser -u owngit --`: run it as root. On Windows, run it in PowerShell.
+4. Behind a reverse proxy, save the public address and the proxy again with `owngit network set --state-dir <state folder> --base-url <public address> --trusted-proxy <proxy address>`. The restore steps show this command with the state folder filled in, ready to copy. `--state-dir` saves the settings in the restored state folder. A restore resets network settings, and saved settings apply at the next start.
+5. Start OwnGit again: `owngit service start`, or the way you started it before.
+
+Copy the commands from the page instead of typing `owngit`. When the `owngit` on PATH is not the program that runs OwnGit, for example after an archive or source install, the page names the program by its full path.
 
 The `.before-restore` folders stay until you delete them. Keep them until you have checked the restored server.
 
@@ -230,6 +233,8 @@ Start OwnGit with the restored folders before you use them in any other way. The
 - The backup schedule. Earlier backups are no longer listed, but their folders stay and `owngit restore` still reads them.
 - Backup before an upgrade is turned on again. Turn it off again if you had turned it off.
 - Server-wide settings are back at their defaults. Set them again under Settings or with `owngit settings set`.
+
+Behind a reverse proxy, OwnGit refuses pages and Git through the proxy until its network settings are saved again. The answer is 421 (`unrecognized host`) or 403 (`origin does not match this server`). Save the public address and the proxy with `owngit network set --state-dir <state folder> --base-url <public address> --trusted-proxy <proxy address>`, then restart OwnGit. Give `--state-dir` when OwnGit uses a state folder other than its default.
 
 ### If a backup or restore stops
 

@@ -544,6 +544,7 @@ owngit network set --base-url https://git.example.internal --trusted-proxy 127.0
 - 프록시가 이 컴퓨터에 있으면 OwnGit을 `127.0.0.1:7654`에 두어 다른 기기가 프록시를 거치지 않고 들어오지 못하게 하세요.
 - 프록시는 원래 Host를 넘기고 `X-Forwarded-Proto`를 설정해야 합니다. 클라이언트 주소도 `X-Forwarded-For`에 추가해야 합니다. 클라이언트가 보낸 `X-Forwarded-For`를 그대로 넘기면 안 됩니다.
 - 프록시의 본문 크기 한도와 시간 제한은 OwnGit의 [Git 전송 제한](#git-전송-제한)(기본 4 GB, 30분) 이상이어야 합니다.
+- 이 설정은 백업에 들어가지 않습니다. 복원한 뒤에는 OwnGit을 시작하기 전에 [백업 문서](BACKUPS.ko.md#복원한-뒤에-할-일)처럼 다시 저장하세요. 그 전까지 프록시를 거친 요청은 421이나 403으로 거부됩니다.
 
 Caddy는 따로 설정하지 않아도 위 조건을 모두 지킵니다. `tls internal`은 Caddy의 로컬 인증 기관으로 인증서에 서명하므로, 각 기기가 그 인증 기관을 신뢰해야 합니다.
 
