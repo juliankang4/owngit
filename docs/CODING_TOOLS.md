@@ -294,6 +294,13 @@ flags. Each check gets 10 minutes and 64 KiB of output by default
 records nothing. For how long the server keeps raw logs, see
 [Raw check logs](AUTOMATIC_CHECKS.md#raw-check-logs).
 
+Git gets 30 seconds to read the committed `.owngit/checks.json`. In a partial
+clone (a clone made with `--filter`), the file may still be on the remote. If
+the read does not finish in time, the run stops with `revision_unavailable`
+and records nothing. To download the file, run
+`git show REVISION:.owngit/checks.json` once, where `REVISION` is the commit
+the message names. Then run the check again.
+
 ### Reading the result
 
 `check run` exits with:
@@ -336,6 +343,32 @@ commit tested.
 Thirty seconds leaves wide room for a typical checkout whose files are already
 cached. A very large checkout with a cold file cache, above all on Windows, can
 still exceed it and record `unknown`.
+
+### Processes a check starts
+
+When a check ends, the client stops the programs the check started. This
+happens when the check finishes, runs out of time or is stopped. The Git reads
+the client runs itself are handled the same way. Start long-lived programs,
+such as a database or a development server, outside OwnGit.
+
+How much is stopped depends on the system:
+
+- Linux: every process the check started, including one that started a new
+  session (for example with `setsid`).
+- macOS and other Unix systems: the check's process group only. A process
+  that started a new session keeps running.
+- Windows: every process the check started, because a job object holds them.
+
+On Linux the client puts a mark in the check's environment and reads it back
+from `/proc` to find a process that left the process group. It cannot find a
+process that cleared its environment or runs as another account. It also
+cannot find a process marked not dumpable, because the kernel hides that
+process's environment. If `/proc` cannot be read, the client stops only the
+process group and logs one line.
+
+If OwnGit cannot end every process a check started within its cleanup time
+(about 5 seconds on Linux), the check ends as `error`. Its `cleanup_error`
+field says that processes are still running.
 
 ### Correction rounds
 

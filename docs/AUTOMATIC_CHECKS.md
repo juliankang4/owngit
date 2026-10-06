@@ -115,6 +115,11 @@ Host mode is not a sandbox. A check can reach everything the OwnGit account
 can, including OwnGit's own data and secrets. Use it only for repositories
 whose every committer you trust.
 
+In host mode and with `owngit runner`, OwnGit stops the programs a check
+started when the check ends. On Linux this includes programs that started a
+new session. Start long-lived services outside OwnGit. For details by system,
+see [Processes a check starts](CODING_TOOLS.md#processes-a-check-starts).
+
 ### Container
 
 Container mode needs a Docker daemon on this computer that runs Linux

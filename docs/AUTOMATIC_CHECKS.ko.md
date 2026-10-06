@@ -89,6 +89,8 @@ owngit check-policy set --enable \
 
 호스트 방식은 샌드박스 없이 실행됩니다. 체크는 OwnGit 계정이 접근할 수 있는 모든 것, 곧 OwnGit의 데이터와 비밀 값에도 접근할 수 있습니다. 커밋하는 사람을 모두 믿는 저장소에만 쓰세요.
 
+호스트 방식과 `owngit runner`에서는 체크가 끝나면 그 체크가 시작한 프로그램을 OwnGit이 멈춥니다. Linux에서는 새 세션을 시작한 프로그램도 멈춥니다. 오래 실행해야 하는 서비스는 OwnGit 밖에서 시작하세요. 운영체제별 동작은 [체크가 시작한 프로세스](CODING_TOOLS.ko.md#체크가-시작한-프로세스)를 보세요.
+
 ### 컨테이너
 
 컨테이너 방식에는 이 컴퓨터에서 Linux 컨테이너를 실행하는 Docker 데몬이 필요합니다. 원격 Docker는 거부하므로 OwnGit에 `DOCKER_HOST`, `DOCKER_CONTEXT`, Docker TLS 변수를 설정하지 마세요. `"executor": "container"`로 정하고 `execution`에 이미지와 자원 한도를 넣습니다.
