@@ -182,6 +182,7 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 	}
 	host.printf("Installing OwnGit as a %s.\n", plan.Mode.Describe())
 	gui := host.env.GraphicalSession
+	plan.Notice = func(format string, args ...any) { host.printf("Note: "+format+"\n", args...) }
 	if _, err := service.InstallLaunchAgent(context.Background(), serviceRunner, plan, agent, host.uid, gui); err != nil {
 		return err
 	}

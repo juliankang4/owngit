@@ -353,7 +353,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	openOwner := flags.Bool("open", false, "open OwnGit for the owner after startup")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
 	headless := flags.Bool("headless", false, "whether this computer has no screen for setup (default: detected); before setup, with no saved listen address, a computer without a screen listens on every address and saves that")
-	logFile := flags.String("log-file", "", "also write the server log to this `file`, or only there with --service (kept below 10 MB, with one older file beside it)")
+	logFile := flags.String("log-file", "", "also write the server log to this `file`, or only there with --service (kept near 10 MB, and below 20 MB while it cannot rotate, with one older file beside it)")
 	asService := flags.Bool("service", false, "run as the background service that \"owngit service install\" or Homebrew set up: with --log-file the log goes only to that file (on Windows also: without administrator rights, and \"owngit service stop\" stops it in order)")
 	noUpdateCheck := flags.Bool("no-update-check", false, "never contact GitHub to check for a newer OwnGit release, whatever the Settings page says")
 	var allowedHosts, trustedProxies stringList
@@ -380,13 +380,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		// through the standard logger, which reports the write, rather than
 		// logf, which does not.
 		defer func() {
-			if serveErr != nil {
-				if err := log.Output(1, "error: "+serveErr.Error()); err != nil {
-					serveErr = fmt.Errorf("%w (the log file did not record this: %v)", serveErr, err)
-				} else {
-					serveErr = loggedError{serveErr}
-				}
-			}
+			serveErr = recordEndingError(serveErr)
 			closeLog()
 		}()
 		if status := os.Getenv(restartedVariable); *asService && status != "" {
@@ -1650,4 +1644,17 @@ func (values *stringList) String() string { return strings.Join(*values, ",") }
 func (values *stringList) Set(value string) error {
 	*values = append(*values, value)
 	return nil
+}
+
+// recordEndingError writes the error that ends serve to the log. When the log
+// takes it, the error is marked as logged; otherwise it says why the log did
+// not record it, and main writes it.
+func recordEndingError(serveErr error) error {
+	if serveErr == nil {
+		return nil
+	}
+	if err := log.Output(2, "error: "+serveErr.Error()); err != nil {
+		return fmt.Errorf("%w (the log file did not record this: %v)", serveErr, err)
+	}
+	return loggedError{serveErr}
 }

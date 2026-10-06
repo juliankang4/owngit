@@ -37,6 +37,9 @@ type Plan struct {
 	// (see AppBundleID), or "". The LaunchAgent names it so that macOS lists
 	// the service under the app's name.
 	App string
+	// Notice, when set, receives what the LaunchAgent install could not make
+	// private but did not stop for.
+	Notice func(format string, args ...any)
 }
 
 // UnitPath is where the plan's unit lives. userConfigDir is the installing

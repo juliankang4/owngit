@@ -547,6 +547,42 @@ func protectLaunchAgentLog(file *os.File) error {
 	return state.ExplainPrivateFileError(file.Name(), err)
 }
 
+// preparePrivateLogs makes the log folder and the files in it private to the
+// owner. launchd does not create the folder, and the job does not start
+// without it; it would create the output file readable by everyone, so the
+// files are created first. On macOS the folder loses an access list before
+// any file is made, and the output file is replaced by a private copy unless
+// OwnGit published it, so a handle opened earlier reaches its end (the server log
+// files are replaced when serve starts). A step that does not work is not
+// fatal: it goes to notice, and the files are protected in place. The agent
+// must not be loaded.
+func preparePrivateLogs(logs []string, notice func(string, ...any)) error {
+	folder, err := state.OpenLogFolder(filepath.Dir(logs[0]), true)
+	if err != nil {
+		return err
+	}
+	defer folder.Close()
+	for _, note := range folder.Notes {
+		notice("%s", note)
+	}
+	for _, log := range logs {
+		name := filepath.Base(log)
+		if log == logs[1] {
+			if err := folder.Replace(name); err != nil {
+				notice("%s could not be replaced by a private copy: %v", log, err)
+			}
+		}
+		logFile, err := state.OpenLogFile(folder.Dir, name)
+		if err == nil {
+			err = errors.Join(protectLaunchAgentLog(logFile), logFile.Close())
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // InstallLaunchAgent writes the agent of plan and (re)loads it, which also
 // starts it. An agent that is already loaded is unloaded first, so launchd
 // reads the new file and runs the new binary. gui says whether the user is
@@ -577,30 +613,21 @@ func InstallLaunchAgent(ctx context.Context, run Runner, plan Plan, agent string
 			for _, log := range logs {
 				_ = os.Remove(log)
 			}
+			_ = os.Remove(filepath.Join(filepath.Dir(logs[0]), state.LogStagingName))
 			_ = os.Remove(filepath.Dir(logs[0]))
 		}
 	}
-	// launchd does not create the log folder, and the job does not start
-	// without it. It would create the output file readable by everyone, so
-	// both files are created first, or made, for the owner only.
-	if err := os.MkdirAll(filepath.Dir(logs[0]), 0o700); err != nil {
-		return "", err
-	}
-	for _, log := range logs {
-		logFile, err := os.OpenFile(log, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
-		if err == nil {
-			err = errors.Join(protectLaunchAgentLog(logFile), logFile.Close())
-		}
-		if err != nil {
-			undo()
-			return "", err
-		}
-	}
-	if err := writeAgentFile(path, agent); err != nil {
+	// The agent is unloaded before its log files are replaced, so launchd
+	// holds none of them.
+	if err := unloadFrom(ctx, run, uid, loadedIn); err != nil {
 		undo()
 		return "", err
 	}
-	if err := unloadFrom(ctx, run, uid, loadedIn); err != nil {
+	if err := preparePrivateLogs(logs, plan.notice()); err != nil {
+		undo()
+		return "", err
+	}
+	if err := writeAgentFile(path, agent); err != nil {
 		undo()
 		return "", err
 	}
@@ -708,4 +735,12 @@ func unloadFrom(ctx context.Context, run Runner, uid int, domain string) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return nil
+}
+
+// notice returns the plan's Notice, or a function that drops what it is told.
+func (plan Plan) notice() func(string, ...any) {
+	if plan.Notice == nil {
+		return func(string, ...any) {}
+	}
+	return plan.Notice
 }

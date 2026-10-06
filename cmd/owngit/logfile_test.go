@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"owngit/internal/state"
-	"owngit/internal/version"
 )
 
 func TestRotatingLogFileKeepsOneOlderFile(t *testing.T) {
@@ -54,15 +53,7 @@ func TestRotatingLogFileKeepsOneOlderFile(t *testing.T) {
 }
 
 func TestMacOSLogFilesRemoveInheritedReadACL(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("macOS access lists")
-	}
-	folder := filepath.Join(t.TempDir(), "logs")
-	noErr(t, os.Mkdir(folder, 0o700))
-	output, err := exec.Command("chmod", "+a", "nobody allow read,list,file_inherit,directory_inherit", folder).CombinedOutput()
-	if err != nil {
-		t.Fatalf("add inherited access entry: %v: %s", err, output)
-	}
+	folder := macLogFolder(t)
 	path := filepath.Join(folder, "owngit.log")
 	for _, name := range []string{path, path + ".1"} {
 		noErr(t, os.WriteFile(name, []byte("earlier output\n"), 0o600))
@@ -252,10 +243,10 @@ func TestOlderLogThatStaysReadableIsLogged(t *testing.T) {
 	}
 }
 
-// A log opens only when it takes its first lines. A full log whose rotation
-// fails, because the older file cannot be replaced, is not opened; serve
-// reports why and what the lines said to its own output.
-func TestLogThatCannotTakeItsFirstLinesIsNotOpened(t *testing.T) {
+// A full log whose rotation fails, because the older file cannot be
+// replaced, is still opened: it takes its lines past the limit and says why
+// the rotation and the older file's protection failed.
+func TestLogThatCannotRotateStillTakesItsFirstLines(t *testing.T) {
 	chflags, err := exec.LookPath("chflags")
 	if err != nil {
 		t.Skip("no chflags to make a file unchangeable without privileges")
@@ -270,23 +261,16 @@ func TestLogThatCannotTakeItsFirstLinesIsNotOpened(t *testing.T) {
 		t.Skipf("chflags uchg: %v: %s", err, output)
 	}
 	t.Cleanup(func() { _ = exec.Command(chflags, "nouchg", logFile+".1").Run() })
-	var output bytes.Buffer
 	previous := log.Writer()
-	log.SetOutput(&output)
 	defer log.SetOutput(previous)
-	err = serveWithContext(context.Background(), []string{
-		"--state-dir", filepath.Join(dir, "state"), "--listen", "not an address", "--no-open", "--service", "--log-file", logFile,
-	}, func(string) error { return nil }, log.Printf)
-	if err == nil {
-		t.Fatal("serve started with a log that cannot be written")
-	}
-	if log.Writer() != &output {
-		t.Fatal("the logger was left writing to the unopened log")
-	}
-	reportError(io.Discard, err)
-	for _, want := range []string{"error: write the log file: rotate the log file: ", "the older log file could not be made private: chmod " + logFile + ".1: "} {
-		if strings.Count(output.String(), want) != 1 {
-			t.Fatalf("output lacks %q: %q", want, output.String())
+	closeLog, err := writeLogTo(logFile, true)
+	noErr(t, err)
+	closeLog()
+	written, err := os.ReadFile(logFile)
+	noErr(t, err)
+	for _, want := range []string{"rotate the log file: ", "the older log file could not be made private: chmod " + logFile + ".1: "} {
+		if strings.Count(string(written[logFileLimit:]), want) != 1 {
+			t.Fatalf("log lacks %q after its first %d bytes", want, logFileLimit)
 		}
 	}
 }
@@ -317,41 +301,6 @@ func TestLogFileIsWrittenWhenTheEarlierOutputFails(t *testing.T) {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("standard error is closed") }
-
-// When the log that serve opened cannot take the error that ends serve, the
-// error is not lost: main writes it to its own output, with why the log
-// could not.
-func TestServiceErrorTheLogCouldNotTakeIsWrittenToItsOutput(t *testing.T) {
-	dir := resolvedTempDir(t)
-	logFile := filepath.Join(dir, "owngit.log")
-	// A log with room for its first lines only, whose rotation then fails:
-	// the older file's place is taken by a folder, which the second line
-	// reports. Each line starts with the date and time.
-	firstLines := 0
-	for _, line := range []string{
-		fmt.Sprintf("OwnGit %s (process %d) starts, logging to this file", version.Version, os.Getpid()),
-		"the older log file could not be made private: " + logFile + ".1 is not a regular file",
-	} {
-		firstLines += len("2006/01/02 15:04:05 ") + len(line) + 1
-	}
-	noErr(t, os.WriteFile(logFile, nil, 0o600))
-	noErr(t, os.Truncate(logFile, logFileLimit-int64(firstLines)))
-	noErr(t, os.Mkdir(logFile+".1", 0o700))
-	var output bytes.Buffer
-	previous := log.Writer()
-	log.SetOutput(&output)
-	defer log.SetOutput(previous)
-	err := serveWithContext(context.Background(), []string{
-		"--state-dir", filepath.Join(dir, "state"), "--listen", "not an address", "--no-open", "--service", "--log-file", logFile,
-	}, func(string) error { return nil }, log.Printf)
-	if err == nil {
-		t.Fatal("serve with an invalid address succeeded")
-	}
-	if code := reportError(io.Discard, err); code != 1 || strings.Count(output.String(), "error: ") != 1 ||
-		!strings.Contains(output.String(), "not an address") || !strings.Contains(output.String(), "the log file did not record this: rotate the log file") {
-		t.Fatalf("exit %d, output %q", code, output.String())
-	}
-}
 
 // An error the log confirmed is written nowhere else, even one that a
 // command would otherwise print as JSON.
