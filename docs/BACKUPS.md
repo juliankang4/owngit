@@ -23,6 +23,8 @@ Both stay when you uninstall OwnGit. Delete them yourself when you no longer nee
 
 - It can be on another disk or on a mounted SMB or NFS share.
 - Only one OwnGit server may use it at a time. A running server holds `.owngit-serve.lock` in the folder, and a second server on the same folder refuses to start.
+- If the folder is empty when OwnGit starts, such as the mount point of a share that is not mounted yet, OwnGit takes that lock only when it first writes a repository there.
+- If the folder or its `.owngit-serve.lock` is replaced or removed while OwnGit runs, for example when a share is mounted, unmounted or mounted again over it, OwnGit stops writing there. Pushes, pull request changes, imports, restores, maintenance, and creating, deleting or renaming a repository or changing its default branch are refused with "The repository folder changed after OwnGit started" (HTTP 409 for Git and the API). Imports are recorded as [unresolved](REPOSITORIES.md#unresolved-publications). Browsing and clones keep working. Make sure the intended folder is in place, then restart OwnGit; it does not take the folder back on its own.
 - OwnGit leaves files it did not create alone. It may create these folders there:
 
 | Folder | What it is |
