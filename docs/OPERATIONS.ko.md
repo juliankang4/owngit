@@ -129,6 +129,20 @@ Homebrew로 설치했다면 서비스는 Homebrew가 맡습니다(`brew services
 
 macOS와 Windows, Homebrew에서는 서비스 로그가 파일로 남습니다. 파일이 10 MB 가까이 되면 오래된 부분은 이름 끝에 `.1`을 붙인 파일로 옮겨집니다. 옮기지 못하면 OwnGit은 지금 파일에 계속 쓰고 실패를 한 번 알린 뒤 1분마다 다시 시도합니다. 파일이 한도의 두 배가 되면 그 뒤의 줄은 서비스의 표준 오류로 갑니다(macOS에서는 `owngit.stderr.log`). Windows 서비스는 표준 오류를 버리므로 이 줄은 남지 않습니다. 실패를 알리는 안내에도 그렇게 적힙니다.
 
+### 중지에 걸리는 시간
+
+멈추라는 요청을 받으면 OwnGit은 하던 일을 최대 45초 동안 마무리합니다. 하는 일이 없으면 바로 멈춥니다. 진행 중인 Git 전송은 그 45초 가운데 40초쯤까지 이어질 수 있습니다. 가져오기, 체크, 백업, 유지 관리도 같은 45초 안에 끝나야 합니다.
+
+그때까지 끝나지 않은 일이 있으면 OwnGit은 그 일을 로그에 남기고 자기가 시작한 Git, 체크, 보조 프로세스를 끝낸 뒤 종료합니다. 무엇이 중단됐는지는 다음에 시작할 때 기록합니다.
+
+서비스 관리자는 OwnGit을 강제로 끝내기 전에 70초를 기다립니다.
+
+- systemd 유닛(`TimeoutStopSec`)
+- macOS LaunchAgent(`ExitTimeOut`). 다만 launchd는 최대 60초까지만 기다립니다. 45초는 그 안에 들어갑니다.
+- Windows 작업. `owngit service` 명령이 작업을 멈추거나 다시 시작할 때 기다립니다.
+- Homebrew 서비스(포뮬러의 `stop_timeout`)
+- Compose 파일(`stop_grace_period`). Compose 없이 Docker를 쓴다면 [컨테이너로 실행하기](#컨테이너로-실행하기)를 보세요.
+
 ### Linux
 
 | 명령을 실행한 곳 | 서비스 | 상태 디렉터리 | 로그 |
@@ -245,6 +259,8 @@ OwnGit은 고치는 명령을 스스로 실행하지 않습니다. root 권한�
 
 내 계정의 서비스가 이 프로그램을 실행하고 있으면 출력된 명령이 `owngit service install`까지 실행해 새 버전으로 서비스를 다시 시작합니다. 서비스가 없으면 OwnGit을 직접 다시 시작하세요.
 
+Homebrew에서 `brew upgrade owngit` 뒤에 `owngit service install`을 실행하면, 상태를 먼저 열지 않고 바로 `brew services restart owngit`에 재시작을 맡깁니다. 새 버전은 상태를 백업한 뒤 업그레이드합니다.
+
 `owngit uninstall`은 서비스를 제거하고 프로그램을 지우는 방법을 알려 줍니다. 상태 디렉터리와 저장소는 지우지 않고 위치만 알려 줍니다. 나중에 다시 설치하면 그대로 이어서 씁니다.
 
 ### 백업 버전
@@ -280,6 +296,8 @@ docker compose restart
 - `docker compose down`은 볼륨을 남깁니다. **`docker compose down -v`는 볼륨을 저장소와 함께 지웁니다.**
 - `/data`는 로컬 디스크에 두세요. 저장소를 네트워크 공유에 두려면 공유를 `/repositories` 같은 다른 경로에 마운트하고 설정에서 그 폴더를 고르세요.
 - 다른 계정으로 실행하려면 `compose.yaml`에 `user:`를 지정하세요. 그리고 그 계정이 소유하고 다른 계정은 바꿀 수 없는 폴더를 마운트하세요.
+
+`compose.yaml`은 OwnGit이 멈출 때까지 70초를 기다립니다([중지에 걸리는 시간](#중지에-걸리는-시간)). Docker의 기본 대기 시간은 10초라서 Git 전송 중에 멈추면 OwnGit이 정리를 마치기 전에 끝나 버릴 수 있습니다. Compose 없이 이미지를 실행한다면 `docker run --stop-timeout 70`으로 시작하거나 `docker stop -t 70`으로 멈추세요.
 
 업데이트는 `compose.yaml`이 있는 폴더에서 `docker compose pull && docker compose up -d`를 실행합니다. OwnGit은 상태를 업그레이드하기 전에 백업합니다. 먼저 직접 백업하려면 다음과 같이 합니다.
 

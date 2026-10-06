@@ -129,6 +129,20 @@ A Homebrew install hands the service to Homebrew (`brew services restart owngit`
 
 On macOS and Windows, and with Homebrew, the service log is a file. When it nears 10 MB, its older part moves to a file with `.1` added to the name. If that move fails, OwnGit keeps writing to the current file, reports the failure once, and tries again every minute. When the file reaches twice the limit, later lines go to the service's standard error (`owngit.stderr.log` on macOS). A Windows service discards its standard error, so there those lines are lost, and the failure notice says so.
 
+### How long a stop takes
+
+When OwnGit is asked to stop, it gives its running work up to 45 seconds to finish. An idle server stops right away. Git transfers in progress can continue for up to about 40 of those seconds, and imports, checks, backups and maintenance must end within the same 45 seconds.
+
+If work is still running at that deadline, OwnGit logs what it is, ends the Git, check and helper processes it started, and exits. The next start records what was interrupted.
+
+Each service manager waits 70 seconds before it forces OwnGit to stop:
+
+- the systemd unit (`TimeoutStopSec`);
+- the macOS LaunchAgent (`ExitTimeOut`), although launchd waits at most 60 seconds, which still leaves room after the 45 seconds;
+- the Windows task, when an `owngit service` command stops or restarts it;
+- the Homebrew service (`stop_timeout` in the formula);
+- the Compose file (`stop_grace_period`). For Docker without Compose, see [Run in a container](#run-in-a-container).
+
 ### Linux
 
 | Where you run the command | Service | State directory | Log |
@@ -245,6 +259,8 @@ For a container, see [Run in a container](#run-in-a-container).
 
 When a service under your account runs this program, the printed command also runs `owngit service install`, which restarts the service with the new version. Without a service, restart OwnGit yourself.
 
+With Homebrew, `owngit service install` after `brew upgrade owngit` hands the restart to `brew services restart owngit` without opening the state first, so the new version backs up the state and then upgrades it.
+
 `owngit uninstall` removes the service and prints how to remove the program. It never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
 
 ### Backup versions
@@ -280,6 +296,8 @@ Everything lives in the volume `owngit-data` at `/data`: the state, the reposito
 - `docker compose down` keeps the volume. **`docker compose down -v` deletes it, with every repository.**
 - Keep `/data` on a local disk. To keep repositories on a network share, mount it at another path, such as `/repositories`, and choose that folder in setup.
 - To run as another account, set `user:` in `compose.yaml` and mount a folder that account owns and no other account can change.
+
+`compose.yaml` gives OwnGit 70 seconds to stop ([How long a stop takes](#how-long-a-stop-takes)). Docker's default is 10 seconds, which can end OwnGit in the middle of a stop while a Git transfer runs. If you start the image without Compose, use `docker run --stop-timeout 70`, or stop it with `docker stop -t 70`.
 
 To update, run `docker compose pull && docker compose up -d` in the folder of `compose.yaml`. OwnGit backs up its state before it upgrades it. To make your own backup first:
 
