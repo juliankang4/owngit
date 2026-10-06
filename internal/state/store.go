@@ -2232,6 +2232,11 @@ func (s *Store) replaceAdminPassword(ctx context.Context, encoded string, verifi
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE kind='admin'`); err != nil {
 		return err
 	}
+	// A new password also ends every administrator pause, so the owner who
+	// runs reset-admin on this computer can sign in at once.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM login_attempts WHERE kind='admin'`); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -2412,11 +2417,28 @@ func (s *Store) AttemptBlocked(ctx context.Context, kind, address string, now ti
 	return max(time.Unix(blocked, 0).Sub(now), 0), nil
 }
 
+// ServerWideAddress is the address under which the server-wide count of
+// administrator failures is kept. No client address can equal it.
+const ServerWideAddress = "*"
+
+// ServerWideFailureFactor times the per-address attempts is the number of
+// wrong administrator passwords from any addresses, within the login window,
+// that pauses every administrator password check for the login pause. It
+// keeps guessing bounded when a client can choose its address.
+const ServerWideFailureFactor = 5
+
+// AdminServerBlocked returns how much longer every administrator password
+// check is refused at now because of the server-wide cap, or zero.
+func (s *Store) AdminServerBlocked(ctx context.Context, now time.Time) (time.Duration, error) {
+	return s.AttemptBlocked(ctx, "admin", ServerWideAddress, now)
+}
+
 // RecordFailedAttempt counts one wrong password from address under the
 // login limits saved now (LoginLimits), read in the same transaction: the
 // failure that reaches their attempts within their window pauses the
-// address for their pause. Limits that cannot be read fail with their
-// PolicyError, and nothing is counted.
+// address for their pause. A wrong administrator password also counts
+// toward the server-wide cap (ServerWideFailureFactor). Limits that cannot
+// be read fail with their PolicyError, and nothing is counted.
 func (s *Store) RecordFailedAttempt(ctx context.Context, kind, address string, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -2427,9 +2449,23 @@ func (s *Store) RecordFailedAttempt(ctx context.Context, kind, address string, n
 	if err != nil {
 		return err
 	}
+	if err := countFailure(ctx, tx, kind, address, now, limits, limits.Attempts); err != nil {
+		return err
+	}
+	if kind == "admin" {
+		if err := countFailure(ctx, tx, kind, ServerWideAddress, now, limits, limits.Attempts*ServerWideFailureFactor); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// countFailure adds one failure to the row of kind and address and starts
+// the pause when the row reaches attempts failures within the window.
+func countFailure(ctx context.Context, tx *sql.Tx, kind, address string, now time.Time, limits LoginLimits, attempts int) error {
 	var started, blocked int64
 	var failures int
-	err = tx.QueryRowContext(ctx, `SELECT window_started_at,attempts,blocked_until FROM login_attempts WHERE kind=? AND address=?`, kind, address).Scan(&started, &failures, &blocked)
+	err := tx.QueryRowContext(ctx, `SELECT window_started_at,attempts,blocked_until FROM login_attempts WHERE kind=? AND address=?`, kind, address).Scan(&started, &failures, &blocked)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -2437,19 +2473,40 @@ func (s *Store) RecordFailedAttempt(ctx context.Context, kind, address string, n
 		started, failures, blocked = now.Unix(), 0, 0
 	}
 	failures++
-	if failures >= limits.Attempts {
+	if failures >= attempts {
 		blocked = now.Add(limits.Pause).Unix()
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO login_attempts(kind,address,window_started_at,attempts,blocked_until) VALUES(?,?,?,?,?)
-		ON CONFLICT(kind,address) DO UPDATE SET window_started_at=excluded.window_started_at,attempts=excluded.attempts,blocked_until=excluded.blocked_until`, kind, address, started, failures, blocked); err != nil {
-		return err
-	}
-	return tx.Commit()
+	_, err = tx.ExecContext(ctx, `INSERT INTO login_attempts(kind,address,window_started_at,attempts,blocked_until) VALUES(?,?,?,?,?)
+		ON CONFLICT(kind,address) DO UPDATE SET window_started_at=excluded.window_started_at,attempts=excluded.attempts,blocked_until=excluded.blocked_until`, kind, address, started, failures, blocked)
+	return err
 }
 
+// ClearAttempts forgets the failures of kind from address after a right
+// password. Administrator failures are cleared with ClearAdminAttempts.
 func (s *Store) ClearAttempts(ctx context.Context, kind, address string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM login_attempts WHERE kind=? AND address=?`, kind, address)
 	return err
+}
+
+// ClearAdminAttempts forgets the administrator failures from address and
+// the server-wide count after a right administrator password, only while
+// version is still the current administrator password version. A password
+// replaced meanwhile clears nothing. Only the owner can send a right
+// password, and it never follows a pause.
+func (s *Store) ClearAdminAttempts(ctx context.Context, address string, version int64) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	current, err := credentialVersionCurrent(ctx, tx, "admin", version)
+	if err != nil || !current {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM login_attempts WHERE kind='admin' AND address IN (?,?)`, address, ServerWideAddress); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // AddRepository records a repository. It refuses an ID whose earlier deletion

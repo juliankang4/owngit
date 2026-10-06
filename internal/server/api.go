@@ -333,7 +333,11 @@ func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Reque
 		if seconds := auth.RetryAfter(err); seconds > 0 {
 			writer.Header().Set("Retry-After", strconv.Itoa(seconds))
 		}
-		writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", "Too many authentication attempts. Try again later.", nil)
+		message := "Too many authentication attempts. Try again later."
+		if auth.IsServerWide(err) {
+			message = "Too many wrong administrator passwords were sent from all addresses, so every administrator password check is paused. Wait and try again, or run reset-admin on the computer that runs OwnGit."
+		}
+		writeAPIError(writer, http.StatusTooManyRequests, "authentication_rate_limited", message, nil)
 	case errors.As(err, new(*state.PolicyError)):
 		writeSettingUnreadable(writer, request, kind+" password check", err)
 	case errors.Is(err, auth.ErrInvalidCredentials):

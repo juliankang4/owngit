@@ -259,17 +259,18 @@ const (
 	MsgLogoutDone       MessageCode = "login.logged_out"
 	MsgLogoutFailed     MessageCode = "login.logout_failed"
 
-	MsgAdminTitle     MessageCode = "admin.title"
-	MsgAdminBody      MessageCode = "admin.body"
-	MsgAdminField     MessageCode = "admin.field"
-	MsgAdminSubmit    MessageCode = "admin.submit"
-	MsgAdminFailed    MessageCode = "admin.failed"
-	MsgAdminEmpty     MessageCode = "admin.empty"
-	MsgAdminLocked    MessageCode = "admin.locked"
-	MsgAdminConfirmed MessageCode = "admin.confirmed"
-	MsgAdminEnded     MessageCode = "admin.ended"
-	MsgAdminTemporary MessageCode = "admin.temporary_notice"
-	MsgAdminForgot    MessageCode = "admin.forgot"
+	MsgAdminTitle            MessageCode = "admin.title"
+	MsgAdminBody             MessageCode = "admin.body"
+	MsgAdminField            MessageCode = "admin.field"
+	MsgAdminSubmit           MessageCode = "admin.submit"
+	MsgAdminFailed           MessageCode = "admin.failed"
+	MsgAdminEmpty            MessageCode = "admin.empty"
+	MsgAdminLocked           MessageCode = "admin.locked"
+	MsgAdminLockedServerWide MessageCode = "admin.locked_server_wide"
+	MsgAdminConfirmed        MessageCode = "admin.confirmed"
+	MsgAdminEnded            MessageCode = "admin.ended"
+	MsgAdminTemporary        MessageCode = "admin.temporary_notice"
+	MsgAdminForgot           MessageCode = "admin.forgot"
 )
 
 // Settings.
@@ -711,8 +712,8 @@ var catalog = map[MessageCode]message{
 		ko: "이 네트워크의 모든 사람",
 	},
 	MsgSetupAccessOpenHelp: {
-		en: "No password for reading or pushing. Suitable for a private LAN or a Tailscale network you control.",
-		ko: "비밀번호 없이 읽고 푸시합니다. 직접 관리하는 사설 LAN이나 Tailscale 네트워크에 알맞습니다.",
+		en: "No password. Every device and program that can reach OwnGit can read, push, delete branches and tags, create repositories, open and merge pull requests and restore files. Settings, repository deletion, rename, imports and check policies need the administrator password, unless you chose in Access settings to be asked less often or not at all. Suitable for a private LAN or a Tailscale network you control. If the network has devices or people you do not fully trust, choose the shared password.",
+		ko: "비밀번호가 없습니다. OwnGit에 접속할 수 있는 모든 기기와 프로그램이 읽기, 푸시, 브랜치와 태그 삭제, 저장소 만들기, 풀 리퀘스트 열기와 병합, 파일 복원을 할 수 있습니다. 설정, 저장소 삭제, 이름 변경, 가져오기, 체크 정책에는 관리자 비밀번호가 필요합니다. 접근 설정에서 확인을 줄이거나 끈 경우는 예외입니다. 직접 관리하는 사설 LAN이나 Tailscale 네트워크에 알맞습니다. 믿기 어려운 기기나 사람이 있는 네트워크라면 공용 비밀번호를 고르세요.",
 	},
 	MsgSetupAccessPassword: {
 		en: "People with the shared password",
@@ -1012,6 +1013,10 @@ var catalog = map[MessageCode]message{
 		en: "Too many attempts. Try again shortly.",
 		ko: "시도가 너무 많았습니다. 잠시 후 다시 시도하세요.",
 	},
+	MsgAdminLockedServerWide: {
+		en: "Too many wrong administrator passwords were sent from all devices, so every administrator password check is paused. Wait and try again. If you cannot wait, run owngit reset-admin on the computer that runs OwnGit.",
+		ko: "모든 기기에서 관리자 비밀번호가 너무 많이 틀려, 관리자 비밀번호 확인을 모두 잠시 멈췄습니다. 잠시 기다린 뒤 다시 시도하세요. 기다릴 수 없으면 OwnGit을 실행하는 컴퓨터에서 owngit reset-admin을 실행하세요.",
+	},
 	MsgAdminConfirmed: {
 		en: "Confirmed as administrator.",
 		ko: "관리자로 확인되었습니다.",
@@ -1059,8 +1064,8 @@ var catalog = map[MessageCode]message{
 		ko: "저장소 접근",
 	},
 	MsgSettingsAccessOpenNow: {
-		en: "Anyone on this network can read and push without a password.",
-		ko: "지금은 이 네트워크의 누구나 비밀번호 없이 읽고 푸시할 수 있습니다.",
+		en: "Anyone who can reach OwnGit, including every device and program on this network, can read, push, delete branches and tags, create repositories, open and merge pull requests and restore files without a password. Settings, repository deletion, rename, imports and check policies need the administrator password, unless you chose in Access settings to be asked less often or not at all. Choose the shared password if the network has devices or people you do not fully trust.",
+		ko: "지금은 OwnGit에 접속할 수 있는 누구나, 이 네트워크의 모든 기기와 프로그램을 포함해, 비밀번호 없이 읽기, 푸시, 브랜치와 태그 삭제, 저장소 만들기, 풀 리퀘스트 열기와 병합, 파일 복원을 할 수 있습니다. 설정, 저장소 삭제, 이름 변경, 가져오기, 체크 정책에는 관리자 비밀번호가 필요합니다. 접근 설정에서 확인을 줄이거나 끈 경우는 예외입니다. 믿기 어려운 기기나 사람이 있는 네트워크라면 공용 비밀번호를 고르세요.",
 	},
 	MsgSettingsAccessPassNow: {
 		en: "A shared password is required to read and push.",

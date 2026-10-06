@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -162,5 +163,140 @@ func noError(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A client that chooses its own address cannot guess the administrator
+// password without limit: wrong passwords from any addresses pause every
+// administrator check, the right password included, until the pause ends or
+// the password is replaced. Shared password checks are not affected.
+func TestAdministratorFailuresFromChangingAddressesPauseEveryAdministratorCheck(t *testing.T) {
+	store, err := state.Open(context.Background(), filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	accessHash, _ := HashPassword("shared-password")
+	adminHash, _ := HashPassword("admin-password")
+	if err := store.CompleteSetup(context.Background(), t.TempDir(), "password", accessHash, adminHash, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	manager := &Manager{Store: store, Now: func() time.Time { return now }}
+	check := func(kind, password string, client int) error {
+		_, err := manager.VerifyCredential(context.Background(), kind, password, fmt.Sprintf("192.0.2.%d:1234", client))
+		return err
+	}
+	for client := 1; client <= maximumFailures*5; client++ {
+		if err := check("admin", "wrong-password", client); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("failure %d from a new address: %v, want an ordinary credential failure", client, err)
+		}
+	}
+	err = check("admin", "admin-password", 200)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("right administrator password after the cap: %v, want a rate limit", err)
+	}
+	if RetryAfter(err) < 1 {
+		t.Fatalf("retry after = %d, want a pause", RetryAfter(err))
+	}
+	if err := check("general", "shared-password", 200); err != nil {
+		t.Fatalf("shared password during the administrator pause: %v", err)
+	}
+	now = now.Add(16 * time.Minute)
+	if err := check("admin", "admin-password", 200); err != nil {
+		t.Fatalf("right administrator password after the pause: %v", err)
+	}
+	// The owner's own address is blocked by its own failures first, then
+	// other addresses reach the server-wide cap. The reset frees both.
+	for range maximumFailures {
+		_ = check("admin", "wrong-password", 300)
+	}
+	if err := check("admin", "admin-password", 300); !errors.Is(err, ErrRateLimited) || IsServerWide(err) {
+		t.Fatalf("owner address before the cap: %v, want its own pause", err)
+	}
+	for client := 1; client <= maximumFailures*5; client++ {
+		_ = check("admin", "wrong-password", client)
+	}
+	newHash, _ := HashPassword("new-admin-password")
+	if err := store.SetAdminPassword(context.Background(), newHash); err != nil {
+		t.Fatal(err)
+	}
+	if err := check("admin", "new-admin-password", 300); err != nil {
+		t.Fatalf("new administrator password from a blocked address after reset: %v", err)
+	}
+}
+
+// Requests that wait for a check slot are held to the server-wide cap, and a
+// right password checked against a replaced administrator password does not
+// clear it.
+func TestServerWideCapHoldsForQueuedChecksAndStalePasswords(t *testing.T) {
+	ctx := context.Background()
+	store, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	accessHash, _ := HashPassword("shared-password")
+	adminHash, _ := HashPassword("admin-password")
+	if err := store.CompleteSetup(ctx, t.TempDir(), "password", accessHash, adminHash, true); err != nil {
+		t.Fatal(err)
+	}
+	one := state.LoginLimits{Attempts: 1, Window: 10 * time.Minute, Pause: 15 * time.Minute}
+	if err := store.SavePolicies(ctx, state.PolicyChange{LoginLimits: &one}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &Manager{Store: store, MaximumConcurrentChecks: 1}
+	var group sync.WaitGroup
+	results := make([]error, 30)
+	for index := range results {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			_, results[index] = manager.VerifyCredential(ctx, "admin", "wrong-password", fmt.Sprintf("192.0.2.%d:1", index+1))
+		}()
+	}
+	group.Wait()
+	checked, limited := 0, 0
+	for _, err := range results {
+		switch {
+		case errors.Is(err, ErrRateLimited):
+			limited++
+		case errors.Is(err, ErrInvalidCredentials):
+			checked++
+		default:
+			t.Fatalf("a wrong password gave %v", err)
+		}
+	}
+	if want := state.ServerWideFailureFactor; checked != want || limited != len(results)-want {
+		t.Fatalf("queued guesses: %d checked and %d refused, want %d checked", checked, limited, want)
+	}
+
+	// The password is replaced while a check of the old one runs; failures
+	// then trip the cap, and the old check still succeeds against its hash.
+	store2, err := state.Open(ctx, filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store2.Close()
+	if err := store2.CompleteSetup(ctx, t.TempDir(), "password", accessHash, adminHash, true); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_800_000_000, 0)
+	stale := &Manager{Store: store2, Now: func() time.Time { return now }}
+	stale.passwordCheck = func(string, string) bool {
+		newHash, _ := HashPassword("new-admin-password")
+		if err := store2.SetAdminPassword(ctx, newHash); err != nil {
+			t.Error(err)
+		}
+		for client := range maximumFailures * state.ServerWideFailureFactor {
+			_ = store2.RecordFailedAttempt(ctx, "admin", fmt.Sprintf("198.51.100.%d", client+1), now)
+		}
+		return true
+	}
+	if _, err := stale.VerifyCredential(ctx, "admin", "admin-password", "192.0.2.1:1"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("replaced password: %v, want invalid credentials", err)
+	}
+	if remaining, err := store2.AdminServerBlocked(ctx, now); err != nil || remaining <= 0 {
+		t.Fatalf("server-wide pause after a stale success: %v, %v", remaining, err)
 	}
 }

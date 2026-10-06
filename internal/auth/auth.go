@@ -38,8 +38,19 @@ var (
 // RateLimitedError is ErrRateLimited with how much longer the pause lasts.
 // Wrong passwords are counted per client address and kind under the login
 // limits saved in Settings (state.LoginLimits).
+//
+// ServerWide is true when the pause comes from the cap on administrator
+// failures from all addresses, not from the client's own address.
 type RateLimitedError struct {
-	Remaining time.Duration
+	Remaining  time.Duration
+	ServerWide bool
+}
+
+// IsServerWide reports whether err is a pause of all administrator
+// password checks.
+func IsServerWide(err error) bool {
+	var limited *RateLimitedError
+	return errors.As(err, &limited) && limited.ServerWide
 }
 
 func (err *RateLimitedError) Error() string { return ErrRateLimited.Error() }
@@ -267,7 +278,7 @@ func (m *Manager) verifyPassword(ctx context.Context, kind, password, remoteAddr
 			return version, m.Store.ClearAttempts(ctx, kind, address)
 		}
 	}
-	if err := m.countedCheck(ctx, kind, address, encoded, password); err != nil {
+	if err := m.countedCheck(ctx, kind, address, version, encoded, password); err != nil {
 		return 0, err
 	}
 	m.remembered.add(remembered, m.now())
@@ -292,7 +303,7 @@ func (m *Manager) VerifySharePassword(ctx context.Context, encoded, password, re
 	if err := ValidatePasswordHash(encoded); err != nil {
 		return fmt.Errorf("stored share link password: %w", err)
 	}
-	return m.countedCheck(ctx, ShareAttempts, address, encoded, password)
+	return m.countedCheck(ctx, ShareAttempts, address, 0, encoded, password)
 }
 
 // startCountedCheck starts a password check of kind from address. Only
@@ -305,9 +316,17 @@ func (m *Manager) startCountedCheck(ctx context.Context, kind, address string) (
 	if err != nil {
 		return nil, err
 	}
-	remaining, err := m.Store.AttemptBlocked(ctx, kind, address, m.now())
+	var remaining time.Duration
+	serverWide := false
+	if kind == "admin" {
+		remaining, err = m.Store.AdminServerBlocked(ctx, m.now())
+		serverWide = remaining > 0
+	}
+	if err == nil && remaining == 0 {
+		remaining, err = m.Store.AttemptBlocked(ctx, kind, address, m.now())
+	}
 	if err == nil && remaining > 0 {
-		err = &RateLimitedError{Remaining: remaining}
+		err = &RateLimitedError{Remaining: remaining, ServerWide: serverWide}
 	}
 	if err != nil {
 		release()
@@ -317,12 +336,24 @@ func (m *Manager) startCountedCheck(ctx context.Context, kind, address string) (
 }
 
 // countedCheck compares password with encoded, records a wrong one against
-// address and clears the count after a right one.
-func (m *Manager) countedCheck(ctx context.Context, kind, address, encoded, password string) error {
+// address and clears the count after a right one. version is the
+// administrator password version encoded was read at. The server-wide
+// pause is checked again once the slot is held, because a request that
+// waited for the slot may have been admitted before the cap tripped.
+func (m *Manager) countedCheck(ctx context.Context, kind, address string, version int64, encoded, password string) error {
 	if err := m.acquireCheck(ctx); err != nil {
 		return err
 	}
 	defer func() { <-m.checkSlots }()
+	if kind == "admin" {
+		remaining, err := m.Store.AdminServerBlocked(ctx, m.now())
+		if err != nil {
+			return err
+		}
+		if remaining > 0 {
+			return &RateLimitedError{Remaining: remaining, ServerWide: true}
+		}
+	}
 	check := m.passwordCheck
 	if check == nil {
 		check = CheckPassword
@@ -337,6 +368,9 @@ func (m *Manager) countedCheck(ctx context.Context, kind, address, encoded, pass
 			return err
 		}
 		return ErrInvalidCredentials
+	}
+	if kind == "admin" {
+		return m.Store.ClearAdminAttempts(ctx, address, version)
 	}
 	return m.Store.ClearAttempts(ctx, kind, address)
 }

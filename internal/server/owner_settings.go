@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"owngit/internal/auth"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -37,12 +38,13 @@ func passwordRuleError(err error) bool {
 
 // setAccessPassword turns the shared password on, or replaces it, with
 // password, which ends every general session. typedAdmin is the
-// administrator password the request typed, or "" when it typed none.
-func (app *App) setAccessPassword(ctx context.Context, typedAdmin, password string) error {
+// administrator password the request typed, or "" when it typed none, and
+// address is the client address a comparison is counted against.
+func (app *App) setAccessPassword(ctx context.Context, address, typedAdmin, password string) error {
 	if err := auth.ValidatePassword(password); err != nil {
 		return err
 	}
-	same, err := app.sameAsAdminPassword(ctx, typedAdmin, password)
+	same, err := app.sameAsAdminPassword(ctx, address, typedAdmin, password)
 	if err != nil {
 		return fmt.Errorf("administrator password read: %w", err)
 	}
@@ -58,16 +60,25 @@ func (app *App) setAccessPassword(ctx context.Context, typedAdmin, password stri
 
 // sameAsAdminPassword reports whether password is the administrator
 // password: the one the request typed, when it typed one, or else the
-// saved one.
-func (app *App) sameAsAdminPassword(ctx context.Context, typed, password string) (bool, error) {
+// saved one. The saved one is compared as an administrator password check
+// from address, so guessing through this form is counted and paused like
+// any other (auth.ErrRateLimited). A candidate that is not the
+// administrator password counts as one failure, which is the price of the
+// check: an owner who changes the shared password many times within the
+// login window reaches the limit of this address, and a pause here also
+// pauses the administrator password for it.
+func (app *App) sameAsAdminPassword(ctx context.Context, address, typed, password string) (bool, error) {
 	if typed != "" {
 		return typed == password, nil
 	}
-	encoded, err := app.Store.PasswordHash(ctx, "admin")
-	if err != nil {
-		return false, err
+	_, err := app.Auth.VerifyCredential(ctx, "admin", password, address)
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, auth.ErrInvalidCredentials):
+		return false, nil
 	}
-	return auth.CheckPassword(encoded, password), nil
+	return false, err
 }
 
 // changeAdminPassword replaces the administrator password proof verified
@@ -166,7 +177,7 @@ func (app *App) putAccessAPI(writer http.ResponseWriter, request *http.Request, 
 		}
 		changed = false
 	case input.Mode == "password":
-		err = app.setAccessPassword(request.Context(), proof.password, input.Password)
+		err = app.setAccessPassword(request.Context(), requestctx.Of(request).ClientAddress, proof.password, input.Password)
 	default:
 		writeAPIError(writer, http.StatusBadRequest, "invalid_settings", "mode must be open or password.", nil)
 		return

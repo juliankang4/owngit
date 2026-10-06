@@ -384,7 +384,11 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 		var policyErr *state.PolicyError
 		switch {
 		case errors.Is(err, auth.ErrRateLimited):
-			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminLocked, webui.MsgLoginLocked), true, http.StatusTooManyRequests)
+			locked := chooseMessage(admin, webui.MsgAdminLocked, webui.MsgLoginLocked)
+			if auth.IsServerWide(err) {
+				locked = webui.MsgAdminLockedServerWide
+			}
+			app.renderLoginFailure(writer, request, scope, field, next, locked, true, http.StatusTooManyRequests)
 		case errors.Is(err, auth.ErrInvalidCredentials):
 			app.renderLoginFailure(writer, request, scope, field, next, chooseMessage(admin, webui.MsgAdminFailed, webui.MsgLoginFailed), false, http.StatusUnauthorized)
 		case errors.As(err, &policyErr):
@@ -437,6 +441,9 @@ func adminPasswordNotice(request *http.Request, err error, field string) (webui.
 	case errors.Is(err, errAdminPasswordMissing):
 		return webui.Error(field, webui.MsgAdminEmpty), http.StatusUnauthorized
 	case errors.Is(err, auth.ErrRateLimited):
+		if auth.IsServerWide(err) {
+			return webui.Error(field, webui.MsgAdminLockedServerWide), http.StatusTooManyRequests
+		}
 		return webui.Error(field, webui.MsgAdminLocked), http.StatusTooManyRequests
 	case errors.Is(err, auth.ErrInvalidCredentials):
 		return webui.Error(field, webui.MsgAdminFailed), http.StatusUnauthorized

@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"html"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/auth"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -164,6 +167,31 @@ func TestLoginLimitsApplyToNewFailuresAndRetryAfterIsTheRemainingPause(t *testin
 	}
 	if status, _, _ := settingsAPI(t, server.URL, http.MethodGet, nil); status != http.StatusOK {
 		t.Fatalf("administrator API during a shared password pause status=%d", status)
+	}
+}
+
+// Wrong administrator passwords from enough different addresses pause every
+// administrator check with the usual 429 and Retry-After, and name what the
+// owner can do; reset-admin ends the pause.
+func TestServerWideAdministratorPauseAnswersTooManyRequests(t *testing.T) {
+	fixture, server, clock := newConfirmationFixture(t, true, state.ConfirmEveryTime)
+	ctx := context.Background()
+	one := state.LoginLimits{Attempts: 1, Window: 10 * time.Minute, Pause: 5 * time.Minute}
+	noErr(t, fixture.store.SavePolicies(ctx, state.PolicyChange{LoginLimits: &one}))
+	for client := range state.ServerWideFailureFactor {
+		noErr(t, fixture.store.RecordFailedAttempt(ctx, "admin", fmt.Sprintf("192.0.2.%d", client+1), clock.Now()))
+	}
+	response := adminAPIRequest(t, http.MethodGet, server.URL+"/api/v1/settings", nil, "admin-password")
+	body, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != http.StatusTooManyRequests || response.Header.Get("Retry-After") != "300" || !strings.Contains(string(body), "reset-admin") {
+		t.Fatalf("paused administrator API status=%d Retry-After=%q body=%s", response.StatusCode, response.Header.Get("Retry-After"), body)
+	}
+	encoded, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, fixture.store.SetAdminPassword(ctx, encoded))
+	if status, _, _ := settingsAPI(t, server.URL, http.MethodGet, nil); status != http.StatusOK {
+		t.Fatalf("administrator API after reset status=%d", status)
 	}
 }
 
@@ -328,4 +356,51 @@ func TestAdministratorConfirmationNamesUnreadableLoginLimits(t *testing.T) {
 	if saved, err := fixture.store.LoginLimits(t.Context()); err != nil || saved != state.DefaultLoginLimits {
 		t.Fatalf("saved=%+v err=%v", saved, err)
 	}
+}
+
+// With open access and "Do not ask", the shared-password form compares the
+// candidate with the administrator password without a typed one. That
+// comparison is a counted administrator check: ordinary candidates are
+// accepted and counted, the administrator password is still refused as a
+// shared password, and once failures reach the server-wide cap the form
+// answers 429 with Retry-After instead of an answer, until reset-admin.
+func TestSharedPasswordFormCountsItsAdministratorComparison(t *testing.T) {
+	fixture, server, clock := newConfirmationFixture(t, false, state.ConfirmNever)
+	ctx := context.Background()
+	browser := openConfirmationBrowser(t, server, false)
+	// candidate posts a shared password and answers its status. A refused
+	// candidate must leave no shared password; an accepted one is undone so
+	// the next needs no sign-in.
+	candidate := func(password string, want int) browserHTTPResult {
+		t.Helper()
+		result := browser.post("/settings/access", url.Values{"action": {webui.ActionSaveAccess}, "access_mode": {"password"}, "access_password": {password}})
+		if result.status != want {
+			t.Fatalf("candidate %q: status=%d, want %d", password, result.status, want)
+		}
+		hash, err := fixture.store.PasswordHash(ctx, "access")
+		noErr(t, err)
+		if saved := want == http.StatusSeeOther; saved != (hash != "") {
+			t.Fatalf("candidate %q: shared password saved=%v after status %d", password, hash != "", result.status)
+		}
+		if want == http.StatusSeeOther {
+			noErr(t, fixture.store.DisableAccessPassword(ctx))
+		}
+		return result
+	}
+	candidate("admin-password", http.StatusUnprocessableEntity)
+	candidate("shared-candidate-1", http.StatusSeeOther)
+	// One failure so far, and the cap is 20 under the default limits.
+	for client := range 18 {
+		noErr(t, fixture.store.RecordFailedAttempt(ctx, "admin", fmt.Sprintf("192.0.2.%d", client+1), clock.Now()))
+	}
+	candidate("shared-candidate-2", http.StatusSeeOther)
+	for _, password := range []string{"shared-candidate-3", "admin-password"} {
+		if retry := candidate(password, http.StatusTooManyRequests).header.Get("Retry-After"); retry != "900" {
+			t.Fatalf("%q during the pause: Retry-After=%q", password, retry)
+		}
+	}
+	encoded, err := auth.HashPassword("admin-password")
+	noErr(t, err)
+	noErr(t, fixture.store.SetAdminPassword(ctx, encoded))
+	candidate("shared-candidate-4", http.StatusSeeOther)
 }

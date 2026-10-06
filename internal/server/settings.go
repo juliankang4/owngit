@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"owngit/internal/auth"
 	"owngit/internal/bidi"
+	"owngit/internal/requestctx"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -146,8 +148,17 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	notice := "settings_saved"
 	switch action {
 	case webui.ActionEnableAccessPassword, webui.ActionChangeAccessPassword:
-		err = app.setAccessPassword(request.Context(), verified.password, postValue(request, "access_password"))
+		err = app.setAccessPassword(request.Context(), requestctx.Of(request).ClientAddress, verified.password, postValue(request, "access_password"))
+		var policyErr *state.PolicyError
 		switch {
+		case errors.Is(err, auth.ErrRateLimited), errors.As(err, &policyErr):
+			// The comparison with the administrator password was refused.
+			if seconds := auth.RetryAfter(err); seconds > 0 {
+				writer.Header().Set("Retry-After", strconv.Itoa(seconds))
+			}
+			notice, status := adminPasswordNotice(request, err, "access_password")
+			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{notice}, status)
+			return
 		case passwordRuleError(err):
 			app.renderSettings(writer, request, settings, csrf, action, []webui.Notice{webui.Error("access_password", passwordRuleMessage(err, webui.MsgSetupAccessPassShort))}, http.StatusUnprocessableEntity)
 			return
