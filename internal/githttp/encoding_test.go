@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -218,23 +219,41 @@ func TestSmartHTTPInflatesGzipBodiesWithinTheRequestLimit(t *testing.T) {
 	// About 64 KiB of gzip that inflates to 64 MiB: the backend must stop at
 	// the request limit instead of reading everything. The limit stops the
 	// backend before it answers, so the answer is 413 and the backend's own
-	// report of what it read never arrives.
+	// report of what it read never arrives. The body names that status, so a
+	// refusal does not read as a gateway failure.
 	bomb := gzipBytes(t, make([]byte, 64<<20))
 	if len(bomb) >= int(limits.MaximumRequest) {
 		t.Fatalf("compressed bomb is %d bytes; it must fit under the limit to test inflation", len(bomb))
 	}
-	response := postPack(t, server.URL, "git-receive-pack", "gzip", bomb)
+	response, answer := postPackAnswer(t, server.URL, "git-receive-pack", "gzip", bomb)
 	if response.StatusCode != http.StatusRequestEntityTooLarge || response.Header.Get("X-Test-Stdin-Bytes") != "" {
 		t.Fatalf("gzip bomb: status=%d, backend read %q bytes; want 413 from a backend stopped at the limit", response.StatusCode, response.Header.Get("X-Test-Stdin-Bytes"))
+	}
+	if strings.TrimSpace(answer) != http.StatusText(http.StatusRequestEntityTooLarge) {
+		t.Fatalf("gzip bomb: body=%q, want %q", answer, http.StatusText(http.StatusRequestEntityTooLarge))
 	}
 	if !strings.Contains(logs.String(), `Git push request for repository "sample" failed: request body exceeded the size limit`) {
 		t.Fatalf("gzip bomb was not logged as over the limit; log:\n%s", logs.String())
 	}
 
-	response = postPack(t, server.URL, "git-upload-pack", "gzip", []byte("not gzip at all"))
-	if response.StatusCode != http.StatusBadRequest ||
+	// A fetch over the same request limit is answered the same way: the
+	// fetch-buffer message is only for the request that passed the bound the
+	// fetch gate itself holds.
+	var fetchBomb []byte
+	fetchBomb = append(fetchBomb, "0032want "+strings.Repeat("0", 40)+"\n"...)
+	for len(fetchBomb) < int(limits.MaximumRequest)+(1<<20) {
+		fetchBomb = append(fetchBomb, "0032have "+strings.Repeat("0", 40)+"\n"...)
+	}
+	fetchBomb = append(fetchBomb, "0000"...)
+	response, answer = postPackAnswer(t, server.URL, "git-upload-pack", "gzip", gzipBytes(t, fetchBomb))
+	if response.StatusCode != http.StatusRequestEntityTooLarge || strings.TrimSpace(answer) != http.StatusText(http.StatusRequestEntityTooLarge) {
+		t.Fatalf("gzip fetch over the request limit: status=%d body=%q, want 413 and %q", response.StatusCode, answer, http.StatusText(http.StatusRequestEntityTooLarge))
+	}
+
+	response, answer = postPackAnswer(t, server.URL, "git-upload-pack", "gzip", []byte("not gzip at all"))
+	if response.StatusCode != http.StatusBadRequest || !strings.Contains(answer, errInvalidGzip.Error()) ||
 		!strings.Contains(logs.String(), `Git fetch request for repository "sample" failed: request body is not valid gzip`) {
-		t.Fatalf("invalid gzip: status=%d, want 400 and a log line; log:\n%s", response.StatusCode, logs.String())
+		t.Fatalf("invalid gzip: status=%d body=%q, want 400 and a log line; log:\n%s", response.StatusCode, answer, logs.String())
 	}
 }
 
@@ -264,10 +283,13 @@ func TestSmartHTTPStopsBackendOnCorruptGzipBody(t *testing.T) {
 		{"a second gzip stream", append(append([]byte{}, valid...), valid...)},
 	} {
 		before := strings.Count(logs.String(), "\n")
-		response := postPack(t, server.URL, "git-receive-pack", "gzip", corrupt.body)
+		response, answer := postPackAnswer(t, server.URL, "git-receive-pack", "gzip", corrupt.body)
 		if response.StatusCode != http.StatusBadRequest || response.Header.Get("X-Test-Stdin-Bytes") != "" {
 			t.Errorf("%s: status=%d, backend reported reading %q bytes; want 400 from a stopped backend", corrupt.name,
 				response.StatusCode, response.Header.Get("X-Test-Stdin-Bytes"))
+		}
+		if strings.TrimSpace(answer) != http.StatusText(http.StatusBadRequest) {
+			t.Errorf("%s: body=%q, want %q", corrupt.name, answer, http.StatusText(http.StatusBadRequest))
 		}
 		lines := strings.Split(strings.TrimSpace(logs.String()), "\n")[before:]
 		if len(lines) != 1 || lines[0] != `Git push request for repository "sample" failed: request body is not valid gzip` {
@@ -368,6 +390,14 @@ func TestSmartHTTPLogsBackendProtocolErrorsWithoutRequestContent(t *testing.T) {
 
 func postPack(t *testing.T, serverURL, service, encoding string, body []byte) *http.Response {
 	t.Helper()
+	response, _ := postPackAnswer(t, serverURL, service, encoding, body)
+	return response
+}
+
+// postPackAnswer posts a Git request and also returns the answer's text, so a
+// journey can check what the client is told about a refusal.
+func postPackAnswer(t *testing.T, serverURL, service, encoding string, body []byte) (*http.Response, string) {
+	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, serverURL+"/git/sample.git/"+service, bytes.NewReader(body))
 	noErr(t, err)
 	request.Header.Set("Content-Type", "application/x-"+service+"-request")
@@ -376,9 +406,10 @@ func postPack(t *testing.T, serverURL, service, encoding string, body []byte) *h
 	}
 	response, err := http.DefaultClient.Do(request)
 	noErr(t, err)
-	_, _ = bytes.NewBuffer(nil).ReadFrom(response.Body)
+	answer, err := io.ReadAll(response.Body)
+	noErr(t, err)
 	response.Body.Close()
-	return response
+	return response, string(answer)
 }
 
 func gzipBytes(t *testing.T, content []byte) []byte {

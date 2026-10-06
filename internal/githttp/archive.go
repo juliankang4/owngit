@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/gitexec"
+	"owngit/internal/logtext"
 	"owngit/internal/repository"
 )
 
@@ -51,7 +53,8 @@ func (e *ArchiveError) Error() string { return e.Message }
 // away or stops reading, the time runs out, or the size limit is reached.
 //
 // Until the first archive byte, a failure writes nothing and is returned as an
-// *ArchiveError: 404 for an unknown format or repository, 503 when the
+// *ArchiveError: 404 for an unknown format or repository, 409 when the
+// commit's tree cannot be read as one path per entry, 503 when the
 // repository, a slot, the lock or the time is not available, and 502 when Git
 // fails. The response is then sent while Git writes it, so a later failure
 // cannot change the status. The connection is closed without ending the
@@ -122,6 +125,26 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 		return busy
 	}
 	defer lock.RUnlock()
+
+	// An archive of a tree that names one path twice is not faithful: it holds
+	// two entries with one name, and an unpacker silently overwrites the first
+	// with the second. The pages refuse such a tree the same way. A check that
+	// did not succeed proves nothing about the commit's paths, so the archive
+	// is refused rather than packed unchecked.
+	var limitErr *gitexec.LimitError
+	switch err := h.Repositories.VerifyTreePaths(ctx, repositoryPath, commitOID, archiveTreeCheckLimit); {
+	case errors.Is(err, repository.ErrRepeatedTreePath):
+		log.Printf("Git archive request for repository %q: the commit's tree names one path twice", repositoryID)
+		return &ArchiveError{Status: http.StatusConflict,
+			Message: "This commit holds two entries with one path, so OwnGit cannot make a faithful archive of it."}
+	case errors.As(err, &limitErr):
+		log.Printf("Git archive request for repository %q: the commit's file list is too large to check", repositoryID)
+		return &ArchiveError{Status: http.StatusConflict,
+			Message: "This commit has too many files for OwnGit to check its paths, so it did not create the archive."}
+	case err != nil:
+		log.Printf("Git archive request for repository %q: could not read the commit's paths, so no archive was created: %s", repositoryID, logtext.Cause(err))
+		return &ArchiveError{Status: http.StatusBadGateway, Message: "Git could not create the archive."}
+	}
 
 	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: limits.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename, repositoryID+"-"+shortCommitID(commitOID)+extension)}
 	held := &holdbackWriter{next: sent, hold: archiveHoldback}
@@ -250,6 +273,11 @@ func archiveFailureReason(err error, deadline time.Time) string {
 }
 
 var errArchiveWrite = errors.New("archive response write failed")
+
+// archiveTreeCheckLimit bounds the tree listing that the repeated-path check
+// reads before Git starts the archive, so a tree too large to check fails with
+// the runner's limit error instead of being archived unchecked.
+const archiveTreeCheckLimit = 64 << 20
 
 // archiveResponse writes archive bytes to the client and refuses to pass the
 // size limit. The first byte commits the status and the archive headers; until

@@ -345,9 +345,23 @@ func (m *Manager) Tree(ctx context.Context, id, requestedRef, directory string) 
 	return commitOID, entries, nil
 }
 
+// treeListingArgs returns the ls-tree arguments that list the path: ls-tree -t
+// prints the record of each directory it descends into, so the pathspecs of
+// treeListingSpecs carry the records of the path's levels in the same listing
+// as the entries the read returns. A path with no pathspec (the top folder)
+// keeps the whole listing.
+func treeListingArgs(path string) []string {
+	specs := treeListingSpecs(path)
+	if len(specs) == 0 {
+		return nil
+	}
+	return append([]string{"--"}, specs...)
+}
+
 // TreeAt lists directory, or the top folder when directory is empty, in the
-// commit commitOID with one Git process. A missing directory, a file, and a
-// directory without entries all report "directory not found".
+// commit commitOID with one Git process, and none when cached. A missing
+// directory, a file, and a directory without entries all report "directory not
+// found".
 func (m *Manager) TreeAt(ctx context.Context, id, commitOID, directory string) ([]TreeEntry, error) {
 	if !isOID(commitOID) {
 		return nil, errInvalidCommitID
@@ -356,14 +370,10 @@ func (m *Manager) TreeAt(ctx context.Context, id, commitOID, directory string) (
 		return nil, fmt.Errorf("%w: %w", errDirectoryNotFound, err)
 	}
 	result, err := m.cachedRead(ctx, id, "tree", commitOID+"\x00"+directory, func(repositoryPath string) (cachedResult, bool, error) {
-		args := []string{"--git-dir", ".", "ls-tree", "-z", "-l", commitOID}
-		if directory != "" {
-			// A pathspec ending in a slash lists the folder's entries and
-			// matches nothing when the path is missing or is not a folder.
-			// The explicit magic keeps the path literal; it was verified with
-			// Git for Windows.
-			args = append(args, "--", ":(top,literal)"+directory+"/")
-		}
+		// A pathspec ending in a slash lists the folder's entries and matches
+		// nothing when the path is missing or is not a folder. The explicit
+		// magic keeps the path literal; it was verified with Git for Windows.
+		args := append([]string{"--git-dir", ".", "ls-tree", "-t", "-z", "-l", commitOID}, treeListingArgs(directory)...)
 		output, err := m.Git.Run(ctx, repositoryPath, nil, args...)
 		if err != nil {
 			return cachedResult{}, false, err
@@ -385,13 +395,12 @@ func (m *Manager) TreeAt(ctx context.Context, id, commitOID, directory string) (
 
 // parseTreeListing reads ls-tree -z -l output of the folder directory. With
 // a folder, Git names each entry by its full path, which must be directly
-// inside that folder.
+// inside that folder. The records of the folder's own levels arrive in the
+// same listing; they are checked for a repeated path and dropped.
 func parseTreeListing(output []byte, directory string) ([]TreeEntry, error) {
 	var entries []TreeEntry
-	prefix := ""
-	if directory != "" {
-		prefix = directory + "/"
-	}
+	order := treeListingOrder{}
+	levels := newTreeIdentityCheck(directory)
 	for _, record := range bytes.Split(output, []byte{0}) {
 		if len(record) == 0 {
 			continue
@@ -400,9 +409,21 @@ func parseTreeListing(output []byte, directory string) ([]TreeEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		name, ok := strings.CutPrefix(entry.Name, prefix)
-		if !ok || name == "" || strings.Contains(name, "/") {
+		if level, err := levels.level(entry.Name); err != nil || level {
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		name, ok := treeEntryName(entry.Name, directory)
+		if !ok {
+			if treeAboveEntry(entry.Name, directory) {
+				continue
+			}
 			return nil, errors.New("Git returned mismatched tree listing data")
+		}
+		if err := order.add(entry.Name, entry.Type == "tree"); err != nil {
+			return nil, err
 		}
 		entry.Name, entry.Path = name, entry.Name
 		entries = append(entries, entry)
@@ -463,6 +484,7 @@ type treePageBuilder struct {
 	cursor      TreeEntry
 	after       string
 	cursorFound bool
+	order       treeListingOrder
 }
 
 func newTreePageBuilder(after string) (*treePageBuilder, error) {
@@ -480,14 +502,11 @@ func newTreePageBuilder(after string) (*treePageBuilder, error) {
 	return builder, nil
 }
 
-func (b *treePageBuilder) add(entry TreeEntry, directory string) error {
-	prefix := ""
-	if directory != "" {
-		prefix = directory + "/"
-	}
-	name, ok := strings.CutPrefix(entry.Name, prefix)
-	if !ok || name == "" || strings.Contains(name, "/") {
-		return errors.New("Git returned mismatched tree listing data")
+// name is the entry's name inside the listed folder, which the caller takes
+// from treeEntryName.
+func (b *treePageBuilder) add(entry TreeEntry, name string) error {
+	if err := b.order.add(entry.Name, entry.Type == "tree"); err != nil {
+		return err
 	}
 	entry.Path, entry.Name = entry.Name, name
 	b.page.Total++
@@ -578,8 +597,9 @@ func cacheTreePage(page any) (cachedResult, bool, error) {
 }
 
 // TreePageAt counts the listing without constructing it, retaining at most
-// DirectoryPageEntries entries and one README. Only that bounded page is
-// cached, preserving cached reads while another Git operation holds the lock.
+// DirectoryPageEntries entries and one README. One Git process reads the
+// listing, and none runs when cached. Only that bounded page is cached,
+// preserving cached reads while another Git operation holds the lock.
 func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, after string) (TreePage, error) {
 	if !isOID(commitOID) {
 		return TreePage{}, errInvalidCommitID
@@ -592,12 +612,22 @@ func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, afte
 		return TreePage{}, err
 	}
 	result, err := m.cachedRead(ctx, id, "tree-page", commitOID+"\x00"+directory+"\x00"+after, func(repositoryPath string) (cachedResult, bool, error) {
-		args := []string{"--git-dir", ".", "ls-tree", "-z", "-l", commitOID}
-		if directory != "" {
-			args = append(args, "--", ":(top,literal)"+directory+"/")
-		}
+		args := append([]string{"--git-dir", ".", "ls-tree", "-t", "-z", "-l", commitOID}, treeListingArgs(directory)...)
+		levels := newTreeIdentityCheck(directory)
 		_, err := m.Git.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
-			return streamTree(reader, func(entry TreeEntry) error { return builder.add(entry, directory) }, nil)
+			return streamTree(reader, func(entry TreeEntry) error {
+				if level, err := levels.level(entry.Name); err != nil || level {
+					return err
+				}
+				name, ok := treeEntryName(entry.Name, directory)
+				if !ok {
+					if treeAboveEntry(entry.Name, directory) {
+						return nil
+					}
+					return errors.New("Git returned mismatched tree listing data")
+				}
+				return builder.add(entry, name)
+			}, nil)
 		}, args...)
 		if err != nil {
 			return cachedResult{}, false, err
@@ -616,7 +646,8 @@ func (m *Manager) TreePageAt(ctx context.Context, id, commitOID, directory, afte
 	return page, err
 }
 
-// PathPageAt streams the parent and children in one Git process. Exact file
+// PathPageAt streams the parent and children in one Git process, and none runs
+// when cached. Exact file
 // lookup is independent of the retained page; at most two bounded listings
 // are built, and only the chosen one is cached. Over-long paths cannot match
 // a validated file path. They invalidate only the listing that contains them.
@@ -636,10 +667,9 @@ func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after
 		return PathView{}, TreePage{}, err
 	}
 	children, _ := newTreePageBuilder(after)
-	parent, parentSpec := "", ":(top)"
-	if separator := strings.LastIndexByte(filePath, '/'); separator >= 0 {
-		parent = filePath[:separator]
-		parentSpec = ":(top,literal)" + parent + "/"
+	parent, parentSpec := treeParentPath(filePath), ":(top)"
+	if parent != "" {
+		parentSpec = treeSpecMagic + parent + "/"
 	}
 	type pathPage struct {
 		File   TreeEntry
@@ -649,26 +679,44 @@ func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after
 	result, err := m.cachedRead(ctx, id, "path-page", commitOID+"\x00"+filePath+"\x00"+after, func(repositoryPath string) (cachedResult, bool, error) {
 		view := pathPage{}
 		var siblingsUnavailable, childrenUnavailable bool
+		args := append([]string{"--git-dir", ".", "ls-tree", "-t", "-z", "-l", commitOID}, treeListingArgs(filePath)...)
+		args = append(args, parentSpec)
+		levels := newTreeIdentityCheck(filePath)
 		_, err := m.Git.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
 			return streamTree(reader, func(entry TreeEntry) error {
-				if strings.HasPrefix(entry.Name, filePath+"/") {
-					return children.add(entry, filePath)
+				if level, err := levels.level(entry.Name); err != nil {
+					return err
+				} else if level && entry.Name != filePath {
+					// A record of a level above the path: checked, not listed.
+					return nil
+				}
+				if name, ok := treeEntryName(entry.Name, filePath); ok {
+					return children.add(entry, name)
+				}
+				name, ok := treeEntryName(entry.Name, parent)
+				if !ok {
+					if treeAboveEntry(entry.Name, parent) {
+						return nil
+					}
+					return errors.New("Git returned mismatched tree listing data")
 				}
 				if entry.Name == filePath {
-					view.File = entry
+					view.File, view.Folder = entry, entry.Type == "tree"
 					view.File.Path = filePath
-					view.Folder = entry.Type == "tree"
 				}
-				return siblings.add(entry, parent)
+				return siblings.add(entry, name)
 			}, func(prefix []byte) error {
-				if bytes.HasPrefix(prefix, []byte(filePath+"/")) {
+				full := string(prefix)
+				if _, ok := treeEntryName(full, filePath); ok {
 					childrenUnavailable = true
-				} else {
+					return nil
+				}
+				if _, ok := treeEntryName(full, parent); ok {
 					siblingsUnavailable = true
 				}
 				return nil
 			})
-		}, "--git-dir", ".", "ls-tree", "-z", "-l", commitOID, "--", parentSpec, ":(top,literal)"+filePath+"/")
+		}, args...)
 		if err != nil {
 			return cachedResult{}, false, err
 		}
@@ -756,13 +804,14 @@ func (m *Manager) PathAt(ctx context.Context, id, commitOID, filePath string) (P
 	if err := validateTreePath(filePath); err != nil {
 		return PathView{}, fmt.Errorf("%w: %w", errFileNotFound, err)
 	}
-	parent, parentSpec := "", ":(top)"
-	if separator := strings.LastIndexByte(filePath, '/'); separator >= 0 {
-		parent = filePath[:separator]
-		parentSpec = ":(top,literal)" + parent + "/"
+	parent, parentSpec := treeParentPath(filePath), ":(top)"
+	if parent != "" {
+		parentSpec = treeSpecMagic + parent + "/"
 	}
 	result, err := m.cachedRead(ctx, id, "path", commitOID+"\x00"+filePath, func(repositoryPath string) (cachedResult, bool, error) {
-		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", commitOID, "--", parentSpec, ":(top,literal)"+filePath+"/")
+		args := append([]string{"--git-dir", ".", "ls-tree", "-t", "-z", "-l", commitOID}, treeListingArgs(filePath)...)
+		args = append(args, parentSpec)
+		output, err := m.Git.Run(ctx, repositoryPath, nil, args...)
 		if err != nil {
 			return cachedResult{}, false, err
 		}
@@ -772,6 +821,8 @@ func (m *Manager) PathAt(ctx context.Context, id, commitOID, filePath string) (P
 		return PathView{}, err
 	}
 	var siblings, children []TreeEntry
+	var siblingOrder, childOrder treeListingOrder
+	levels := newTreeIdentityCheck(filePath)
 	for _, record := range bytes.Split(result.data, []byte{0}) {
 		if len(record) == 0 {
 			continue
@@ -780,23 +831,31 @@ func (m *Manager) PathAt(ctx context.Context, id, commitOID, filePath string) (P
 		if err != nil {
 			return PathView{}, err
 		}
-		full := entry.Name
-		if name, ok := strings.CutPrefix(full, filePath+"/"); ok && name != "" && !strings.Contains(name, "/") {
-			entry.Name, entry.Path = name, full
+		if level, err := levels.level(entry.Name); err != nil {
+			return PathView{}, err
+		} else if level && entry.Name != filePath {
+			// A record of a level above the path: checked, not listed.
+			continue
+		}
+		if name, ok := treeEntryName(entry.Name, filePath); ok {
+			if err := childOrder.add(entry.Name, entry.Type == "tree"); err != nil {
+				return PathView{}, err
+			}
+			entry.Path, entry.Name = entry.Name, name
 			children = append(children, entry)
 			continue
 		}
-		name := full
-		if parent != "" {
-			var ok bool
-			if name, ok = strings.CutPrefix(full, parent+"/"); !ok {
-				name = ""
+		name, ok := treeEntryName(entry.Name, parent)
+		if !ok {
+			if treeAboveEntry(entry.Name, parent) {
+				continue
 			}
-		}
-		if name == "" || strings.Contains(name, "/") {
 			return PathView{}, errors.New("Git returned mismatched tree listing data")
 		}
-		entry.Name, entry.Path = name, full
+		if err := siblingOrder.add(entry.Name, entry.Type == "tree"); err != nil {
+			return PathView{}, err
+		}
+		entry.Path, entry.Name = entry.Name, name
 		siblings = append(siblings, entry)
 	}
 	if len(children) > 0 {
@@ -1145,6 +1204,13 @@ func parseChanges(data []byte) (files []ChangedFile, end int, complete, separate
 			count.deletions, _ = strconv.Atoi(string(fields[1]))
 		}
 		counts[string(fields[2])] = count
+	}
+	if len(counts) != len(files) {
+		// A tree that names one path twice makes Git list it twice. The counts
+		// are keyed by path, so a repeat would silently merge the two files'
+		// line counts; the records are then not one per file and the caller
+		// refuses them like a cut record.
+		return files, position, false, separated
 	}
 	for index := range files {
 		count, ok := counts[files[index].Path]

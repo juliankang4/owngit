@@ -3,6 +3,7 @@
 package githttp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -137,6 +138,37 @@ func TestArchiveFailingAfterItsLastByteSendsNoValidArchive(t *testing.T) {
 		if entries, err := read(body); err == nil {
 			t.Fatalf("%s: a failed archive reads as complete: %s", format, entryNames(entries))
 		}
+	}
+}
+
+// A tree-path check that fails for a reason of its own starts no archive: the
+// check is what a faithful archive depends on, so the request is refused
+// instead of packed unchecked. The wrapper fails only the listing, so an
+// archive would still have succeeded.
+func TestArchiveCheckFailureStartsNoArchive(t *testing.T) {
+	handler, commitOID := archiveFixture(t, 16)
+	realGit, err := exec.LookPath("git")
+	noErr(t, err)
+	directory := t.TempDir()
+	trace := filepath.Join(directory, "calls")
+	wrapper := filepath.Join(directory, "git")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + quoteShell(trace) + "\ncase \" $* \" in *\" ls-tree \"*)\n  echo 'fatal: simulated storage failure' >&2\n  exit 128;;\nesac\n" +
+		"exec " + quoteShell(realGit) + " \"$@\"\n"
+	noErr(t, os.WriteFile(wrapper, []byte(script), 0o700))
+	handler.Git.GitPath = wrapper
+	logs := captureLog(t)
+	server := serveArchiveOf(t, handler, commitOID)
+	response, body, err := fetchArchive(t, server.URL+"?format=zip")
+	noErr(t, err)
+	if response.StatusCode != http.StatusBadGateway || bytes.HasPrefix(body, []byte("PK")) {
+		t.Fatalf("status=%d received %d bytes, want 502 without an archive", response.StatusCode, len(body))
+	}
+	calls, err := os.ReadFile(trace)
+	if err != nil || strings.Contains(string(calls), " archive ") {
+		t.Fatalf("the failed check still started an archive: calls=%q err=%v", calls, err)
+	}
+	if !strings.Contains(logs.String(), `could not read the commit's paths, so no archive was created`) {
+		t.Fatalf("log=%q", logs.String())
 	}
 }
 

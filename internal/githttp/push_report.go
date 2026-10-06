@@ -27,6 +27,7 @@ type pushReport struct {
 	hookDeclined bool
 	storageFull  bool
 	notWritable  bool
+	objectCheck  bool
 	// unpackSeen and ended mark the report-status list from its unpack line
 	// to its closing flush. accepted is set by an "ok" line, and
 	// mayHaveWritten by any other line or refusal after which the update
@@ -170,6 +171,13 @@ func (report *pushReport) scan(message []byte) {
 		bytes.Contains(message, []byte("Permission denied")) ||
 		bytes.Contains(message, []byte("unable to create temporary object directory"))
 	report.hookDeclined = report.hookDeclined || bytes.Contains(message, []byte("hook declined"))
+	// The receive-side object check (receive.fsckObjects) stops the push before
+	// any ref moves. Git names it in the first line it writes as an error,
+	// either "fsck error in packed object" (index-pack) or "fsck error in
+	// object" (unpack-objects), and the detail stays on the client's remote
+	// lines.
+	report.objectCheck = report.objectCheck || bytes.Contains(message, []byte("fsck error in packed object")) ||
+		bytes.Contains(message, []byte("fsck error in object"))
 	// The retention hook's message when its own ref transaction failed, which
 	// may have written part of the retained refs.
 	report.mayHaveWritten = report.mayHaveWritten || bytes.Contains(message, []byte("could not preserve previous history"))
@@ -187,6 +195,9 @@ func (report *pushReport) reason() string {
 	case report.notWritable:
 		return "push refused: repository storage is not writable"
 	case report.unpackFailed:
+		if report.objectCheck {
+			return "push refused: the pushed objects did not pass Git's object checks"
+		}
 		return "push refused: Git could not store the pushed objects"
 	case report.hookDeclined:
 		return "push refused: a server hook declined a ref update"

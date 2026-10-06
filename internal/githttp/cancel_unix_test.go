@@ -79,10 +79,6 @@ func TestClientCancellationReapsBackendProcessTreeBeforeReleasingSlot(t *testing
 	t.Fatalf("backend child process %d remained after request cancellation", childPID)
 }
 
-func quoteShell(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
-}
-
 // An abandoned operation whose client stalls its upload returns at once
 // instead of at the operation deadline: when the response exceeds its limit,
 // when the gzip body turns out corrupt mid-stream, and when the body passes

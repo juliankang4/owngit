@@ -85,13 +85,17 @@ func TestSelectedRestoreRejectsDuplicateFlattenedPaths(t *testing.T) {
 			name = "source tree"
 		}
 		t.Run(name, func(t *testing.T) {
-			manager, remote, work := newTestRepository(t)
-			valid, malformed := duplicateFlattenedPathCommits(t, work)
+			manager, remote, _ := newTestRepository(t)
+			// A push refuses a tree that names one path twice (the receive-side
+			// object check), so the fixture writes the objects directly, as a
+			// repository that stored them before the check holds them.
+			valid, malformed := duplicateFlattenedPathCommits(t, remote)
 			source, target := valid, malformed
 			if malformedSource {
 				source, target = malformed, valid
 			}
-			runGit(t, work, "push", "origin", source+":refs/heads/source", target+":refs/heads/main")
+			runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/source", source)
+			runGit(t, "", "--git-dir", remote, "update-ref", "refs/heads/main", target)
 
 			beforeObjects := gitOutput(t, remote, "--git-dir", ".", "count-objects", "-v")
 			beforeRecords := gitOutput(t, remote, "--git-dir", ".", "ls-tree", "-r", "--full-tree", malformed)

@@ -214,12 +214,20 @@ type languageFile struct {
 
 func (m *Manager) countLanguages(ctx context.Context, repositoryPath, commitOID string) (LanguageStats, error) {
 	limits := gitexec.CommandLimits{Timeout: languageTimeLimit, OutputLimit: languageOutputLimit}
-	listing, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "ls-tree", "-r", "-l", "-z", commitOID)
+	// -t lists the tree entries themselves: a file beside a directory of the
+	// same path, and two directories of one path, then name one path twice for
+	// repeatedTreePath, which reads only leaves otherwise.
+	listing, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "ls-tree", "-r", "-t", "-l", "-z", commitOID)
 	var limitErr *gitexec.LimitError
 	if errors.As(err, &limitErr) {
 		return LanguageStats{TooLarge: true}, nil
 	}
 	if err != nil {
+		return LanguageStats{}, err
+	}
+	// A tree that names one path twice would count that path's bytes twice
+	// and show a share the tree does not have, so the count is refused.
+	if err := repeatedTreePath(listing.Stdout); err != nil {
 		return LanguageStats{}, err
 	}
 	var files []languageFile
@@ -229,12 +237,17 @@ func (m *Manager) countLanguages(ctx context.Context, repositoryPath, commitOID 
 		if len(record) == 0 {
 			continue
 		}
-		if entries++; entries > languageEntryLimit {
-			return LanguageStats{TooLarge: true}, nil
-		}
 		entry, err := parseTreeEntry(record)
 		if err != nil {
 			return LanguageStats{}, err
+		}
+		// The tree records -t adds are here for the collision check above, so
+		// they use up neither the entry budget nor the count.
+		if entry.Type == "tree" {
+			continue
+		}
+		if entries++; entries > languageEntryLimit {
+			return LanguageStats{TooLarge: true}, nil
 		}
 		// Symbolic links (120000) and submodules (commit entries) name no
 		// content of this repository.

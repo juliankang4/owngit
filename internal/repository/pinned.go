@@ -236,10 +236,18 @@ func (p *PinnedRepository) ListTreeRecursive(ctx context.Context, side PinnedSid
 		if err := verifyPinnedCommit(ctx, p.manager.Git, repositoryPath, commitOID); err != nil {
 			return err
 		}
+		// -t lists the tree entries themselves, so a file beside a directory of
+		// the same path, and two directories of one path, are one path twice
+		// for repeatedTreePath. The result keeps its leaves only, as before.
 		result, runErr := runPinnedGit(ctx, p.manager.Git, limit, repositoryPath, nil,
-			"ls-tree", "-r", "-z", "-l", commitOID)
+			"ls-tree", "-r", "-t", "-z", "-l", commitOID)
 		if runErr != nil {
 			return classifyPinnedGitError(ctx, runErr)
+		}
+		// A tree that names one path twice would list two entries with one
+		// path, and a copy of it would silently overwrite the first.
+		if err := repeatedTreePath(result.Stdout); err != nil {
+			return err
 		}
 		listed := make([]TreeEntry, 0)
 		for _, record := range bytes.Split(result.Stdout, []byte{0}) {
@@ -249,6 +257,9 @@ func (p *PinnedRepository) ListTreeRecursive(ctx context.Context, side PinnedSid
 			entry, parseErr := parseTreeEntry(record)
 			if parseErr != nil {
 				return parseErr
+			}
+			if entry.Type == "tree" {
+				continue
 			}
 			entry.Path = entry.Name
 			if separator := strings.LastIndexByte(entry.Path, '/'); separator >= 0 {

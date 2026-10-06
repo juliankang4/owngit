@@ -93,8 +93,10 @@ func warmSnapshot(t *testing.T, app *App, id string) {
 }
 
 // A file view lists the file's folder, which names the file's object, and
-// reads the file: two Git processes. A folder view lists the folder and reads
-// its README. Viewing either again starts none.
+// reads the file: two Git processes, the listing that also carries the records
+// of the path's own levels and the file itself. A folder view lists the folder
+// and reads its README, and starts the same two. Viewing either again starts
+// none.
 func TestFileAndFolderViewsStartTwoGitProcessesAndNoneWhenCached(t *testing.T) {
 	app := newConfiguredApp(t)
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)

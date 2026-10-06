@@ -52,13 +52,19 @@ type fetchScope struct {
 	hidden string
 	// reaching are the rev-list arguments that select the same refs.
 	reaching []string
+	// headTips limits HEAD to the tips of the refs patterns name. A share
+	// link shows no kept history, and a detached HEAD can name a commit that
+	// only kept history reaches, so HEAD is shown there only when it names a
+	// branch or tag tip it already shows.
+	headTips bool
 }
 
 var (
 	// mainScope is the owner's address: every ref except kept history.
 	mainScope = &fetchScope{hidden: "refs/owngit/", reaching: []string{"--exclude=refs/owngit/*", "--all"}}
-	// branchesAndTags is a share link's address (see readOnlyConfig).
-	branchesAndTags = &fetchScope{patterns: []string{"refs/heads/", "refs/tags/"}, reaching: []string{"--branches", "--tags"}}
+	// branchesAndTags is a share link's address (see readOnlyConfig). HEAD is
+	// advertised and served there only as a branch or tag tip (headTips).
+	branchesAndTags = &fetchScope{patterns: []string{"refs/heads/", "refs/tags/"}, reaching: []string{"--branches", "--tags"}, headTips: true}
 )
 
 // usesProtocolV2 reports whether Git reads the request in protocol version 2.
@@ -185,6 +191,53 @@ func validObjectID(oid string) bool {
 	return true
 }
 
+// scopeHead reports HEAD's object ID and whether scope advertises and serves
+// it, with one Git process that lists HEAD and the scope's refs together. The
+// owner's address advertises HEAD as it is. A share address advertises it only
+// when it names a branch or tag tip there: a detached HEAD can name a commit
+// that only kept history reaches, which the link never shows, while a branch
+// tip, a lightweight tag target and an annotated tag's peeled commit are tips
+// the link already serves. A HEAD that does not resolve, such as one on an
+// unborn branch, is not advertised.
+func (h *Handler) scopeHead(ctx context.Context, repositoryPath string, scope *fetchScope) (string, bool, error) {
+	arguments := []string{"--git-dir", ".", "show-ref", "--head"}
+	if scope.headTips {
+		// --dereference adds "<peeled commit> refs/tags/NAME^{}" for an
+		// annotated tag, so its commit counts as that tag's tip.
+		arguments = append(arguments, "--heads", "--tags", "--dereference")
+	}
+	limits := gitexec.CommandLimits{OutputLimit: 64 << 20}
+	result, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, arguments...)
+	if err != nil {
+		if code, ok := gitexec.ExitCode(err); ok && code == 1 {
+			// No ref resolves at all, as in an empty repository.
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("%w: git show-ref: %w", errFetchCheck, err)
+	}
+	head := ""
+	tips := map[string]bool{}
+	for _, line := range strings.Split(string(result.Stdout), "\n") {
+		oid, name, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		switch {
+		case name == "HEAD":
+			head = oid
+		case scope.headTips:
+			tips[oid] = true
+		}
+	}
+	if head == "" {
+		return "", false, nil
+	}
+	if !scope.headTips {
+		return head, true, nil
+	}
+	return head, tips[head], nil
+}
+
 // checkWants returns errNotOurRef for the first want that is neither the tip
 // of a ref scope advertises nor a commit those refs reach, and errFetchCheck
 // when it cannot tell. Tags, trees and blobs are served only as ref tips.
@@ -211,9 +264,15 @@ func (h *Handler) checkWants(ctx context.Context, repositoryPath string, scope *
 			tips[oid] = true
 		}
 	}
-	// HEAD is advertised too, and is a branch except when detached.
-	if head, err := h.Repositories.Git.RunWithLimits(ctx, repositoryPath, nil, limits, "--git-dir", ".", "rev-parse", "--verify", "--quiet", "HEAD"); err == nil {
-		tips[strings.TrimSpace(string(head.Stdout))] = true
+	// HEAD is advertised too, and is a branch except when detached. A share
+	// address advertises it only when it names a branch or tag tip there
+	// (see scopeHead), so a visitor cannot fetch history its pages never show.
+	head, headAdvertised, err := h.scopeHead(ctx, repositoryPath, scope)
+	if err != nil {
+		return err
+	}
+	if headAdvertised {
+		tips[head] = true
 	}
 	var others []string
 	seen := map[string]bool{}

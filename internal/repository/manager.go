@@ -623,6 +623,18 @@ func canonicalRoot(root string) (string, error) {
 
 func repositoryConfig() [][2]string {
 	config := [][2]string{
+		// A push stores only objects git-receive-pack's own check accepts, so
+		// a crafted tree, such as one whose entries flatten to the same path
+		// twice, is refused before the update hook runs. The legacy spelling
+		// faults that popular public repositories carry stay warnings, as
+		// they are for an import (see internal/importsync/verify.go,
+		// historicFormatWarnings); under the check's strict mode every other
+		// finding refuses the push. Reading objects stays unchanged: an
+		// import, a fetch and a local Git command see no object check here.
+		{"receive.fsckObjects", "true"},
+		{"receive.fsck.badTimezone", "warn"},
+		{"receive.fsck.missingSpaceBeforeDate", "warn"},
+		{"receive.fsck.zeroPaddedFilemode", "warn"},
 		{"http.receivepack", "true"},
 		{"http.getanyfile", "false"},
 		{"receive.hideRefs", "refs/owngit/"},

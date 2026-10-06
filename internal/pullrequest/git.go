@@ -1,6 +1,7 @@
 package pullrequest
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -44,17 +45,27 @@ func MergeReceiptRef(number int64) string {
 
 // committedChecks reads the checks from the workflow file committed in the
 // commit oid. A revision without a readable, valid regular workflow file has no
-// committed configuration, so exists is false and err is nil.
+// committed configuration, so exists is false and err is nil. Two records for
+// the one path mean the commit holds two workflows there, which no push can
+// store now; reading either of them would judge the revision by an arbitrary
+// configuration, so the read fails and the caller reports it.
 func (service *Service) committedChecks(ctx context.Context, repositoryPath, oid string) ([]state.CheckDefinition, bool, error) {
 	listing, err := service.Repositories.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "ls-tree", "-z", "-l", "--full-tree", oid, "--", checkworkflow.Path)
 	if err != nil {
 		return nil, false, err
 	}
-	metadata, _, found := strings.Cut(strings.TrimSuffix(string(listing.Stdout), "\x00"), "\t")
+	records := bytes.Split(bytes.TrimSuffix(listing.Stdout, []byte{0}), []byte{0})
+	if len(records) == 1 && len(records[0]) == 0 {
+		return nil, false, nil
+	}
+	if len(records) != 1 {
+		return nil, false, fmt.Errorf("the commit holds %d entries at %s", len(records), checkworkflow.Path)
+	}
+	metadata, _, found := bytes.Cut(records[0], []byte{'\t'})
 	if !found {
 		return nil, false, nil
 	}
-	fields := strings.Fields(metadata)
+	fields := strings.Fields(string(metadata))
 	if len(fields) != 4 || fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") || !validOID(fields[2]) {
 		return nil, false, nil
 	}

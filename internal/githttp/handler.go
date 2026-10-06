@@ -432,6 +432,26 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 		}
 	}
 
+	// A share address advertises HEAD only when it names a branch or tag tip
+	// in its scope (see branchesAndTags). Hiding it otherwise is the same
+	// rule checkWants applies to a fetch, so a link cannot serve or show a
+	// commit that only kept history reaches. The check decides that, so it must
+	// succeed: an address that cannot tell refuses the request instead of
+	// advertising whatever HEAD names.
+	if route.scope != nil && route.scope.headTips {
+		_, advertised, err := h.scopeHead(operationContext, repositoryPath, route.scope)
+		if err != nil {
+			logCause(request.Context(), fmt.Sprintf("Git %s request for repository %q could not check its HEAD", requestKind(route, request.Method), route.repositoryID), err)
+			http.Error(writer, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !advertised {
+			config := make([][2]string, 0, len(route.config)+1)
+			config = append(append(config, route.config...), [2]string{"uploadpack.hideRefs", "HEAD"})
+			route.config = config
+		}
+	}
+
 	contentLength := request.ContentLength
 	streamContext, cancelStream := context.WithCancelCause(request.Context())
 	defer cancelStream(nil)
@@ -486,6 +506,16 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 			body = http.MaxBytesReader(nil, body, limits.MaximumRequest)
 		}
 		contentLength = -1
+	}
+	if route.service == "git-upload-pack" && request.Method == http.MethodPost && contentLength > int64(maximumFetchRequest) {
+		// git-http-backend holds an upload-pack request in memory up to the
+		// same bound OwnGit's gate reads, and refuses a longer one before it
+		// writes any answer, so its failure would hide the cause. Refusing it
+		// here answers what the gate answers, like the request limit does
+		// before Git starts.
+		logGitFailure(route, request.Method, errFetchTooLarge.Error())
+		http.Error(writer, requestTooLarge, http.StatusRequestEntityTooLarge)
+		return
 	}
 	extraEnvironment, err := h.cgiEnvironment(request, route, contentLength)
 	if err != nil {
@@ -643,6 +673,7 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 		// A client that stopped sending gets 408, like the log says; 502
 		// would blame OwnGit, or behind a proxy OwnGit's backend, for it.
 		status := http.StatusBadGateway
+		fetchBound := fetchBufferOverflow(route, request, inputErr, reason)
 		switch {
 		case deadlines.stalled.Load():
 			status = http.StatusRequestTimeout
@@ -650,8 +681,17 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 			status = http.StatusRequestEntityTooLarge
 		case invalidGzip:
 			status = http.StatusBadRequest
+		case fetchBound:
+			status = http.StatusRequestEntityTooLarge
 		}
-		http.Error(committed, http.StatusText(status), status)
+		// The text names the status the request is answered with, so a refusal
+		// never reads as a gateway failure. A fetch over the buffer bound keeps
+		// the message the fetch gate answers the same request with.
+		message := http.StatusText(status)
+		if fetchBound {
+			message = requestTooLarge
+		}
+		http.Error(committed, message, status)
 	}
 }
 
@@ -835,6 +875,19 @@ func (body *observedBody) firstError() error {
 	body.mu.Lock()
 	defer body.mu.Unlock()
 	return body.err
+}
+
+// fetchBufferOverflow reports whether a failed request is an upload-pack
+// request over maximumFetchRequest, the bound the fetch gate and
+// git-http-backend both hold in memory. ownsError is the gate's own error, if
+// the request body reported one, and reason is the failure classification of
+// the backend exit (see failureReason), which names the same bound when Git
+// refused the request first.
+func fetchBufferOverflow(route route, request *http.Request, ownsError error, reason string) bool {
+	if route.service != "git-upload-pack" || request.Method != http.MethodPost {
+		return false
+	}
+	return errors.Is(ownsError, errFetchTooLarge) || reason == errFetchTooLarge.Error()
 }
 
 // failureReason classifies a failed Smart HTTP operation for the server log.

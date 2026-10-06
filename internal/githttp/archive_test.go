@@ -155,7 +155,9 @@ func TestArchiveStreamsTheCommitAsZipAndTarGz(t *testing.T) {
 }
 
 // Git failing before it wrote anything still gets an error status, without
-// the archive's headers.
+// the archive's headers. A commit whose paths cannot be read at all is such a
+// failure: the check that must pass before an archive runs reads them, so a
+// missing commit is refused there, and no archive starts.
 func TestArchiveFailureBeforeTheFirstByteIsAnError(t *testing.T) {
 	handler, _ := archiveFixture(t, 16)
 	logs := captureLog(t)
@@ -168,7 +170,8 @@ func TestArchiveFailureBeforeTheFirstByteIsAnError(t *testing.T) {
 	if handler.Active() != 0 {
 		t.Fatalf("%d archive operations still active", handler.Active())
 	}
-	if !strings.Contains(logs.String(), "git archive exited with status 128") {
+	if !strings.Contains(logs.String(), `could not read the commit's paths, so no archive was created`) ||
+		!strings.Contains(logs.String(), "exit status 128") {
 		t.Fatalf("log=%q", logs.String())
 	}
 }

@@ -36,6 +36,22 @@ func writeLanguageFixture(t *testing.T, work, remote string, files map[string]in
 	return gitOutput(t, "", "--git-dir", remote, "rev-parse", "main")
 }
 
+// writeNestedLanguageFixture stores one Go file inside one folder, so the
+// listing holds one folder record and one file record, and returns the commit.
+func writeNestedLanguageFixture(t *testing.T, remote string) string {
+	t.Helper()
+	work := t.TempDir()
+	runGit(t, "", "init", "-q", "--initial-branch=main", work)
+	runGit(t, work, "remote", "add", "origin", remote)
+	noErr(t, os.MkdirAll(filepath.Join(work, "dir"), 0o700))
+	noErr(t, os.WriteFile(filepath.Join(work, "dir", "a.go"), []byte("package main\n"), 0o600))
+	runGit(t, work, "add", "-A")
+	runGit(t, work, "-c", "user.name=Language Fixture", "-c", "user.email=language@example.invalid",
+		"commit", "-q", "-m", "one Go file in one folder")
+	runGit(t, work, "push", "-q", "origin", "HEAD:refs/heads/nested")
+	return gitOutput(t, "", "--git-dir", remote, "rev-parse", "nested")
+}
+
 func hashObject(t *testing.T, work, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "blob")
@@ -206,6 +222,16 @@ func TestLanguagesBounds(t *testing.T) {
 	undo()
 	if err != nil || !stats.TooLarge || len(stats.Shares) != 0 {
 		t.Fatalf("entry cap: stats=%+v err=%v", stats, err)
+	}
+
+	// The tree records -t adds are not entries of the count, so one Go file in
+	// one folder is one entry and a budget of one still counts it.
+	nested := writeNestedLanguageFixture(t, remote)
+	undo = restore(1, languageOutputLimit, languageTimeLimit)
+	stats, err = manager.Languages(context.Background(), "sample", nested)
+	undo()
+	if err != nil || stats.TooLarge || len(stats.Shares) != 1 || stats.Shares[0].Name != "Go" || stats.Shares[0].Bytes != 13 {
+		t.Fatalf("leaf budget with a folder: stats=%+v err=%v", stats, err)
 	}
 
 	undo = restore(languageEntryLimit, 64, languageTimeLimit)
