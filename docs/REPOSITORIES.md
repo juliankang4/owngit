@@ -29,6 +29,8 @@ git ls-remote --heads --tags owngit
 
 A push may change branches and tags, plus any [other ref namespaces](#other-ref-namespaces) listed for the repository. OwnGit refuses every other ref, so `git push --mirror` from another host's mirror fails on refs such as `refs/pull/*`. It also refuses a branch or tag name that some file systems treat as the same as an existing one, such as `Main` beside `main`; Git shows the reason and the fix.
 
+OwnGit checks every pushed object with Git's own object check. A push that carries a damaged or malformed object is refused, and Git prints the reason on `remote: error:` lines. Old zero-padded file modes and old date formats, which some long-lived projects carry in their history, stay warnings, so those repositories can still be pushed.
+
 Pushing to another OwnGit server does not carry kept history, pull requests or checks. Use a backup for those ([Backups](BACKUPS.md)). To keep following a host that stays in use, [import](#import-from-another-git-host) instead.
 
 ## Keep a copy on another host
@@ -126,6 +128,8 @@ Visitors see the files, README, commits, branches and tags. They never see other
 - without an extra password, enter any user name, and the part of the link after `/share/` as the password;
 - with an extra password, enter the part after `/share/` as the user name, and the extra password as the password.
 
+The Git address offers the repository's HEAD only when HEAD names the tip of a branch or tag (for an annotated tag, the commit it points to). Otherwise a clone may not check out any files; clone with `--branch BRANCH`, or check out a branch afterwards. If OwnGit cannot check HEAD, the address answers HTTP 503; try again.
+
 Treat a link like a password. Revoking a link does not take back a clone someone already made. A reverse proxy in front of OwnGit may log the first request, which carries the secret, so check its access log. Share links are not in backups; create new ones after a restore.
 
 On the command line:
@@ -200,6 +204,8 @@ curl --fail --remote-name --remote-header-name --user owngit \
 
 `ref` is a branch, tag or full commit ID, and defaults to the default branch. `--user` makes curl ask for the shared password. If the download stops early, curl reports an error and the file is not a valid archive.
 
+Before it creates an archive, OwnGit checks that no two files or folders of the commit share one path. It refuses the archive with HTTP 409 when two do, or when the commit has too many files to check. If the check itself fails, the answer is HTTP 502 and no archive is created.
+
 ## All activity
 
 All activity in the sidebar shows a year of commits across every repository, and the newest 1,000 commits of the year or of one day. `owngit activity` prints the same as JSON; it takes `--year 2025` or `--date 2026-09-29`.
@@ -209,6 +215,8 @@ All activity in the sidebar shows a year of commits across every repository, and
 When OwnGit starts, or when a repository folder could not be read, it prepares the repository before serving it. Meanwhile Git gets HTTP 503 with `repository is being prepared; try again later`, and the dashboard shows "Preparing". OwnGit retries on its own. If it stays that way, read the server log for the cause, such as an unmounted disk or wrong permissions, fix it, and restart OwnGit. If the log names a `hooks` entry, run [`owngit doctor`](OPERATIONS.md), which prints a command that moves it aside.
 
 Unreadable means OwnGit can read the folder but not its Git data. Git then reports the error itself.
+
+A repository stored before OwnGit checked pushed objects can hold a commit with two entries at one path. OwnGit keeps that data, but a page that reads those entries says the Git data could not be read, the language panel shows "Not counted right now", and an archive of that commit is refused.
 
 ## Import from another Git host
 

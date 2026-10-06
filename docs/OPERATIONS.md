@@ -660,6 +660,8 @@ A request may also have to wait while another transfer holds the repository, and
 What a client sees:
 
 - A push over the size limit gets HTTP 413, which Git may show only as `fatal: the remote end hung up unexpectedly`. A clone or fetch over a limit is cut off.
+- A clone or fetch request (the commits the client wants and already has) larger than 10 MiB gets HTTP 413, `request body exceeded the size limit`. This bound is fixed.
+- A push whose objects fail Git's object check is refused, and Git prints the reason on `remote: error:` lines (see [Move an existing repository into OwnGit](REPOSITORIES.md#move-an-existing-repository-into-owngit)).
 - A request that does not get a free slot or the repository in time gets HTTP 503, `Git service is busy with other transfers; try again shortly`. When this happens before any data moves, Git shows `remote: Git service is busy with other transfers; try again shortly` and `fatal: unable to access '...': The requested URL returned error: 503`. When it happens at the data transfer, Git shows only `error: RPC failed; HTTP 503`. In both cases, run the command again.
 - OwnGit does not host Git LFS. A repository whose history is larger than the size limit cannot be cloned; keep large binary files out of Git history.
 

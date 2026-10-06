@@ -660,6 +660,8 @@ Git 요청(클론, 페치, 푸시, 압축 파일)마다 다음 제한이 걸립�
 클라이언트에서는 다음과 같이 보입니다.
 
 - 크기 제한을 넘는 푸시는 HTTP 413을 받습니다. Git은 이를 `fatal: the remote end hung up unexpectedly`로만 보여 줄 수도 있습니다. 제한을 넘는 클론과 페치는 중간에 끊깁니다.
+- 클론이나 페치 요청(클라이언트가 원하는 커밋과 이미 가진 커밋의 목록)이 10 MiB를 넘으면 HTTP 413 `request body exceeded the size limit`을 받습니다. 이 한도는 바꿀 수 없습니다.
+- Git의 객체 검사를 통과하지 못한 푸시는 거부되고, Git이 `remote: error:` 줄에 이유를 보여 줍니다([기존 저장소를 OwnGit으로 옮기기](REPOSITORIES.ko.md#기존-저장소를-owngit으로-옮기기) 참고).
 - 기다리는 시간 안에 빈 자리나 저장소를 얻지 못한 요청은 HTTP 503 `Git service is busy with other transfers; try again shortly`를 받습니다. 데이터가 오가기 전에 거부되면 Git은 `remote: Git service is busy with other transfers; try again shortly`와 `fatal: unable to access '...': The requested URL returned error: 503`을 보여 줍니다. 데이터를 주고받는 단계에서 거부되면 `error: RPC failed; HTTP 503`만 보입니다. 어느 쪽이든 명령을 다시 실행하세요.
 - OwnGit은 Git LFS를 제공하지 않습니다. 기록이 크기 제한보다 큰 저장소는 클론할 수 없으니, 큰 바이너리 파일은 Git 기록에 넣지 마세요.
 
