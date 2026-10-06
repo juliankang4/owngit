@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 )
@@ -108,9 +109,12 @@ func TestNetworkSetAndShowTrustedProxies(t *testing.T) {
 	}
 }
 
-// preauthCookieSecure reports whether serve marks its first cookie Secure for
-// a request that claims to come through an HTTPS proxy.
-func preauthCookieSecure(t *testing.T, base string) bool {
+// preauthCookieForForwardedHTTPS is the live form token cookie of a GET
+// /setup answer for a request that claims to come through an HTTPS proxy.
+// Serve accepts one of two names, so the caller checks which one it got, and
+// a first answer at the secure address also expires the cookie names of OwnGit
+// 1.1.4 and earlier, whose expiries are not this cookie.
+func preauthCookieForForwardedHTTPS(t *testing.T, base string) *http.Cookie {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, base+"/setup", nil)
 	noErr(t, err)
@@ -118,13 +122,30 @@ func preauthCookieSecure(t *testing.T, base string) bool {
 	response, err := http.DefaultClient.Do(request)
 	noErr(t, err)
 	response.Body.Close()
+	var plain *http.Cookie
 	for _, cookie := range response.Cookies() {
-		if cookie.Name == "owngit_preauth" {
-			return cookie.Secure
+		if cookie.MaxAge < 0 || (!cookie.Expires.IsZero() && !cookie.Expires.After(time.Now())) {
+			continue
+		}
+		switch cookie.Name {
+		case "__Host-owngit_preauth":
+			return cookie
+		case "owngit_preauth":
+			plain = cookie
 		}
 	}
+	if plain != nil {
+		return plain
+	}
 	t.Fatalf("GET /setup set no preauth cookie (status %d)", response.StatusCode)
-	return false
+	return nil
+}
+
+// preauthCookieUsesHTTPSName reports whether serve answered a forwarded HTTPS
+// claim as a trusted proxy's claim: the HTTPS name for the preauth cookie,
+// with Secure.
+func preauthCookieUsesHTTPSName(preauth *http.Cookie) bool {
+	return preauth.Name == "__Host-owngit_preauth" && preauth.Secure
 }
 
 // serve trusts the saved proxies, a flag replaces them for one run, and
@@ -132,10 +153,10 @@ func preauthCookieSecure(t *testing.T, base string) bool {
 func TestServeAppliesTrustedProxies(t *testing.T) {
 	stateDir := filepath.Join(t.TempDir(), "state")
 	instance := startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
-	secure := preauthCookieSecure(t, instance.url)
+	preauth := preauthCookieForForwardedHTTPS(t, instance.url)
 	report := networkJSON(t, stateDir)
 	instance.stop()
-	if secure {
+	if preauthCookieUsesHTTPSName(preauth) {
 		t.Fatal("a forwarded scheme was trusted with no trusted proxy")
 	}
 	if report.Running == nil || len(report.Running.TrustedProxies) != 0 || report.Running.TrustedProxiesSource != "default" {
@@ -145,16 +166,16 @@ func TestServeAppliesTrustedProxies(t *testing.T) {
 	_, err := runNetwork(t, "set", "--state-dir", stateDir, "--trusted-proxy", "127.0.0.1")
 	noErr(t, err)
 	instance = startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0"})
-	secure = preauthCookieSecure(t, instance.url)
+	preauth = preauthCookieForForwardedHTTPS(t, instance.url)
 	report = networkJSON(t, stateDir)
 	logs := instance.log()
-	if secure {
+	if preauthCookieUsesHTTPSName(preauth) {
 		_, err = runNetwork(t, "set", "--state-dir", stateDir, "--trusted-proxy", "192.0.2.10")
 		noErr(t, err)
 	}
 	changed := networkJSON(t, stateDir)
 	instance.stop()
-	if !secure {
+	if !preauthCookieUsesHTTPSName(preauth) {
 		t.Fatal("the saved trusted proxy was not trusted")
 	}
 	if report.Running == nil || !reflect.DeepEqual(report.Running.TrustedProxies, []string{"127.0.0.1"}) || report.Running.TrustedProxiesSource != "saved" || report.RestartNeeded {
@@ -168,12 +189,12 @@ func TestServeAppliesTrustedProxies(t *testing.T) {
 	}
 
 	instance = startServedWith(t, []string{"--state-dir", stateDir, "--no-open", "--listen", "127.0.0.1:0", "--trusted-proxy", ""})
-	secure = preauthCookieSecure(t, instance.url)
+	preauth = preauthCookieForForwardedHTTPS(t, instance.url)
 	report = networkJSON(t, stateDir)
 	text, err := runNetwork(t, "show", "--state-dir", stateDir)
 	instance.stop()
 	noErr(t, err)
-	if secure {
+	if preauthCookieUsesHTTPSName(preauth) {
 		t.Fatal("an empty --trusted-proxy flag still trusted the saved proxy")
 	}
 	if report.Running == nil || len(report.Running.TrustedProxies) != 0 || report.Running.TrustedProxiesSource != "flag" || report.RestartNeeded {

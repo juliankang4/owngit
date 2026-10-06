@@ -121,8 +121,11 @@ func (fixture *proxiedOwnGit) send(t *testing.T, client *http.Client, method, pa
 	return response, string(content)
 }
 
-func secureCookie(t *testing.T, response *http.Response, name string) {
+// secureCookie checks that an answer the trusted proxy made HTTPS carries the
+// cookie of purpose under the HTTPS name, with Secure.
+func secureCookie(t *testing.T, response *http.Response, purpose string) {
 	t.Helper()
+	name := httpsCookiePrefix + purpose
 	for _, cookie := range response.Cookies() {
 		if cookie.Name == name {
 			if !cookie.Secure {
@@ -144,13 +147,13 @@ func TestBrowserAndGitThroughATrustedReverseProxy(t *testing.T) {
 		t.Fatalf("login page status=%d", response.StatusCode)
 	}
 	secureCookie(t, response, preauthCookie)
-	csrf := cookieValue(t, jar, origin, preauthCookie)
+	csrf := cookieValue(t, jar, origin, httpsCookiePrefix+preauthCookie)
 	response, _ = fixture.send(t, client, http.MethodPost, "/login", url.Values{"csrf": {csrf}, "password": {"shared-password"}, "next": {"/"}}, origin)
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("login status=%d", response.StatusCode)
 	}
 	secureCookie(t, response, generalCookie)
-	session, ok, err := fixture.app.Store.Session(context.Background(), cookieValue(t, jar, origin, generalCookie), "general", fixture.app.now())
+	session, ok, err := fixture.app.Store.Session(context.Background(), cookieValue(t, jar, origin, httpsCookiePrefix+generalCookie), "general", fixture.app.now())
 	if err != nil || !ok {
 		t.Fatalf("login created no session: %v", err)
 	}
@@ -343,7 +346,7 @@ func TestSetupThroughATrustedHTTPSProxy(t *testing.T) {
 	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
 	fixture.send(t, client, http.MethodGet, "/setup", nil, "")
 	response, _ := fixture.send(t, client, http.MethodPost, "/setup/redeem", url.Values{
-		"csrf": {cookieValue(t, jar, origin, preauthCookie)}, "token": {"synthetic-owner-token"},
+		"csrf": {cookieValue(t, jar, origin, httpsCookiePrefix+preauthCookie)}, "token": {"synthetic-owner-token"},
 	}, origin)
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("redeem status=%d", response.StatusCode)
@@ -352,7 +355,7 @@ func TestSetupThroughATrustedHTTPSProxy(t *testing.T) {
 	if _, page := fixture.send(t, client, http.MethodGet, "/setup", nil, ""); strings.Contains(page, `name="insecure_ack"`) {
 		t.Fatal("the setup form asks to acknowledge plain HTTP for an HTTPS request through the proxy")
 	}
-	session, ok, err := store.Session(context.Background(), cookieValue(t, jar, origin, setupCookie), "setup", time.Now())
+	session, ok, err := store.Session(context.Background(), cookieValue(t, jar, origin, httpsCookiePrefix+setupCookie), "setup", time.Now())
 	if err != nil || !ok {
 		t.Fatalf("setup session ok=%v err=%v", ok, err)
 	}

@@ -261,6 +261,7 @@ const (
 	MsgLoginNotRequired MessageCode = "login.not_required"
 	MsgLogoutDone       MessageCode = "login.logged_out"
 	MsgLogoutFailed     MessageCode = "login.logout_failed"
+	MsgLogoutSecureKept MessageCode = "login.logout_secure_kept"
 
 	MsgAdminTitle            MessageCode = "admin.title"
 	MsgAdminBody             MessageCode = "admin.body"
@@ -272,6 +273,7 @@ const (
 	MsgAdminLockedServerWide MessageCode = "admin.locked_server_wide"
 	MsgAdminConfirmed        MessageCode = "admin.confirmed"
 	MsgAdminEnded            MessageCode = "admin.ended"
+	MsgAdminSecureKept       MessageCode = "admin.secure_kept"
 	MsgAdminTemporary        MessageCode = "admin.temporary_notice"
 	MsgAdminForgot           MessageCode = "admin.forgot"
 )
@@ -992,6 +994,10 @@ var catalog = map[MessageCode]message{
 		en: "Sign-out could not be completed. You are still signed in. Try signing out again.",
 		ko: "로그아웃을 마치지 못했습니다. 아직 로그인된 상태입니다. 다시 로그아웃하세요.",
 	},
+	MsgLogoutSecureKept: {
+		en: "The HTTPS address keeps its own sign-in: sign out there too to end it.",
+		ko: "HTTPS 주소는 로그인을 따로 유지하므로 그 주소에서도 로그아웃하세요.",
+	},
 	MsgAdminTitle: {
 		en: "Confirm as administrator",
 		ko: "관리자 확인",
@@ -1031,6 +1037,10 @@ var catalog = map[MessageCode]message{
 	MsgAdminEnded: {
 		en: "Administrator confirmation ended.",
 		ko: "관리자 확인을 종료했습니다.",
+	},
+	MsgAdminSecureKept: {
+		en: "The HTTPS address keeps its own administrator confirmation: end it there too.",
+		ko: "HTTPS 주소는 관리자 확인을 따로 유지하므로 그 주소에서도 끝내세요.",
 	},
 	MsgAdminTemporary: {
 		en: "This browser is not remembered as an administrator. Confirmation is asked again when it lapses.",

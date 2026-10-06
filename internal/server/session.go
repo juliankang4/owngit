@@ -18,11 +18,11 @@ import (
 func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request, settings state.Settings) (state.Session, bool) {
 	if settings.AccessMode == "open" {
 		expires := app.now().Add(12 * time.Hour)
-		if cookie, err := request.Cookie(generalCookie); err == nil && validOpenToken(cookie.Value) {
+		if cookie, err := request.Cookie(cookieNameForScheme(request, generalCookie)); err == nil && validOpenToken(cookie.Value) {
 			return state.Session{Kind: "general", CSRF: cookie.Value, Version: settings.AccessSessionVersion, Expires: expires}, true
 		}
 		token := auth.RandomToken(32)
-		app.setCookie(writer, request, generalCookie, token, expires, true)
+		app.setCookie(writer, request, cookieNameForScheme(request, generalCookie), token, expires, true)
 		return state.Session{Kind: "general", CSRF: token, Version: settings.AccessSessionVersion, Expires: expires}, true
 	}
 	session, ok, err := app.cookieSession(request, "general", generalCookie)
@@ -112,13 +112,15 @@ func repositoryOfPath(path string) (string, bool) {
 	return id, found && id != ""
 }
 
-// cookieSession returns the session of kind named by the request's cookie.
+// cookieSession returns the session of kind named by the request's cookie,
+// whose name is the cookie's base name without a scheme (see
+// cookieNameForScheme).
 // ok is false for no cookie and for an unknown, expired or ended session. An
 // error means the session could not be read and may be valid, so it neither
 // grants nor refuses anything: the request is answered through
 // answerUnavailable instead of being sent to sign in or refused as a forgery.
-func (app *App) cookieSession(request *http.Request, kind, cookieName string) (state.Session, bool, error) {
-	cookie, err := request.Cookie(cookieName)
+func (app *App) cookieSession(request *http.Request, kind, base string) (state.Session, bool, error) {
+	cookie, err := request.Cookie(cookieNameForScheme(request, base))
 	if err != nil || cookie.Value == "" {
 		return state.Session{}, false, nil
 	}
@@ -163,7 +165,7 @@ func (app *App) validCSRF(request *http.Request, submitted string) (bool, error)
 		return false, err
 	}
 	if settings.AccessMode == "open" {
-		if cookie, err := request.Cookie(generalCookie); err == nil && validOpenToken(cookie.Value) && constantEqual(cookie.Value, submitted) {
+		if cookie, err := request.Cookie(cookieNameForScheme(request, generalCookie)); err == nil && validOpenToken(cookie.Value) && constantEqual(cookie.Value, submitted) {
 			return true, nil
 		}
 	}
@@ -193,17 +195,134 @@ func validOpenToken(value string) bool {
 }
 
 func (app *App) preauthCSRF(writer http.ResponseWriter, request *http.Request) string {
-	if cookie, err := request.Cookie(preauthCookie); err == nil && len(cookie.Value) >= 32 {
+	name := cookieNameForScheme(request, preauthCookie)
+	if cookie, err := request.Cookie(name); err == nil && len(cookie.Value) >= 32 {
 		return cookie.Value
 	}
 	token := auth.RandomToken(32)
-	app.setCookie(writer, request, preauthCookie, token, app.now().Add(20*time.Minute), true)
+	app.setCookie(writer, request, name, token, app.now().Add(20*time.Minute), true)
 	return token
 }
 
 func (app *App) validPreauthCSRF(request *http.Request, submitted string) bool {
-	cookie, err := request.Cookie(preauthCookie)
+	cookie, err := request.Cookie(cookieNameForScheme(request, preauthCookie))
 	return err == nil && submitted != "" && constantEqual(cookie.Value, submitted)
+}
+
+// cookieNameForScheme returns the name a request reads, writes and clears for
+// a cookie that carries a session, a form token or a setup secret. Over
+// HTTPS the name carries the __Host- prefix, which a browser accepts only
+// from a secure origin, with Path=/ and no Domain: the cookie belongs to this
+// exact host and never travels over plain HTTP (writeCookie sets those
+// attributes with it). Over plain HTTP the name is the plain base name. A
+// browser that uses both this server's HTTPS address and a plain address
+// therefore holds one cookie for each, and the plain response never has to
+// replace a secure cookie of the same name. Signing in at either address
+// works, and a sign-in at one does not end the session at the other.
+func cookieNameForScheme(request *http.Request, base string) string {
+	if requestctx.Of(request).Secure() {
+		return "__Host-" + base
+	}
+	return base
+}
+
+// signOutCookieNames returns the cookie names a sign-out of base ends and
+// clears. A secure request carries the cookie of both address schemes: the
+// secure name and the plain one, which the same browser holds for a plain
+// address of this host. Signing out there therefore ends both of this
+// browser's sessions, and no other browser's. A plain request never carries
+// the secure cookie, so it can end its own name only, and the sign-in page it
+// leads to says that the secure address keeps its sign-in.
+func signOutCookieNames(request *http.Request, base string) []string {
+	if !requestctx.Of(request).Secure() {
+		return []string{base}
+	}
+	return []string{cookieNameForScheme(request, base), base}
+}
+
+// generalAccess reports whether the request already has general access, the
+// way the dashboard needs it: open access, or a valid general session. It
+// reads only, so a handler can ask before it answers where it sends the
+// reader.
+func (app *App) generalAccess(request *http.Request, settings state.Settings) bool {
+	if settings.AccessMode == "open" {
+		return true
+	}
+	_, ok, err := app.cookieSession(request, "general", generalCookie)
+	return err == nil && ok
+}
+
+// signOutKeepsSecureAddress reports whether a sign-out at a plain address
+// must say that the secure address keeps its own sign-in, or its own
+// administrator confirmation. The secure cookie never reached this address,
+// so OwnGit cannot end that session here, and the sentence is true when the
+// base URL is that secure address.
+func (app *App) signOutKeepsSecureAddress(request *http.Request) bool {
+	return !requestctx.Of(request).Secure() && strings.HasPrefix(app.Network.BaseURL(), "https://")
+}
+
+// legacyCookieNames are the names OwnGit 1.1.4 and earlier gave the cookies
+// that carry a session, a form token or a setup secret: one name for both
+// address schemes. A browser that signed in at the HTTPS address of that
+// version holds them with Secure, and a plain response can neither replace
+// nor remove such a cookie (RFC 6265bis, section 5.4), so signing in at the
+// plain address stays broken until they are gone (forgetLegacyCookies).
+var legacyCookieNames = []string{generalCookie, adminCookie, setupCookie, preauthCookie, approvalCookie}
+
+// cookieNamesMarkerName records in the browser that forgetLegacyCookies ran.
+// It carries no secret: it only keeps a later response from expiring the
+// names the plain address uses now.
+const cookieNamesMarkerName = "__Host-owngit_cookie_names"
+
+// cookieNamesMarkerValue names the cleanup this marker stands for. A release
+// that renames these cookies again raises it.
+const cookieNamesMarkerValue = "1"
+
+// cookieNamesMarkerLifetime outlives every session the plain address can
+// create, so the cleanup cannot run while such a session exists. The longest
+// sign-in is 30 days.
+const cookieNamesMarkerLifetime = 10 * 365 * 24 * time.Hour
+
+// legacyCookieSessions names the session kind of each earlier cookie that
+// carries a session. The earlier form token and setup approval cookies name
+// no session row: the approval request they name expires by itself.
+var legacyCookieSessions = map[string]string{
+	generalCookie: "general",
+	adminCookie:   "admin",
+	setupCookie:   "setup",
+}
+
+// forgetLegacyCookies expires the cookie names of OwnGit 1.1.4 and earlier
+// once for this browser, so a browser that signed in at the HTTPS address
+// before the upgrade can sign in at a plain address again. Only a secure
+// answer can do it: a browser takes the expiry of a secure cookie from a
+// secure origin and ignores it from a plain one. The marker holds the
+// cleanup to that once, because a later run would delete the sessions the
+// plain address sets now. A browser that reaches this server only over plain
+// HTTP keeps the earlier cookies until it opens the secure address once.
+func (app *App) forgetLegacyCookies(writer http.ResponseWriter, request *http.Request) {
+	if !requestctx.Of(request).Secure() {
+		return
+	}
+	marker, err := request.Cookie(cookieNamesMarkerName)
+	if err == nil && marker.Value == cookieNamesMarkerValue {
+		return
+	}
+	for _, name := range legacyCookieNames {
+		// The server ends a session before the browser forgets it, as a
+		// sign-out does. A session that cannot be ended stops the cleanup
+		// before the marker is set, so the next page tries again: a cleared
+		// cookie would leave a live session this browser can no longer end.
+		kind, hasSession := legacyCookieSessions[name]
+		if cookie, err := request.Cookie(name); hasSession && err == nil && cookie.Value != "" {
+			if err := app.Store.DeleteSession(request.Context(), cookie.Value, kind); err != nil {
+				logFailure(request, "earlier cookie session removal", err)
+				return
+			}
+		}
+		app.clearCookie(writer, request, name, true)
+	}
+	app.setCookie(writer, request, cookieNamesMarkerName, cookieNamesMarkerValue, app.now().Add(cookieNamesMarkerLifetime), true)
 }
 
 // setCookie sets a Strict cookie: a request that another site starts does
@@ -347,7 +466,7 @@ func (app *App) resultNotice(writer http.ResponseWriter, request *http.Request) 
 // setupSession returns the setup session named by the request's cookie, with
 // the outcomes of cookieSession.
 func (app *App) setupSession(request *http.Request) (state.Session, bool, error) {
-	cookie, err := request.Cookie(setupCookie)
+	cookie, err := request.Cookie(cookieNameForScheme(request, setupCookie))
 	if err != nil {
 		return state.Session{}, false, nil
 	}
@@ -490,8 +609,12 @@ func noticeFor(notice string) []webui.Notice {
 		return []webui.Notice{webui.Success(webui.MsgSettingsAckDone)}
 	case "logout":
 		return []webui.Notice{webui.Success(webui.MsgLogoutDone)}
+	case "logout_secure_kept":
+		return []webui.Notice{webui.Success(webui.MsgLogoutDone), {Kind: webui.NoticeWarning, Code: webui.MsgLogoutSecureKept}}
 	case "admin_logout":
 		return []webui.Notice{webui.Success(webui.MsgAdminEnded)}
+	case "admin_logout_secure_kept":
+		return []webui.Notice{webui.Success(webui.MsgAdminEnded), {Kind: webui.NoticeWarning, Code: webui.MsgAdminSecureKept}}
 	case "restore_success":
 		return []webui.Notice{webui.Success(webui.MsgRestoreSuccess)}
 	// Pull request results are not answered here. The pull request page

@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/testfixture"
 )
 
 // renameAPI renames repository name through the owner API and returns the
@@ -30,9 +35,10 @@ func renameAPI(t *testing.T, server, name, newName, password string) (int, repos
 
 // After a rename, the repository answers at its new name on every route,
 // its links and clone address use it, and the old address leads there: pages
-// and the API redirect after the caller is accepted, and a clone made from
-// the old address keeps fetching and pushing while Git says where it went.
-// Once the alias expires the old address reaches nothing.
+// and the API redirect after the caller is accepted, and Git at the old
+// address keeps cloning, fetching and pushing while it tells the client where
+// the repository is now. Once the alias expires the old address reaches
+// nothing.
 func TestRenamedRepositoryAnswersAtItsNewNameAndTheOldOneLeadsThere(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	server, client, jar := openBrowser(t, fixture)
@@ -111,14 +117,26 @@ func TestRenamedRepositoryAnswersAtItsNewNameAndTheOldOneLeadsThere(t *testing.T
 	}
 
 	// Git: a new clone uses the new address, and the old clone keeps
-	// fetching and pushing through the alias.
-	apiRunGit(t, "", "clone", "-q", server.URL+"/git/renamed.git", filepath.Join(t.TempDir(), "new"))
+	// fetching and pushing through the alias, which tells it where the
+	// repository is now. A transfer that moves no data carries no message on
+	// this protocol, so a commit comes first.
+	newClone := filepath.Join(t.TempDir(), "new")
+	apiRunGit(t, "", "clone", "-q", server.URL+"/git/renamed.git", newClone)
+	apiRunGit(t, newClone, "config", "user.name", "API Test")
+	apiRunGit(t, newClone, "config", "user.email", "api-test@example.invalid")
+	noErr(t, os.WriteFile(filepath.Join(newClone, "second.txt"), []byte("second\n"), 0o600))
+	apiRunGit(t, newClone, "add", ".")
+	apiRunGit(t, newClone, "commit", "-m", "second")
+	apiRunGit(t, newClone, "push", "origin", "HEAD:refs/heads/main")
+
+	movedNotice := "remote: This repository moved to " + server.URL + "/git/renamed.git"
 	output, err := gitCombined(oldClone, "fetch", "origin")
-	if err != nil || !strings.Contains(output, "redirecting to "+server.URL+"/git/renamed.git/") {
+	if err != nil || !strings.Contains(output, movedNotice) {
 		t.Fatalf("fetch through the alias err=%v output:\n%s", err, output)
 	}
+	apiRunGit(t, oldClone, "merge", "--ff-only", "origin/main")
 	apiRunGit(t, oldClone, "commit", "--allow-empty", "-m", "through the alias")
-	if output, err := gitCombined(oldClone, "push", "origin", "HEAD:refs/heads/main"); err != nil {
+	if output, err := gitCombined(oldClone, "push", "origin", "HEAD:refs/heads/main"); err != nil || !strings.Contains(output, movedNotice) {
 		t.Fatalf("push through the alias: %v\n%s", err, output)
 	}
 	if head := apiGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"); head != apiGitOutput(t, oldClone, "rev-parse", "HEAD") {
@@ -179,9 +197,132 @@ func TestRenameIsForTheAdministratorAndAliasesAnswerOnlyAcceptedCallers(t *testi
 	request.SetBasicAuth("owngit", "shared-password")
 	response, err = client.Do(request)
 	noErr(t, err)
+	answer, readErr := io.ReadAll(response.Body)
 	response.Body.Close()
-	if response.StatusCode != http.StatusTemporaryRedirect || response.Header.Get("Location") != "/git/renamed.git/info/refs?service=git-upload-pack" {
+	noErr(t, readErr)
+	if response.StatusCode != http.StatusOK || response.Header.Get("Location") != "" {
 		t.Fatalf("old Git address with the password status=%d location=%q", response.StatusCode, response.Header.Get("Location"))
+	}
+	if strings.Contains(string(answer), "renamed") {
+		t.Fatalf("the old Git address named the repository's current address:\n%s", answer)
+	}
+}
+
+// passwordGit runs Git against base with the shared password in a credential
+// helper file, the way an owner's client holds it after the credential
+// challenge. It returns Git's combined output.
+func passwordGit(t *testing.T, base, directory string, arguments ...string) (string, error) {
+	t.Helper()
+	home := t.TempDir()
+	emptyConfig := filepath.Join(home, "gitconfig")
+	noErr(t, os.WriteFile(emptyConfig, nil, 0o600))
+	credentials := filepath.Join(home, "credentials")
+	stored, err := url.Parse(base)
+	noErr(t, err)
+	stored.User = url.UserPassword("owngit", "shared-password")
+	noErr(t, os.WriteFile(credentials, []byte(stored.String()+"\n"), 0o600))
+	command := exec.Command("git", append([]string{"-c", "credential.helper=", "-c", "credential.helper=store --file=" + filepath.ToSlash(credentials)}, arguments...)...)
+	command.Dir = directory
+	command.Env = testfixture.GitEnvironment(append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+emptyConfig, "HOME="+home))
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
+
+// With the shared password, an existing clone keeps cloning, fetching and
+// pushing at an earlier address while its alias lasts, and Git prints where
+// the repository moved to. Git does not follow a redirect that arrives after
+// its authentication round, so the earlier address is served directly. Before,
+// every command there failed with HTTP 307 for a correct saved password.
+func TestPasswordProtectedEarlierAddressServesClonesFetchesAndPushes(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	server := serve(t, fixture.app.Handler())
+	if status, _, code := renameAPI(t, server.URL, "project", "renamed", "admin-password"); status != http.StatusOK || code != "" {
+		t.Fatalf("rename status=%d code=%s", status, code)
+	}
+	// The address Git uses carries the shared password in its credential
+	// helper, so no prompt is needed.
+	earlier := server.URL + "/git/project.git"
+	current := server.URL + "/git/renamed.git"
+	movedNotice := "remote: This repository moved to " + server.URL + "/git/renamed.git"
+
+	// A clone at the earlier address.
+	earlierClone := filepath.Join(t.TempDir(), "earlier")
+	output, err := passwordGit(t, server.URL, "", "clone", earlier, earlierClone)
+	if err != nil || !strings.Contains(output, movedNotice) {
+		t.Fatalf("clone at the earlier address err=%v output:\n%s", err, output)
+	}
+	apiRunGit(t, earlierClone, "config", "user.name", "Alias Test")
+	apiRunGit(t, earlierClone, "config", "user.email", "alias-test@example.invalid")
+
+	currentClone := filepath.Join(t.TempDir(), "current")
+	if output, err := passwordGit(t, server.URL, "", "clone", "-q", current, currentClone); err != nil {
+		t.Fatalf("clone at the current address err=%v output:\n%s", err, output)
+	}
+	apiRunGit(t, currentClone, "config", "user.name", "Alias Test")
+	apiRunGit(t, currentClone, "config", "user.email", "alias-test@example.invalid")
+
+	// A fetch that needs objects. Protocol version 0 acknowledges before the
+	// pack and version 2 sends a section header before it; both carry the
+	// message. A transfer that moves no data carries none.
+	for _, protocol := range []string{"0", "2"} {
+		noErr(t, os.WriteFile(filepath.Join(currentClone, "next-"+protocol+".txt"), []byte("next\n"), 0o600))
+		apiRunGit(t, currentClone, "add", ".")
+		apiRunGit(t, currentClone, "commit", "-m", "next for protocol "+protocol)
+		if output, err := passwordGit(t, server.URL, currentClone, "push", "origin", "HEAD:refs/heads/main"); err != nil {
+			t.Fatalf("push at the current address err=%v output:\n%s", err, output)
+		}
+		output, err := passwordGit(t, server.URL, earlierClone, "-c", "protocol.version="+protocol, "fetch", "origin")
+		if err != nil || !strings.Contains(output, movedNotice) {
+			t.Fatalf("protocol %s fetch at the earlier address err=%v output:\n%s", protocol, err, output)
+		}
+		if head, want := apiGitOutput(t, earlierClone, "rev-parse", "refs/remotes/origin/main"), apiGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"); head != want {
+			t.Fatalf("protocol %s fetched %s, want %s", protocol, head, want)
+		}
+	}
+
+	// A push through the earlier address reaches the repository.
+	apiRunGit(t, earlierClone, "merge", "--ff-only", "origin/main")
+	noErr(t, os.WriteFile(filepath.Join(earlierClone, "pushed.txt"), []byte("pushed\n"), 0o600))
+	apiRunGit(t, earlierClone, "add", ".")
+	apiRunGit(t, earlierClone, "commit", "-m", "through the earlier address")
+	if output, err = passwordGit(t, server.URL, earlierClone, "push", "origin", "HEAD:refs/heads/main"); err != nil || !strings.Contains(output, movedNotice) {
+		t.Fatalf("push at the earlier address err=%v output:\n%s", err, output)
+	}
+	if head, want := apiGitOutput(t, fixture.remote, "rev-parse", "refs/heads/main"), apiGitOutput(t, earlierClone, "rev-parse", "HEAD"); head != want {
+		t.Fatalf("the pushed commit %s is at %s", want, head)
+	}
+}
+
+// A protocol 2 fetch that the server answers with a section before the pack
+// sends a four-byte delimiter between the two, as a shallow fetch does. The
+// notice scan must step over that delimiter exactly, or it reads the pack as
+// garbage, stops, and the clone loses the message. Before, a shallow clone at
+// an earlier address fetched silently.
+func TestShallowCloneAtAnEarlierAddressNamesTheCurrentOne(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	server := serve(t, fixture.app.Handler())
+	if status, _, code := renameAPI(t, server.URL, "project", "renamed", "admin-password"); status != http.StatusOK || code != "" {
+		t.Fatalf("rename status=%d code=%s", status, code)
+	}
+	movedNotice := "remote: This repository moved to " + server.URL + "/git/renamed.git"
+	clone := filepath.Join(t.TempDir(), "shallow")
+	output, err := passwordGit(t, server.URL, "", "-c", "protocol.version=2", "clone", "--depth=1", server.URL+"/git/project.git", clone)
+	if err != nil || !strings.Contains(output, movedNotice) {
+		t.Fatalf("shallow clone at the earlier address err=%v output:\n%s", err, output)
+	}
+	if shallow, err := os.Stat(filepath.Join(clone, ".git", "shallow")); err != nil {
+		t.Fatalf("the clone is not shallow, so the server sent no shallow section: %v", err)
+	} else if shallow.IsDir() {
+		t.Fatalf("the shallow marker is a directory")
+	}
+
+	// A later fetch that deepens the clone asks for the same section.
+	full := filepath.Join(t.TempDir(), "full")
+	if output, err := passwordGit(t, server.URL, "", "-c", "protocol.version=2", "clone", "-q", server.URL+"/git/project.git", full); err != nil || !strings.Contains(output, movedNotice) {
+		t.Fatalf("clone at the earlier address err=%v output:\n%s", err, output)
+	}
+	if output, err := passwordGit(t, server.URL, full, "-c", "protocol.version=2", "fetch", "--depth=1", "origin"); err != nil || !strings.Contains(output, movedNotice) {
+		t.Fatalf("shallow fetch at the earlier address err=%v output:\n%s", err, output)
 	}
 }
 

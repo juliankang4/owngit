@@ -49,7 +49,7 @@ func (app *App) setGeneralCookie(writer http.ResponseWriter, request *http.Reque
 	if links == state.CrossSiteLax {
 		sameSite = http.SameSiteLaxMode
 	}
-	app.writeCookie(writer, request, generalCookie, token, expires, true, sameSite)
+	app.writeCookie(writer, request, cookieNameForScheme(request, generalCookie), token, expires, true, sameSite)
 }
 
 // renewGeneralCookie applies a newly saved cross-site link choice to this
@@ -63,7 +63,7 @@ func (app *App) renewGeneralCookie(writer http.ResponseWriter, request *http.Req
 	if !ok {
 		return
 	}
-	cookie, err := request.Cookie(generalCookie)
+	cookie, err := request.Cookie(cookieNameForScheme(request, generalCookie))
 	if err == nil {
 		app.setGeneralCookie(writer, request, cookie.Value, session.Expires, links)
 	}

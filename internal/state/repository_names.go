@@ -10,7 +10,9 @@ import (
 )
 
 // RepositoryAliasLifetime is how long an earlier address of a renamed
-// repository keeps redirecting to its current one.
+// repository keeps working. Git is answered at that address itself, and the
+// answer names the current one (internal/githttp); a page or an API request
+// is still redirected to the current name.
 const RepositoryAliasLifetime = 90 * 24 * time.Hour
 
 // ErrRepositoryNameTaken reports a name that is another repository's ID,
@@ -153,7 +155,7 @@ func (s *Store) RenameRepository(ctx context.Context, id, name string, now time.
 			return Repository{}, err
 		}
 		// The address the repository had, its ID or its current name, now
-		// redirects to the new one.
+		// reaches the new one for RepositoryAliasLifetime.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM repository_names WHERE name=?`, repository.Address); err != nil {
 			return Repository{}, err
 		}

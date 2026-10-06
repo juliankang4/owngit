@@ -158,7 +158,7 @@ func TestTurningTailscaleSharingOnAndOff(t *testing.T) {
 	}
 	secure := false
 	for _, cookie := range response.Result().Cookies() {
-		secure = secure || (cookie.Name == generalCookie && cookie.Secure)
+		secure = secure || (cookie.Name == httpsCookiePrefix+generalCookie && cookie.Secure)
 	}
 	if !secure {
 		t.Fatal("the session cookie of a request through Serve is not Secure")

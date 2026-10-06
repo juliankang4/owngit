@@ -100,8 +100,8 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 	} else {
 		app.setupHosts.clear()
 	}
-	app.setCookie(writer, request, setupCookie, sessionToken, expires, true)
-	app.clearCookie(writer, request, preauthCookie, true)
+	app.setCookie(writer, request, cookieNameForScheme(request, setupCookie), sessionToken, expires, true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
 	http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 }
 
@@ -161,7 +161,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		// terminal does.
 		logFailure(request, "setup file removal", err)
 	}
-	app.clearCookie(writer, request, setupCookie, true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, setupCookie), true)
 	app.returnToLocalListen(request.Context(), answers.KeepHost)
 	// An unknown Host that was not kept is refused from now on, so the
 	// result is shown here instead of on the dashboard.
@@ -339,9 +339,9 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgErrCSRF, "")
 		return
 	}
-	kind, field, cookieName := "general", "password", generalCookie
+	kind, field, cookieName := "general", "password", cookieNameForScheme(request, generalCookie)
 	if scope == webui.AuthAdmin {
-		kind, field, cookieName = "admin", "admin_password", adminCookie
+		kind, field, cookieName = "admin", "admin_password", cookieNameForScheme(request, adminCookie)
 	} else if settings.AccessMode == "open" {
 		http.Redirect(writer, request, "/", http.StatusSeeOther)
 		return
@@ -409,7 +409,7 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 	} else {
 		app.setCookie(writer, request, cookieName, session.Token, session.Expires, true)
 	}
-	app.clearCookie(writer, request, preauthCookie, true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
 	http.Redirect(writer, request, next, http.StatusSeeOther)
 }
 
@@ -467,13 +467,37 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 	endings, target := []ending{{"general", generalCookie}, {"admin", adminCookie}}, "/login?notice=logout"
 	if scope == webui.AuthAdmin {
 		endings, target = []ending{{"admin", adminCookie}}, "/?notice=admin_logout"
+		if app.signOutKeepsSecureAddress(request) {
+			// The administrator confirmation of the secure address stays:
+			// this plain request never carried its cookie. A reader who
+			// holds no plain general session cannot open the dashboard, so
+			// the sign-in page carries the sentence instead of the page
+			// the dashboard would send them to.
+			target = "/?notice=admin_logout_secure_kept"
+			settings, err := app.Store.Settings(request.Context())
+			if err != nil {
+				app.answerUnavailable(writer, request, "settings read", err)
+				return
+			}
+			if !app.generalAccess(request, settings) {
+				target = "/login?notice=admin_logout_secure_kept"
+			}
+		}
+	} else if app.signOutKeepsSecureAddress(request) {
+		// This sign-out cannot end the session of the secure address: its
+		// cookie never reached this one. The sign-in page says so.
+		target = "/login?notice=logout_secure_kept"
 	}
 	// The browser forgets a session only after the server ended it. A
 	// failed sign-out says the reader is still signed in, and the kept
 	// cookies let them try again; a cleared one would leave a live session
 	// this browser can no longer end.
 	for _, end := range endings {
-		if cookie, err := request.Cookie(end.cookie); err == nil {
+		for _, name := range signOutCookieNames(request, end.cookie) {
+			cookie, err := request.Cookie(name)
+			if err != nil {
+				continue
+			}
 			if err := app.Store.DeleteSession(request.Context(), cookie.Value, end.kind); err != nil {
 				app.renderError(writer, request, unavailable(request, "sign-out", err), webui.MsgLogoutFailed, "")
 				return
@@ -481,7 +505,9 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 		}
 	}
 	for _, end := range endings {
-		app.clearCookie(writer, request, end.cookie, true)
+		for _, name := range signOutCookieNames(request, end.cookie) {
+			app.clearCookie(writer, request, name, true)
+		}
 	}
 	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
 }

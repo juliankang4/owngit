@@ -72,10 +72,12 @@ func (app *App) adminAuthority(writer http.ResponseWriter, request *http.Request
 	return adminAuthority{choice: choice, known: known, session: session, confirmed: ok}, nil
 }
 
-// heldCookie is the value of the cookie named name that the browser holds
+// heldCookie is the value of the cookie named base that the browser holds
 // once this response arrives: the one the response sets, when it sets one
-// ("" when it clears it), otherwise the one the request sent.
-func heldCookie(writer http.ResponseWriter, request *http.Request, name string) string {
+// ("" when it clears it), otherwise the one the request sent. The name is the
+// cookie's base name without a scheme (see cookieNameForScheme).
+func heldCookie(writer http.ResponseWriter, request *http.Request, base string) string {
+	name := cookieNameForScheme(request, base)
 	value, set := "", false
 	for _, line := range writer.Header().Values("Set-Cookie") {
 		if cookie, err := http.ParseSetCookie(line); err == nil && cookie.Name == name {
@@ -183,7 +185,7 @@ func (app *App) rememberAdmin(writer http.ResponseWriter, request *http.Request,
 	if err != nil {
 		return err
 	}
-	app.setCookie(writer, request, adminCookie, session.Token, session.Expires, true)
+	app.setCookie(writer, request, cookieNameForScheme(request, adminCookie), session.Token, session.Expires, true)
 	if chrome != nil {
 		if authority, err := app.adminAuthority(writer, request); err != nil {
 			logFailure(request, "administrator confirmation read", err)

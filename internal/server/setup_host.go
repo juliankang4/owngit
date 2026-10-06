@@ -116,7 +116,7 @@ func (app *App) setupSessionForHost(request *http.Request) (state.Session, bool,
 		return state.Session{}, false, err
 	}
 	if host, unknown := app.unknownHost(request); unknown {
-		cookie, err := request.Cookie(setupCookie)
+		cookie, err := request.Cookie(cookieNameForScheme(request, setupCookie))
 		if err != nil || !app.setupHosts.matches(cookie.Value, host) {
 			return state.Session{}, false, nil
 		}

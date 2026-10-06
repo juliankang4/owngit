@@ -28,6 +28,12 @@ import (
 )
 
 const (
+	// The cookies that carry a session or a form token have one name per
+	// scheme: the name below over plain HTTP, and the same name with the
+	// __Host- prefix over HTTPS (cookieNameForScheme). A browser that uses
+	// both this server's HTTPS address and a plain address then holds a
+	// session for each, and signing in at one never has to replace the
+	// other's cookie. The preference cookies below keep one name.
 	generalCookie  = "owngit_general"
 	adminCookie    = "owngit_admin"
 	setupCookie    = "owngit_setup"
@@ -360,6 +366,15 @@ func (reader failedReader) Read([]byte) (int, error) { return 0, reader.err }
 
 func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	app.noteHTTPS(request)
+	// A browser that signed in here with OwnGit 1.1.4 or earlier keeps the
+	// cookie names of that version, which block a plain address until the
+	// first secure page removes them (forgetLegacyCookies). Only a page does
+	// it: a browser holds the marker that stops the cleanup from running
+	// again, and a Git or API client, which keeps no cookies, would get the
+	// same expiries on every request.
+	if dashboardPage(request.URL.Path) || strings.HasPrefix(request.URL.Path, "/setup") {
+		app.forgetLegacyCookies(writer, request)
+	}
 	if request.URL.Path == HealthPath {
 		app.handleHealth(writer, request)
 		return

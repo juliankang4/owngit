@@ -386,7 +386,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if ends != "" {
-		app.clearCookie(writer, request, ends, true)
+		app.clearCookie(writer, request, cookieNameForScheme(request, ends), true)
 	}
 	// A new shared password signs out every general session, this browser's
 	// too. Without an administrator session Settings would send it to the

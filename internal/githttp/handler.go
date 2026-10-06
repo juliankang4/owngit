@@ -169,9 +169,13 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	}
-	// The path names the repository by its address. An alias redirects: Git
-	// follows the redirect of its first request, uses the new address for
-	// the rest, and shows the user the address it was redirected to.
+	// The path names the repository by its address. An earlier address of a
+	// renamed repository is answered here. Git is authenticated before this
+	// point, and it does not follow a redirect that arrives after that
+	// authentication round, so a redirect would fail the transfer; the
+	// answer instead names the current address in the protocol's own
+	// message channel (see writeMovedNotice), which reaches the person who
+	// runs the command.
 	address, found, err := h.Repositories.Store.ResolveRepositoryName(request.Context(), route.repositoryID, time.Now())
 	switch {
 	case err != nil:
@@ -182,12 +186,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		http.NotFound(writer, request)
 		return
 	case address.Current != route.repositoryID:
-		location := "/git/" + address.Current + ".git/" + route.suffix
-		if route.query != "" {
-			location += "?" + route.query
-		}
-		http.Redirect(writer, request, location, http.StatusTemporaryRedirect)
-		return
+		route.moved = address.Current
 	}
 	route.repositoryID = address.RepositoryID
 	h.serve(writer, request, route)
@@ -593,7 +592,11 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 		quarantinesListed = listErr == nil
 	}
 	stderr, err := h.Git.Stream(streamContext, h.BackendPath, repositoryPath, input, extraEnvironment, func(stdout io.Reader) error {
-		err := h.copyCGIResponse(committed, stdout, observer, limits.MaximumResponse)
+		movedNotice := ""
+		if route.moved != "" {
+			movedNotice = "This repository moved to " + requestctx.Of(request).Origin() + "/git/" + route.moved + ".git"
+		}
+		err := h.copyCGIResponse(committed, stdout, observer, limits.MaximumResponse, movedNotice)
 		consumeFailed.Store(err != nil)
 		return err
 	})
@@ -1030,6 +1033,9 @@ type route struct {
 	query   string
 	// config is Git config at command-line scope for this request only.
 	config [][2]string
+	// moved names the repository's current address when the request named an
+	// earlier one of its addresses, or "".
+	moved string
 	// scope names the refs a fetch may reach; nil means mainScope.
 	scope *fetchScope
 }
@@ -1127,8 +1133,10 @@ func (h *Handler) cgiEnvironment(request *http.Request, route route, contentLeng
 }
 
 // copyCGIResponse copies the backend's CGI response to writer. A non-nil
-// observer also receives the body bytes as they are copied.
-func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, observer io.Writer, maximum int64) error {
+// observer receives every body byte the backend sent, once, and a non-empty
+// notice is written into the body where the protocol carries a server message
+// (writeMovedNotice).
+func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, observer io.Writer, maximum int64, notice string) error {
 	reader := bufio.NewReaderSize(stdout, 32<<10)
 	totalHeaderBytes := 0
 	status := http.StatusOK
@@ -1181,18 +1189,36 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 	// still goes out in writes of up to 32 KiB. A failed flush leaves the
 	// connection failed, so the next write reports it, and the handler
 	// reports a failure after Git's last output.
+	//
+	// Every byte of the backend's body reaches the observer exactly once,
+	// whether the notice scan below passes it on or the copy that follows
+	// reads it, so the observer sits under the buffer the scan peeks into.
+	// The notice is OwnGit's own text and never reaches the observer: it is
+	// not part of the backend's report.
+	if observer != nil {
+		reader = bufio.NewReaderSize(io.TeeReader(reader, observer), 32<<10)
+	}
+	// A request that named an earlier address tells the client where the
+	// repository is now, before the transfer's own data.
+	sent := int64(0)
+	if notice != "" {
+		var err error
+		if sent, err = writeMovedNotice(writer, reader, notice); err != nil {
+			return err
+		}
+	}
+	if maximum > 0 && sent > maximum {
+		return errResponseTooLarge
+	}
 	if reader.Buffered() == 0 {
 		writer.scheduleFlush()
 	}
 	body := io.Reader(reader)
-	if observer != nil {
-		body = io.TeeReader(reader, observer)
-	}
 	if maximum > 0 {
 		body = &io.LimitedReader{R: body, N: maximum + 1}
 	}
 	buffer := make([]byte, 32<<10)
-	var written int64
+	written := sent
 	for {
 		n, err := body.Read(buffer)
 		if n > 0 {
@@ -1214,6 +1240,67 @@ func (h *Handler) copyCGIResponse(writer *responseState, stdout io.Reader, obser
 			return err
 		}
 	}
+}
+
+// movedNoticeScan bounds how far into a response body OwnGit looks for the
+// side-band data that carries a Git client's messages.
+const movedNoticeScan = 64 << 10
+
+// writeMovedNotice writes notice as a side-band progress message at the one
+// point the Git protocol carries a server message to the person who runs the
+// command: immediately before the first side-band packet of the response
+// body, whatever section or acknowledgement comes before it. The packets
+// before that one are protocol data (a ref list, a section header, an
+// acknowledgement) and are passed through unchanged. A body that is not
+// pkt-lines (a pack without side-band framing), one that ends before a
+// side-band packet, and one whose packets carry none within movedNoticeScan
+// get no message, so no client ever receives a packet it does not expect. It
+// returns how many bytes it wrote to the client, for the response size
+// accounting.
+func writeMovedNotice(writer *responseState, reader *bufio.Reader, notice string) (int64, error) {
+	// The line break ends the message: a Git client shows remote output
+	// line by line.
+	message := notice + "\n"
+	if len(message)+5 > maximumPacket {
+		return 0, nil
+	}
+	packet := fmt.Sprintf("%04x\x02%s", len(message)+5, message)
+	var written int64
+	for written < movedNoticeScan {
+		head, err := reader.Peek(5)
+		if err != nil {
+			return written, nil
+		}
+		length, err := strconv.ParseUint(string(head[:4]), 16, 16)
+		switch {
+		case err != nil || length == 3 || length > maximumPacket:
+			// Not a pkt-line: the body carries no side-band data, or it is
+			// not a response OwnGit writes a message into.
+			return written, nil
+		case length == 0 || length == 2:
+			// A flush packet ends the response, and a response-end packet
+			// ends it for a stateless connection.
+			return written, nil
+		case length == 1:
+			// A delimiter separates sections, so the next section may be
+			// the one that carries the side-band data. Every special packet
+			// is four bytes on the wire, whatever its length says.
+			length = 4
+		case length > 4 && head[4] >= 1 && head[4] <= 3:
+			// The client reads a packet that starts with its side-band
+			// channel as remote output, at any point of the transfer.
+			if _, err := writer.Write([]byte(packet)); err != nil {
+				return written, err
+			}
+			return written + int64(len(packet)), nil
+		}
+		copied, err := io.CopyN(writer, reader, int64(length))
+		written += copied
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
 }
 
 func hopByHop(name string) bool {

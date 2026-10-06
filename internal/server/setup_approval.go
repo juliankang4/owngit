@@ -344,7 +344,7 @@ func requestClient(request *http.Request) (string, requestctx.ClientProvenance) 
 }
 
 func (app *App) approvalCookieHash(request *http.Request) ([32]byte, bool) {
-	cookie, err := request.Cookie(approvalCookie)
+	cookie, err := request.Cookie(cookieNameForScheme(request, approvalCookie))
 	if err != nil || cookie.Value == "" || len(cookie.Value) > 256 {
 		return [32]byte{}, false
 	}
@@ -371,7 +371,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 		switch {
 		case errors.Is(err, state.ErrSetupComplete):
 			// Another browser or the terminal finished setup meanwhile.
-			app.clearCookie(writer, request, approvalCookie, true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
 			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupAlreadyDone, http.StatusConflict
 		case err != nil:
 			// The cookie stays: an approval that was not used up can still be
@@ -381,7 +381,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 			http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 			return
 		default:
-			app.clearCookie(writer, request, approvalCookie, true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
 			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 		}
 	case approvalPending:
@@ -391,11 +391,11 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 		// again at once.
 		page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalRejected, http.StatusForbidden
 	case approvalExpired:
-		app.clearCookie(writer, request, approvalCookie, true)
+		app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
 		page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 	default:
 		if hasCookie {
-			app.clearCookie(writer, request, approvalCookie, true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
 		}
 	}
 	if page.Stage == webui.SetupUnavailable {
@@ -425,9 +425,9 @@ func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.R
 	if err := app.Store.StartApprovedSetupSession(request.Context(), sessionToken, csrf, expires); err != nil {
 		return false, err
 	}
-	app.setCookie(writer, request, setupCookie, sessionToken, expires, true)
-	app.clearCookie(writer, request, approvalCookie, true)
-	app.clearCookie(writer, request, preauthCookie, true)
+	app.setCookie(writer, request, cookieNameForScheme(request, setupCookie), sessionToken, expires, true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
 	return true, nil
 }
 
@@ -463,7 +463,7 @@ func (app *App) handleSetupApprovalRequest(writer http.ResponseWriter, request *
 		app.renderApprovalRefusal(writer, request, *refusal)
 		return
 	}
-	app.setCookie(writer, request, approvalCookie, token, app.now().Add(approvalLifetime), true)
+	app.setCookie(writer, request, cookieNameForScheme(request, approvalCookie), token, app.now().Add(approvalLifetime), true)
 	http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 }
 

@@ -533,7 +533,7 @@ func TestTurningOffThroughTheTailnetAddressEndsOnAPageThatLoads(t *testing.T) {
 	}
 	var csrf string
 	for _, cookie := range page.Result().Cookies() {
-		if cookie.Name == generalCookie {
+		if cookie.Name == httpsCookiePrefix+generalCookie {
 			csrf = cookie.Value
 		}
 	}
