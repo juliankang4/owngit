@@ -6,6 +6,96 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-10-07
+
+This release fixes security problems rated Medium and Low, bounds waits that could last without end, and lowers memory use on small Linux hosts and with large repositories. Upgrading is recommended.
+
+**Upgrading:**
+
+- Every browser signed in at the HTTPS address is signed out once. A sign-in at a plain HTTP address ends once, the first time that browser opens the HTTPS address.
+- Run `owngit service install` once after the upgrade, so that the service restarts and gets the longer 70-second stop wait; until OwnGit restarts, `owngit health` reports `it published no health key; restart OwnGit`. The one-line installers do this for you, and with Homebrew, run `brew services restart owngit` after `brew upgrade owngit`.
+- With plain Docker, use `docker run --stop-timeout 70` or `docker stop -t 70`; `compose.yaml` already sets it.
+- Pushes of malformed Git data that earlier versions accepted are now refused, with the reason on `remote: error:` lines.
+- On Linux, programs that a check starts are stopped when the check ends. Start long-lived programs outside OwnGit.
+- On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Use the OwnGit.app from the disk image (DMG) in `/Applications`, at the same version as your installed `owngit`; a fix is planned for 1.1.6.
+
+**Changes for scripts:**
+
+- Pull request diffs (API, `owngit pr diff`, MCP `pull_request_diff`) and the restore preview mark a file too large to compare with `too_large: true`. Such a file, and a file whose line counts were not read, has no `additions` or `deletions`, and `binary` is `false`; a diff missing only such files has `reason` `too_large`.
+- An archive refused with 409 has the code `archive_repeated_path`, `archive_too_many_files`, `archive_deep_chain` or `archive_memory` instead of `archive_failed`.
+- The pull request list (API, `owngit pr list`, MCP `pull_request_list`), a repository's task list (`GET /api/v1/repositories/ID/tasks`, `owngit check task list`, MCP `check_task_list`) and `GET /api/v1/tasks/NAME` return pages of 50 (at most 100), newest first, with `next`. The pull request list takes `state`, `limit` and `before`, and no longer fails with `result_too_large`.
+- A push or fetch to a busy repository gets 503 after the slot wait (90 seconds by default), and an import change on a busy repository gets 409. On Linux, a file page or raw download gets 503 with `Retry-After` when the server is busy.
+- A clone or fetch request larger than 10 MiB gets 413 instead of 502.
+- A configured check rerun is refused with `check_workflow_changed` when the check file changed.
+- `owngit check run` exits with 128 plus the signal number (130 for Ctrl-C) when stopped, adds `worktree_note` when the working copy state is `unknown`, and stops with `revision_unavailable` when it cannot read the committed check file in 30 seconds.
+- In `owngit tailscale status --json`, `can_turn_off` says whether the dashboard offers turning sharing off.
+
+### Added
+
+- `owngit import configure` can change an import's source address, mode and consents, and attach a source to a repository that has none, as the dashboard can.
+
+### Changed
+
+- OwnGit is now licensed under GPL-3.0-or-later instead of MIT. If you distribute OwnGit or a modified version, you must offer its source code under the same license; releases 1.1.4 and earlier stay MIT.
+- Setup, the Access tab and the guides now say plainly what open access lets anyone on the network do, and what still needs the administrator password.
+- A browser keeps separate sign-ins at the HTTPS address and at a plain HTTP address of the same host. Signing out at the HTTPS address ends both.
+- Small Linux hosts use memory-aware limits for Go, Git and concurrency, and refuse oversized file reads before Git starts.
+- A request to a repository busy with another Git operation no longer waits without limit, and a client that gives up leaves no work running on the server.
+- With many repositories, the dashboard opens faster after the first view.
+- Commits and pull requests with many changed files show 400 files per page, and a large file diff opens alone in pages of 10,000 lines.
+- All commits shows 100 commits per page with Older and Newer links, so older commits are reachable.
+- The pull request page shows open pull requests by default, newest first, with links to closed, merged and all.
+- A refused archive says why on the archive page, in English or Korean.
+- Styles, scripts and SVG images are sent compressed, and static files are checked for changes instead of downloaded again.
+- Large restores apply much faster. Restoring selected files with none ticked points to the Files field.
+- Repository maintenance runs only when a repository has new work, so restarts and unchanged pushes no longer repack every repository, and it no longer skips nights.
+- Automatic checks skip repositories whose refs did not change, with a full scan at least every 10 minutes.
+- Configured checks: every matching branch update in a push gets its own job, and branch heads that never got a job are queued when push checks are turned on and at each start.
+- Configured checks run oldest first across repositories, and a rerun uses the limits the check file asks for, up to the current maximums.
+- A long check log keeps the beginning and the end of the output, so the lines that explain a failure stay visible.
+- The Checks tab lists tasks in pages of 50, newest first.
+- `owngit check run` no longer hangs on a stuck Git filter. Closing the terminal stops a run; a run started with `nohup` keeps running.
+- Scheduled imports wait for a free import slot instead of failing when every slot is busy.
+- When the repository folder is slow at startup, OwnGit logs what it waits for, and a pull request page that times out says so.
+- Tray notifications: on Windows, notifications that arrive together appear one after another, or as one summary for more than three. On Linux, a slow notification service no longer shows a notification twice.
+- The POSIX and Proxmox installers give up on a stalled download after about three minutes at most, instead of waiting forever.
+- The English and Korean guides are shorter, with separate guides for repositories and imports and for backup and restore.
+
+### Fixed
+
+- Small Linux hosts no longer run out of memory when showing, downloading or comparing a file that needs much memory to rebuild. OwnGit says the file is too large instead; a clone of a single branch can still need that memory.
+- Git at a renamed repository's old address works during the 90 days, also with the shared password, and tells you the new address.
+- Signing in at a plain HTTP address works after signing in at the HTTPS address of the same host.
+- A stop now finishes within what service managers allow. A stop during a Git transfer can take up to about 45 seconds, and the next start records what was interrupted.
+- With Homebrew, `owngit service install` after an upgrade no longer refuses the previous version's state.
+- The restore command on the Storage & recovery tab works as shown, without `sudo` on Linux and after an archive or source install.
+- After a restore behind a reverse proxy, the restore steps and error pages name the network settings to save before starting OwnGit.
+- A full disk at the end of a backup no longer blocks later backups until a restart.
+- Repeated backup verification failures no longer fill the backup destination; OwnGit keeps only the newest failed backup.
+- `owngit health` works when the state directory is read-only.
+- A log file that cannot rotate no longer stops logging or keeps OwnGit from starting.
+- Configured checks no longer end as an error when a runner's job lease runs out, and a branch with a very long name no longer stops checks of later branches.
+- `owngit check run` no longer waits without end for the committed check file in a partial clone whose remote does not answer.
+- Branch names that Git accepts, such as `a./b`, work in pull requests, the initial branch and check branch patterns.
+- OwnGit starts faster with many repositories.
+- Turning tailnet sharing off in the dashboard works while Tailscale is stopped, signed out or starting.
+- A Tailscale sharing change started while another one runs no longer waits without end.
+- A grouped push notification opens the repository when the latest push deleted its branch or tag.
+- On Windows, a notification no longer stays on screen past the display time in accessibility settings, and a newer one replaces it.
+- Linux: the OwnGit icon gives up after 30 seconds when the desktop panel does not answer, and its panel fits small screens.
+- In Windows contrast themes and other forced colours, switches, the activity graph, selections, tabs and folding triangles stay visible.
+- The focus ring of a diff file is no longer cut off, and screen readers say whether each diff line was added or removed.
+- Storage and recovery no longer shows unsaved changes when backups are not configured.
+- Korean: revoking a token is now 폐기, distinct from 취소, and backup and upload messages appear in Korean.
+
+### Security
+
+- Medium: share link holders could download files from kept history and deleted branches, and Git clients could fetch kept history. Affects 1.1.4 and earlier; upgrade, and replace any secret that kept history held if share link holders could have reached it.
+- Low: on a computer shared with other local accounts, another account could replace OwnGit's password or token files on Linux and other Unix systems, read its logs on macOS, make `owngit health` report a server that is not OwnGit, or make OwnGit write into a repository folder it had not claimed. Affects 1.1.4 and earlier; upgrade.
+- Low: in some network setups, the limit on wrong administrator passwords could be bypassed. Affects 1.1.4 and earlier; upgrade.
+- Low: a push could store Git data that OwnGit's pages and archives showed differently from Git. Affects 1.1.4 and earlier; upgrade. Repositories that already hold such data keep it, and pages refuse to show it.
+- Low: on Linux, programs started by a check could keep running after the check ended. Affects 1.1.4 and earlier; upgrade.
+
 ## [1.1.4] - 2026-10-04
 
 This release fixes security problems rated Medium and Low, and bugs that could make every later backup fail. Upgrading is recommended.
