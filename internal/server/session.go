@@ -209,21 +209,34 @@ func (app *App) validPreauthCSRF(request *http.Request, submitted string) bool {
 	return err == nil && submitted != "" && constantEqual(cookie.Value, submitted)
 }
 
-// cookieNameForScheme returns the name a request reads, writes and clears for
-// a cookie that carries a session, a form token or a setup secret. Over
-// HTTPS the name carries the __Host- prefix, which a browser accepts only
-// from a secure origin, with Path=/ and no Domain: the cookie belongs to this
-// exact host and never travels over plain HTTP (writeCookie sets those
-// attributes with it). Over plain HTTP the name is the plain base name. A
-// browser that uses both this server's HTTPS address and a plain address
-// therefore holds one cookie for each, and the plain response never has to
-// replace a secure cookie of the same name. Signing in at either address
-// works, and a sign-in at one does not end the session at the other.
+// cookieNameForScheme keeps each address scheme's cookies separate. Root
+// cookies use __Host- over HTTPS. Share cookies use __Secure- because their
+// path belongs to one link. Preferences and shares use a new HTTP name too,
+// so a legacy Secure cookie cannot block a plain address's new choice.
 func cookieNameForScheme(request *http.Request, base string) string {
 	if requestctx.Of(request).Secure() {
+		if base == shareCookie {
+			return "__Secure-" + base
+		}
 		return "__Host-" + base
 	}
-	return base
+	switch base {
+	case languageCookie, appearanceCookie, orderCookie, shareCookie:
+		return base + "_http"
+	default:
+		return base
+	}
+}
+
+// upgradeCookie reads the current name first. Only preferences and share
+// access retain legacy values, which the caller validates before migrating.
+func upgradeCookie(request *http.Request, base string) (*http.Cookie, bool) {
+	cookie, err := request.Cookie(cookieNameForScheme(request, base))
+	if err == nil {
+		return cookie, false
+	}
+	cookie, err = request.Cookie(base)
+	return cookie, err == nil
 }
 
 // signOutCookieNames returns the cookie names a sign-out of base ends and
@@ -478,14 +491,17 @@ func (app *App) language(writer http.ResponseWriter, request *http.Request) webu
 	if value, present := request.URL.Query()["lang"]; present {
 		if len(value) == 1 {
 			if lang, valid := webui.ParseLang(value[0]); valid {
-				app.setCookie(writer, request, languageCookie, string(lang), app.now().Add(365*24*time.Hour), false)
+				app.setCookie(writer, request, cookieNameForScheme(request, languageCookie), string(lang), app.now().Add(365*24*time.Hour), false)
 				return lang
 			}
 		}
 		return webui.DefaultLang
 	}
-	if cookie, err := request.Cookie(languageCookie); err == nil {
+	if cookie, legacy := upgradeCookie(request, languageCookie); cookie != nil {
 		if lang, valid := webui.ParseLang(cookie.Value); valid {
+			if legacy {
+				app.setCookie(writer, request, cookieNameForScheme(request, languageCookie), string(lang), app.now().Add(365*24*time.Hour), false)
+			}
 			return lang
 		}
 	}
@@ -497,12 +513,15 @@ func (app *App) language(writer http.ResponseWriter, request *http.Request) webu
 func (app *App) appearance(writer http.ResponseWriter, request *http.Request) webui.Appearance {
 	if value, present := request.URL.Query()["appearance"]; present && len(value) == 1 {
 		if appearance, valid := webui.ParseAppearance(value[0]); valid {
-			app.setCookie(writer, request, appearanceCookie, string(appearance), app.now().Add(365*24*time.Hour), false)
+			app.setCookie(writer, request, cookieNameForScheme(request, appearanceCookie), string(appearance), app.now().Add(365*24*time.Hour), false)
 			return appearance
 		}
 	}
-	if cookie, err := request.Cookie(appearanceCookie); err == nil {
+	if cookie, legacy := upgradeCookie(request, appearanceCookie); cookie != nil {
 		if appearance, valid := webui.ParseAppearance(cookie.Value); valid {
+			if legacy {
+				app.setCookie(writer, request, cookieNameForScheme(request, appearanceCookie), string(appearance), app.now().Add(365*24*time.Hour), false)
+			}
 			return appearance
 		}
 	}
@@ -514,12 +533,15 @@ func (app *App) appearance(writer http.ResponseWriter, request *http.Request) we
 func (app *App) listOrder(writer http.ResponseWriter, request *http.Request) webui.ListOrder {
 	if value, present := request.URL.Query()["order"]; present && len(value) == 1 {
 		if order, valid := webui.ParseListOrder(value[0]); valid {
-			app.setCookie(writer, request, orderCookie, string(order), app.now().Add(365*24*time.Hour), false)
+			app.setCookie(writer, request, cookieNameForScheme(request, orderCookie), string(order), app.now().Add(365*24*time.Hour), false)
 			return order
 		}
 	}
-	if cookie, err := request.Cookie(orderCookie); err == nil {
+	if cookie, legacy := upgradeCookie(request, orderCookie); cookie != nil {
 		if order, valid := webui.ParseListOrder(cookie.Value); valid {
+			if legacy {
+				app.setCookie(writer, request, cookieNameForScheme(request, orderCookie), string(order), app.now().Add(365*24*time.Hour), false)
+			}
 			return order
 		}
 	}

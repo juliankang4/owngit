@@ -259,7 +259,7 @@ func TestAppearanceChoiceWorksWithoutJavaScript(t *testing.T) {
 	server, client, jar := openBrowser(t, fixture)
 
 	page := browserGET(t, client, server.URL+"/repositories/project?appearance=dark")
-	if !strings.Contains(page.body, `class="theme-dark" data-appearance="dark"`) || cookieValue(t, jar, server.URL, appearanceCookie) != "dark" {
+	if !strings.Contains(page.body, `class="theme-dark" data-appearance="dark"`) || cookieValue(t, jar, server.URL, appearanceCookie+"_http") != "dark" {
 		t.Fatalf("appearance=dark was not rendered and saved")
 	}
 	if !strings.Contains(page.body, `href="/repositories/project?appearance=light" data-appearance-set="light">`) ||
@@ -274,11 +274,11 @@ func TestAppearanceChoiceWorksWithoutJavaScript(t *testing.T) {
 		t.Error("the saved appearance is not rendered on the next page")
 	}
 	invalid := browserGET(t, client, server.URL+"/repositories/project?appearance=sepia")
-	if !strings.Contains(invalid.body, `class="theme-dark"`) || cookieValue(t, jar, server.URL, appearanceCookie) != "dark" {
+	if !strings.Contains(invalid.body, `class="theme-dark"`) || cookieValue(t, jar, server.URL, appearanceCookie+"_http") != "dark" {
 		t.Error("an invalid appearance value replaced the saved choice")
 	}
 	browserGET(t, client, server.URL+"/repositories/project?appearance=system")
-	if cookieValue(t, jar, server.URL, appearanceCookie) != "system" {
+	if cookieValue(t, jar, server.URL, appearanceCookie+"_http") != "system" {
 		t.Error("choosing System was not saved")
 	}
 }

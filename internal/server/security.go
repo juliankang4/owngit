@@ -176,7 +176,7 @@ func refuseHost(writer http.ResponseWriter, request *http.Request) {
 // refusedHostLang is the language of the refused-Host page: the saved
 // language choice for this address, if any, otherwise the default.
 func refusedHostLang(request *http.Request) webui.Lang {
-	if cookie, err := request.Cookie(languageCookie); err == nil {
+	if cookie, _ := upgradeCookie(request, languageCookie); cookie != nil {
 		if lang, valid := webui.ParseLang(cookie.Value); valid {
 			return lang
 		}

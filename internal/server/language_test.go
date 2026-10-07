@@ -18,7 +18,7 @@ func TestValidatedLanguageQueryRendersWithoutRedirectAndPersistsPreference(t *te
 	parsed, _ := url.Parse(server.URL)
 	found := false
 	for _, cookie := range jar.Cookies(parsed) {
-		if cookie.Name == languageCookie && cookie.Value == "ko" {
+		if cookie.Name == languageCookie+"_http" && cookie.Value == "ko" {
 			found = true
 		}
 	}

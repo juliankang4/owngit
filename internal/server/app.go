@@ -33,7 +33,8 @@ const (
 	// __Host- prefix over HTTPS (cookieNameForScheme). A browser that uses
 	// both this server's HTTPS address and a plain address then holds a
 	// session for each, and signing in at one never has to replace the
-	// other's cookie. The preference cookies below keep one name.
+	// other's cookie. Language, appearance and list order also have separate
+	// names, with a legacy read fallback (upgradeCookie).
 	generalCookie  = "owngit_general"
 	adminCookie    = "owngit_admin"
 	setupCookie    = "owngit_setup"

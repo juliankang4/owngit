@@ -101,7 +101,7 @@ func (app *App) setShareCookie(writer http.ResponseWriter, request *http.Request
 	// Lax, so the link opens from a message or another site; HttpOnly and
 	// limited to the link's own pages.
 	http.SetCookie(writer, &http.Cookie{
-		Name: shareCookie, Value: value, Path: shareBase(id),
+		Name: cookieNameForScheme(request, shareCookie), Value: value, Path: shareBase(id),
 		HttpOnly: true, Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -179,7 +179,8 @@ func (app *App) serveSharePage(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	var secret, proof string
-	if cookie, err := request.Cookie(shareCookie); err == nil {
+	cookie, legacy := upgradeCookie(request, shareCookie)
+	if cookie != nil {
 		secret, proof, _ = strings.Cut(cookie.Value, ".")
 	}
 	link, found, err := app.activeShare(request.Context(), id, secret)
@@ -194,6 +195,9 @@ func (app *App) serveSharePage(writer http.ResponseWriter, request *http.Request
 	if link.PasswordHash != "" && !hmac.Equal([]byte(proof), []byte(shareProof(link, secret))) {
 		app.askSharePassword(writer, request, link, secret)
 		return
+	}
+	if legacy {
+		app.setShareCookie(writer, request, id, cookie.Value)
 	}
 	if request.Method == http.MethodPost {
 		// A password sent again after it was accepted.

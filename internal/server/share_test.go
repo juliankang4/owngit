@@ -421,6 +421,47 @@ func TestSharePasswordLinkAsksForItsPassword(t *testing.T) {
 	}
 }
 
+// Each address scheme preserves a share link's scoped cookie and earlier password proof.
+func TestShareCookiesSeparateSchemesAndKeepEarlierPasswordProof(t *testing.T) {
+	fixture := newAPIFixture(t, true)
+	plain := serve(t, fixture.app.Handler())
+	secure := httptest.NewTLSServer(fixture.app.Handler())
+	t.Cleanup(secure.Close)
+	created := createShare(t, plain.URL, "project", map[string]any{"label": "Guarded", "password": "link-password"})
+	for _, scheme := range []struct {
+		address, name string
+		secure        bool
+	}{
+		{secure.URL, "__Secure-owngit_share", true},
+		{plain.URL, "owngit_share_http", false},
+	} {
+		client, jar := newBrowserClient(t)
+		client.Transport = secure.Client().Transport
+		opened := browserGET(t, client, strings.Replace(created.URL, plain.URL, scheme.address, 1))
+		cookie := setCookie(t, opened, scheme.name)
+		path := "/share/" + created.ShareLink.ID
+		if cookie.Secure != scheme.secure || !cookie.HttpOnly || cookie.Path != path || cookie.Domain != "" || cookie.SameSite != http.SameSiteLaxMode {
+			t.Fatalf("share cookie attributes: %+v", cookie)
+		}
+		accepted := browserForm(t, client, scheme.address+path, url.Values{"share_password": {"link-password"}}, scheme.address)
+		proof := setCookie(t, accepted, scheme.name).Value
+		address, _ := url.Parse(scheme.address + path)
+		jar.SetCookies(address, []*http.Cookie{
+			{Name: scheme.name, Path: path, MaxAge: -1},
+			{Name: shareCookie, Value: proof, Path: path, Secure: scheme.secure, HttpOnly: true},
+		})
+		page := browserGET(t, client, scheme.address+path+"/code")
+		if migrated := setCookie(t, page, scheme.name); page.status != http.StatusOK || migrated.Value != proof || migrated.Path != path || migrated.Secure != scheme.secure {
+			t.Fatalf("the earlier password proof was not kept: status=%d cookie=%+v", page.status, migrated)
+		}
+		// Once migrated, an old cookie must not override the current name.
+		jar.SetCookies(address, []*http.Cookie{{Name: scheme.name, Value: "invalid", Path: path, Secure: scheme.secure}})
+		if page := browserGET(t, client, scheme.address+path); page.status != http.StatusNotFound {
+			t.Fatalf("the earlier cookie replaced the current share cookie: %d", page.status)
+		}
+	}
+}
+
 // Only an administrator manages share links: the screen and the owner API
 // ask for the administrator, every change needs the session's CSRF token,
 // and the new link is shown once.

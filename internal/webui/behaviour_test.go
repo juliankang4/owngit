@@ -58,6 +58,21 @@ func TestLanguageSwitchIsAPlainLinkAndAScriptHook(t *testing.T) {
 	if !strings.Contains(scriptSource(t), `|| 'owngit_lang'`) {
 		t.Error("the script fallback does not use the OwnGit language cookie")
 	}
+	for _, connection := range []struct {
+		address, name string
+		encrypted     bool
+	}{
+		{"http://owngit.test/settings", "owngit_lang_http", false},
+		{"https://owngit.test/settings", "__Host-owngit_lang", true},
+		{"https://owngit.test/settings", "owngit_lang_http", false},
+	} {
+		c.Connection.Encrypted = connection.encrypted
+		out := render(t, r, SettingsPage{Chrome: c, SubmitURL: "/settings"})
+		result := runLanguageClick(t, out, connection.address, nil, nil)
+		if result.Cookie != connection.name+"=ko" || result.CookieSecure != connection.encrypted {
+			t.Errorf("%s (encrypted=%v): the script saved %q (Secure=%v)", connection.address, connection.encrypted, result.Cookie, result.CookieSecure)
+		}
+	}
 }
 
 func TestRefPickerSubmitsWithoutScripting(t *testing.T) {
@@ -97,6 +112,23 @@ func TestAppearanceDefaultsToSystem(t *testing.T) {
 		if !strings.Contains(out, `data-appearance-set="`+choice+`"`) {
 			t.Errorf("the %s appearance option is missing", choice)
 		}
+	}
+	for _, saved := range []struct {
+		name, current, legacy, storage, want string
+	}{
+		{"current beats legacy and storage", "dark", "light", "system", "dark"},
+		{"legacy System beats storage", "", "system", "dark", "system"},
+		{"storage migrates without cookies", "", "", "light", "light"},
+	} {
+		t.Run(saved.name, func(t *testing.T) {
+			result := runLanguageClick(t, out, "http://owngit.test/", nil, nil, appearancePreferences{
+				Cookies: map[string]string{"owngit_appearance_http": saved.current, "owngit_appearance": saved.legacy},
+				Storage: saved.storage,
+			})
+			if result.Appearance != saved.want || result.AppearanceCookie != saved.want {
+				t.Errorf("appearance=%q cookie=%q, want %q", result.Appearance, result.AppearanceCookie, saved.want)
+			}
+		})
 	}
 }
 
@@ -285,9 +317,6 @@ func TestScriptPreferenceCookieIsNotACredential(t *testing.T) {
 	}
 	if !strings.Contains(js, "Path=/") {
 		t.Error("the preference cookie is not scoped to the whole interface")
-	}
-	if !strings.Contains(js, "https:") || !strings.Contains(js, "Secure") {
-		t.Error("the preference cookie is not marked Secure over HTTPS")
 	}
 	// A preference cookie must never be treated as proof of anything.
 	for _, forbidden := range []string{"owngit_session", "admin", "token="} {

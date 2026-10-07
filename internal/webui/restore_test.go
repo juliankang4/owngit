@@ -1042,15 +1042,24 @@ type renderedList struct {
 }
 
 type languageClickResult struct {
-	Address   string         `json:"address"`
-	Prevented bool           `json:"prevented"`
-	Lang      string         `json:"lang"`
-	Nodes     []switchedNode `json:"nodes"`
+	Address          string         `json:"address"`
+	Prevented        bool           `json:"prevented"`
+	Lang             string         `json:"lang"`
+	Cookie           string         `json:"cookie"`
+	CookieSecure     bool           `json:"cookieSecure"`
+	Appearance       string         `json:"appearance"`
+	AppearanceCookie string         `json:"appearanceCookie"`
+	Nodes            []switchedNode `json:"nodes"`
 	// Lists holds each list's row addresses after the click.
 	Lists [][]string `json:"lists"`
 }
 
-func runLanguageClick(t *testing.T, out, currentURL string, tags []string, lists []renderedList) languageClickResult {
+type appearancePreferences struct {
+	Cookies map[string]string `json:"cookies"`
+	Storage string            `json:"storage"`
+}
+
+func runLanguageClick(t *testing.T, out, currentURL string, tags []string, lists []renderedList, preferences ...appearancePreferences) languageClickResult {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -1084,9 +1093,14 @@ func runLanguageClick(t *testing.T, out, currentURL string, tags []string, lists
 
 	script, err := filepath.Abs("assets/owngit.js")
 	noErr(t, err)
-	input, err := json.Marshal(map[string]any{
+	fixture := map[string]any{
 		"script": script, "currentURL": currentURL, "links": links, "nodes": tags, "lists": lists,
-	})
+		"secure": strings.Contains(out, `data-secure="1"`),
+	}
+	if len(preferences) > 0 {
+		fixture["preferences"] = preferences[0]
+	}
+	input, err := json.Marshal(fixture)
 	noErr(t, err)
 
 	cmd := exec.Command(node, "testdata/langclick.mjs", string(input))

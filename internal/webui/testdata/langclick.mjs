@@ -1,5 +1,4 @@
-/* Drive the real owngit.js language interceptor and report where it leaves
- * the address bar.
+/* Drive the real owngit.js preference behavior and language interceptor.
  *
  * The script is what ships, so a source grep cannot answer the question this
  * checks: given a language link, which address does the reader end up on? The
@@ -7,15 +6,18 @@
  * already correct and the interceptor ignored it.
  *
  * Only the handful of DOM features owngit.js actually uses are implemented,
- * and only well enough to run the language section. The page under test is
+ * and only well enough to run the appearance and language sections. The page under test is
  * built from the renderer's real output, which is passed in on argv, so the
  * links here are the ones the server emits.
  *
  * Input  (argv[2]): {"script": path, "currentURL": str, "links": [{lang, href}],
  *                    "nodes": [rendered opening tag plus text, optional],
  *                    "lists": [{tag: container opening tag,
- *                               rows: [row opening tags]}], optional}
+ *                               rows: [row opening tags]}], optional,
+ *                    "secure": server encryption state,
+ *                    "preferences": {cookies: object, storage: str}, optional}
  * Output (stdout) : {"address": str, "lang": str, "cookie": str,
+ *                    "cookieSecure": bool, "appearance": str, "appearanceCookie": str,
  *                    "nodes": [{text, attrs}] after the click, in input order,
  *                    "lists": [[href of each row] after the click]}
  *
@@ -91,6 +93,7 @@ class Node {
 }
 
 const root = new Node('html', { 'data-lang': 'en', 'data-lang-cookie': 'owngit_lang' });
+if (input.secure) { root.setAttribute('data-secure', '1'); }
 const body = root.append(new Node('body'));
 
 // The language links the renderer actually produced.
@@ -119,13 +122,22 @@ const lists = (input.lists || []).map((list) => {
 });
 
 let cookie = '';
+let cookieSecure = false;
+const cookies = { ...input.preferences?.cookies };
+let appearanceStorage = input.preferences?.storage || '';
 const documentListeners = {};
 
 globalThis.document = {
   documentElement: root,
   title: '',
-  get cookie() { return cookie; },
-  set cookie(value) { cookie = String(value).split(';')[0]; },
+  get cookie() { return Object.entries(cookies).map(([name, value]) => name + '=' + value).join('; '); },
+  set cookie(value) {
+    const [pair, ...attrs] = String(value).split('; ');
+    cookie = pair;
+    cookieSecure = attrs.includes('Secure');
+    const eq = pair.indexOf('=');
+    cookies[pair.slice(0, eq)] = pair.slice(eq + 1);
+  },
   querySelectorAll: (s) => root.querySelectorAll(s),
   querySelector: (s) => root.querySelector(s),
   addEventListener: (type, fn) => { (documentListeners[type] ||= []).push(fn); },
@@ -136,14 +148,14 @@ globalThis.window = {
   location: {
     // The screen was rendered from a POST, so this is the POST-only route.
     get href() { return new URL(address, 'https://owngit.test').toString(); },
-    protocol: 'https:',
+    protocol: new URL(address, 'https://owngit.test').protocol,
   },
   history: {
     state: null,
     replaceState: (_state, _title, next) => { address = next; },
   },
   matchMedia: () => ({ matches: false, addEventListener() {}, addListener() {} }),
-  localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+  localStorage: { getItem: () => appearanceStorage, removeItem: () => { appearanceStorage = ''; } },
 };
 globalThis.URL = URL;
 
@@ -171,6 +183,9 @@ process.stdout.write(JSON.stringify({
   prevented,
   lang: root.getAttribute('data-lang'),
   cookie,
+  cookieSecure,
+  appearance: root.getAttribute('data-appearance'),
+  appearanceCookie: cookies[(input.secure ? '__Host-' : '') + 'owngit_appearance' + (input.secure ? '' : '_http')] || '',
   nodes: nodes.map((n) => ({ text: n.textContent, attrs: n.attrs })),
   lists: lists.map((list) => list.children.map((row) => row.getAttribute('href'))),
 }));

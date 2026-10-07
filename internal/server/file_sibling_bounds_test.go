@@ -123,7 +123,7 @@ func TestNamedFilesRemainReadableBesideOversizedSiblings(t *testing.T) {
 		address, _ := url.Parse(home)
 		secret := ""
 		for _, cookie := range client.Jar.Cookies(address) {
-			if cookie.Name == shareCookie {
+			if cookie.Name == shareCookie+"_http" {
 				secret = cookie.Value
 			}
 		}

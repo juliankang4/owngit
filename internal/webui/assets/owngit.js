@@ -53,16 +53,20 @@
     return '';
   }
 
+  function preferenceCookieName(base) {
+    return root.hasAttribute('data-secure') ? '__Host-' + base : base + '_http';
+  }
+
   // Preference cookies only. These are not credentials, so they carry no
   // authentication value and are readable by the page on purpose.
   function writeCookie(name, value) {
     var parts = [
-      encodeURIComponent(name) + '=' + encodeURIComponent(value),
+      encodeURIComponent(preferenceCookieName(name)) + '=' + encodeURIComponent(value),
       'Path=/',
       'Max-Age=31536000',
       'SameSite=Lax'
     ];
-    if (window.location.protocol === 'https:') { parts.push('Secure'); }
+    if (root.hasAttribute('data-secure')) { parts.push('Secure'); }
     document.cookie = parts.join('; ');
   }
 
@@ -76,7 +80,8 @@
    *
    * The choice lives in a preference cookie, so the server renders it and the
    * links work without this script. A choice made before the cookie existed
-   * is still in this browser's storage and is read once, then moved. */
+   * is still in this browser's storage and is read once, then moved. Older
+   * cookie names are also read until this address has its own choice. */
 
   var APPEARANCE_KEY = 'owngit_appearance';
   var darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
@@ -86,7 +91,9 @@
   }
 
   function currentAppearance() {
-    var stored = readCookie(APPEARANCE_KEY);
+    var stored = readCookie(preferenceCookieName(APPEARANCE_KEY));
+    if (validAppearance(stored)) { return stored; }
+    stored = readCookie(APPEARANCE_KEY);
     if (validAppearance(stored)) { return stored; }
     try { stored = window.localStorage.getItem(APPEARANCE_KEY) || ''; } catch (e) { stored = ''; }
     return stored === 'light' || stored === 'dark' ? stored : 'system';
@@ -132,7 +139,8 @@
   }
 
   var initialAppearance = currentAppearance();
-  if (!validAppearance(readCookie(APPEARANCE_KEY)) && initialAppearance !== 'system') {
+  if (!validAppearance(readCookie(preferenceCookieName(APPEARANCE_KEY))) &&
+      (validAppearance(readCookie(APPEARANCE_KEY)) || initialAppearance !== 'system')) {
     setAppearance(initialAppearance);
   }
   applyAppearance(initialAppearance);

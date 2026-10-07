@@ -87,7 +87,7 @@ func TestListOrderIsRememberedPerBrowserWithoutScript(t *testing.T) {
 	chosen := browserGET(t, client, server.URL+"/?order=name-asc&lang=en")
 	var saved *http.Cookie
 	for _, cookie := range chosen.header.Values("Set-Cookie") {
-		if parsed, err := http.ParseSetCookie(cookie); err == nil && parsed.Name == orderCookie {
+		if parsed, err := http.ParseSetCookie(cookie); err == nil && parsed.Name == orderCookie+"_http" {
 			saved = parsed
 		}
 	}
@@ -107,7 +107,7 @@ func TestListOrderIsRememberedPerBrowserWithoutScript(t *testing.T) {
 		}
 	}
 	if cookies := jar.Cookies(&url.URL{Scheme: "http", Host: strings.TrimPrefix(server.URL, "http://")}); !slices.ContainsFunc(cookies, func(c *http.Cookie) bool {
-		return c.Name == orderCookie && c.Value == "name-asc"
+		return c.Name == orderCookie+"_http" && c.Value == "name-asc"
 	}) {
 		t.Error("an unknown sort value replaced the saved order")
 	}
