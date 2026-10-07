@@ -627,14 +627,16 @@ func repositoryConfig() [][2]string {
 		// a crafted tree, such as one whose entries flatten to the same path
 		// twice, is refused before the update hook runs. The legacy spelling
 		// faults that popular public repositories carry stay warnings, as
-		// they are for an import (see internal/importsync/verify.go,
-		// historicFormatWarnings); under the check's strict mode every other
+		// they are for an import (see gitexec.HistoricFormatWarnings);
+		// under the check's strict mode every other
 		// finding refuses the push. Reading objects stays unchanged: an
 		// import, a fetch and a local Git command see no object check here.
 		{"receive.fsckObjects", "true"},
-		{"receive.fsck.badTimezone", "warn"},
-		{"receive.fsck.missingSpaceBeforeDate", "warn"},
-		{"receive.fsck.zeroPaddedFilemode", "warn"},
+	}
+	for _, warning := range gitexec.HistoricFormatWarnings() {
+		config = append(config, [2]string{"receive.fsck." + warning, "warn"})
+	}
+	config = append(config, [][2]string{
 		{"http.receivepack", "true"},
 		{"http.getanyfile", "false"},
 		{"receive.hideRefs", "refs/owngit/"},
@@ -649,7 +651,7 @@ func repositoryConfig() [][2]string {
 		{"maintenance.auto", "false"},
 		{"maintenance.autoDetach", "false"},
 		{"core.logAllRefUpdates", "false"},
-	}
+	}...)
 	if runtime.GOOS == "windows" {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}

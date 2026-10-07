@@ -52,32 +52,15 @@ func (s *Service) createStagingRepository(ctx context.Context, path, objectForma
 	return nil
 }
 
-// historicFormatWarnings are the fsck message IDs that strict indexing
-// reports as warnings instead of refusing the pack. Each one is a spelling
-// fault that old versions of Git wrote into popular public repositories. It
-// changes neither a path, a file type, a link nor a submodule, so accepting it
-// cannot place a file or reach outside the repository. Every other check,
-// including the .git, .gitmodules and symbolic link checks, still refuses the
-// pack. A date these two let through that Git cannot render at all is refused
-// later by verifyCommitDates, before publication.
-//
-//   - badTimezone: an author or committer offset such as +051800 (rails/rails
-//     commit 4cf94979, psf/requests commit 5e6ecdad).
-//   - missingSpaceBeforeDate: a tagger line without a date (30 tags in
-//     coreutils/coreutils, such as v4.5.1).
-//   - zeroPaddedFilemode: a directory mode written 040000 instead of 40000,
-//     which still means a directory (141 trees in rails/rails). Git itself
-//     only warns about it; --strict alone would refuse it.
-var historicFormatWarnings = []string{"badTimezone", "missingSpaceBeforeDate", "zeroPaddedFilemode"}
-
 // strictIndexPackArguments is shared by staging and destination indexing so a
 // pack cannot pass through either object store without Git's strict checks,
-// apart from historicFormatWarnings. The keep message is written into the
+// apart from gitexec.HistoricFormatWarnings. The keep message is written into the
 // pack's .keep file, which protects the new pack from a concurrent repack
 // until refs use it. A .keep file left by a crash therefore names the OwnGit
-// import that created it.
+// import that created it. A date these warnings let through that Git cannot
+// render is refused by verifyCommitDates before publication.
 func strictIndexPackArguments(keepMessage string) []string {
-	strict := "--strict=" + strings.Join(historicFormatWarnings, "=warn,") + "=warn"
+	strict := "--strict=" + strings.Join(gitexec.HistoricFormatWarnings(), "=warn,") + "=warn"
 	return []string{"--git-dir", ".", "index-pack", "--stdin", strict, "--keep=" + keepMessage}
 }
 
