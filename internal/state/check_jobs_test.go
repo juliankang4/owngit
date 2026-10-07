@@ -1055,11 +1055,44 @@ func TestRunnerCredentialCreationIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestObservationsAreBoundedAndUpserted(t *testing.T) {
+func TestUnchangedBranchHeadsDoNotRewriteObservations(t *testing.T) {
 	fixture := newCheckJobFixture(t)
 	ctx := context.Background()
-	for index := 0; index < MaximumCheckObservations+6; index++ {
-		ref := fmt.Sprintf("refs/heads/branch-%02d", index)
+	changes := func() int64 {
+		var count int64
+		noErr(t, fixture.store.db.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&count))
+		return count
+	}
+	for scan := 0; scan < 2; scan++ {
+		before := changes()
+		for index := 0; index < 65; index++ {
+			ref := fmt.Sprintf("refs/heads/branch-%02d", index)
+			oid := fmt.Sprintf("%040d", index)
+			noErr(t, fixture.store.RecordCheckObservation(ctx, "project", ref, oid, fixture.now.Add(time.Duration(scan*65+index)*time.Second)))
+		}
+		writes := changes() - before
+		t.Logf("scan %d: %d changed observation rows", scan+1, writes)
+		if scan == 1 && writes != 0 {
+			t.Fatalf("an unchanged set of 65 heads wrote %d observation rows", writes)
+		}
+	}
+}
+
+func TestObservationsAreBoundedAndUpserted(t *testing.T) {
+	if testing.Short() {
+		t.Skip("fills and reads a 10,000-row SQLite observation window")
+	}
+	fixture := newCheckJobFixture(t)
+	ctx := context.Background()
+	// Seed the full window in one transaction; individual observations below
+	// exercise eviction without thousands of separate write transactions.
+	noErr(t, fixture.store.Exec(ctx, `WITH RECURSIVE branches(idx) AS (
+		VALUES(0) UNION ALL SELECT idx+1 FROM branches WHERE idx+1<?
+	) INSERT INTO check_observations(repository_id,ref_name,oid,observed_at)
+		SELECT 'project',printf('refs/heads/branch-%05d',idx),printf('%040d',idx),?+idx*? FROM branches`,
+		MaximumCheckObservations, fixture.now.UnixNano(), time.Second.Nanoseconds()))
+	for index := MaximumCheckObservations; index < MaximumCheckObservations+6; index++ {
+		ref := fmt.Sprintf("refs/heads/branch-%05d", index)
 		oid := fmt.Sprintf("%040d", index)
 		noErr(t, fixture.store.RecordCheckObservation(ctx, "project", ref, oid, fixture.now.Add(time.Duration(index)*time.Second)))
 	}
@@ -1067,19 +1100,20 @@ func TestObservationsAreBoundedAndUpserted(t *testing.T) {
 	if err != nil || len(observations) != MaximumCheckObservations {
 		t.Fatalf("observation count=%d err=%v", len(observations), err)
 	}
-	if observations[0].RefName != fmt.Sprintf("refs/heads/branch-%02d", MaximumCheckObservations+5) {
+	if observations[0].RefName != fmt.Sprintf("refs/heads/branch-%05d", MaximumCheckObservations+5) {
 		t.Fatalf("newest observation=%+v", observations[0])
 	}
 	updated := strings.Repeat("e", 40)
-	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-63", updated, fixture.now.Add(time.Hour)))
+	updatedAt := fixture.now.Add(time.Duration(MaximumCheckObservations+6) * time.Second)
+	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-00063", updated, updatedAt))
 	refreshed, err := fixture.store.CheckObservations(ctx, "project")
 	if err != nil || refreshed[0].OID != updated || len(refreshed) != MaximumCheckObservations {
 		t.Fatalf("upserted observation=%+v err=%v", refreshed[0], err)
 	}
 	// The same object again is not written: its observation time stays.
-	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-63", updated, fixture.now.Add(90*time.Minute)))
+	noErr(t, fixture.store.RecordCheckObservation(ctx, "project", "refs/heads/branch-00063", updated, updatedAt.Add(time.Minute)))
 	again, err := fixture.store.CheckObservations(ctx, "project")
-	if err != nil || !again[0].ObservedAt.Equal(fixture.now.Add(time.Hour)) {
+	if err != nil || !again[0].ObservedAt.Equal(updatedAt) {
 		t.Fatalf("an unchanged observation was rewritten: %+v err=%v", again[0], err)
 	}
 	for _, invalid := range []struct{ ref, oid string }{
@@ -1095,7 +1129,7 @@ func TestObservationsAreBoundedAndUpserted(t *testing.T) {
 		}
 	}
 	afterInvalid, err := fixture.store.CheckObservations(ctx, "project")
-	if err != nil || len(afterInvalid) != MaximumCheckObservations || afterInvalid[0].RefName != "refs/heads/branch-63" {
+	if err != nil || len(afterInvalid) != MaximumCheckObservations || afterInvalid[0].RefName != "refs/heads/branch-00063" {
 		t.Fatalf("invalid refs changed branch observations=%+v err=%v", afterInvalid, err)
 	}
 }

@@ -856,8 +856,12 @@ func TestResumedPartialSweepDoesNotHideAHeadBeforeTheCursor(t *testing.T) {
 
 // A repository with more branches than one pass handles is swept over several
 // passes at one ref generation; once they cover every head, later passes run
-// no Git process until a ref write.
+// no Git process until a ref write. A moved head on the last branch is still
+// admitted after the next sweep.
 func TestSweepOverSeveralPassesLetsUnchangedRepositoryBeSkipped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("pushes and checks 65 branch heads through real Git")
+	}
 	if runtime.GOOS == "windows" {
 		t.Skip("counts Git runs with a shell wrapper")
 	}
@@ -890,9 +894,27 @@ func TestSweepOverSeveralPassesLetsUnchangedRepositoryBeSkipped(t *testing.T) {
 	if runs() != before {
 		t.Fatalf("a pass over an unchanged repository ran %d Git processes", runs()-before)
 	}
+	initial, err := fixture.store.CheckJobs(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	if len(initial) != maximumObservedRefs+1 {
+		t.Fatalf("initial jobs=%d, want one for each of 65 branch heads", len(initial))
+	}
+	// main sorts after b00 through b63, so it is the 65th branch.
+	moved := fixture.pushWorkflow("main", validWorkflow)
 	fixture.noteOwnGitWrite()
-	noErr(t, fixture.coordinator.reconcile(fixture.ctx))
+	fixture.passes(2)
 	if runs() == before {
 		t.Fatal("a ref write did not cause a new scan")
 	}
+	jobs, err := fixture.store.CheckJobs(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	if len(jobs) != len(initial)+1 {
+		t.Fatalf("a moved 65th branch queued %d jobs, want 1", len(jobs)-len(initial))
+	}
+	for _, job := range jobs {
+		if job.SourceOID == moved && job.TriggerRef == "main" {
+			return
+		}
+	}
+	t.Fatal("the moved 65th branch has no check job for its new head")
 }

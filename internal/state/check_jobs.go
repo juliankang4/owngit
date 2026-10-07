@@ -54,9 +54,10 @@ const (
 	// observed trigger context.
 	MaximumCheckEventKeyBytes   = 200
 	MaximumCheckTriggerRefBytes = 200
-	// MaximumCheckObservations bounds the retained observed refs per
-	// repository.
-	MaximumCheckObservations = 64
+	// MaximumCheckObservations retains branch decisions, including heads with
+	// no job, up to the maximum queue size. Observing more heads than one scan
+	// handles must not evict unchanged heads on each pass.
+	MaximumCheckObservations = MaximumCheckQueueLimit
 )
 
 // Sentinel errors are mapped to stable runner and owner API responses.
@@ -1071,30 +1072,32 @@ func (s *Store) RecordCheckObservation(ctx context.Context, repositoryID, refNam
 	if repositoryID == "" || !validObservationRef(refName) || !validObjectID(oid) || now.IsZero() {
 		return ErrInvalidCheckObservation
 	}
-	// An observation of the same object is already recorded; writing it again
-	// would only add to the write-ahead log.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// Read in the write transaction so only a new ref can increase the count.
 	var stored string
-	err := s.db.QueryRowContext(ctx, `SELECT oid FROM check_observations WHERE repository_id=? AND ref_name=?`, repositoryID, refName).Scan(&stored)
+	err = tx.QueryRowContext(ctx, `SELECT oid FROM check_observations WHERE repository_id=? AND ref_name=?`, repositoryID, refName).Scan(&stored)
 	if err == nil && stored == oid {
 		return nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
+	newRef := errors.Is(err, sql.ErrNoRows)
 	if _, err := tx.ExecContext(ctx, `INSERT INTO check_observations(repository_id,ref_name,oid,observed_at) VALUES(?,?,?,?)
 		ON CONFLICT(repository_id,ref_name) DO UPDATE SET oid=excluded.oid,observed_at=excluded.observed_at`,
 		repositoryID, refName, oid, now.UTC().UnixNano()); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM check_observations WHERE repository_id=? AND ref_name NOT IN (
-		SELECT ref_name FROM check_observations WHERE repository_id=? ORDER BY observed_at DESC,ref_name DESC LIMIT ?
-	)`, repositoryID, repositoryID, MaximumCheckObservations); err != nil {
-		return err
+	if newRef {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM check_observations WHERE rowid IN (
+			SELECT rowid FROM check_observations WHERE repository_id=? ORDER BY observed_at DESC,ref_name DESC LIMIT -1 OFFSET ?
+		)`, repositoryID, MaximumCheckObservations); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }

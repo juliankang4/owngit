@@ -35,10 +35,8 @@ func (fixture *pushFixture) settle() int {
 	return len(jobs)
 }
 
-// With more branches than the bounded observation set, heads lost their
-// observation without moving. Each saved and enabled policy version then
-// queued them again, and every open pull request revision too, which filled
-// the queue ahead of new pushes. A head or revision is now queued once.
+// A policy change clears observations but must not queue branch heads or open
+// pull request revisions that already had a job. New heads are still queued.
 func TestPolicyChangeDoesNotRequeueHeadsThatAlreadyHadAJob(t *testing.T) {
 	if testing.Short() {
 		t.Skip("pushes more than a thousand branch heads through real Git")
