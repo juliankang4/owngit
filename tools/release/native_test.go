@@ -647,6 +647,7 @@ require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\",\"repair\":\"owngi
 require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\"}") == .unavailable(why: .silent(restart: [])), "silent without a service")
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}") == .unavailable(why: .addressTaken), "address taken")
 require(doctor("{\"code\":\"doctor.unchecked_server\",\"message\":\"why\",\"unchecked\":true}") == .unavailable(why: .unchecked(detail: "why")), "unchecked")
+require(doctor(#"{"code":"tray.state_unsafe","message":"m","args":["/state"],"repair":"chmod g-w,o-w /state"}"#) == .unavailable(why: .stateUnsafe(path: "/state", repair: "chmod g-w,o-w /state")), "state refusal carries its path and repair")
 require(doctor(#"{"code":"tray.unproven","message":"m"}"#) == .unavailable(why: .unconfirmed), "an unproven answer is not silent")
 require(doctor("", running: true) == .unavailable(why: .starting), "refused, then answering doctor: starting")
 require(doctor("", running: true, asked: .notFound) == .unavailable(why: .noStatus), "a running OwnGit without the status route")
@@ -831,6 +832,9 @@ umask(wideMask)
 require((try? String(contentsOfFile: cursorPath, encoding: .utf8)) == "eyJwIjo1fQ\n", "the cursor with a newline")
 require((try! FileManager.default.attributesOfItem(atPath: cursorPath)[.posixPermissions] as! NSNumber).intValue == 0o600, "the cursor is private")
 require(kept() == "eyJwIjo1fQ", "the kept cursor")
+try! FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: stateDir.path)
+require(kept() == "error", "an unprotected state directory is not read")
+try! FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: stateDir.path)
 require((try? writeCursor("not a cursor!", stateDir: stateDir)) == nil && kept() == "eyJwIjo1fQ", "only a cursor is written")
 require((try! FileManager.default.contentsOfDirectory(atPath: stateDir.path)) == [trayCursorFile], "no temporary file is left")
 try! Data("not a cursor!\n".utf8).write(to: URL(fileURLWithPath: cursorPath))
@@ -1110,7 +1114,21 @@ model.showingSettings = false
 model.state = .unavailable(why: .silent(restart: ["service", "restart"]))
 panel.render(model)
 require(control("restart") is NSButton, "a silent server offers restart")
+model.state = .unavailable(why: .stateUnsafe(path: "/var/example/owngit-state", repair: "chmod g-w,o-w '/var/example/owngit-state'"))
+panel.render(model)
+require(control("copy-command") is NSButton && control("restart") == nil, "an unsafe state directory offers the repair, not restart")
 window.contentView = nil
+
+var copied: String?
+let korean = PanelViewController(words: .ko, appVersion: "1.1.6") { action in
+    if case .copy(let text) = action { copied = text }
+}
+korean.render(model)
+let labels = controls(korean.view).compactMap { $0 as? NSTextField }
+require(labels.contains { $0.isSelectable && $0.stringValue.contains("권한") && $0.stringValue.contains("/var/example/owngit-state") }, "the Korean permission reason names the path")
+let copy = controls(korean.view).first { $0.identifier?.rawValue == "copy-command" } as! NSButton
+copy.performClick(nil)
+require(copied == "chmod g-w,o-w '/var/example/owngit-state'", "the repair button copies the complete command")
 
 // Only the integer choices count; anything else reads as Default.
 let defaults = UserDefaults(suiteName: "org.example.owngit.panel-fixture")!

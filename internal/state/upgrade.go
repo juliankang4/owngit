@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // Upgrade is the schema upgrade that OpenIn is about to apply to an existing
@@ -136,6 +137,11 @@ func UpgradeBackupFolder(stateDir string) string {
 // So until release, a path name inside the folder leads to what this
 // account put there, and the callers work inside it by path.
 func OpenUpgradeBackupFolder(stateDir string) (folder *os.File, release func(), err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("%w; the backups before upgrades need a folder that only this account can change: make it so, or move it away so that OwnGit creates one", err)
+		}
+	}()
 	path := UpgradeBackupFolder(stateDir)
 	_, statErr := os.Lstat(path)
 	created := errors.Is(statErr, os.ErrNotExist)
@@ -157,12 +163,13 @@ func OpenUpgradeBackupFolder(stateDir string) (folder *os.File, release func(), 
 		// the walk holds it with O_PATH, which cannot change its mode.
 		err = ProtectPrivatePath(held.Name(), true)
 	}
-	if err == nil {
+	if err == nil && runtime.GOOS == "windows" {
+		// Unix CreateDirectory already checks writers; Windows needs the ACL check here.
 		err = requirePrivateFolder(held)
 	}
 	if err != nil {
 		release()
-		return nil, nil, fmt.Errorf("%w; the backups before upgrades need a folder that only this account can change: make it so, or move it away so that OwnGit creates one", err)
+		return nil, nil, err
 	}
 	return held, release, nil
 }

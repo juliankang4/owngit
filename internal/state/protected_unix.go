@@ -371,7 +371,7 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 	return func(name string, info os.FileInfo) error {
 		changeable, fix, err := othersCanChange(name, info, true, allowSticky)
 		if err == nil && changeable {
-			err = fmt.Errorf("another account can change %s", name)
+			err = &NotPrivateError{Problem: fmt.Sprintf("another account can change %s", name), Fix: fix}
 			if fix != "" {
 				err = fmt.Errorf("%w (%s fixes that)", err, fix)
 			}
@@ -441,9 +441,9 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 }
 
 // wayCheck is the check that openDirectory applies on the way to path, with
-// local as there. With own set, the directory that the way leads to must
-// belong to this account; otherwise it is checked like every folder on the
-// way, as the parent of a Destination is.
+// local as there. With own set, the directory must belong to this account.
+// A local state directory also refuses other writers, even with the sticky
+// bit. Without own, it is checked like every folder on the way.
 func wayCheck(path string, local, own bool) func(wayEntry) error {
 	protected := protectedCheck(true)
 	return func(entry wayEntry) error {
@@ -461,6 +461,11 @@ func wayCheck(path string, local, own bool) func(wayEntry) error {
 		case last && !info.IsDir():
 			return fmt.Errorf("%s is not a directory", name)
 		case last && own && int(stat.Uid) == os.Geteuid():
+			if local {
+				if err := protectedCheck(false)(name, info); err != nil {
+					return fmt.Errorf("%s is not protected: %w", path, err)
+				}
+			}
 			return nil
 		case os.Geteuid() == 0 && stat.Uid != 0:
 			return &OtherAccountError{Path: name, Account: accountName(stat.Uid), UID: stat.Uid}

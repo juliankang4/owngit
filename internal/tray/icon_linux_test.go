@@ -4,6 +4,7 @@ package tray
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -146,6 +147,40 @@ func TestLinuxIconKeepsTheHideChoice(t *testing.T) {
 	close(stop)
 	if err := <-result; err != nil {
 		t.Fatalf("the icon ended with %v", err)
+	}
+}
+
+func TestLinuxIconKeepsUnsafeStateVisible(t *testing.T) {
+	fakeDir := useFakeGJS(t, "open")
+	t.Setenv("LANG", "ko_KR.UTF-8")
+	stateDir := newStateDir(t)
+	if err := os.Chmod(stateDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	result := make(chan error, 1)
+	go func() { result <- Run(Options{StateDir: stateDir, Stop: stop}) }()
+	t.Cleanup(func() {
+		close(stop)
+		if err := <-result; err != nil {
+			t.Errorf("icon exit: %v", err)
+		}
+		if err := os.Chmod(stateDir, 0o700); err != nil {
+			t.Error(err)
+		}
+	})
+	waitFor(t, fakeDir, "state")
+	data, err := os.ReadFile(filepath.Join(fakeDir, "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message struct{ Panel Panel }
+	if err := json.Unmarshal(data, &message); err != nil {
+		t.Fatal(err)
+	}
+	panel := message.Panel
+	if panel.Condition != "unavailable" || panel.CanOpen || !strings.Contains(panel.Command, "chmod g-w,o-w ") || len(panel.Notice) != 2 || !strings.Contains(panel.Notice[1], stateDir) || !strings.Contains(panel.Notice[1], "권한") {
+		t.Fatalf("visible refusal: %s", data)
 	}
 }
 

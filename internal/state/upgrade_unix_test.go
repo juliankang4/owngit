@@ -30,7 +30,7 @@ func TestUpgradeBackupFolderMustBePrivate(t *testing.T) {
 		before, err := os.Stat(folder)
 		noErr(t, err)
 		_, _, err = OpenUpgradeBackupFolder(stateDir)
-		if err == nil || !strings.Contains(err.Error(), "only this account can change") {
+		if err == nil || !strings.Contains(err.Error(), "another account can change") || !strings.Contains(err.Error(), "chmod g-w,o-w ") || !strings.Contains(err.Error(), "only this account can change") || !strings.Contains(err.Error(), "move it away") {
 			t.Fatalf("mode %v: err=%v", mode, err)
 		}
 		after, err := os.Stat(folder)

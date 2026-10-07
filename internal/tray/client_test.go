@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -135,6 +137,19 @@ func TestReadTakesTheTokenOfTheCurrentStart(t *testing.T) {
 	fake.requests = nil
 	if report := client.Read(context.Background(), "en"); report.Condition != Running || len(fake.requests) != 2 {
 		t.Fatalf("after a new start: %+v, requests %q", report, fake.requests)
+	}
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(fake.stateDir, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		client.Diagnose = nil
+		if report := client.Read(context.Background(), "en"); report.Condition != Unavailable || !strings.Contains(report.Repair, "chmod g-w,o-w ") || !strings.Contains(report.Message, fake.stateDir) {
+			t.Fatalf("cached access in an unprotected state directory: %+v", report)
+		}
+		if err := os.Chmod(fake.stateDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		client.Diagnose = checkup.run
 	}
 	fake.token = "third"
 	if report := client.Read(context.Background(), "en"); report.Condition != Unavailable || checkup.ran != 0 {

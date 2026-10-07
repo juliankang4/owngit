@@ -24,11 +24,11 @@ struct PathFacts {
 /// changes; links are followed after their owner is checked; and the file
 /// is a regular file. facts reads one name without following it.
 func protectedPathProblem(_ path: String, me: uid_t = getuid(), ownGroup: gid_t? = privateGroup(),
-                          facts: (String) -> PathFacts? = readPathFacts) -> String? {
+                          directory: Bool = false, facts: (String) -> PathFacts? = readPathFacts) -> String? {
     var pending = path.split(separator: "/").map(String.init)
     var current = ""
     var links = 0
-    if let problem = changeable("/", facts("/"), last: pending.isEmpty, me: me, ownGroup: ownGroup) {
+    if let problem = changeable("/", facts("/"), last: pending.isEmpty, me: me, ownGroup: ownGroup, directory: directory) {
         return problem
     }
     while !pending.isEmpty {
@@ -53,7 +53,7 @@ func protectedPathProblem(_ path: String, me: uid_t = getuid(), ownGroup: gid_t?
             }
             continue
         }
-        if let problem = changeable(candidate, entry, last: pending.isEmpty, me: me, ownGroup: ownGroup) {
+        if let problem = changeable(candidate, entry, last: pending.isEmpty, me: me, ownGroup: ownGroup, directory: directory) {
             return problem
         }
         current = candidate
@@ -61,7 +61,20 @@ func protectedPathProblem(_ path: String, me: uid_t = getuid(), ownGroup: gid_t?
     return nil
 }
 
-private func changeable(_ path: String, _ entry: PathFacts?, last: Bool, me: uid_t, ownGroup: gid_t?) -> String? {
+func protectedStateDirectoryProblem(_ path: String) -> String? {
+    protectedPathProblem(path, me: geteuid(), directory: true) { name in
+        guard let facts = readPathFacts(name) else { return nil }
+        var mount = statfs()
+        let mounted = facts.kind == .link ? (name as NSString).deletingLastPathComponent : name
+        let folder = open(mounted, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
+        guard folder >= 0 else { return nil }
+        defer { close(folder) }
+        guard fstatfs(folder, &mount) == 0, mount.f_flags & UInt32(MNT_LOCAL) != 0 else { return nil }
+        return facts
+    }
+}
+
+private func changeable(_ path: String, _ entry: PathFacts?, last: Bool, me: uid_t, ownGroup: gid_t?, directory: Bool) -> String? {
     guard let entry, entry.owner == 0 || entry.owner == me, !entry.accessListWriter else {
         return path
     }
@@ -72,7 +85,7 @@ private func changeable(_ path: String, _ entry: PathFacts?, last: Bool, me: uid
         entry.mode & S_IWGRP != 0 && !(entry.group == 0 || entry.group == 80 || entry.group == ownGroup)) {
         return path
     }
-    if last ? entry.kind != .file : entry.kind != .folder {
+    if last ? entry.kind != (directory ? .folder : .file) : entry.kind != .folder {
         return path
     }
     return nil

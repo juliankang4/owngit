@@ -45,6 +45,14 @@ func TestTrayReadAndOpen(t *testing.T) {
 	if !shown || panel.Condition != "attention" || panel.State != "확인 필요" || !panel.CanOpen || panel.CloneAddress != served.url+"/git/" {
 		t.Fatalf("panel of a running server: shown=%v %+v", shown, panel)
 	}
+	if runtime.GOOS != "windows" {
+		noErr(t, os.Chmod(stateDir, 0o777))
+		shown, unavailable := trayRead(t, stateDir)
+		if !shown || unavailable.Condition != "unavailable" || unavailable.CanOpen || !strings.Contains(unavailable.Command, "chmod g-w,o-w ") || len(unavailable.Notice) != 2 || !strings.Contains(unavailable.Notice[1], stateDir) || !strings.Contains(unavailable.Notice[1], "권한") {
+			t.Fatalf("unprotected state panel: shown=%v %+v", shown, unavailable)
+		}
+		noErr(t, os.Chmod(stateDir, 0o700))
+	}
 	if runtime.GOOS != "linux" {
 		t.Skip("the browser opens through xdg-open on Linux")
 	}

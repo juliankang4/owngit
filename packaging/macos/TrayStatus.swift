@@ -136,6 +136,7 @@ struct DoctorReport: Decodable, Equatable {
         let code: String
         let message: String
         let repair: String?
+        let args: [String]?
     }
 
     let running: Bool
@@ -183,6 +184,7 @@ enum Unavailable: Equatable {
     /// The check itself could not tell; detail is its message.
     case unchecked(detail: String)
     case unconfirmed
+    case stateUnsafe(path: String, repair: String)
 }
 
 /// How one status request ended.
@@ -317,6 +319,9 @@ func doctorState(output: Data?, asked: DoctorAsked) -> PanelState {
     }
     if codes["doctor.address_taken"] != nil {
         return .unavailable(why: .addressTaken)
+    }
+    if let unsafe = codes["tray.state_unsafe"] {
+        return .unavailable(why: .stateUnsafe(path: unsafe.args?.first ?? "", repair: unsafe.repair ?? ""))
     }
     if codes["tray.unproven"] != nil {
         return .unavailable(why: .unconfirmed)
@@ -527,7 +532,7 @@ struct Words {
     let failed: String
     let readFailed: String
     let noDashboard, openFailed, notConfirmed: String
-    let noProgram, unprotected: String
+    let noProgram, unprotected, stateUnsafe: String
     let notifications, notifyAll, notifyOthers, notifyOthersHelp, notificationsHint: String
     let notificationsOff, openNotificationSettings: String
     /// The name of each notification kind in the settings.
@@ -569,6 +574,7 @@ struct Words {
         notConfirmed: "OwnGit did not confirm that it answers at this computer's address, so nothing was opened.",
         noProgram: "OwnGit.app needs the owngit program inside it or beside it, but %@ is missing. Install OwnGit again.",
         unprotected: "OwnGit is at %@, where another account on this Mac could change it. Move OwnGit to a folder only you can change, then open it again.",
+        stateUnsafe: "OwnGit needs its state directory protected from changes by other accounts. Fix its permissions before starting OwnGit. Folder: %@",
         notifications: "Notifications", notifyAll: "Show notifications", notifyOthers: "Only what I did not do",
         notifyOthersHelp: "Leaves out pushes and pull requests sent from this Mac, and imports started on it.",
         notificationsHint: "The notification settings of macOS apply too.",
@@ -616,6 +622,7 @@ struct Words {
         notConfirmed: "이 컴퓨터의 주소에서 OwnGit이 응답하는지 확인하지 못해 아무것도 열지 않았습니다.",
         noProgram: "owngit 프로그램을 찾지 못했습니다: %@. 이 프로그램은 OwnGit.app 안이나 옆에 있어야 합니다. OwnGit을 다시 설치하세요.",
         unprotected: "OwnGit이 %@에 있어 이 Mac의 다른 계정이 바꿀 수 있습니다. 나만 바꿀 수 있는 폴더로 OwnGit을 옮긴 뒤 다시 여세요.",
+        stateUnsafe: "다른 계정이 바꿀 수 없도록 상태 폴더의 권한을 고쳐야 OwnGit을 실행할 수 있습니다. 위치: %@",
         notifications: "알림", notifyAll: "알림 보기", notifyOthers: "내가 하지 않은 일만 알림",
         notifyOthersHelp: "이 Mac에서 보낸 푸시와 풀 리퀘스트, 이 Mac에서 시작한 가져오기는 알리지 않습니다.",
         notificationsHint: "macOS의 알림 설정도 함께 적용됩니다.",

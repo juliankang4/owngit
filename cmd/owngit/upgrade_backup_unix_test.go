@@ -24,7 +24,7 @@ func TestSharedBackupFolderIsRefused(t *testing.T) {
 	}
 	before := stateFiles(t, stateDir)
 	_, err := openStateForTest(t, stateDir)
-	if err == nil || !strings.Contains(err.Error(), "the state was not upgraded") || !strings.Contains(err.Error(), "only this account can change") {
+	if err == nil || !strings.Contains(err.Error(), "the state was not upgraded") || !strings.Contains(err.Error(), "another account can change") || !strings.Contains(err.Error(), "chmod g-w,o-w ") || !strings.Contains(err.Error(), "only this account can change") || !strings.Contains(err.Error(), "move it away") {
 		t.Fatalf("err=%v", err)
 	}
 	requireStateFiles(t, stateDir, before)

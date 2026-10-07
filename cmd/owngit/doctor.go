@@ -141,6 +141,11 @@ type servingService struct {
 // An answer without a running record belongs to another program.
 func commandSubject(stateDir string) (doctorSubject, error) {
 	subject := doctorSubject{stateDir: stateDir, service: findServingService(stateDir)}
+	if held, err := state.OpenStateDirectory(stateDir); err == nil {
+		held.Close()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return stateRefusalSubject(subject, err)
+	}
 	observed := state.RunningObservation{Server: state.ServerNotRunning}
 	savedListen := ""
 	switch err := state.RequireExisting(stateDir); {
@@ -151,7 +156,7 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 		ctx := context.Background()
 		store, err := openLiveState(ctx, stateDir)
 		if err != nil {
-			return doctorSubject{}, err
+			return stateRefusalSubject(subject, err)
 		}
 		defer store.Close()
 		if observed, err = store.ObserveRunningNetwork(ctx); err != nil {
@@ -216,6 +221,16 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 		}
 	}
 	subject.administrator = subject.service.administrator || probeEnvironment().Administrator
+	return subject, nil
+}
+
+func stateRefusalSubject(subject doctorSubject, err error) (doctorSubject, error) {
+	var private *state.NotPrivateError
+	if !errors.As(err, &private) {
+		return doctorSubject{}, err
+	}
+	subject.server = doctor.ServerUnknown
+	subject.serverFinding = &webui.Finding{Code: webui.MsgTrayStateUnsafe, Args: []string{subject.stateDir}, Repair: private.Fix, Unchecked: true}
 	return subject, nil
 }
 

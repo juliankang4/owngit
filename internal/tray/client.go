@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -133,10 +134,27 @@ func (client *Client) Read(ctx context.Context, lang string) Report {
 func (client *Client) unavailable(err error, lang string) Report {
 	language, _ := webui.ParseLang(lang)
 	report := Report{Condition: Unavailable}
-	if errors.Is(err, errUnproven) {
+	var private *state.NotPrivateError
+	switch {
+	case errors.As(err, &private):
+		report.Message = fmt.Sprintf(webui.Text(language, webui.MsgTrayStateUnsafe), client.StateDir)
+		report.Repair = private.Fix
+	case errors.Is(err, errUnproven):
 		report.Message = webui.Text(language, webui.MsgTrayUnproven)
 	}
 	return report
+}
+
+// Shown hides only a missing state directory or the owner's hidden choice.
+// A refusal keeps the icon visible so it can show the problem and repair.
+func Shown(stateDir string) (bool, error) {
+	held, err := state.OpenStateDirectory(stateDir)
+	if err != nil {
+		return !errors.Is(err, os.ErrNotExist), err
+	}
+	defer held.Close()
+	hidden, err := state.TrayHidden(held)
+	return !hidden, err
 }
 
 // Dashboard asks the server again and returns the dashboard's address
@@ -179,6 +197,12 @@ func (client *Client) status(ctx context.Context, lang string) (server.TrayStatu
 // answer to read. It returns the dashboard's address. A token is kept only
 // while it works.
 func (client *Client) get(ctx context.Context, path string, query url.Values, read func([]byte) error) (string, error) {
+	held, err := state.OpenStateDirectory(client.StateDir)
+	if err != nil {
+		client.access = nil
+		return "", fmt.Errorf("%w: %w", errNoConnection, err)
+	}
+	defer held.Close()
 	for attempt := 0; ; attempt++ {
 		if client.access == nil {
 			access, err := readAccess(filepath.Join(client.StateDir, state.TrayAccessFile))

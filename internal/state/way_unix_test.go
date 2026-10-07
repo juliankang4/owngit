@@ -12,6 +12,41 @@ import (
 	"testing"
 )
 
+// A directory other accounts can write is refused without changing its mode.
+func TestStateDirectoryRefusesOtherWriters(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	held, err := CreateDirectory(path)
+	noErr(t, err)
+	noErr(t, held.Close())
+	defer func() { noErr(t, os.Chmod(path, 0o700)) }()
+	for _, mode := range []os.FileMode{0o777, 0o777 | os.ModeSticky, 0o770, 0o500} {
+		noErr(t, os.Chmod(path, mode))
+		info, err := os.Stat(path)
+		noErr(t, err)
+		stat := info.Sys().(*syscall.Stat_t)
+		unsafe := mode.Perm()&0o002 != 0 || mode.Perm()&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !rootEquivalentGroup(stat.Gid)
+		held, err := OpenStateDirectory(path)
+		if held != nil {
+			noErr(t, held.Close())
+		}
+		if unsafe && (err == nil || !strings.Contains(err.Error(), "chmod g-w,o-w ") || !strings.Contains(err.Error(), path)) {
+			t.Fatalf("mode %o: expected refusal with repair, got %v", mode, err)
+		}
+		if !unsafe {
+			noErr(t, err)
+		}
+		// Log directories keep their existing ownership-only rule.
+		log, err := OpenDirectory(path, false)
+		noErr(t, err)
+		noErr(t, log.Close())
+		after, err := os.Stat(path)
+		noErr(t, err)
+		if after.Mode() != info.Mode() {
+			t.Fatalf("checking mode %o changed it to %o", info.Mode(), after.Mode())
+		}
+	}
+}
+
 // The walk resolves links itself, relative and absolute, and ".." in a
 // link leaves the folder that the link before it led to, as the system
 // would.

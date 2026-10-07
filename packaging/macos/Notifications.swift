@@ -242,9 +242,17 @@ struct StateFile {
     }
 
     private func openFolder() throws -> Int32 {
+        if protectedStateDirectoryProblem(dir.path) != nil {
+            throw StateFileError(dir.path, "the state directory is not protected")
+        }
         let folder = open(dir.path, O_RDONLY | O_DIRECTORY | O_CLOEXEC)
         if folder < 0 {
             throw StateFileError.posix(dir.path)
+        }
+        var facts = stat()
+        if fstat(folder, &facts) != 0 || facts.st_uid != geteuid() {
+            close(folder)
+            throw StateFileError(dir.path, "the state directory belongs to another account")
         }
         return folder
     }
@@ -259,6 +267,9 @@ struct StateFile {
         }
         if facts.st_uid != geteuid() {
             throw StateFileError(name, "belongs to another account")
+        }
+        if facts.st_mode & 0o077 != 0 {
+            throw StateFileError(name, "its permissions allow other accounts access")
         }
         if facts.st_nlink != 1 {
             throw StateFileError(name, "has another name as well, so it may be another file")
@@ -366,8 +377,7 @@ final class Notifier {
     /// when the token is refused.
     private func ask(stateDir: URL, lang: String, choice: NotificationChoice, cursor: String?) -> TrayEvents? {
         for _ in 0..<2 {
-            let accessFile = stateDir.appendingPathComponent("tray-access.json")
-            guard let data = try? Data(contentsOf: accessFile),
+            guard let data = try? StateFile(dir: stateDir, name: "tray-access.json").read(limit: 4096),
                   let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
                   let url = eventsURL(access: access, lang: lang, choice: choice, cursor: cursor)
             else {
