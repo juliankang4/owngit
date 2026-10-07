@@ -14,7 +14,8 @@
 #
 # A few tests also read files by path that their test binary does not show;
 # they are declared below with what they read. A Markdown file outside every
-# package selects only those readers.
+# package selects only those readers, and an image under docs/images selects
+# nothing, since no test reads one.
 #
 # --full prints the packages that keep their full flags on a pull request,
 # which test-shard.sh turns into a -short run for the rest: every affected
@@ -112,7 +113,7 @@ while read -r file; do
 			affected[$owngit]=1
 			continue
 			;;
-		*.md) continue ;;
+		*.md | /docs/images/*) continue ;;
 		esac
 		echo ./...
 		exit 0
