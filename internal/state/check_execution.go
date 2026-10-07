@@ -297,7 +297,7 @@ func ImmutableContainerImage(value string) bool {
 	if value == "" || strings.ContainsAny(value, "\x00\r\n\t ") {
 		return false
 	}
-	digestStart := 0
+	var digestStart int
 	if strings.HasPrefix(value, "sha256:") {
 		digestStart = len("sha256:")
 		if digestStart+64 != len(value) {

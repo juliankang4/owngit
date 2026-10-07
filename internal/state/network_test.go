@@ -42,7 +42,7 @@ func TestNetworkSettingsAreOptionalMetadata(t *testing.T) {
 	if rows != 0 {
 		t.Fatalf("empty base URL left %d metadata rows", rows)
 	}
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion() {
+	if version, _, err := readSchemaVersion(ctx, store.db); err != nil || version != currentSchemaVersion() {
 		t.Fatalf("schema version=%d err=%v", version, err)
 	}
 }

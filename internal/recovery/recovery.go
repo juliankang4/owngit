@@ -370,13 +370,6 @@ type commandRunner interface {
 	Run(context.Context, string, io.Reader, ...string) (gitexec.Result, error)
 }
 
-// Create writes a backup of an OwnGit that is not running. It first
-// recovers unfinished pull request work, as a start of OwnGit would.
-func Create(ctx context.Context, store *state.Store, manager *repository.Manager, output string) error {
-	_, err := CreateWithReport(ctx, store, manager, output)
-	return err
-}
-
 // CreateWithReport writes an offline backup and reports its capture-time notices.
 func CreateWithReport(ctx context.Context, store *state.Store, manager *repository.Manager, output string) (CaptureReport, error) {
 	service := &pullrequest.Service{Store: store, Repositories: manager}
@@ -1581,22 +1574,6 @@ func manifestFields() []manifestField {
 	return fields
 }
 
-func readManifest(manifestPath string) (Manifest, error) {
-	if err := requireRegularFile(manifestPath); err != nil {
-		return Manifest{}, err
-	}
-	file, err := os.Open(manifestPath)
-	if err != nil {
-		return Manifest{}, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return Manifest{}, err
-	}
-	return decodeManifest(file, info.Size(), manifestLimit)
-}
-
 // decodeManifest reads a manifest of size bytes with memory bounded by its
 // cost, which the budget limits (manifestBudget): it refuses a file larger
 // than limit (or than the 64 MiB of version 10 and older) before and while
@@ -2586,17 +2563,6 @@ func sameRefs(left, right []Ref) bool {
 		}
 	}
 	return true
-}
-
-func requireRegularFile(filePath string) error {
-	info, err := os.Lstat(filePath)
-	if err != nil {
-		return err
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return errors.New("path is not a regular file")
-	}
-	return nil
 }
 
 func fileSHA256(filePath string) (string, error) {

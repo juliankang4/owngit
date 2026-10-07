@@ -40,8 +40,8 @@ func TestShutdownDrainsInFlightRunBeforeReturning(t *testing.T) {
 	require(t, err == nil && !exists, "active run after shutdown=%+v err=%v", active, err)
 	err = <-finished
 	require(t, problemCode(err) == CodeCancelled, "drained refresh err=%v", err)
-	availability := f.service.Availability(context.Background())
-	require(t, !availability.Prepared, "shutdown kept the runtime lease")
+	_, prepared := f.service.preparedRuntime()
+	require(t, !prepared, "shutdown kept the runtime lease")
 	_, err = f.refresh()
 	require(t, problemCode(err) == CodeRuntimeUnavailable, "refresh after shutdown err=%v", err)
 }

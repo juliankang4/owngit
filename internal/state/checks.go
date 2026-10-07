@@ -1758,10 +1758,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 		}
 		// The stored hash must describe the stored definitions, so a tampered
 		// configuration cannot silently change what the evidence means.
-		encoded, err := json.Marshal(configuration.Checks)
-		if err != nil {
-			return errors.New("invalid check configuration contents")
-		}
+		encoded, _ := json.Marshal(configuration.Checks)
 		hash := sha256.Sum256(encoded)
 		if hex.EncodeToString(hash[:]) != configuration.ConfigHash {
 			return errors.New("check configuration hash does not match its definitions")

@@ -334,7 +334,7 @@ func (in *inspection) inspectPrivateCopy(ctx context.Context, walInfo, shmInfo o
 // classified. A fresh directory is accepted only while it is still the same
 // directory with no database, sidecar or journal. Migrating classifications
 // also require their bound hashes.
-func (in *inspection) accept(ctx context.Context, dir string) error {
+func (in *inspection) accept(ctx context.Context) error {
 	if err := in.at(pointAccept, ""); err != nil {
 		return err
 	}

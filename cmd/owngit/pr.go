@@ -266,23 +266,26 @@ func writeDiffPatch(content []byte, output, notes io.Writer) error {
 	if err := json.Unmarshal(content, &diff); err != nil {
 		return &apiclient.Error{Code: "invalid_response", Message: "The OwnGit API returned an invalid diff.", Cause: err}
 	}
-	fmt.Fprintf(notes, "owngit: source %s, target %s, merge base %s\n", diff.Source.OID, diff.Target.OID, valueOr(diff.MergeBase, "none"))
+	lines := []string{fmt.Sprintf("owngit: source %s, target %s, merge base %s\n", diff.Source.OID, diff.Target.OID, valueOr(diff.MergeBase, "none"))}
 	if diff.Moved && diff.Current != nil {
-		fmt.Fprintf(notes, "owngit: the branches moved; the current source is %s and the current target is %s\n",
-			valueOr(diff.Current.Source.OID, diff.Current.Source.Status), valueOr(diff.Current.Target.OID, diff.Current.Target.Status))
+		lines = append(lines, fmt.Sprintf("owngit: the branches moved; the current source is %s and the current target is %s\n",
+			valueOr(diff.Current.Source.OID, diff.Current.Source.Status), valueOr(diff.Current.Target.OID, diff.Current.Target.Status)))
 	}
 	if diff.Unavailable != "" {
-		fmt.Fprintf(notes, "owngit: no patch: %s\n", diff.Unavailable)
+		lines = append(lines, fmt.Sprintf("owngit: no patch: %s\n", diff.Unavailable))
 	}
 	if diff.Truncated {
 		scope := "the patch leaves out some files"
 		if diff.Incomplete {
 			scope = "the patch and the file list leave out some files"
 		}
-		fmt.Fprintf(notes, "owngit: %s (%s)\n", scope, diff.Reason)
+		lines = append(lines, fmt.Sprintf("owngit: %s (%s)\n", scope, diff.Reason))
 	}
 	if note := tooLargeNote(diff.Files); note != "" {
-		fmt.Fprintf(notes, "owngit: %s\n", note)
+		lines = append(lines, fmt.Sprintf("owngit: %s\n", note))
+	}
+	if _, err := io.WriteString(notes, strings.Join(lines, "")); err != nil {
+		return &apiclient.Error{Code: "output_failed", Message: "The patch notes could not be written.", Cause: err}
 	}
 	if _, err := io.WriteString(output, diff.Patch); err != nil {
 		return &apiclient.Error{Code: "output_failed", Message: "The patch could not be written.", Cause: err}

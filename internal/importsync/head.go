@@ -268,7 +268,7 @@ func (s *Service) acquireRefFileLock(ctx context.Context, run *runState, reposit
 		return nil, newProblem(CodeDestinationChanged, fmt.Sprintf("destination %s changed before its write lock was acquired", name), nil)
 	}
 	if run.run.ID != "" {
-		if err := s.recordRefLock(ctx, run, lock, name); err != nil {
+		if err := s.recordRefLock(run, lock, name); err != nil {
 			_ = lock.rollback()
 			return nil, newProblem(CodeStateUnavailable, "owned ref lock recovery evidence could not be recorded", err)
 		}
@@ -650,7 +650,7 @@ func directoryFileID(path string) string {
 	return id
 }
 
-func (s *Service) recordRefLock(ctx context.Context, run *runState, lock *headLock, name string) error {
+func (s *Service) recordRefLock(run *runState, lock *headLock, name string) error {
 	if _, err := s.currentRuntime(run.runtimeGeneration); err != nil {
 		return err
 	}

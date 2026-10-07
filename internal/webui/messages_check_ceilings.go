@@ -120,10 +120,5 @@ var checkCeilingsCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range checkCeilingsCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(checkCeilingsCatalog)
 }

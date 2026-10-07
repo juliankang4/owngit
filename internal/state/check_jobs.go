@@ -405,7 +405,7 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 			executionJSON, candidate.UpdatedAt.Unix(), candidate.RepositoryID); err != nil {
 			return CheckPolicy{}, err
 		}
-		if _, err := interruptStalePendingCheckJobsTx(ctx, tx, candidate, now); err != nil {
+		if err := interruptStalePendingCheckJobsTx(ctx, tx, candidate, now); err != nil {
 			return CheckPolicy{}, err
 		}
 		stored = candidate
@@ -633,7 +633,7 @@ func (s *Store) RevokeCheckConsent(ctx context.Context, repositoryID string, now
 		policy.UpdatedAt.Unix(), repositoryID); err != nil {
 		return CheckPolicy{}, err
 	}
-	if _, err := interruptStalePendingCheckJobsTx(ctx, tx, policy, now); err != nil {
+	if err := interruptStalePendingCheckJobsTx(ctx, tx, policy, now); err != nil {
 		return CheckPolicy{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1554,7 +1554,7 @@ func (s *Store) claimCheckJob(ctx context.Context, repositoryID, credentialID, r
 	default:
 		return CheckJob{}, false, ErrCheckRunnerCredential
 	}
-	if _, err := interruptStalePendingCheckJobsTx(ctx, tx, policy, now); err != nil {
+	if err := interruptStalePendingCheckJobsTx(ctx, tx, policy, now); err != nil {
 		return CheckJob{}, false, err
 	}
 	if !checkConsentCurrent(policy) || policy.Execution.Legacy {
@@ -2094,31 +2094,31 @@ func oldestPendingCheckJobTx(ctx context.Context, queryer querier, repositoryID 
 	return job, err == nil, err
 }
 
-func interruptStalePendingCheckJobsTx(ctx context.Context, tx *sql.Tx, policy CheckPolicy, now time.Time) (int, error) {
+func interruptStalePendingCheckJobsTx(ctx context.Context, tx *sql.Tx, policy CheckPolicy, now time.Time) error {
 	rows, err := tx.QueryContext(ctx, checkJobSelect+` WHERE repository_id=? AND status IN ('pending','claimed') ORDER BY admitted_at,id`, policy.RepositoryID)
 	if err != nil {
-		return 0, err
+		return err
 	}
 	var stale []CheckJob
 	for rows.Next() {
 		job, err := scanCheckJob(rows)
 		if err != nil {
 			rows.Close()
-			return 0, err
+			return err
 		}
 		if !checkJobAuthorityCurrent(job, policy) {
 			stale = append(stale, job)
 		}
 	}
 	if err := closeRows(rows); err != nil {
-		return 0, err
+		return err
 	}
 	for _, job := range stale {
 		if err := interruptCheckJobTx(ctx, tx, job, now, "Execution authority changed before start."); err != nil {
-			return 0, err
+			return err
 		}
 	}
-	return len(stale), nil
+	return nil
 }
 
 func interruptCheckJobTx(ctx context.Context, tx *sql.Tx, job CheckJob, now time.Time, summary string) error {

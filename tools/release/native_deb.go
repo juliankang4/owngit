@@ -345,7 +345,7 @@ func verifyDebTar(compressed []byte, expected []nativePackageFile) error {
 			}
 			continue
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+		if header.Typeflag != tar.TypeReg {
 			return fmt.Errorf("entry %s is not a regular file", name)
 		}
 		if err := validateNativePath(name); err != nil {

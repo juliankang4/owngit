@@ -174,7 +174,7 @@ func (app *App) uploadBackup(writer http.ResponseWriter, request *http.Request) 
 		writeAPIError(writer, http.StatusLengthRequired, "length_required", webui.Text(webui.LangEN, webui.MsgBackupUploadNoSize), nil)
 		return
 	}
-	request = app.beginTransfer(writer, request)
+	request = app.beginTransfer(request)
 	upload, err := app.Backups.ReceiveUpload(request.Context(), idleReader{request.Body, http.NewResponseController(writer)}, request.ContentLength)
 	if err != nil {
 		writeBackupAPIError(writer, request, err, "backup upload")

@@ -704,6 +704,19 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 	}
 }
 
+// MissingMessages lists catalog entries without text in one of the languages.
+// The package test uses it; it exists so an incomplete translation fails a
+// check instead of silently shipping English to Korean readers.
+func MissingMessages() []MessageCode {
+	var missing []MessageCode
+	for code, entry := range catalog {
+		if entry.en == "" || entry.ko == "" {
+			missing = append(missing, code)
+		}
+	}
+	return missing
+}
+
 func TestCatalogIsCompleteInBothLanguages(t *testing.T) {
 	if missing := MissingMessages(); len(missing) > 0 {
 		t.Fatalf("catalog entries missing a translation: %v", missing)

@@ -207,19 +207,6 @@ var checkPolicyBounds = map[string]CheckPolicyBounds{
 	FieldSourceMaxTotalBytes: {MinField: FieldSourceMaxFileBytes, Max: 1 << 40},
 }
 
-// PublishedPolicyFields lists every field that publishes bounds.
-//
-// A caller uses it to enumerate what can be shown, and a test uses it to
-// confirm that nothing published to operators escapes a boundary check. The
-// order is not defined.
-func PublishedPolicyFields() []string {
-	fields := make([]string, 0, len(checkPolicyBounds))
-	for field := range checkPolicyBounds {
-		fields = append(fields, field)
-	}
-	return fields
-}
-
 // CheckPolicyBoundsFor reports the accepted range of a numeric field.
 //
 // The second result is false only for a field that is not numeric. A numeric

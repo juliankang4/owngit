@@ -50,7 +50,8 @@ func TestBackupVerifyRestoreKeepsDecomposedRefs(t *testing.T) {
 	}
 	t.Run("capture", func(t *testing.T) {
 		backup := filepath.Join(root, "captured-backup")
-		noErr(t, Create(ctx, store, manager, backup))
+		_, err = CreateWithReport(ctx, store, manager, backup)
+		noErr(t, err)
 		checkManifest(t, backup)
 	})
 	t.Run("portable backup", func(t *testing.T) {

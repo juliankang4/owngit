@@ -620,7 +620,7 @@ func (s *Service) objectsPresent(ctx context.Context, run *runState, repositoryP
 	if truncated {
 		return false, newProblem(CodeVerifyFailed, "destination object inspection exceeded its output bound", nil)
 	}
-	lines := splitBoundedLines(stdout, 0)
+	lines := splitBoundedLines(stdout)
 	if len(lines) != len(wanted) {
 		return false, newProblem(CodeVerifyFailed, "destination object inspection returned an unexpected record count", nil)
 	}
@@ -1569,7 +1569,7 @@ func (s *Service) reconcileIntentListLocked(ctx context.Context, repositoryPath,
 			// belong to its run. Another empty repository must not mark it
 			// not-applied or complete. An earlier initial import of this name
 			// whose directory is gone is settled as never published.
-			if _, err := s.settleGoneInitialIntent(ctx, intent, now); err != nil {
+			if err := s.settleGoneInitialIntent(ctx, intent, now); err != nil {
 				return err
 			}
 			continue
@@ -1939,19 +1939,6 @@ func (s *Service) checkAuthority(ctx context.Context, run *runState, honorCancel
 		return newProblem(CodeCancelled, "import was cancelled before publication", nil)
 	}
 	return nil
-}
-
-// reconcileRepositoryIntents verifies open intents under the repository write
-// lock so its reads cannot race a publication.
-func (s *Service) reconcileRepositoryIntents(ctx context.Context, repositoryPath, repositoryID, generation string) error {
-	now := s.clock()
-	lock := s.Repositories.Locks.For(repositoryID)
-	if err := lock.LockContext(ctx); err != nil {
-		return err
-	}
-	err := s.reconcileRepositoryIntentsLocked(ctx, repositoryPath, repositoryID, generation, now)
-	lock.Unlock()
-	return err
 }
 
 func sortedKeys(values map[string]string) []string {

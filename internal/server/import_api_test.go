@@ -184,7 +184,7 @@ func TestImportAddOnAnExistingRepositoryIsRefused(t *testing.T) {
 			t.Fatalf("add on an existing repository status=%d", again.StatusCode)
 		}
 	}
-	runs, _, err := fixture.app.Imports.History(context.Background(), "fresh", 10)
+	runs, _, err := fixture.app.Imports.HistoryBefore(context.Background(), "fresh", 10, 0)
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("a refused add started a run: runs=%d err=%v", len(runs), err)
 	}
@@ -208,7 +208,7 @@ func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
 	if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
 		t.Fatalf("refresh without a repository status=%d", response.StatusCode)
 	}
-	runs, _, err := fixture.app.Imports.History(context.Background(), "missing", 10)
+	runs, _, err := fixture.app.Imports.HistoryBefore(context.Background(), "missing", 10, 0)
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("a refresh without a repository recorded runs=%d err=%v", len(runs), err)
 	}

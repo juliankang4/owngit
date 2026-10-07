@@ -46,5 +46,5 @@ func durableFileID(file *os.File) (string, error) {
 	if !ok || identity.Ino == 0 {
 		return "", errors.New("file identity is unavailable")
 	}
-	return fmt.Sprintf("unix:%x:%x", uint64(identity.Dev), uint64(identity.Ino)), nil
+	return fmt.Sprintf("unix:%x:%x", uint64(identity.Dev), identity.Ino), nil
 }

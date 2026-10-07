@@ -42,7 +42,8 @@ func TestBackupAndRestoreOmitDeletedRepositories(t *testing.T) {
 	}
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if len(manifest.Repositories) != 1 || manifest.Repositories[0].ID != "project" {

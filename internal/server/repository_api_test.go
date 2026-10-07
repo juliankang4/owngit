@@ -247,7 +247,8 @@ func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
 	noErr(t, fixture.app.Imports.Reconcile(ctx))
 	initials, err := fixture.store.ImportInitialDestinationsPage(ctx, "", 100)
 	noErr(t, err)
-	issues, more, err := fixture.app.Imports.StagingIssues(ctx, 100, "")
+	issues, err := fixture.store.ImportStagingsPage(ctx, "", 101)
+	more := len(issues) > 100
 	if err != nil || len(initials) != 0 || len(issues) != 0 || more {
 		t.Fatalf("preservation became an import issue: initials=%v issues=%v more=%v err=%v", initials, issues, more, err)
 	}
@@ -260,7 +261,8 @@ func TestFailedCreationPreservationIsNotARepositoryOrImportIssue(t *testing.T) {
 		t.Fatalf("same-name import status=%d", imported.StatusCode)
 	}
 	backup := filepath.Join(t.TempDir(), "backup")
-	noErr(t, recovery.Create(ctx, fixture.store, fixture.app.Repositories, backup))
+	_, err = recovery.CreateWithReport(ctx, fixture.store, fixture.app.Repositories, backup)
+	noErr(t, err)
 	manifestFile, err := os.Open(filepath.Join(backup, "manifest.json"))
 	noErr(t, err)
 	defer manifestFile.Close()

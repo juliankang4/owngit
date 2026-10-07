@@ -36,7 +36,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	// finished" once: after the terminal setup, or after the sign-in that
 	// shared access asked for. The notice travels in the notice cookie.
 	if notice := app.setupResult.Swap(nil); notice != nil {
-		app.noticeRedirect(writer, request, "/?notice="+*notice, http.StatusSeeOther)
+		app.noticeRedirect(writer, request, "/?notice="+*notice)
 		return
 	}
 	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
@@ -261,7 +261,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(created.ID)+"?notice=repository_created", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(created.ID)+"?notice=repository_created")
 }
 
 func (app *App) handleActivity(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
@@ -349,10 +349,10 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 	if len(parts) == 2 && app.Repositories.Preparing(id) {
 		switch parts[1] {
 		case "helper-credentials":
-			app.handleHelperCredentials(writer, request, stored, repository.Summary{}, chrome)
+			app.handleHelperCredentials(writer, request, stored, repository.Summary{})
 			return
 		case "runner-tokens":
-			app.handleRunnerTokens(writer, request, stored, repository.Summary{}, chrome)
+			app.handleRunnerTokens(writer, request, stored, repository.Summary{})
 			return
 		}
 	}
@@ -421,15 +421,15 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 		return
 	}
 	if len(parts) == 2 && parts[1] == "helper-credentials" {
-		app.handleHelperCredentials(writer, request, stored, summary, chrome)
+		app.handleHelperCredentials(writer, request, stored, summary)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "configured-checks" {
-		app.handleConfiguredChecks(writer, request, stored, summary, chrome)
+		app.handleConfiguredChecks(writer, request, stored, summary)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "runner-tokens" {
-		app.handleRunnerTokens(writer, request, stored, summary, chrome)
+		app.handleRunnerTokens(writer, request, stored, summary)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "settings" && request.Method == http.MethodGet {
@@ -1437,15 +1437,15 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	// A commit opens with every file's diff. An address naming one file, as
 	// the note on a file left out of a large commit does, loads that file's
 	// diff alone.
+	var selectedFile *repository.ChangedFile
 	if requestedPath != "" {
-		found := false
-		for _, file := range files {
-			if file.Path == requestedPath {
-				found = true
+		for index := range files {
+			if files[index].Path == requestedPath {
+				selectedFile = &files[index]
 				break
 			}
 		}
-		if !found {
+		if selectedFile == nil {
 			page.Commits.NotFound = true
 			return nil
 		}
@@ -1488,30 +1488,25 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		// added file's patch). The page says why instead.
 		patch, truncated := "", false
 		var err error
-		if !binaryBySize(files, requestedPath) {
+		if !selectedFile.BinaryBySize {
 			patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, limits.FilePatchBytes)
 		}
 		if err != nil {
 			return err
 		}
 		view.Truncated = truncated
-		for _, file := range files {
-			if file.Path != requestedPath {
-				continue
-			}
-			item := diffFileItem(file, fileURL)
-			item.Selected = true
-			var total, shown int
-			if !item.Binary {
-				item.Hunks, total, shown = patchLinePage(patch, pagination.First, maximumCommitDiffLines)
-				view.Continuation = lineContinuation(fileURL(requestedPath), pagination.First, shown, total)
-				view.Continuation.Incomplete = truncated
-			}
-			if err := pagination.check(total, truncated, fileURL(requestedPath)); err != nil {
-				return err
-			}
-			view.Files = append(view.Files, item)
+		item := diffFileItem(*selectedFile, fileURL)
+		item.Selected = true
+		var total, shown int
+		if !item.Binary {
+			item.Hunks, total, shown = patchLinePage(patch, pagination.First, maximumCommitDiffLines)
+			view.Continuation = lineContinuation(fileURL(requestedPath), pagination.First, shown, total)
+			view.Continuation.Incomplete = truncated
 		}
+		if err := pagination.check(total, truncated, fileURL(requestedPath)); err != nil {
+			return err
+		}
+		view.Files = append(view.Files, item)
 		page.Commits.Detail = &view
 		return nil
 	}
@@ -1675,17 +1670,6 @@ func excludedFromDiff(files []repository.ChangedFile) (excluded []string, deferr
 		}
 	}
 	return excluded, deferred, len(excluded) < len(files)
-}
-
-// binaryBySize reports whether the changed file at path is larger than this
-// computer compares as text, so its change was not read as lines.
-func binaryBySize(files []repository.ChangedFile, path string) bool {
-	for _, file := range files {
-		if file.Path == path {
-			return file.BinaryBySize
-		}
-	}
-	return false
 }
 
 // diffFileItem is the list row of one changed file, without its diff.

@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -155,7 +154,7 @@ func (p *PinnedRepository) ReadChange(ctx context.Context, limit int64) (PinnedC
 				return err
 			}
 		}
-		result, runErr := runPinnedGit(ctx, p.manager.Git, limit, repositoryPath, nil,
+		result, runErr := runPinnedGit(ctx, p.manager.Git, limit, repositoryPath,
 			"-c", "diff.external=", "-c", "submodule.recurse=false",
 			"diff", "--no-ext-diff", "--no-textconv", "--no-color", "--full-index",
 			"--find-renames=50%", "--submodule=short", p.baseOID, p.headOID, "--")
@@ -243,7 +242,7 @@ func (p *PinnedRepository) ListTreeRecursive(ctx context.Context, side PinnedSid
 		// -t lists the tree entries themselves, so a file beside a directory of
 		// the same path, and two directories of one path, are one path twice
 		// for repeatedTreePath. The result keeps its leaves only, as before.
-		result, runErr := runPinnedGit(ctx, p.manager.Git, limit, repositoryPath, nil,
+		result, runErr := runPinnedGit(ctx, p.manager.Git, limit, repositoryPath,
 			"ls-tree", "-r", "-t", "-z", "-l", commitOID)
 		if runErr != nil {
 			return classifyPinnedGitError(ctx, runErr)
@@ -314,7 +313,7 @@ func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size 
 	err = p.withReadLock(ctx, func(repositoryPath string) error {
 		// The limit is one byte above the recorded size so an oversized object
 		// is detected by the length check rather than silently truncated.
-		result, runErr := runPinnedGit(ctx, p.manager.Git, size+1, repositoryPath, nil, "cat-file", "blob", oid)
+		result, runErr := runPinnedGit(ctx, p.manager.Git, size+1, repositoryPath, "cat-file", "blob", oid)
 		if runErr != nil {
 			return classifyPinnedGitError(ctx, runErr)
 		}
@@ -433,7 +432,7 @@ func (p *PinnedRepository) ReadBlob(ctx context.Context, side PinnedSide, filePa
 		if end > entry.Size {
 			end = entry.Size
 		}
-		result, runErr := runPinnedGit(ctx, p.manager.Git, end, repositoryPath, nil, "cat-file", "blob", entry.OID)
+		result, runErr := runPinnedGit(ctx, p.manager.Git, end, repositoryPath, "cat-file", "blob", entry.OID)
 		var limitErr *gitexec.LimitError
 		stdoutLimited := errors.As(runErr, &limitErr) && limitErr.Stream == "stdout"
 		if runErr != nil && !stdoutLimited {
@@ -532,7 +531,7 @@ func captureDirectoryIdentity(path string) (os.FileInfo, error) {
 }
 
 func pinnedObjectFormat(ctx context.Context, runner *gitexec.Runner, repositoryPath string) (string, error) {
-	result, err := runPinnedGit(ctx, runner, 1024, repositoryPath, nil, "rev-parse", "--show-object-format")
+	result, err := runPinnedGit(ctx, runner, 1024, repositoryPath, "rev-parse", "--show-object-format")
 	if err != nil {
 		return "", classifyPinnedGitError(ctx, err)
 	}
@@ -544,7 +543,7 @@ func pinnedObjectFormat(ctx context.Context, runner *gitexec.Runner, repositoryP
 }
 
 func verifyPinnedCommit(ctx context.Context, runner *gitexec.Runner, repositoryPath, oid string) error {
-	result, err := runPinnedGit(ctx, runner, 1024, repositoryPath, nil, "cat-file", "-t", oid)
+	result, err := runPinnedGit(ctx, runner, 1024, repositoryPath, "cat-file", "-t", oid)
 	if err != nil {
 		return classifyPinnedGitError(ctx, err)
 	}
@@ -555,7 +554,7 @@ func verifyPinnedCommit(ctx context.Context, runner *gitexec.Runner, repositoryP
 }
 
 func lookupPinnedTreeEntry(ctx context.Context, runner *gitexec.Runner, repositoryPath, rootOID, filePath string, limit int64) (TreeEntry, error) {
-	result, err := runPinnedGit(ctx, runner, limit, repositoryPath, nil,
+	result, err := runPinnedGit(ctx, runner, limit, repositoryPath,
 		"ls-tree", "-z", "-l", rootOID, "--", ":(top,literal)"+filePath)
 	if err != nil {
 		return TreeEntry{}, classifyPinnedGitError(ctx, err)
@@ -582,7 +581,7 @@ func lookupPinnedTreeEntry(ctx context.Context, runner *gitexec.Runner, reposito
 }
 
 func listPinnedTree(ctx context.Context, runner *gitexec.Runner, repositoryPath, treeOID, prefix string, limit int64) ([]TreeEntry, error) {
-	result, err := runPinnedGit(ctx, runner, limit, repositoryPath, nil, "ls-tree", "-z", "-l", treeOID)
+	result, err := runPinnedGit(ctx, runner, limit, repositoryPath, "ls-tree", "-z", "-l", treeOID)
 	if err != nil {
 		return nil, classifyPinnedGitError(ctx, err)
 	}
@@ -604,7 +603,7 @@ func listPinnedTree(ctx context.Context, runner *gitexec.Runner, repositoryPath,
 	return entries, nil
 }
 
-func runPinnedGit(ctx context.Context, runner *gitexec.Runner, limit int64, repositoryPath string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
+func runPinnedGit(ctx context.Context, runner *gitexec.Runner, limit int64, repositoryPath string, arguments ...string) (gitexec.Result, error) {
 	if runner == nil || !validPinnedLimit(limit) {
 		return gitexec.Result{}, errors.New("pinned Git execution is unavailable")
 	}
@@ -612,7 +611,7 @@ func runPinnedGit(ctx context.Context, runner *gitexec.Runner, limit int64, repo
 	bounded.OutputLimit = limit
 	args := []string{"--no-replace-objects", "--git-dir=."}
 	args = append(args, arguments...)
-	return bounded.RunWithEnvironment(ctx, repositoryPath, stdin, []string{
+	return bounded.RunWithEnvironment(ctx, repositoryPath, nil, []string{
 		"GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0",
 	}, args...)
 }

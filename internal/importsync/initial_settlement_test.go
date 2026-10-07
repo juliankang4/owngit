@@ -47,7 +47,8 @@ func reimportLeavesNothingUnresolved(t *testing.T, f *fixture) {
 	status, err := f.service.Status(ctx, "project")
 	require(t, err == nil && status.UnresolvedIntents == 0,
 		"status after the new import unresolved=%d err=%v", status.UnresolvedIntents, err)
-	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport")),
+	_, err = recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup-after-reimport"))
+	noErr(t, err,
 		"backup after the new import")
 }
 
@@ -115,7 +116,8 @@ func TestStoppedInitialPublicationIsSettledByTheRun(t *testing.T) {
 			_, _, exists, err := f.manager.ExistingPath(ctx, "project")
 			require(t, err == nil && !exists,
 				"stopped initial import created a repository exists=%v err=%v", exists, err)
-			noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")),
+			_, err = recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup"))
+			noErr(t, err,
 				"backup after the stopped initial import")
 			if mode == "shutdown" {
 				waitForShutdownClose(t, f)
@@ -134,7 +136,7 @@ func TestStoppedInitialPublicationIsSettledByTheRun(t *testing.T) {
 func waitForShutdownClose(t *testing.T, f *fixture) {
 	t.Helper()
 	for i := 0; i < 500; i++ {
-		if availability := f.service.Availability(context.Background()); !availability.Prepared {
+		if _, prepared := f.service.preparedRuntime(); !prepared {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -190,7 +192,7 @@ func TestReconciliationSettlesUnresolvedInitialPublicationItRemoves(t *testing.T
 	f := newFixture(t)
 	run, directory, restore := unreadableInitialPublication(t, f)
 	ctx := context.Background()
-	err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
+	_, err := recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
 	require(t, err != nil && strings.Contains(err.Error(), `"project"`) &&
 		strings.Contains(err.Error(), "unresolved") && strings.Contains(err.Error(), "Start and stop OwnGit once"),
 		"backup of an unresolved intent without a repository err=%v", err)
@@ -208,7 +210,8 @@ func TestReconciliationSettlesUnresolvedInitialPublicationItRemoves(t *testing.T
 	stored, _, err := f.store.ImportRun(ctx, run.ID)
 	require(t, err == nil && stored.Status == state.ImportRunFailed && stored.ErrorClass == CodePublishFailed &&
 		strings.Contains(stored.Message, "earlier outcome"), "reconciled run=%+v err=%v", stored, err)
-	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after reconciliation")
+	_, err = recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup"))
+	noErr(t, err, "backup after reconciliation")
 	reimportLeavesNothingUnresolved(t, f)
 }
 
@@ -229,7 +232,7 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	require(t, statErr == nil, "an unproven directory was not preserved: %v", statErr)
 	intent := initialIntentOf(t, f, run.ID)
 	require(t, intent.Status == state.ImportIntentUnresolved, "intent of a preserved directory=%s", intent.Status)
-	err := recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
+	_, err := recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup-refused"))
 	require(t, err != nil && strings.Contains(err.Error(), "move that directory out of the repository root"),
 		"backup advice for a preserved directory err=%v", err)
 	// A newer import takes the name while the old directory is preserved.
@@ -248,7 +251,8 @@ func TestPreservedInitialDirectoryMovedAwaySettlesItsIntent(t *testing.T) {
 	status, err := f.service.Status(ctx, "project")
 	require(t, err == nil && status.UnresolvedIntents == 0,
 		"status after settlement unresolved=%d err=%v", status.UnresolvedIntents, err)
-	noErr(t, recovery.Create(ctx, f.store, f.manager, filepath.Join(f.root, "backup")), "backup after settlement")
+	_, err = recovery.CreateWithReport(ctx, f.store, f.manager, filepath.Join(f.root, "backup"))
+	noErr(t, err, "backup after settlement")
 	_, err = f.service.ResolveUnresolved(ctx, "project")
 	require(t, problemCode(err) == CodeNothingToResolve, "resolve after settlement err=%v", errors.Unwrap(err))
 }

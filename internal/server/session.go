@@ -320,7 +320,7 @@ func (app *App) forgetLegacyCookies(writer http.ResponseWriter, request *http.Re
 				return
 			}
 		}
-		app.clearCookie(writer, request, name, true)
+		app.clearCookie(writer, request, name)
 	}
 	app.setCookie(writer, request, cookieNamesMarkerName, cookieNamesMarkerValue, app.now().Add(cookieNamesMarkerLifetime), true)
 }
@@ -340,10 +340,10 @@ func (app *App) writeCookie(writer http.ResponseWriter, request *http.Request, n
 	})
 }
 
-func (app *App) clearCookie(writer http.ResponseWriter, request *http.Request, name string, httpOnly bool) {
+func (app *App) clearCookie(writer http.ResponseWriter, request *http.Request, name string) {
 	http.SetCookie(writer, &http.Cookie{
 		Name: name, Value: "", Path: "/", MaxAge: -1, Expires: time.Unix(1, 0),
-		HttpOnly: httpOnly, Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteStrictMode,
+		HttpOnly: true, Secure: requestctx.Of(request).Secure(), SameSite: http.SameSiteStrictMode,
 	})
 }
 
@@ -438,13 +438,13 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 // noticeRedirect ends an action by redirecting to target. When target names
 // a result notice, the notice is also kept in a short-lived cookie, and the
 // page shows the notice only while the two match (see resultNotice).
-func (app *App) noticeRedirect(writer http.ResponseWriter, request *http.Request, target string, status int) {
+func (app *App) noticeRedirect(writer http.ResponseWriter, request *http.Request, target string) {
 	if parsed, err := url.Parse(target); err == nil {
 		if notice := parsed.Query().Get("notice"); notice != "" {
 			app.setCookie(writer, request, noticeCookie, notice, app.now().Add(noticeCookieMaxAge), true)
 		}
 	}
-	http.Redirect(writer, request, target, status)
+	http.Redirect(writer, request, target, http.StatusSeeOther)
 }
 
 // resultNotice returns the result notice of the address when the action that
@@ -459,7 +459,7 @@ func (app *App) resultNotice(writer http.ResponseWriter, request *http.Request) 
 	if err != nil || cookie.Value != notice {
 		return ""
 	}
-	app.clearCookie(writer, request, noticeCookie, true)
+	app.clearCookie(writer, request, noticeCookie)
 	return notice
 }
 

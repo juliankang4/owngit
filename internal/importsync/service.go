@@ -16,7 +16,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -238,11 +237,6 @@ func (s *Service) forgetResolvedStartupProblem(repositoryID string) {
 	if len(kept) != len(parts) {
 		s.startupFailure = errors.Join(kept...)
 	}
-}
-
-func (s *Service) startupProblem() (string, string) {
-	status := s.runtimeStatus()
-	return status.Code, status.Reason
 }
 
 // Credentials is one explicit credential mutation. At most one of a Basic pair
@@ -1426,11 +1420,6 @@ func (s *Service) fillStatusRefs(ctx context.Context, status *Status, source sta
 	return nil
 }
 
-// History returns bounded run records, newest first.
-func (s *Service) History(ctx context.Context, repositoryID string, limit int) ([]RunView, bool, error) {
-	return s.HistoryBefore(ctx, repositoryID, limit, 0)
-}
-
 // HistoryBefore returns the next older page after afterRowID. A zero cursor
 // starts at the newest run. History is not pruned.
 func (s *Service) HistoryBefore(ctx context.Context, repositoryID string, limit int, afterRowID int64) ([]RunView, bool, error) {
@@ -1449,60 +1438,6 @@ func (s *Service) HistoryBefore(ctx context.Context, repositoryID string, limit 
 		views = append(views, runView(run))
 	}
 	return views, more, nil
-}
-
-// Availability is the runtime report. A preparation failure here must not
-// disable healthy core Git, so the caller only disables import features.
-// Availability is passive: it never creates a directory.
-type Availability struct {
-	Available bool       `json:"available"`
-	Prepared  bool       `json:"prepared"`
-	RootID    string     `json:"root_id,omitempty"`
-	Code      string     `json:"code,omitempty"`
-	Reason    string     `json:"reason,omitempty"`
-	Limits    LimitsView `json:"limits"`
-}
-
-// Availability reports whether import work can start and what bounds apply.
-// Prepared reports only this process's lease and only while the lease identity
-// still matches the current filesystem; an unprepared or replaced root is not an
-// error until an explicit mutation calls Prepare.
-func (s *Service) Availability(ctx context.Context) Availability {
-	limits := s.effectiveLimits()
-	view := limits.view()
-	report := func(code, reason string) Availability {
-		return Availability{Code: code, Reason: reason, Limits: view}
-	}
-	if s.Repositories.RepositoryRoot() == "" {
-		return report(CodeRuntimeUnavailable, "repository storage root is not configured")
-	}
-	if err := ctx.Err(); err != nil {
-		return report(CodeCancelled, err.Error())
-	}
-	for _, path := range []string{s.runtimeRootPath(), s.stagingRootPath()} {
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return report(CodeRuntimeUnavailable, "import runtime root could not be inspected")
-		}
-		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-			return report(CodeRuntimeUnsafe, "import runtime root is not a real directory")
-		}
-	}
-	availability := Availability{Available: true, Limits: view}
-	if root, err := s.currentRuntime(""); err == nil {
-		availability.Prepared = true
-		availability.RootID = root.rootID
-	} else if errors.Is(err, ErrRuntimeLost) {
-		return report(CodeRuntimeUnavailable, "import runtime ownership was lost; close the idle service before preparing it again")
-	}
-	if code, reason := s.startupProblem(); code != "" {
-		availability.Code = code
-		availability.Reason = reason
-	}
-	return availability
 }
 
 // RunRecordView is the credential-free history view of one stored run.
@@ -1645,7 +1580,7 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 					continue
 				}
 				for _, intent := range grouped[repositoryID] {
-					if _, err := s.settleGoneInitialIntent(ctx, intent, now); err != nil {
+					if err := s.settleGoneInitialIntent(ctx, intent, now); err != nil {
 						*problems = append(*problems, &repositoryReconcileError{repositoryID: repositoryID, err: err})
 						break
 					}
@@ -1728,39 +1663,6 @@ func (s *Service) recordScheduledClaimFailure(ctx context.Context, repositoryID,
 	run.ErrorClass = CodeRuntimeUnavailable
 	run.Message = boundedImportMessage(message)
 	return s.Store.FinishImportRun(ctx, run)
-}
-
-// Schedules returns one bounded page of machine-local schedules.
-func (s *Service) Schedules(ctx context.Context, limit int, afterID string) ([]state.ImportSchedule, bool, error) {
-	limit = clampListPage(limit)
-	records, err := s.Store.ImportSchedulesPage(ctx, afterID, limit+1)
-	if err != nil {
-		return nil, false, newProblem(CodeStateUnavailable, "import schedules could not be read", err)
-	}
-	if len(records) > limit {
-		return records[:limit], true, nil
-	}
-	return records, false, nil
-}
-
-// StagingIssues returns one bounded page of preserved staging records.
-func (s *Service) StagingIssues(ctx context.Context, limit int, afterName string) ([]state.ImportStaging, bool, error) {
-	limit = clampListPage(limit)
-	records, err := s.Store.ImportStagingsPage(ctx, afterName, limit+1)
-	if err != nil {
-		return nil, false, newProblem(CodeStateUnavailable, "import staging records could not be read", err)
-	}
-	if len(records) > limit {
-		return records[:limit], true, nil
-	}
-	return records, false, nil
-}
-
-func clampListPage(limit int) int {
-	if limit <= 0 || limit > maxListPage {
-		return maxListPage
-	}
-	return limit
 }
 
 func (s *Service) effectiveLimits() Limits {

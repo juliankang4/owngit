@@ -222,10 +222,5 @@ func KeptHistoryChoices() []PolicyChoice {
 }
 
 func init() {
-	for code, entry := range policiesCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(policiesCatalog)
 }

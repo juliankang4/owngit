@@ -386,7 +386,7 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	if ends != "" {
-		app.clearCookie(writer, request, cookieNameForScheme(request, ends), true)
+		app.clearCookie(writer, request, cookieNameForScheme(request, ends))
 	}
 	// A new shared password signs out every general session, this browser's
 	// too. Without an administrator session Settings would send it to the
@@ -490,7 +490,7 @@ func (app *App) settingsSaved(writer http.ResponseWriter, request *http.Request,
 // for the page's script, as JSON.
 func (app *App) settingsAnswer(writer http.ResponseWriter, request *http.Request, target string) {
 	if request.Header.Get(settingsGroupHeader) == "" {
-		app.noticeRedirect(writer, request, target, http.StatusSeeOther)
+		app.noticeRedirect(writer, request, target)
 		return
 	}
 	if parsed, err := url.Parse(target); err == nil {

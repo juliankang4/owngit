@@ -280,11 +280,6 @@ func formatNumber64(n int64) string {
 	return b.String()
 }
 
-// biLimit renders a stored value in running text in both languages.
-func biLimit(lang Lang, kind LimitKind, value int64) template.HTML {
-	return biText(lang, humanLimit(LangEN, kind, value), humanLimit(LangKO, kind, value))
-}
-
 // Groups the numeric policy fields are drawn in.
 const (
 	// LimitGroupRun holds the limits every mode uses for one job.

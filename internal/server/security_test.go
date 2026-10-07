@@ -55,7 +55,7 @@ func TestStalledOrdinaryFormTimesOutAndShutdownCompletes(t *testing.T) {
 
 func TestUnknownHostIsRejectedBeforeApplication(t *testing.T) {
 	called := false
-	handler := NewHostPolicy("owngit.internal").Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	handler := NewHostPolicy("owngit.internal").MiddlewareAdmitting(nil, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	request := httptest.NewRequest(http.MethodGet, "http://attacker.invalid/", nil)
 	request.Host = "attacker.invalid"
 	response := httptest.NewRecorder()
@@ -79,7 +79,7 @@ func TestLocalNextRejectsExternalAndBackslashRedirects(t *testing.T) {
 
 func TestOriginMustExactlyMatchRequest(t *testing.T) {
 	called := false
-	handler := NewHostPolicy("owngit.internal").Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	handler := NewHostPolicy("owngit.internal").MiddlewareAdmitting(nil, nil, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	for _, origin := range []string{"http://owngit.internal.evil", "https://owngit.internal", "null", "http://owngit.internal/path"} {
 		called = false
 		request := httptest.NewRequest(http.MethodPost, "http://owngit.internal/settings", nil)

@@ -373,7 +373,7 @@ func readTarGz(path string) ([]archiveEntry, error) {
 		if err != nil {
 			return nil, err
 		}
-		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA {
+		if header.Typeflag != tar.TypeReg {
 			return nil, fmt.Errorf("archive entry %s is not a regular file (type %q)", header.Name, header.Typeflag)
 		}
 		data, err := io.ReadAll(archive)

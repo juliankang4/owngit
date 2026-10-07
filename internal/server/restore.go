@@ -98,7 +98,7 @@ func (app *App) handleRestoreApply(writer http.ResponseWriter, request *http.Req
 		if strings.Contains(location, "?") {
 			separator = "&"
 		}
-		app.noticeRedirect(writer, request, location+separator+"notice=restore_success", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, location+separator+"notice=restore_success")
 		return
 	}
 

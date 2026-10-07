@@ -74,10 +74,5 @@ var publicShareCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range publicShareCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(publicShareCatalog)
 }

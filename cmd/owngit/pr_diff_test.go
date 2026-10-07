@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/apiclient"
 	"owngit/internal/pullrequest"
 )
 
@@ -27,6 +29,16 @@ func runDiffCommand(t *testing.T, arguments ...string) (stdout, stderr string, e
 }
 
 func TestPRDiffPatchNamesTheFilesItLeavesOut(t *testing.T) {
+	t.Run("failed notes", func(t *testing.T) {
+		content, err := json.Marshal(pullrequest.Diff{OK: true, Patch: "patch"})
+		noErr(t, err)
+		var patch strings.Builder
+		err = writeDiffPatch(content, &patch, failingWriter{})
+		var problem *apiclient.Error
+		if !errors.As(err, &problem) || problem.Code != "output_failed" || patch.Len() != 0 {
+			t.Fatalf("failed notes: patch=%q err=%v", patch.String(), err)
+		}
+	})
 	cases := []struct {
 		name  string
 		files []pullrequest.DiffFile

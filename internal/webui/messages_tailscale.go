@@ -499,16 +499,6 @@ var tailscaleBlockCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range tailscaleBlockCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
-	for code, entry := range tailscaleCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(tailscaleBlockCatalog)
+	registerMessages(tailscaleCatalog)
 }

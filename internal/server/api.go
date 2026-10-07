@@ -34,7 +34,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		writeAPIError(writer, http.StatusConflict, "setup_incomplete", "OwnGit setup is not complete.", nil)
 		return
 	}
-	repositoryID, resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
+	resource, remainder, repositoryRoute := parseRepositoryAPIRoute(request.URL.Path)
 	if request.URL.RawQuery != "" {
 		// URL.Query drops malformed pairs and the parse error, so an invalid
 		// ref, year or commit pair would be read as an omitted one. Refuse
@@ -82,7 +82,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	// authorization of each route answers a name that reaches no current
 	// repository (see answerRepositoryAddressAPI).
 	address, _ := repositoryAddressOf(request)
-	repositoryID = address.id
+	repositoryID := address.id
 	if repositoryRoute {
 		switch resource {
 		case "runner":
@@ -129,7 +129,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		return
 	}
 
-	_, number, operation, ok := parsePullRequestAPIRoute(request.URL.Path)
+	number, operation, ok := parsePullRequestAPIRoute(request.URL.Path)
 	if !ok {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
 		return
@@ -353,27 +353,27 @@ func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Reque
 	return 0, false
 }
 
-func parseRepositoryAPIRoute(requestPath string) (string, string, string, bool) {
+func parseRepositoryAPIRoute(requestPath string) (string, string, bool) {
 	const prefix = "/api/v1/repositories/"
 	if !strings.HasPrefix(requestPath, prefix) {
-		return "", "", "", false
+		return "", "", false
 	}
 	rest := strings.TrimPrefix(requestPath, prefix)
 	parts := strings.SplitN(rest, "/", 2)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
-		return "", "", "", false
+		return "", "", false
 	}
 	resource, remainder := parts[1], ""
 	if index := strings.Index(parts[1], "/"); index >= 0 {
 		resource, remainder = parts[1][:index], parts[1][index+1:]
 	}
-	return parts[0], resource, remainder, true
+	return resource, remainder, true
 }
 
 // pullRequestListQueryAllowed accepts the paging parameters of a pull request
 // list, each given once.
 func pullRequestListQueryAllowed(request *http.Request) bool {
-	if _, _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); request.Method != http.MethodGet || !ok || operation != "collection" {
+	if _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); request.Method != http.MethodGet || !ok || operation != "collection" {
 		return false
 	}
 	for key, values := range request.URL.Query() {
@@ -391,7 +391,7 @@ func helperTaskListQueryAllowed(request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		return false
 	}
-	_, resource, remainder, ok := parseRepositoryAPIRoute(request.URL.Path)
+	resource, remainder, ok := parseRepositoryAPIRoute(request.URL.Path)
 	if !ok || resource != "tasks" || remainder != "" {
 		return false
 	}
@@ -403,39 +403,39 @@ func helperTaskListQueryAllowed(request *http.Request) bool {
 	return true
 }
 
-func parsePullRequestAPIRoute(requestPath string) (string, int64, string, bool) {
+func parsePullRequestAPIRoute(requestPath string) (int64, string, bool) {
 	const prefix = "/api/v1/repositories/"
 	if !strings.HasPrefix(requestPath, prefix) {
-		return "", 0, "", false
+		return 0, "", false
 	}
 	parts := strings.Split(strings.TrimPrefix(requestPath, prefix), "/")
 	if len(parts) < 2 || parts[0] == "" || parts[1] != "pull-requests" {
-		return "", 0, "", false
+		return 0, "", false
 	}
 	if len(parts) == 2 {
-		return parts[0], 0, "collection", true
+		return 0, "collection", true
 	}
 	number, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil || number <= 0 {
-		return "", 0, "", false
+		return 0, "", false
 	}
 	if len(parts) == 3 {
-		return parts[0], number, "show", true
+		return number, "show", true
 	}
 	if len(parts) == 4 && (parts[3] == "merge" || parts[3] == "close" || parts[3] == "reopen" || parts[3] == "diff" || parts[3] == "edit" || parts[3] == "mergeability") {
-		return parts[0], number, parts[3], true
+		return number, parts[3], true
 	}
 	if len(parts) == 5 && parts[3] == "review" {
 		switch parts[4] {
 		case "request":
-			return parts[0], number, "review_request", true
+			return number, "review_request", true
 		case "submit":
-			return parts[0], number, "review_submit", true
+			return number, "review_submit", true
 		case "skip":
-			return parts[0], number, "review_skip", true
+			return number, "review_skip", true
 		}
 	}
-	return "", 0, "", false
+	return 0, "", false
 }
 
 func decodeAPIJSON(writer http.ResponseWriter, request *http.Request, destination any) bool {

@@ -88,7 +88,8 @@ func TestCheckJobNormalClockBackupFormats(t *testing.T) {
 				clockBackupRequire(t, err)
 			}
 			backup := filepath.Join(root, "normal-backup")
-			clockBackupRequire(t, recovery.Create(ctx, store, manager, backup))
+			_, err := recovery.CreateWithReport(ctx, store, manager, backup)
+			clockBackupRequire(t, err)
 			content, err := os.ReadFile(filepath.Join(backup, "manifest.json"))
 			clockBackupRequire(t, err)
 			var manifest recovery.Manifest

@@ -178,7 +178,7 @@ func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 	noErr(t, err)
 	manager = &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
+	if _, err := CreateWithReport(ctx, store, manager, backup); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
@@ -229,7 +229,7 @@ func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 	noErr(t, err)
 	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	rebackup := filepath.Join(root, "backup-again")
-	if err := Create(ctx, restored, restoredManager, rebackup); err != nil {
+	if _, err := CreateWithReport(ctx, restored, restoredManager, rebackup); err != nil {
 		t.Fatalf("re-backup restored checks: %v", err)
 	}
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
@@ -775,7 +775,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 	}
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoriesRoot}
 	backup := filepath.Join(root, "backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
+	if _, err := CreateWithReport(ctx, store, manager, backup); err != nil {
 		store.Close()
 		t.Fatalf("backup of the upgraded baseline failed: %v", err)
 	}
@@ -827,7 +827,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 
 	restoredManager := &repository.Manager{Store: restored, Git: runner, Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	second := filepath.Join(root, "backup-again")
-	if err := Create(ctx, restored, restoredManager, second); err != nil {
+	if _, err := CreateWithReport(ctx, restored, restoredManager, second); err != nil {
 		restored.Close()
 		t.Fatalf("re-backup of the restored baseline failed: %v", err)
 	}

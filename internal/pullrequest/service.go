@@ -316,13 +316,7 @@ func (service *Service) SkipReview(ctx context.Context, repositoryID string, num
 }
 
 func (service *Service) SubmitReview(ctx context.Context, repositoryID string, number int64, input ReviewSubmitInput) (*View, error) {
-	status := ""
-	switch input.Decision {
-	case state.ReviewApproved:
-		status = state.ReviewApproved
-	case state.ReviewChangesRequested:
-		status = state.ReviewChangesRequested
-	default:
+	if input.Decision != state.ReviewApproved && input.Decision != state.ReviewChangesRequested {
 		return nil, NewProblem("invalid_review_decision", "A submitted review must be approved or changes_requested.")
 	}
 	input, err := input.CheckText()
@@ -330,7 +324,7 @@ func (service *Service) SubmitReview(ctx context.Context, repositoryID string, n
 		return nil, err
 	}
 	return service.recordReview(ctx, repositoryID, number, state.PullRequestReview{
-		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: status, ReviewerLabel: input.ReviewerLabel, Note: input.Note, Actor: input.Actor,
+		SourceOID: input.SourceOID, TargetOID: input.TargetOID, Status: input.Decision, ReviewerLabel: input.ReviewerLabel, Note: input.Note, Actor: input.Actor,
 	})
 }
 
@@ -656,21 +650,6 @@ func notOpenProblem(status string) *Problem {
 		return NewProblem("pull_request_not_open", "The pull request is closed. Reopen it first.")
 	}
 	return NewProblem("pull_request_not_open", "The pull request is already merged.")
-}
-
-// ObserveCurrentRevisions preserves the original count-only API.
-func (service *Service) ObserveCurrentRevisions(ctx context.Context, repositoryID string, limit int) (int, bool, error) {
-	revisions, more, err := service.ObserveCurrentRevisionsAfter(ctx, repositoryID, 0, limit)
-	if err != nil {
-		return 0, more, err
-	}
-	observed := 0
-	for _, revision := range revisions {
-		if revision.NewlyObserved {
-			observed++
-		}
-	}
-	return observed, more, nil
 }
 
 // ObserveCurrentRevisionsAfter durably binds one bounded circular page of

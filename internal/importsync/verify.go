@@ -306,7 +306,7 @@ func (s *Service) verifyObjects(ctx context.Context, run *runState, wanted []str
 	if truncated {
 		return newProblem(CodeVerifyFailed, "wanted object inspection exceeded its output bound", nil)
 	}
-	lines := splitBoundedLines(stdout, 0)
+	lines := splitBoundedLines(stdout)
 	if len(lines) != len(wanted) {
 		return newProblem(CodeVerifyFailed, fmt.Sprintf("wanted object inspection returned %d records for %d objects", len(lines), len(wanted)), nil)
 	}
@@ -492,7 +492,7 @@ func (s *Service) listReachableObjects(ctx context.Context, run *runState) ([]st
 			stdout = nil
 		}
 	}
-	lines := splitBoundedLines(stdout, 0)
+	lines := splitBoundedLines(stdout)
 	objects := make([]string, 0, len(lines))
 	for _, line := range lines {
 		fields := strings.Fields(line)
@@ -526,7 +526,7 @@ func (s *Service) inspectObjectTypes(ctx context.Context, run *runState, objects
 			stdout = nil
 		}
 	}
-	lines := splitBoundedLines(stdout, 0)
+	lines := splitBoundedLines(stdout)
 	if !truncated && len(lines) != len(objects) {
 		return nil, false, newProblem(CodeVerifyFailed, "object type inspection returned an unexpected record count", nil)
 	}
@@ -555,7 +555,7 @@ func (s *Service) inspectObjectTypes(ctx context.Context, run *runState, objects
 // pointer signature. Blobs larger than the pointer bound were not inspected.
 func (s *Service) inspectPointerCandidates(ctx context.Context, run *runState, candidates []string) (int64, int64, int64, bool, []string, error) {
 	input := strings.NewReader(strings.Join(candidates, "\n") + "\n")
-	outputLimit := run.limits.LFS.MaxCandidateBytes + int64(len(candidates))*int64(run.limits.LFS.MaxPointerBytes) + (1 << 20)
+	outputLimit := run.limits.LFS.MaxCandidateBytes + int64(len(candidates))*run.limits.LFS.MaxPointerBytes + (1 << 20)
 	stdout, truncated, err := s.boundedCommand(ctx, run.stagingPath, input, gitexec.CommandLimits{
 		Timeout:     run.limits.LFS.Timeout,
 		OutputLimit: outputLimit,
@@ -612,15 +612,12 @@ func (s *Service) inspectPointerCandidates(ctx context.Context, run *runState, c
 	return pointers, scanned, bytesRead, bytesTruncated, examples, nil
 }
 
-// splitBoundedLines splits captured output into lines, optionally bounded.
-func splitBoundedLines(content []byte, maximum int) []string {
+// splitBoundedLines splits captured output into lines.
+func splitBoundedLines(content []byte) []string {
 	trimmed := strings.TrimSuffix(string(content), "\n")
 	if trimmed == "" {
 		return nil
 	}
 	lines := strings.Split(trimmed, "\n")
-	if maximum > 0 && len(lines) > maximum {
-		return lines[:maximum]
-	}
 	return lines
 }

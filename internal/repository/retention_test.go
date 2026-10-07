@@ -3,6 +3,7 @@ package repository
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -59,6 +60,25 @@ func (runner *countingRetainedRunner) RunWithOutputLimit(ctx context.Context, di
 		stdin = bytes.NewReader(content)
 	}
 	return runner.delegate.RunWithOutputLimit(ctx, directory, stdin, limit, arguments...)
+}
+
+func retainedRefs(ctx context.Context, runner retainedRunner, repositoryPath string) ([]RetainedRef, error) {
+	result, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)%00%(objecttype)", "refs/heads", "refs/tags", "refs/owngit/retained", "refs/owngit/provenance")
+	if err != nil {
+		return nil, err
+	}
+	var refs []Ref
+	for _, line := range bytes.Split(bytes.TrimSpace(result.Stdout), []byte{'\n'}) {
+		if len(line) == 0 {
+			continue
+		}
+		parts := bytes.SplitN(line, []byte{0}, 3)
+		if len(parts) != 3 {
+			return nil, errors.New("Git returned malformed retained ref data")
+		}
+		refs = append(refs, Ref{Name: string(parts[0]), OID: string(parts[1]), Type: string(parts[2])})
+	}
+	return retainedRefsFromSnapshot(ctx, runner, repositoryPath, refs, nil)
 }
 
 func TestRetainedRefsBatchPeelsAndLoadsMetadataWithoutDiffProcesses(t *testing.T) {

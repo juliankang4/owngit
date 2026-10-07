@@ -279,7 +279,7 @@ func TestWindowsNotPrivateExplainsAndFixes(t *testing.T) {
 	noErr(t, err)
 	const path = `C:\secrets\it's.txt`
 	setOwner := privatePathRepairCommand(path, user, true, false)
-	replace := userOnlyACLCommand(path, user)
+	replace := privatePathRepairCommand(path, user, false, false)
 	for _, test := range []struct {
 		name       string
 		descriptor *windows.SECURITY_DESCRIPTOR

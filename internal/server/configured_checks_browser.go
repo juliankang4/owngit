@@ -60,7 +60,7 @@ func runnerTokensURL(address string) string {
 }
 
 // handleConfiguredChecks serves the execution policy screen and its forms.
-func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
+func (app *App) handleConfiguredChecks(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary) {
 	writer.Header().Set("Cache-Control", "no-store")
 	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
@@ -174,7 +174,7 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 	}
 	// A saved policy is a durable change, so the result is a redirect: a
 	// reload re-reads it instead of re-submitting the form.
-	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice)
 }
 
 // reviewSaveAndEnable shows what saving the submitted policy and turning
@@ -247,7 +247,7 @@ func (app *App) saveAndEnableCheckPolicy(writer http.ResponseWriter, request *ht
 		return
 	}
 	app.wakeChecks(stored.ID)
-	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_policy_saved_turned_on", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_policy_saved_turned_on")
 }
 
 func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -295,7 +295,7 @@ func (app *App) changeCheckConsent(writer http.ResponseWriter, request *http.Req
 	if action == webui.ActionDisableChecks {
 		notice = "checks_disabled"
 	}
-	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, configuredChecksURL(stored.Address)+"?notice="+notice)
 }
 
 func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, action string) {
@@ -377,7 +377,7 @@ func (app *App) changeCheckJob(writer http.ResponseWriter, request *http.Request
 	if opened != "" {
 		target = configuredCheckJobURL(self, opened) + "&notice=" + notice
 	}
-	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, target)
 }
 
 // forgetContainerScope names the leftover container form of one job, so a
@@ -416,7 +416,7 @@ func (app *App) forgetCheckContainer(writer http.ResponseWriter, request *http.R
 		if forgotten.DockerUnavailable != nil {
 			logFailure(request, "Docker daemon identity read while forgetting a check container", forgotten.DockerUnavailable)
 		}
-		app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_container_forgotten", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, configuredChecksURL(stored.ID)+"?notice=check_container_forgotten")
 	case errors.Is(err, checkrun.ErrNoContainerRecord):
 		refuse(webui.Error("", webui.MsgCCContainerMissing), http.StatusNotFound)
 	case errors.Is(err, checkrun.ErrContainerOnCurrentDaemon):
@@ -1120,7 +1120,7 @@ func policySaveStatus(request *http.Request, err error) int {
 }
 
 // handleRunnerTokens serves the runner token screen and its forms.
-func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
+func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary) {
 	writer.Header().Set("Cache-Control", "no-store")
 	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
@@ -1138,7 +1138,6 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 
 	// Every token change, including a refusal, is private and must not be
 	// cached. No response path puts a token value in a redirect URL.
-	writer.Header().Set("Cache-Control", "no-store")
 	if !app.parseForm(writer, request) {
 		return
 	}
@@ -1224,7 +1223,7 @@ func (app *App) handleRunnerTokens(writer http.ResponseWriter, request *http.Req
 			return
 		}
 		app.wakeChecks(stored.ID)
-		app.noticeRedirect(writer, request, runnerTokensURL(stored.Address)+"?notice=runner_token_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, runnerTokensURL(stored.Address)+"?notice=runner_token_revoked")
 	default:
 		app.renderRunnerTokens(writer, request, stored, summary, chrome, action, credentialID, "",
 			[]webui.Notice{webui.Error("", webui.MsgRTFailed)}, http.StatusBadRequest)

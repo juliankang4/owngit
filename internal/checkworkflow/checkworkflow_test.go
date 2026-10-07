@@ -33,10 +33,14 @@ func TestParseValidDocument(t *testing.T) {
 	if names := document.EventNames(); len(names) != 2 || names[0] != EventPullRequest || names[1] != EventPush {
 		t.Fatalf("enabled events=%v", names)
 	}
-	if !document.Events.Push.Match("main") || !document.Events.Push.Match("release/1.2") || document.Events.Push.Match("dev") {
+	effective, err := Tighten(document, OperatorPolicy{AllowedEvents: []string{EventPush, EventPullRequest}, MaxTimeoutMS: MaximumTimeoutMS, MaxOutputLimitBytes: MaximumOutputLimitBytes})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !effective.MatchesBranch("push", "main") || !effective.MatchesBranch("push", "release/1.2") || effective.MatchesBranch("push", "dev") {
 		t.Fatal("push branch selection is wrong")
 	}
-	if !document.Events.PullRequest.Match("anything") || len(document.Events.PullRequest.Branches) != 0 {
+	if !effective.MatchesBranch("pull_request", "anything") || len(document.Events.PullRequest.Branches) != 0 {
 		t.Fatal("an empty branch selection must match every branch")
 	}
 }

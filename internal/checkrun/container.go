@@ -792,14 +792,6 @@ func validContainerID(value string) bool {
 	return true
 }
 
-func unavailableResults(definitions []checkexec.Definition, err error) []checkexec.Result {
-	results := make([]checkexec.Result, 0, len(definitions))
-	for _, definition := range definitions {
-		results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusUnavailable, Output: err.Error()})
-	}
-	return results
-}
-
 func boundedError(err error) string {
 	if err == nil {
 		return ""

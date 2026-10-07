@@ -272,7 +272,7 @@ func TestInterruptStalePendingCheckJobsFailsOnIterationError(t *testing.T) {
 	fault.set(func(query string) bool {
 		return strings.Contains(query, "FROM check_jobs WHERE repository_id=? AND status IN")
 	})
-	if _, err := interruptStalePendingCheckJobsTx(ctx, tx, CheckPolicy{RepositoryID: "project"}, time.Now()); !errors.Is(err, errInjectedStep) {
+	if err := interruptStalePendingCheckJobsTx(ctx, tx, CheckPolicy{RepositoryID: "project"}, time.Now()); !errors.Is(err, errInjectedStep) {
 		t.Fatalf("stale job sweep err=%v", err)
 	}
 }

@@ -22,7 +22,7 @@ const backupIdleLimit = time.Minute
 // theirs (idleReader, idleWriter), and the returned request's context ends
 // only when the client goes away or the server stops. Unlike
 // beginOperation, the rest of the request body is still read.
-func (app *App) beginTransfer(writer http.ResponseWriter, request *http.Request) *http.Request {
+func (app *App) beginTransfer(request *http.Request) *http.Request {
 	deadlines, _ := request.Context().Value(requestDeadlinesKey{}).(*requestDeadlines)
 	if deadlines == nil || deadlines.cancel != nil {
 		return request

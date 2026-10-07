@@ -100,21 +100,19 @@ func (f *flow) questions() error {
 	if err := f.language(); err != nil {
 		return err
 	}
-	for {
-		choice, err := f.choose(func() choiceCard {
-			return choiceCard{
-				title: f.say("start_title"), help: f.say("start_help"),
-				options: [][2]string{{f.say("opt_term"), f.say("opt_term_help")}, {f.say("opt_web"), f.say("opt_web_help")}},
-			}
-		})
-		if err != nil {
-			return err
+	choice, err := f.choose(func() choiceCard {
+		return choiceCard{
+			title: f.say("start_title"), help: f.say("start_help"),
+			options: [][2]string{{f.say("opt_term"), f.say("opt_term_help")}, {f.say("opt_web"), f.say("opt_web_help")}},
 		}
-		if choice == 0 {
-			return f.terminal()
-		}
-		return f.web()
+	})
+	if err != nil {
+		return err
 	}
+	if choice == 0 {
+		return f.terminal()
+	}
+	return f.web()
 }
 
 func (f *flow) language() error {

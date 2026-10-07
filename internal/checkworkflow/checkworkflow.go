@@ -77,24 +77,6 @@ type Event struct {
 	Branches []string
 }
 
-// Match reports whether the event selects the branch name (without the
-// refs/heads/ prefix). A pattern ending in "*" matches by prefix; every other
-// pattern matches exactly.
-func (event *Event) Match(branch string) bool {
-	if event == nil {
-		return false
-	}
-	if len(event.Branches) == 0 {
-		return true
-	}
-	for _, pattern := range event.Branches {
-		if matchPattern(pattern, branch) {
-			return true
-		}
-	}
-	return false
-}
-
 // Limits are the limits the repository requests. Zero means unspecified, so
 // the effective limit comes from the default or the operator cap.
 type Limits struct {

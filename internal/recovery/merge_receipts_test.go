@@ -78,7 +78,8 @@ func TestReleasedAbandonedMergePlansRemainRecoverable(t *testing.T) {
 			if shown.Merge == nil || shown.Merge.OID != before.PullRequests[0].MergeOID {
 				t.Fatalf("recovered pull request: %+v", shown)
 			}
-			noErr(t, Create(ctx, store, manager, filepath.Join(root, "offline-backup")))
+			_, err = CreateWithReport(ctx, store, manager, filepath.Join(root, "offline-backup"))
+			noErr(t, err)
 			after, err := store.RecoverySnapshot(ctx)
 			noErr(t, err)
 			if !reflect.DeepEqual(before.PullRequestMergeIntents, after.PullRequestMergeIntents) {

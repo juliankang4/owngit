@@ -354,7 +354,7 @@ func backupScheduleForm(request *http.Request) (backups.ScheduleChange, []webui.
 // never takes a shortened archive for a whole one.
 func (app *App) writeBackupArchive(writer http.ResponseWriter, request *http.Request, download *backups.Download) {
 	defer download.Close()
-	request = app.beginTransfer(writer, request)
+	request = app.beginTransfer(request)
 	header := writer.Header()
 	header.Set("Content-Type", "application/x-tar")
 	header.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": download.Name + ".tar"}))
@@ -440,7 +440,7 @@ func (app *App) receiveBackupUpload(writer http.ResponseWriter, request *http.Re
 	}
 	// A long upload outlives the page deadline, so the answer uses the
 	// transfer's request.
-	request = app.beginTransfer(writer, request)
+	request = app.beginTransfer(request)
 	_, err = app.Backups.ReceiveUpload(request.Context(), idleReader{file, http.NewResponseController(writer)}, request.ContentLength)
 	if err != nil {
 		if refusal, ok := backupRefused(err); ok {

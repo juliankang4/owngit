@@ -164,7 +164,6 @@ func assignAndResumeWindowsProcess(job, process windows.Handle, processID uint32
 	if err := windows.AssignProcessToJobObject(job, process); err != nil {
 		return false, fmt.Errorf("assign suspended process to job object: %w", err)
 	}
-	assigned = true
 	previousSuspendCount, err := windows.ResumeThread(thread)
 	if err != nil {
 		return true, fmt.Errorf("resume owned primary thread: %w", err)

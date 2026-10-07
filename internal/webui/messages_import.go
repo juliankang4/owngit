@@ -643,11 +643,6 @@ func importTokenCode(token string) (MessageCode, bool) {
 
 func init() {
 	for _, source := range []map[MessageCode]message{importCatalog, importOptionsCatalog} {
-		for code, entry := range source {
-			if _, exists := catalog[code]; exists {
-				panic("webui: duplicate message code " + string(code))
-			}
-			catalog[code] = entry
-		}
+		registerMessages(source)
 	}
 }

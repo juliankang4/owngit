@@ -962,12 +962,12 @@ func removeInHeldDirectory(directory *os.File, name string) error {
 	return root.Remove(name)
 }
 
-func writeHookFile(hooks *os.File, name, content string) error {
+func writeHookFile(hooks *os.File, name, content string) (err error) {
 	file, err := state.OpenOwnFile(hooks, name, os.O_RDWR|os.O_CREATE)
 	if err != nil {
 		return hookEntryError(filepath.Join(hooks.Name(), name), "hooks/"+name, false, err)
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	if err := state.ProtectPrivateHandle(file, false); err != nil {
 		return fmt.Errorf("protect Git hook %s: %w", name, err)
 	}

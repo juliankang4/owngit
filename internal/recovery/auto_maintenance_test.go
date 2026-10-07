@@ -48,7 +48,8 @@ func TestRestoreStartsNoGitAutomaticMaintenance(t *testing.T) {
 		t.Fatalf("source history has %s commits, want 151", count)
 	}
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 
 	stateTarget := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))

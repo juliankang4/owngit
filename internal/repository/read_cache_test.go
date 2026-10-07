@@ -15,6 +15,13 @@ import (
 	"owngit/internal/hostmem"
 )
 
+// usage reports the cached entry count and bytes, for tests.
+func (cache *objectCache) usage() (int, int64) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return len(cache.entries), cache.bytes
+}
+
 // commitTree commits files in work, pushes the commit to branch and records
 // an OwnGit write, and returns the commit.
 func commitTree(t *testing.T, manager *Manager, work, branch string, files map[string]string) string {

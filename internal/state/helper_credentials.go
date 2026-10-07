@@ -100,10 +100,6 @@ func (s *Store) CreateHelperCredential(ctx context.Context, repositoryID, label,
 	return credential, true, nil
 }
 
-func (s *Store) helperCredentialByCreation(ctx context.Context, repositoryID, creationID string) (HelperCredential, bool, error) {
-	return helperCredentialByCreationTx(ctx, s.db, repositoryID, creationID)
-}
-
 func helperCredentialByCreationTx(ctx context.Context, queryer querier, repositoryID, creationID string) (HelperCredential, bool, error) {
 	row := queryer.QueryRowContext(ctx, helperCredentialSelect+` WHERE repository_id=? AND creation_id=?`, repositoryID, creationID)
 	credential, err := scanHelperCredential(row)

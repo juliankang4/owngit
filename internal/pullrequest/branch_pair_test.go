@@ -30,7 +30,7 @@ func TestSecondOpenPullRequestForABranchPairIsRefused(t *testing.T) {
 	if existing, ok := problem.Details.(ExistingPullRequest); !ok || existing.Number != first.Number {
 		t.Fatalf("details=%#v, want the open pull request #%d", problem.Details, first.Number)
 	}
-	records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+	records, _, err := fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 	noErr(t, err)
 	if len(records) != 1 {
 		t.Fatalf("the refused create left %d pull requests", len(records))

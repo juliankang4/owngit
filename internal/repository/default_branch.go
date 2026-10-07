@@ -28,14 +28,13 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	if ValidateID(id) != nil {
 		return "", ErrRepositoryNotFound
 	}
-	ref, err := m.validateDefaultBranchInput(ctx, value, exact)
-	if err != nil {
+	if err := m.validateDefaultBranchInput(ctx, value, exact); err != nil {
 		return "", err
 	}
 	// Like Delete, wait only briefly for Git operations that hold the
 	// repository, and report it in use instead of outliving the request.
 	lock := m.Locks.For(id)
-	if err := lockWithin(ctx, lock, deleteLockWait); err != nil {
+	if err := lockWithin(ctx, lock); err != nil {
 		return "", err
 	}
 	defer lock.Unlock()
@@ -48,8 +47,8 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	if !exists {
 		return "", ErrRepositoryNotFound
 	}
-	ref, err = m.SelectBranchRefWithEligibility(ctx, repositoryPath, value, exact, func(operand string) (bool, error) {
-		_, err := m.validateDefaultBranchInput(ctx, operand, false)
+	ref, err := m.SelectBranchRefWithEligibility(ctx, repositoryPath, value, exact, func(operand string) (bool, error) {
+		err := m.validateDefaultBranchInput(ctx, operand, false)
 		if errors.Is(err, ErrBranchNotFound) {
 			return false, nil
 		}
@@ -69,22 +68,22 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 
 // validateDefaultBranchInput is the save and advice eligibility rule. Its
 // namespace removal is validation only, never branch identity selection.
-func (m *Manager) validateDefaultBranchInput(ctx context.Context, value string, exact bool) (string, error) {
+func (m *Manager) validateDefaultBranchInput(ctx context.Context, value string, exact bool) error {
 	branch := strings.TrimPrefix(value, "refs/heads/")
 	if !utf8.ValidString(branch) || strings.ContainsAny(branch, "\x00\r\n\t") || branch == "HEAD" || validateShortRef(branch) != nil {
-		return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
+		return fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
 	}
 	if exact && !strings.HasPrefix(value, "refs/heads/") {
-		return "", ErrBranchNotFound
+		return ErrBranchNotFound
 	}
 	ref := "refs/heads/" + branch
 	if _, err := m.Git.Run(ctx, "", nil, "check-ref-format", ref); err != nil {
 		if gitAnsweredNo(ctx, err) {
-			return "", fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
+			return fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
 		}
-		return "", fmt.Errorf("check branch name: %w", err)
+		return fmt.Errorf("check branch name: %w", err)
 	}
-	return ref, nil
+	return nil
 }
 
 // SelectBranchRef resolves a branch while the caller holds the repository lock.

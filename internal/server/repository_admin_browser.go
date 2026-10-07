@@ -136,7 +136,7 @@ func (app *App) handleSetDefaultBranch(writer http.ResponseWriter, request *http
 		}
 		return
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+defaultBranchNotice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+defaultBranchNotice)
 }
 
 // setDefaultBranch makes branch, an existing branch, the default branch of
@@ -321,7 +321,7 @@ func (app *App) handleSaveHistory(writer http.ResponseWriter, request *http.Requ
 	case protectOff:
 		notice = "history_saved_protect_off"
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice)
 }
 
 // handleRenameRepository renames the repository and opens its Settings tab
@@ -347,7 +347,7 @@ func (app *App) handleRenameRepository(writer http.ResponseWriter, request *http
 	renamed, err := app.renameRepository(request, stored.ID, form.name)
 	switch {
 	case err == nil:
-		app.noticeRedirect(writer, request, repositorySettingsURL(renamed.Address)+"?notice="+renamedNotice, http.StatusSeeOther)
+		app.noticeRedirect(writer, request, repositorySettingsURL(renamed.Address)+"?notice="+renamedNotice)
 	case errors.Is(err, repository.ErrReservedName):
 		refuse(webui.Error("name", webui.MsgRepoNameReserved), http.StatusUnprocessableEntity)
 	case errors.Is(err, repository.ErrInvalidName):
@@ -404,7 +404,7 @@ func (app *App) handleSaveNamespaces(writer http.ResponseWriter, request *http.R
 	if len(prefixes) > 0 {
 		notice = "namespaces_saved_unkept"
 	}
-	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, repositorySettingsURL(stored.Address)+"?notice="+notice)
 }
 
 // ---------------------------------------------------------------------------
@@ -474,7 +474,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 		logFailure(request, "repository file removal", err)
 	}
 	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, Incomplete: incomplete})
-	app.noticeRedirect(writer, request, "/?notice="+removedNotice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/?notice="+removedNotice)
 }
 
 // deleteRepository deletes repository id in mode once the owner confirmed
@@ -588,7 +588,7 @@ func (app *App) removedNotices(writer http.ResponseWriter, request *http.Request
 	if err != nil {
 		return generic
 	}
-	app.clearCookie(writer, request, removedCookie, true)
+	app.clearCookie(writer, request, removedCookie)
 	if !administrator {
 		return generic
 	}

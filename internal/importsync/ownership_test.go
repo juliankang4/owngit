@@ -371,9 +371,9 @@ func TestIdentityLossLatchesWhileRunActive(t *testing.T) {
 
 	restore, err := induceRuntimeMarkerMismatch(f.service, ".identity-preserved")
 	noErr(t, err)
-	availability := f.service.Availability(ctx)
-	require(t, !availability.Available && availability.Code == CodeRuntimeUnavailable,
-		"availability did not report ownership loss: %+v", availability)
+	_, runtimeErr := f.service.currentRuntime("")
+	require(t, errors.Is(runtimeErr, ErrRuntimeLost),
+		"runtime did not report ownership loss: %v", runtimeErr)
 	noErr(t, restore(), "restore runtime marker")
 	_, err = f.service.Prepare(ctx)
 	require(t, errors.Is(err, ErrRuntimeLost), "restored marker cleared ownership loss: err=%v", err)
@@ -422,27 +422,29 @@ func TestPartialRuntimeInitializationWithoutMarkerIsRefused(t *testing.T) {
 }
 
 // Passive reads never create the runtime tree; an explicit mutation does.
-func TestAvailabilityIsPassive(t *testing.T) {
+func TestStatusIsPassive(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
 	runtimeRoot := f.service.runtimeRootPath()
 	_, err := os.Lstat(runtimeRoot)
 	require(t, errors.Is(err, os.ErrNotExist), "precondition: runtime root exists: %v", err)
-	availability := f.service.Availability(ctx)
-	require(t, availability.Available && !availability.Prepared, "availability before prepare=%+v", availability)
+	_, statusErr := f.service.Status(ctx, "project")
+	_, prepared := f.service.preparedRuntime()
+	require(t, statusErr == nil && !prepared, "status before prepare: prepared=%v err=%v", prepared, statusErr)
 	_, err = os.Lstat(runtimeRoot)
-	require(t, errors.Is(err, os.ErrNotExist), "Availability created the runtime root: %v", err)
+	require(t, errors.Is(err, os.ErrNotExist), "Status created the runtime root: %v", err)
 
 	first := f.prepareRuntime(t)
 	second := f.prepareRuntime(t)
 	require(t, first == second, "Prepare changed the root identity: %s then %s", first, second)
-	availability = f.service.Availability(ctx)
-	require(t, availability.Prepared && availability.RootID == first, "availability after prepare=%+v", availability)
+	root, runtimeErr := f.service.currentRuntime("")
+	require(t, runtimeErr == nil && root.rootID == first, "runtime after prepare=%+v err=%v", root, runtimeErr)
 	_, err = os.Lstat(filepath.Join(f.service.stagingRootPath(), runtimeRootMarkerName))
 	noErr(t, err, "root marker missing after prepare")
 	f.service.Close()
-	availability = f.service.Availability(ctx)
-	require(t, availability.Available && !availability.Prepared, "availability after close=%+v", availability)
+	_, statusErr = f.service.Status(ctx, "project")
+	_, prepared = f.service.preparedRuntime()
+	require(t, statusErr == nil && !prepared, "status after close: prepared=%v err=%v", prepared, statusErr)
 }
 
 // An unknown nonempty root is adopted without changing its mode, and every
@@ -497,9 +499,6 @@ func TestLinkedStagingRootIsRefusedAndPreserved(t *testing.T) {
 	f.assertSentinel(sentinel, "linked")
 	_, err = os.Lstat(filepath.Join(target, runtimeRootMarkerName))
 	require(t, errors.Is(err, os.ErrNotExist), "marker was written through the link: %v", err)
-	availability := f.service.Availability(ctx)
-	require(t, !availability.Available && availability.Code == CodeRuntimeUnsafe,
-		"availability on linked root=%+v", availability)
 }
 
 // A name collision refuses instead of adopting, so pre-existing content is

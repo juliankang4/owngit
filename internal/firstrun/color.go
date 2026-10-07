@@ -187,10 +187,3 @@ func parseBackground(buffer []byte) (theme, bool, []byte) {
 func queryComplete(buffer []byte) bool {
 	return deviceReply.Match(buffer)
 }
-
-// stripSGR removes color codes, for tests and plain-text comparisons.
-func stripSGR(s string) string {
-	return string(sgrPattern.ReplaceAll([]byte(s), nil))
-}
-
-var sgrPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)

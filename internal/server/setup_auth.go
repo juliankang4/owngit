@@ -101,7 +101,7 @@ func (app *App) handleSetupRedeem(writer http.ResponseWriter, request *http.Requ
 		app.setupHosts.clear()
 	}
 	app.setCookie(writer, request, cookieNameForScheme(request, setupCookie), sessionToken, expires, true)
-	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie))
 	http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 }
 
@@ -161,7 +161,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 		// terminal does.
 		logFailure(request, "setup file removal", err)
 	}
-	app.clearCookie(writer, request, cookieNameForScheme(request, setupCookie), true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, setupCookie))
 	app.returnToLocalListen(request.Context(), answers.KeepHost)
 	// An unknown Host that was not kept is refused from now on, so the
 	// result is shown here instead of on the dashboard.
@@ -177,7 +177,7 @@ func (app *App) handleSetupPost(writer http.ResponseWriter, request *http.Reques
 	if answers.AccessMode == "open" {
 		app.setupResult.Store(nil)
 	}
-	app.noticeRedirect(writer, request, "/?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/?notice="+notice)
 }
 
 // renderSetupDoneElsewhere tells a browser on an unknown Host that setup is
@@ -409,7 +409,7 @@ func (app *App) handleLoginPost(writer http.ResponseWriter, request *http.Reques
 	} else {
 		app.setCookie(writer, request, cookieName, session.Token, session.Expires, true)
 	}
-	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie))
 	http.Redirect(writer, request, next, http.StatusSeeOther)
 }
 
@@ -506,10 +506,10 @@ func (app *App) handleLogout(writer http.ResponseWriter, request *http.Request, 
 	}
 	for _, end := range endings {
 		for _, name := range signOutCookieNames(request, end.cookie) {
-			app.clearCookie(writer, request, name, true)
+			app.clearCookie(writer, request, name)
 		}
 	}
-	app.noticeRedirect(writer, request, target, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, target)
 }
 
 func chooseMessage(condition bool, yes, no webui.MessageCode) webui.MessageCode {

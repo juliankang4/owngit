@@ -3,7 +3,7 @@ package webui
 // Text for the configured-check policy, job, and runner-token screens.
 //
 // These entries are merged into the shared catalog at startup, exactly like
-// the evidence entries, so Text, Has, and MissingMessages all see one catalog.
+// the evidence entries, so Text and Has see one catalog.
 //
 // Wording rule for this file: it describes what OwnGit actually does. Host
 // commands run with the service account's access, container limits are the
@@ -1144,10 +1144,5 @@ var configuredCheckCatalog = map[MessageCode]message{
 // mistake in this package, so it fails at startup rather than letting one
 // definition silently win.
 func init() {
-	for code, entry := range configuredCheckCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(configuredCheckCatalog)
 }

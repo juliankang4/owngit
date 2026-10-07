@@ -347,7 +347,7 @@ func assertConcurrentFirstOpensShareOneDatabase(t *testing.T, locked bool) {
 		}
 		store, err := Open(ctx, directory)
 		noErr(t, err)
-		version, err := store.schemaVersion(ctx)
+		version, _, err := readSchemaVersion(ctx, store.db)
 		noErr(t, store.Close())
 		noErr(t, err)
 		if version != currentSchemaVersion() {

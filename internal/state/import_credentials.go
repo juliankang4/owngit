@@ -92,13 +92,12 @@ func (s *Store) importCredentialAuthorityLocked(repositoryID string) (uint64, bo
 	return state.revision, state.blocked
 }
 
-func (s *Store) beginImportCredentialMutationLocked(repositoryID string) uint64 {
+func (s *Store) beginImportCredentialMutationLocked(repositoryID string) {
 	value, _ := s.credentialAuthority.Load(repositoryID)
 	state, _ := value.(importCredentialAuthority)
 	state.revision++
 	state.blocked = true
 	s.credentialAuthority.Store(repositoryID, state)
-	return state.revision
 }
 
 func (s *Store) completeImportCredentialMutationLocked(repositoryID string) {

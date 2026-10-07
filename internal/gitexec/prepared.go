@@ -350,7 +350,6 @@ func (r *Runner) runPreparedUpdateContext(ctx context.Context, dir string, comma
 		timer := time.NewTimer(grace)
 		select {
 		case waitErr = <-waitCh:
-			waited = true
 			if !timer.Stop() {
 				select {
 				case <-timer.C:

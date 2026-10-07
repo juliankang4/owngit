@@ -308,17 +308,6 @@ func (root *WorkspaceRoot) ownsJobEnvelope(envelope, jobID string) (bool, error)
 	return record.Format == workspaceFormat && record.RootID == root.id && record.JobID == jobID, nil
 }
 
-// CleanupWorkspaceRoot preserves the original one-shot cleanup API. It refuses
-// an unowned nonempty root and cannot run while another lifecycle holds it.
-func CleanupWorkspaceRoot(path string, limit int) (removed int, more bool, err error) {
-	root, err := AcquireWorkspaceRoot(path)
-	if err != nil {
-		return 0, false, err
-	}
-	defer root.Close()
-	return root.Cleanup(limit)
-}
-
 func validateWorkspaceLockPath(path string) error {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
