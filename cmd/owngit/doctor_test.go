@@ -319,6 +319,13 @@ func TestDoctorCommandTrustsTheStateOnly(t *testing.T) {
 		t.Errorf("running without an answer: %q", got)
 	}
 	served.stop()
+	if runtime.GOOS != "windows" {
+		noErr(t, os.Chmod(runningDir, 0o777))
+		if got := codes(runningDir); !reflect.DeepEqual(got, []string{string(webui.MsgTrayStateUnsafe)}) {
+			t.Errorf("unprotected state directory: %q", got)
+		}
+		noErr(t, os.Chmod(runningDir, 0o700))
+	}
 
 	stateDir := filepath.Join(t.TempDir(), "held")
 	_, err := captureStdout(func() error {

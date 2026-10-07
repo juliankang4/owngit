@@ -225,7 +225,7 @@ func trayDiagnosis(stateDir string) func(context.Context, string) (tray.Diagnosi
 		for _, finding := range diagnose(ctx, subject) {
 			switch finding.Code {
 			case webui.MsgDoctorNotRunning, webui.MsgDoctorSilent, webui.MsgDoctorAddressTaken, webui.MsgDoctorUncheckedServer,
-				webui.MsgTrayUnproven, webui.MsgTrayHealthKey:
+				webui.MsgTrayUnproven, webui.MsgTrayHealthKey, webui.MsgTrayStateUnsafe:
 				message := finding.Sentence(language)
 				if finding.Code == webui.MsgDoctorUncheckedServer {
 					message = webui.Text(language, webui.MsgTrayNoStatus)

@@ -513,6 +513,17 @@ final class PanelViewController: NSViewController {
                 return words.lang == "ko" ? [label(words.noAnswerLine)] : [label(String(format: words.uncheckedLine, detail), selectable: true)]
             case .unconfirmed:
                 return [label(words.noAnswerLine), label(words.notConfirmed, selectable: true)]
+            case .stateUnsafe(let path, let repair):
+                var lines: [NSView] = [label(words.noAnswerLine), label(String(format: words.stateUnsafe, path), selectable: true)]
+                if !repair.isEmpty {
+                    lines.append(help(words.runInTerminal))
+                    lines.append(code(repair))
+                    lines.append(button(words.copyCommand, id: "copy-command") { [perform, words] button in
+                        perform(.copy(repair))
+                        button.title = words.copied
+                    })
+                }
+                return lines
             }
         }
     }

@@ -3,12 +3,12 @@
 package tray
 
 import (
-	"os"
+	"owngit/internal/state"
 )
 
 // readSharedFile reads at most limit bytes of the file at path.
 func readSharedFile(path string, limit int64) ([]byte, error) {
-	file, err := os.Open(path)
+	file, err := state.OpenPrivateInputFile(path)
 	if err != nil {
 		return nil, err
 	}

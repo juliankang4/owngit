@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
         }
         runHelper(["tray", "status", "--json", "--state-dir", stateDir.path]) { [self] result in
             guard result.status == 0, let report = try? JSONDecoder().decode(TrayReport.self, from: result.output) else {
-                fail(String(format: words.readFailed, result.failureText))
+                startVisible()
                 return
             }
             if report.available && report.shown {
@@ -343,8 +343,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     }
 
     private func requestStatus(retry: Bool, done: @escaping (PanelState) -> Void) {
-        let accessFile = stateDir.appendingPathComponent("tray-access.json")
-        guard let data = try? Data(contentsOf: accessFile),
+        guard let data = try? StateFile(dir: stateDir, name: "tray-access.json").read(limit: 4096),
               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
               let url = statusURL(access: access, lang: words.lang)
         else {
@@ -547,7 +546,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
     /// dashboard.
     private func openDashboard(page: String) {
         let accessFile = stateDir.appendingPathComponent("tray-access.json")
-        guard let data = try? Data(contentsOf: accessFile),
+        guard let data = try? StateFile(dir: stateDir, name: "tray-access.json").read(limit: 4096),
               let access = try? JSONDecoder().decode(TrayAccess.self, from: data),
               let url = dashboardPage(access: access.url, path: page)
         else {

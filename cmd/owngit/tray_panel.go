@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"owngit/internal/bootstrap"
-	"owngit/internal/state"
 	"owngit/internal/tray"
 	"owngit/internal/webui"
 )
@@ -66,13 +65,8 @@ func trayPanelCommand(operation, stateDir string, lang webui.Lang, asJSON bool) 
 }
 
 // trayShown reports whether the owner lets the icon show; a choice that
-// cannot be read counts as hidden, as the icon treats it.
+// cannot be read leaves the icon visible with its diagnostic.
 func trayShown(stateDir string) bool {
-	held, err := state.OpenStateDirectory(stateDir)
-	if err != nil {
-		return false
-	}
-	defer held.Close()
-	hidden, err := state.TrayHidden(held)
-	return err == nil && !hidden
+	shown, _ := tray.Shown(stateDir)
+	return shown
 }

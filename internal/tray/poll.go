@@ -24,8 +24,8 @@ const (
 
 // reading is one result of the poller.
 type reading struct {
-	// show is false while the icon is hidden, or while its choice cannot
-	// be read (as before the server's first start).
+	// show is false only for a missing state directory or the owner's
+	// hidden choice. Read errors stay visible.
 	show   bool
 	report Report
 	// unavailable is the sentence that says this desktop cannot show
@@ -58,10 +58,15 @@ func newPoller(options Options, lang webui.Lang) *poller {
 // poll hands a reading to deliver after each read until ctx ends.
 func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 	for {
-		next := reading{show: p.mayShow(), unavailable: p.notifier.unavailable(p.lang)}
+		show, showErr := Shown(p.stateDir)
+		next := reading{show: show, unavailable: p.notifier.unavailable(p.lang)}
 		wait := pollHidden
 		if next.show {
-			next.report = p.client.Read(ctx, string(p.lang))
+			if showErr != nil {
+				next.report = p.client.unavailable(showErr, string(p.lang))
+			} else {
+				next.report = p.client.Read(ctx, string(p.lang))
+			}
 			// The server says so too when the choice changed meanwhile.
 			if next.report.Status != nil && !next.report.Status.Shown {
 				next.show = false
@@ -77,8 +82,12 @@ func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 			wait = pollOpen
 		}
 		// The owner may have hidden the icon while the status was read.
-		if next.show && !p.mayShow() {
-			next.show = false
+		if next.show {
+			show, err := Shown(p.stateDir)
+			next.show = show
+			if err != nil {
+				next.report = p.client.unavailable(err, string(p.lang))
+			}
 		}
 		if ctx.Err() != nil {
 			return
@@ -97,18 +106,6 @@ func (p *poller) poll(ctx context.Context, deliver func(reading)) {
 		case <-time.After(wait):
 		}
 	}
-}
-
-// mayShow reports whether the owner lets the icon show: the hidden choice
-// can be read and is not set.
-func (p *poller) mayShow() bool {
-	held, err := state.OpenStateDirectory(p.stateDir)
-	if err != nil {
-		return false
-	}
-	defer held.Close()
-	hidden, err := state.TrayHidden(held)
-	return err == nil && !hidden
 }
 
 // forgetCursor removes the notification cursor while the owner hides the
