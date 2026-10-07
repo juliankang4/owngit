@@ -370,12 +370,12 @@ On Linux the client puts a mark in the check's environment and reads it back
 from `/proc` to find a process that left the process group. It cannot find a
 process that cleared its environment or runs as another account. It also
 cannot find a process marked not dumpable, because the kernel hides that
-process's environment. If `/proc` cannot be read, the client stops only the
+process's environment. If the system has no `/proc`, the client stops only the
 process group and logs one line.
 
 If OwnGit cannot end every process a check started within its cleanup time
-(about 5 seconds on Linux), the check ends as `error`. Its `cleanup_error`
-field says that processes are still running.
+(about 5 seconds on Linux), or cannot read `/proc` to find them, the check ends
+as `error`. Its `cleanup_error` field says which of the two happened.
 
 ### Correction rounds
 
