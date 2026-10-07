@@ -13,12 +13,12 @@ type Locks struct {
 	// gate, when set, runs after every LockContext and TryLockGated takes the
 	// write lock. An error from it means the writer must not go on: the lock
 	// is released, with no ref change, and the error is returned.
-	gate atomic.Pointer[func() error]
+	gate atomic.Pointer[func(string) error]
 }
 
 // SetWriteGate installs the check that every write lock taken through
 // LockContext or TryLockGated passes. Passing nil removes it.
-func (l *Locks) SetWriteGate(gate func() error) {
+func (l *Locks) SetWriteGate(gate func(string) error) {
 	if gate == nil {
 		l.gate.Store(nil)
 		return
@@ -58,6 +58,7 @@ type RepositoryLock struct {
 
 	// owner supplies the write gate; nil for a lock made outside Locks.
 	owner *Locks
+	id    string
 }
 
 // lockWaiter is one queued caller. ready is closed when it holds the lock.
@@ -100,13 +101,16 @@ func (l *RepositoryLock) RLock() {
 // ctx's error and does not hold the lock. Release a lock it took through
 // Unlock or UnlockWithoutRefChanges.
 func (l *RepositoryLock) LockContext(ctx context.Context) error {
-	if err := l.lockContext(ctx); err != nil {
+	if err := l.LockContextUngated(ctx); err != nil {
 		return err
 	}
 	return l.passGate()
 }
 
-func (l *RepositoryLock) lockContext(ctx context.Context) error {
+// LockContextUngated takes the write lock without the gate. Storage preparation
+// and recorded lifecycle cleanup verify their storage separately before writing.
+// Ordinary writers use LockContext or TryLockGated.
+func (l *RepositoryLock) LockContextUngated(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -131,7 +135,7 @@ func (l *RepositoryLock) passGate() error {
 	if gate == nil {
 		return nil
 	}
-	if err := (*gate)(); err != nil {
+	if err := (*gate)(l.id); err != nil {
 		l.releaseWriteLock()
 		return err
 	}
@@ -371,7 +375,7 @@ func (l *Locks) For(repositoryID string) *RepositoryLock {
 	defer l.mu.Unlock()
 	lock := l.locks[repositoryID]
 	if lock == nil {
-		lock = &RepositoryLock{owner: l}
+		lock = &RepositoryLock{owner: l, id: repositoryID}
 		l.locks[repositoryID] = lock
 	}
 	return lock

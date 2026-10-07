@@ -494,8 +494,11 @@ func (s *Service) ensureObjects(ctx context.Context, run *runState, repositoryPa
 			return err
 		}
 		// This write runs before the repository write lock, so it checks the
-		// storage claim itself: a folder that changed receives no pack.
-		if err := s.Repositories.VerifyStorageHold(); err != nil {
+		// storage identity itself: a folder that changed receives no pack.
+		if err := s.verifyDestinationStorage(run, repositoryPath); err != nil {
+			if errors.Is(err, repository.ErrStorageUnavailable) {
+				return newProblem(CodeRepositoryMissing, "repository storage is unavailable", err)
+			}
 			return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped before indexing its objects; restart OwnGit", err)
 		}
 		file, err := os.Open(packPath)
@@ -580,7 +583,7 @@ func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 		return
 	}
 	// A folder that changed keeps the file: it is not the claimed one.
-	if err := s.Repositories.VerifyStorageHold(); err != nil {
+	if err := s.verifyDestinationStorage(run, directory); err != nil {
 		lock.RUnlock()
 		s.logf("import %s left its pack keep file %s: %v", run.run.RepositoryID, path, err)
 		return
@@ -592,6 +595,24 @@ func (s *Service) releaseDestinationKeep(run *runState, repositoryPath string) {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logf("import %s could not remove its pack keep file %s: %v", run.run.RepositoryID, path, err)
 	}
+}
+
+// verifyDestinationStorage also preserves the owned identity of an initial
+// destination that has not yet become a registered repository.
+func (s *Service) verifyDestinationStorage(run *runState, path string) error {
+	if err := s.Repositories.VerifyRepositoryStorage(run.run.RepositoryID); err != nil {
+		return err
+	}
+	if dest := run.initialDestination; dest != nil && !dest.rowRecorded {
+		info, err := directoryIdentityIn(dest.storageRoot, filepath.Base(path))
+		if err != nil {
+			return fmt.Errorf("%w: %w", repository.ErrStorageUnavailable, err)
+		}
+		if dest.identity == nil || !os.SameFile(info, dest.identity) {
+			return fmt.Errorf("%w: %s", repository.ErrStorageChanged, path)
+		}
+	}
+	return nil
 }
 
 func singleStagingPack(stagingPath string) (string, error) {

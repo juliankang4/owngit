@@ -341,6 +341,11 @@ func TestInitialIntentIsNotJudgedAgainstAnotherDirectory(t *testing.T) {
 	require(t, got == "", "foreign directory gained main=%s", got)
 	noErr(t, f.store.Exec(context.Background(), `DELETE FROM repositories WHERE id=?`, "project"))
 	noErr(t, os.RemoveAll(foreign))
+	// This fixture removed a registered lifetime without Manager.Delete.
+	lock := f.manager.Locks.For("project")
+	lock.Lock()
+	lock.AdvanceIncarnation()
+	lock.UnlockWithoutRefChanges()
 	noErr(t, f.service.Reconcile(context.Background()))
 	got = f.destinationRefs()["refs/heads/main"]
 	require(t, got == wanted, "reconciled owned directory main=%s want %s", got, wanted)

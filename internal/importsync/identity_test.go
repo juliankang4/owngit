@@ -70,56 +70,77 @@ func TestRefreshPublishesNothingAfterTheStorageClaimIsLost(t *testing.T) {
 
 // The destination pack is written before the repository write lock, so a claim
 // lost during the source transfer must still stop it.
-func TestRefreshWritesNoPackWhenTheClaimIsLostMidRun(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows refuses to remove the held lock file")
-	}
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	noErr(t, f.manager.ClaimStorage())
-	t.Cleanup(f.manager.ReleaseStorage)
-	destination := f.destinationPath()
-	f.commit("two", "two\n")
-	f.service.beforeStagingVerification = func(context.Context) {
-		noErr(t, os.Remove(filepath.Join(f.manager.RepositoryRoot(), ".owngit-serve.lock")))
-		noErr(t, os.Rename(destination, destination+"-original"))
-		f.git("", "init", "--bare", "--quiet", "--initial-branch=main", destination)
-	}
-	run, _ := f.refresh()
-	if run.ErrorClass != CodeUnresolved {
-		t.Fatalf("refresh error class=%q, want %q", run.ErrorClass, CodeUnresolved)
-	}
-	packs, err := os.ReadDir(filepath.Join(destination, "objects", "pack"))
-	noErr(t, err)
-	if len(packs) != 0 {
-		t.Fatalf("the unclaimed replacement folder received %d pack files", len(packs))
+func TestRefreshWritesNoPackWhenStorageChangesMidRun(t *testing.T) {
+	for _, change := range []string{"root claim lost", "repository replaced"} {
+		t.Run(change, func(t *testing.T) {
+			if change == "root claim lost" && runtime.GOOS == "windows" {
+				t.Skip("Windows refuses to remove the held lock file")
+			}
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.mustImport(ImportInput{})
+			noErr(t, f.manager.ClaimStorage())
+			t.Cleanup(f.manager.ReleaseStorage)
+			destination := f.destinationPath()
+			revision := f.commit("two", "two\n")
+			_, err := f.refresh()
+			noErr(t, err)
+			require(t, f.git(destination, "rev-parse", "refs/heads/main") == revision, "intact refresh did not publish")
+			f.commit("three", "three\n")
+			f.service.beforeStagingVerification = func(context.Context) {
+				if change == "root claim lost" {
+					noErr(t, os.Remove(filepath.Join(f.manager.RepositoryRoot(), ".owngit-serve.lock")))
+				}
+				noErr(t, os.Rename(destination, destination+"-original"))
+				f.git("", "init", "--bare", "--quiet", "--initial-branch=main", destination)
+			}
+			run, err := f.refresh()
+			require(t, err != nil && run.ErrorClass == CodeUnresolved, "run=%+v err=%v", run, err)
+			packs, err := os.ReadDir(filepath.Join(destination, "objects", "pack"))
+			noErr(t, err)
+			require(t, len(packs) == 0, "the changed folder received %d pack files", len(packs))
+			require(t, f.git(destination, "for-each-ref", "--format=%(refname)") == "", "the changed folder received refs")
+		})
 	}
 }
 
 // The keep file of a run whose claim was lost before cleanup stays in place.
-func TestRefreshKeepsThePackKeepFileWhenTheClaimIsLostBeforeCleanup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("Windows refuses to remove the held lock file")
+func TestRefreshKeepsItsPackKeepFileWhenStorageChangesBeforeCleanup(t *testing.T) {
+	for _, change := range []string{"root claim lost", "repository replaced"} {
+		t.Run(change, func(t *testing.T) {
+			if change == "root claim lost" && runtime.GOOS == "windows" {
+				t.Skip("Windows refuses to remove the held lock file")
+			}
+			f := newFixture(t)
+			f.commit("one", "one\n")
+			f.mustImport(ImportInput{})
+			noErr(t, f.manager.ClaimStorage())
+			t.Cleanup(f.manager.ReleaseStorage)
+			destination := f.destinationPath()
+			original := destination
+			var replacementKeep string
+			f.commit("two", "two\n")
+			f.service.beforeFinalAuthorityCheck = func() {
+				if change == "root claim lost" {
+					noErr(t, os.Remove(filepath.Join(f.manager.RepositoryRoot(), ".owngit-serve.lock")))
+					return
+				}
+				keeps := destinationKeepFiles(t, destination)
+				require(t, len(keeps) == 1, "indexing made %d keep files", len(keeps))
+				original = destination + "-original"
+				noErr(t, os.Rename(destination, original))
+				f.git("", "init", "--bare", "--quiet", "--initial-branch=main", destination)
+				replacementKeep = filepath.Join(destination, "objects", "pack", filepath.Base(keeps[0]))
+				noErr(t, os.WriteFile(replacementKeep, []byte("replacement\n"), 0o600))
+			}
+			run, err := f.refresh()
+			require(t, err != nil && run.ErrorClass == CodeUnresolved, "run=%+v err=%v", run, err)
+			require(t, len(destinationKeepFiles(t, original)) == 1, "the owned keep file was removed")
+			if replacementKeep != "" {
+				content, err := os.ReadFile(replacementKeep)
+				noErr(t, err)
+				require(t, string(content) == "replacement\n", "cleanup changed the replacement keep file")
+			}
+		})
 	}
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.mustImport(ImportInput{})
-	noErr(t, f.manager.ClaimStorage())
-	t.Cleanup(f.manager.ReleaseStorage)
-	destination := f.destinationPath()
-	f.commit("two", "two\n")
-	f.service.beforeFinalAuthorityCheck = func() {
-		noErr(t, os.Remove(filepath.Join(f.manager.RepositoryRoot(), ".owngit-serve.lock")))
-	}
-	run, err := f.refresh()
-	require(t, err != nil && run.ErrorClass == CodeUnresolved, "run=%+v err=%v", run, err)
-	entries, err := os.ReadDir(filepath.Join(destination, "objects", "pack"))
-	noErr(t, err)
-	for _, entry := range entries {
-		if filepath.Ext(entry.Name()) == ".keep" {
-			return
-		}
-	}
-	t.Fatalf("the keep file was removed from the unclaimed folder")
 }

@@ -372,6 +372,9 @@ type commandRunner interface {
 
 // CreateWithReport writes an offline backup and reports its capture-time notices.
 func CreateWithReport(ctx context.Context, store *state.Store, manager *repository.Manager, output string) (CaptureReport, error) {
+	if err := manager.PrepareStorageIdentities(ctx); err != nil {
+		return CaptureReport{}, fmt.Errorf("prepare repository storage before backup: %w", err)
+	}
 	service := &pullrequest.Service{Store: store, Repositories: manager}
 	if err := service.ReconcileAll(ctx); err != nil {
 		return CaptureReport{}, fmt.Errorf("reconcile pull request state before backup: %w", err)

@@ -233,6 +233,12 @@ func TestCaptureGivesUpABusyRepository(t *testing.T) {
 // remote.
 func TestBackupRefusesRepositoriesItCannotDescribe(t *testing.T) {
 	for name, damage := range map[string]func(t *testing.T, manager *repository.Manager, path string){
+		"directory replaced": func(t *testing.T, manager *repository.Manager, path string) {
+			noErr(t, manager.ClaimStorage())
+			t.Cleanup(manager.ReleaseStorage)
+			noErr(t, os.Rename(path, path+"-original"))
+			runGit(t, "", "init", "--bare", "--quiet", "--initial-branch=main", path)
+		},
 		"unreadable HEAD": func(t *testing.T, manager *repository.Manager, path string) {
 			noErr(t, os.WriteFile(filepath.Join(path, "HEAD"), []byte(strings.Repeat("1", 40)+"\n"), 0o600))
 		},
@@ -281,6 +287,9 @@ func TestBackupRefusesRepositoriesItCannotDescribe(t *testing.T) {
 			_, err = CreateWhileServing(ctx, store, manager, backup)
 			if err == nil || !strings.Contains(err.Error(), `"damaged"`) {
 				t.Fatalf("err=%v", err)
+			}
+			if name == "directory replaced" && !errors.Is(err, repository.ErrStorageChanged) {
+				t.Fatalf("replacement backup error=%v, want ErrStorageChanged", err)
 			}
 			assertNoRecoveryOutputOrStages(t, backup, ".owngit-backup-")
 			if _, err := manager.HoldForBackup(); err != nil {
@@ -409,6 +418,7 @@ func runKilledBackupChild(t *testing.T, root string) {
 	runner, err := gitexec.New("", filepath.Join(root, "source-state", "runtime"))
 	noErr(t, err)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: settings.RepositoryRoot}
+	noErr(t, manager.PrepareStorageIdentities(ctx))
 	stopping := stoppingRunner{delegate: runner, ready: filepath.Join(root, "child-ready")}
 	_, err = create(ctx, store, manager, stopping, filepath.Join(root, "backup"), manifestLimit)
 	t.Fatalf("the child backup was not killed: %v", err)
@@ -504,6 +514,7 @@ func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
 					heads[id] = Head{Symbolic: "refs/heads/main"}
 				}
 			}
+			noErr(t, manager.PrepareStorageIdentities(ctx))
 			backup := filepath.Join(root, "backup")
 			_, err = CreateWhileServing(ctx, store, manager, backup)
 			noErr(t, err)

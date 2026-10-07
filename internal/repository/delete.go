@@ -99,8 +99,27 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	}
 	// Maintenance never delays a deletion: a running one is stopped.
 	m.stopMaintenanceOf(id)
+	_, pending, err := m.Store.RepositoryDeletion(ctx, id)
+	if err != nil {
+		return DeleteResult{}, err
+	}
 	lock := m.Locks.For(id)
-	if err := lockWithin(ctx, lock); err != nil {
+	if pending {
+		// Finish the old owned stage before preparing a newer registered row.
+		lockCtx, cancel := context.WithTimeout(ctx, deleteLockWait)
+		err := lock.LockContextUngated(lockCtx)
+		cancel()
+		if err != nil {
+			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+				return DeleteResult{}, ErrRepositoryInUse
+			}
+			return DeleteResult{}, err
+		}
+		if err := m.verifyRepositoryStorage(id, false); err != nil {
+			lock.UnlockWithoutRefChanges()
+			return DeleteResult{}, err
+		}
+	} else if err := lockWithin(ctx, lock); err != nil {
 		return DeleteResult{}, err
 	}
 	defer lock.Unlock()
@@ -130,10 +149,16 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	}
 	// A repository that is still being prepared can be deleted, so this
 	// lookup skips the preparation check.
-	if _, _, exists, err := m.existingPath(ctx, id); err != nil {
+	path, _, exists, err := m.existingPath(ctx, id)
+	if err != nil {
 		return DeleteResult{}, err
 	} else if !exists {
 		return DeleteResult{}, ErrRepositoryNotFound
+	}
+	if pending {
+		if err := m.BindRepositoryStorage(id, path, nil); err != nil {
+			return DeleteResult{}, err
+		}
 	}
 	moved, err := m.deletionTarget(root, id, mode)
 	if err != nil {
@@ -186,14 +211,19 @@ func (m *Manager) ReconcileDeletions(ctx context.Context) error {
 	var problems []error
 	for _, deletion := range deletions {
 		lock := m.Locks.For(deletion.RepositoryID)
-		if err := lock.LockContext(ctx); err != nil {
+		if err := lock.LockContextUngated(ctx); err != nil {
 			problems = append(problems, err)
 			continue
 		}
-		_, err := m.finishDeletion(ctx, root, deletion)
+		err := m.verifyRepositoryStorage(deletion.RepositoryID, false)
+		if err == nil {
+			_, err = m.finishDeletion(ctx, root, deletion)
+		} else if errors.Is(err, ErrStorageUnavailable) {
+			err = errors.Join(err, checkDeletionMarker(root, deletion))
+		}
 		lock.Unlock()
 		if err != nil {
-			problems = append(problems, fmt.Errorf("repository %q: %w", deletion.RepositoryID, err))
+			problems = append(problems, fmt.Errorf("repository %q: %w: %w", deletion.RepositoryID, ErrDeleteIncomplete, err))
 		}
 	}
 	return errors.Join(problems...)
@@ -206,7 +236,14 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	incomplete := func(err error) (DeleteResult, error) {
 		return DeleteResult{}, fmt.Errorf("%w: %w", ErrDeleteIncomplete, err)
 	}
-	m.Locks.For(deletion.RepositoryID).AdvanceIncarnation()
+	_, reused, err := m.Store.Repository(ctx, deletion.RepositoryID)
+	if err != nil {
+		return incomplete(err)
+	}
+	// A row written by an older build after the move is already a new lifetime.
+	if !reused {
+		m.Locks.For(deletion.RepositoryID).AdvanceIncarnation()
+	}
 	m.snapshots.drop(deletion.RepositoryID)
 	m.objects.drop(deletion.RepositoryID)
 	if deletion.Root != root {

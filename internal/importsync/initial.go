@@ -204,6 +204,9 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		releaseCtx, cancelRelease := cleanupContext(ctx)
 		defer cancelRelease()
 		_ = s.setInitialDestinationState(releaseCtx, name, state.ImportInitialReleased, "", now)
+		if errors.Is(err, repository.ErrStorageUnavailable) {
+			return "", newProblem(CodeRepositoryMissing, "repository storage is unavailable", err)
+		}
 		if errors.Is(err, repository.ErrStorageInUse) {
 			return "", newProblem(CodeUnresolved, "the repository folder is in use by another OwnGit server, so the import did not start writing", err)
 		}
@@ -238,6 +241,9 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		return "", s.discardInitialDestination(ctx, dest, now, err)
 	}
 	if err := s.Repositories.InitBareRepository(ctx, path, repository.CreateOptions{ObjectFormat: run.objectFormat}); err != nil {
+		return "", s.discardInitialDestination(ctx, dest, now, err)
+	}
+	if err := s.proveInitialOwnership(ctx, dest); err != nil {
 		return "", s.discardInitialDestination(ctx, dest, now, err)
 	}
 	run.initialDestination = dest
@@ -542,6 +548,13 @@ func (s *Service) finishInitialDestination(ctx context.Context, run *runState, i
 	if err != nil || !exists || recorded.ID != repositoryRecord.ID || recorded.Name != repositoryRecord.Name {
 		return ownerRecoveryProblem(finalPath, err)
 	}
+	if err := s.Repositories.BindRepositoryStorage(run.run.RepositoryID, finalPath, dest.identity); err != nil {
+		message := repository.ErrStorageUnavailable.Error()
+		if errors.Is(err, repository.ErrStorageChanged) {
+			message = repository.ErrStorageChanged.Error()
+		}
+		return newProblem(CodeUnresolved, message, err)
+	}
 	dest.rowRecorded = true
 	if err := s.setInitialDestinationState(stateCtx, dest.name, state.ImportInitialPublished, "", now); err != nil {
 		return ownerRecoveryProblem(finalPath, err)
@@ -645,7 +658,7 @@ func (s *Service) reconcileInitialDestinations(ctx context.Context, generation s
 				continue
 			}
 			now := s.clock()
-			count, err := s.reconcileLandedInitialDestination(ctx, generation, root.rootID, row, now)
+			count, err := s.reconcileLandedInitialDestination(ctx, generation, root.rootID, storageRoot, row, now)
 			if err != nil {
 				return issues, err
 			}
@@ -938,13 +951,13 @@ func (s *Service) publishReconciledInitial(ctx context.Context, dest *initialDes
 		return 1, landErr
 	}
 	dest.finalPath = finalPath
-	if err := s.recordInitialRepository(ctx, row, finalPath, now); err != nil {
+	if err := s.recordInitialRepository(ctx, row, finalPath, dest.identity, now); err != nil {
 		return 1, nil
 	}
 	return 0, nil
 }
 
-func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generation, rootID string, row state.ImportInitialDestination, now time.Time) (int, error) {
+func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generation, rootID, storageRoot string, row state.ImportInitialDestination, now time.Time) (int, error) {
 	if s.runIsLive(row.RunID) || !ownedUnpublishedName(row.Name) {
 		return 0, nil
 	}
@@ -992,13 +1005,17 @@ func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generat
 	if observeErr != nil || !observation.matchesDesired || !observation.retentionComplete || !observation.headMatches {
 		return 1, nil
 	}
-	if err := s.recordInitialRepository(ctx, row, finalPath, now); err != nil {
+	identity, err := directoryIdentityIn(storageRoot, filepath.Base(finalPath))
+	if err != nil {
+		return 1, err
+	}
+	if err := s.recordInitialRepository(ctx, row, finalPath, identity, now); err != nil {
 		return 1, nil
 	}
 	return 0, nil
 }
 
-func (s *Service) recordInitialRepository(ctx context.Context, row state.ImportInitialDestination, finalPath string, now time.Time) error {
+func (s *Service) recordInitialRepository(ctx context.Context, row state.ImportInitialDestination, finalPath string, expected os.FileInfo, now time.Time) error {
 	if _, exists, err := s.Store.Repository(ctx, row.RepositoryID); err != nil {
 		return err
 	} else if !exists {
@@ -1017,6 +1034,9 @@ func (s *Service) recordInitialRepository(ctx context.Context, row state.ImportI
 	if err != nil || !exists || stored.ID != row.RepositoryID {
 		_ = s.Store.SetImportInitialDestinationState(ctx, row.Name, state.ImportInitialReady, boundedImportMessage(ownerRecoveryMessage(finalPath)), now)
 		return errors.New(ownerRecoveryMessage(finalPath))
+	}
+	if err := s.Repositories.BindRepositoryStorage(row.RepositoryID, finalPath, expected); err != nil {
+		return err
 	}
 	if err := s.setInitialDestinationState(ctx, row.Name, state.ImportInitialPublished, "", now); err != nil {
 		return err

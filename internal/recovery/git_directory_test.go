@@ -56,6 +56,7 @@ func TestRecoveryUsesBareRepositoryWorkingDirectoryAtWindowsGitBoundaries(t *tes
 	}
 	noErr(t, store.AddRepository(ctx, state.Repository{ID: "project", Name: "project", Description: "Long bare path fixture", CreatedAt: time.Now().UTC().Truncate(time.Second)}))
 
+	noErr(t, manager.PrepareStorageIdentities(ctx))
 	backupRunner := &recordingRecoveryRunner{delegate: runner}
 	backup := filepath.Join(t.TempDir(), "backup")
 	_, err = create(ctx, store, manager, backupRunner, backup, manifestLimit)

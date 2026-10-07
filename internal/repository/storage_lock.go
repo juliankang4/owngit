@@ -21,9 +21,10 @@ const storageLockName = ".owngit-serve.lock"
 // folder.
 var ErrStorageInUse = errors.New("the repository folder is in use by another OwnGit server")
 
-// ErrStorageChanged reports that the repository folder, or the lock file in
-// it, is no longer the one this server claimed. Writes stop until OwnGit is
-// restarted on the intended folder.
+// ErrStorageChanged reports that a repository directory, the storage root or
+// its lock file is no longer the one this server bound or claimed. Writes can
+// resume when the original storage returns. Restart OwnGit to adopt changed
+// storage.
 var ErrStorageChanged = errors.New("the repository folder changed after this OwnGit server claimed it; restart OwnGit to use it again")
 
 // storageHold is a taken claim: the lock, and the identities of the folder
@@ -41,7 +42,10 @@ type storageHold struct {
 // link, junction or mount) is not the one that was claimed.
 func (h *storageHold) verify() error {
 	root, err := os.Stat(h.root)
-	if err != nil || !os.SameFile(root, h.rootInfo) {
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	if !os.SameFile(root, h.rootInfo) {
 		return fmt.Errorf("%w: %s", ErrStorageChanged, h.root)
 	}
 	lock, err := os.Lstat(filepath.Join(h.root, storageLockName))
@@ -76,11 +80,11 @@ func (m *Manager) ClaimStorage() error {
 	return m.claimStorageLocked(false)
 }
 
-// installWriteGate makes every repository write lock pass verifyStorageHold,
+// installWriteGate makes every repository write lock verify root and repository identity,
 // so no writer needs its own call.
 func (m *Manager) installWriteGate() {
 	if m.Locks != nil {
-		m.Locks.SetWriteGate(m.verifyStorageHold)
+		m.Locks.SetWriteGate(m.VerifyRepositoryStorage)
 	}
 }
 

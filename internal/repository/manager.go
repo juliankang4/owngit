@@ -81,7 +81,8 @@ type Manager struct {
 	maintenanceHook func(ctx context.Context, id string, args []string) error
 	// storageClaim holds this server's lock on the repository folder; see
 	// ClaimStorage.
-	storageClaim storageClaimState
+	storageClaim      storageClaimState
+	storageIdentities repositoryIdentities
 	// failedCreationMu serializes the preservation count and move across names.
 	failedCreationMu sync.Mutex
 	// creationDirectoryHook, when set by tests, runs after atomic private
@@ -269,7 +270,8 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s because its record could not be checked: %v", err, finalPath, checkErr)
 		}
 		if accepted {
-			return state.Repository{}, fmt.Errorf("record repository: %w; preserve the recorded repository at %s", err, finalPath)
+			bindErr := m.BindRepositoryStorage(id, finalPath, stagingInfo)
+			return state.Repository{}, fmt.Errorf("record repository: %w; preserve the recorded repository at %s", errors.Join(err, bindErr), finalPath)
 		}
 		// No request can use this repository before its row exists. Move
 		// this attempt's unchanged empty tree out of the published name,
@@ -285,6 +287,9 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 			return state.Repository{}, fmt.Errorf("record repository: %w; preserve folder at %s: %w", err, keptPath, rollbackErr)
 		}
 		return state.Repository{}, fmt.Errorf("record repository: %w; the unaccepted empty folder is preserved at %s and may be removed", err, creation.preserved)
+	}
+	if err := m.BindRepositoryStorage(id, finalPath, stagingInfo); err != nil {
+		return state.Repository{}, err
 	}
 	return repository, nil
 }
@@ -715,10 +720,13 @@ func (m *Manager) prepareRepository(ctx context.Context, id string, hookRuntime 
 		return err
 	}
 	lock := m.Locks.For(id)
-	if err := lock.LockContext(ctx); err != nil {
+	if err := lock.LockContextUngated(ctx); err != nil {
 		return err
 	}
 	defer lock.Unlock()
+	if err := m.BindRepositoryStorage(id, path, nil); err != nil {
+		return err
+	}
 	return m.configureLocked(ctx, path, hookRuntime)
 }
 

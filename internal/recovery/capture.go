@@ -290,6 +290,9 @@ func captureOnce(ctx context.Context, store *state.Store, manager *repository.Ma
 
 	repositories := make([]capturedRepository, len(roster))
 	for index, stored := range roster {
+		if err := manager.VerifyRepositoryStorage(stored.ID); err != nil {
+			return capturedState{}, "", fmt.Errorf("capture repository %q: %w", stored.ID, err)
+		}
 		if err := unreadable[stored.ID]; err != nil {
 			return capturedState{}, "", err
 		}

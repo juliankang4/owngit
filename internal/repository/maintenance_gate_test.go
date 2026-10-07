@@ -10,12 +10,34 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"owngit/internal/hostmem"
 )
+
+func TestMaintenanceRecordRefusesAReplacedDirectory(t *testing.T) {
+	manager, path, _ := newTestRepository(t)
+	ctx := context.Background()
+	manager.recordMaintenance(ctx, "sample", time.Now())
+	_, err := os.Stat(maintenanceRecordPath(path))
+	noErr(t, err)
+	noErr(t, os.Rename(path, path+"-original"))
+	noErr(t, os.Mkdir(path, 0o700))
+	var logged string
+	manager.maintenance.logf = func(format string, args ...any) { logged = fmt.Sprintf(format, args...) }
+	manager.recordMaintenance(ctx, "sample", time.Now())
+	if _, err := os.Lstat(maintenanceRecordPath(path)); !os.IsNotExist(err) {
+		t.Fatalf("replacement received a maintenance record: %v", err)
+	}
+	if !strings.Contains(logged, ErrStorageChanged.Error()) {
+		t.Fatalf("maintenance refusal was not reported: %q", logged)
+	}
+}
 
 func TestMaintenanceDoesNotWaitForTheGateUnderTheRepositoryLock(t *testing.T) {
 	fixture := newMaintenanceFixture(t)

@@ -868,6 +868,10 @@ func (m *Manager) recordMaintenance(ctx context.Context, id string, started time
 	}
 	recorded := started.Truncate(time.Second).Add(-maintenanceRecordMargin)
 	file := maintenanceRecordPath(path)
+	if err := m.VerifyRepositoryStorage(id); err != nil {
+		m.maintenance.logfOrNothing()("repository %q: the maintenance record was not written: %v", id, err)
+		return
+	}
 	if err := os.WriteFile(file, []byte(recorded.UTC().Format(time.RFC3339Nano)+"\n"), 0o644); err != nil {
 		m.maintenance.logfOrNothing()("repository %q: the maintenance record was not written, so it is maintained again: %v", id, err)
 	}

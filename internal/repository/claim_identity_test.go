@@ -3,12 +3,106 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 )
+
+// A repository keeps its directory identity even without a root claim.
+func TestRepositoryWriteLockRefusesAReplacedDirectory(t *testing.T) {
+	for _, claimRoot := range []bool{false, true} {
+		t.Run(fmt.Sprint("root claim ", claimRoot), func(t *testing.T) {
+			ctx := context.Background()
+			manager, path, _ := newTestRepository(t)
+			if claimRoot {
+				noErr(t, manager.ClaimStorage())
+				t.Cleanup(manager.ReleaseStorage)
+			}
+			lock := manager.Locks.For("sample")
+			noErr(t, lock.LockContext(ctx))
+			lock.UnlockWithoutRefChanges()
+			original := path + "-original"
+			noErr(t, os.Rename(path, original))
+			noErr(t, os.Mkdir(path, 0o700))
+			if err := lock.LockContext(ctx); !errors.Is(err, ErrStorageChanged) {
+				t.Fatalf("replacement write lock error=%v", err)
+			}
+			entries, err := os.ReadDir(path)
+			noErr(t, err)
+			if len(entries) != 0 {
+				t.Fatal("replacement received a write")
+			}
+			if err := manager.BindRepositoryStorage("sample", path, nil); !errors.Is(err, ErrStorageChanged) {
+				t.Fatalf("replacement identity was rebound: %v", err)
+			}
+			noErr(t, os.Rename(path, path+"-replacement"))
+			if err := lock.LockContext(ctx); !errors.Is(err, ErrStorageUnavailable) {
+				t.Fatalf("missing storage error=%v, want ErrStorageUnavailable", err)
+			}
+			noErr(t, os.Rename(original, path))
+			noErr(t, lock.LockContext(ctx))
+			lock.UnlockWithoutRefChanges()
+			// Windows does not rename a root with its claim file held open.
+			if !claimRoot || runtime.GOOS != "windows" {
+				root := manager.RepositoryRoot()
+				noErr(t, os.Rename(root, root+"-away"))
+				if err := lock.LockContext(ctx); !errors.Is(err, ErrStorageUnavailable) {
+					t.Fatalf("missing root error=%v, want ErrStorageUnavailable", err)
+				}
+				noErr(t, os.Rename(root+"-away", root))
+				noErr(t, lock.LockContext(ctx))
+				lock.UnlockWithoutRefChanges()
+			}
+			other := manager.Locks.For("other")
+			noErr(t, other.LockContext(ctx))
+			other.UnlockWithoutRefChanges()
+		})
+	}
+}
+
+func TestRegisteredRepositoryRefusesWritesUntilStorageIsPrepared(t *testing.T) {
+	manager, path, _ := newTestRepository(t)
+	ctx := context.Background()
+	unprepared := secondServer(manager)
+	noErr(t, unprepared.ClaimStorage())
+	t.Cleanup(unprepared.ReleaseStorage)
+	lock := unprepared.Locks.For("sample")
+	if err := lock.LockContext(ctx); !errors.Is(err, ErrStorageUnavailable) {
+		t.Fatalf("unprepared write error=%v, want ErrStorageUnavailable", err)
+	}
+	noErr(t, os.Rename(path, path+"-away"))
+	if err := unprepared.PrepareExisting(ctx); !errors.Is(err, ErrStorageUnavailable) {
+		t.Fatalf("missing preparation error=%v, want ErrStorageUnavailable", err)
+	}
+	noErr(t, os.Rename(path+"-away", path))
+	noErr(t, unprepared.PrepareExisting(ctx))
+	noErr(t, lock.LockContext(ctx))
+	lock.UnlockWithoutRefChanges()
+
+	// A confirmed publication retains its captured identity during an outage.
+	published := secondServer(manager)
+	identity, err := captureDirectoryIdentity(path)
+	noErr(t, err)
+	noErr(t, os.Rename(path, path+"-away"))
+	publicationLock := published.Locks.For("sample")
+	publicationLock.Lock()
+	err = published.BindRepositoryStorage("sample", path, identity)
+	publicationLock.UnlockWithoutRefChanges()
+	if !errors.Is(err, ErrStorageUnavailable) {
+		t.Fatalf("publication during missing storage error=%v", err)
+	}
+	noErr(t, os.Mkdir(path, 0o700))
+	if err := publicationLock.LockContext(ctx); !errors.Is(err, ErrStorageChanged) {
+		t.Fatalf("published identity was lost during the outage: %v", err)
+	}
+	noErr(t, os.Rename(path, path+"-replacement"))
+	noErr(t, os.Rename(path+"-away", path))
+	noErr(t, publicationLock.LockContext(ctx))
+	publicationLock.UnlockWithoutRefChanges()
+}
 
 // The claim must follow the folder and lock file it was taken on, not their
 // names: a removed lock name lets a second server claim the same folder, and a

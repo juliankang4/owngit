@@ -338,7 +338,7 @@ func (m *Manager) prepareAttempt(ctx context.Context, id string, job *preparatio
 	}
 	defer func() { <-p.slots }()
 	lock := m.Locks.For(id)
-	if err := lock.LockContext(ctx); err != nil {
+	if err := lock.LockContextUngated(ctx); err != nil {
 		return err
 	}
 	defer lock.Unlock()
@@ -350,6 +350,9 @@ func (m *Manager) prepareAttempt(ctx context.Context, id string, job *preparatio
 	}
 	path, err := m.readableStorage(ctx, id)
 	if err != nil {
+		return err
+	}
+	if err := m.BindRepositoryStorage(id, path, nil); err != nil {
 		return err
 	}
 	// Git commands that OwnGit's previous run left interrupted, for example

@@ -1,13 +1,48 @@
 package gitexec
 
 import (
+	"context"
+	"errors"
 	"sync"
 	"testing"
 )
 
-// TestRepositoryLockGenerationCountsWriteReleases proves that every release
-// of the write lock through the returned value advances the generation, and
-// that readers do not.
+func TestRepositoryWriteGateGetsIDAndReleasesRefusal(t *testing.T) {
+	locks := NewLocks()
+	refused := errors.New("storage changed")
+	locks.SetWriteGate(func(id string) error {
+		if id == "sample" {
+			return refused
+		}
+		return nil
+	})
+	lock := locks.For("sample")
+	if err := lock.LockContext(context.Background()); !errors.Is(err, refused) {
+		t.Fatalf("write lock error=%v", err)
+	}
+	if ok, err := lock.TryLockGated(); ok || !errors.Is(err, refused) {
+		t.Fatalf("try write lock=%v, error=%v", ok, err)
+	}
+	if lock.Generation() != 0 || !lock.TryRLock() {
+		t.Fatal("refusal changed refs or kept the write lock")
+	}
+	// A reader still excludes writers after both refusals released the lock.
+	if ok, err := lock.TryLockGated(); ok || err != nil {
+		t.Fatalf("writer passed a held reader: %v, %v", ok, err)
+	}
+	lock.RUnlock()
+	other := locks.For("other")
+	if err := other.LockContext(context.Background()); err != nil {
+		t.Fatalf("gate received the wrong repository ID: %v", err)
+	}
+	other.UnlockWithoutRefChanges()
+	locks.SetWriteGate(nil)
+	if !lock.TryLock() {
+		t.Fatal("refused lock is not reusable")
+	}
+	lock.UnlockWithoutRefChanges()
+}
+
 func TestRepositoryIncarnationIsIndependentOfRefWrites(t *testing.T) {
 	locks := NewLocks()
 	lock := locks.For("project")
