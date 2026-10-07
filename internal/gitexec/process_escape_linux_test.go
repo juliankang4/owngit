@@ -2,6 +2,7 @@ package gitexec
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"runtime"
@@ -40,9 +41,9 @@ func runSessionFixture(mode string) bool {
 	return true
 }
 
-// A process list that cannot be read must not turn a finished run into an
-// error: the run keeps what the process group gave it.
-func TestUnreadableProcessListKeepsTheRunResult(t *testing.T) {
+// An absent process list must not turn a finished run into an error:
+// the run keeps what the process group gave it.
+func TestMissingProcessListKeepsTheRunResult(t *testing.T) {
 	previous := procDirectory
 	procDirectory = t.TempDir() + "/missing"
 	t.Cleanup(func() { procDirectory = previous })
@@ -74,6 +75,47 @@ func TestEmptyEnvironmentOfAnUnrelatedProcessIsNotWaitedFor(t *testing.T) {
 	if _, unknown, _ = markedProcesses("none", 0); unknown == 0 {
 		t.Fatal("a process that could belong to the run was not counted")
 	}
+}
+
+// A real child isolates RLIMIT_NOFILE from the package's other tests.
+func TestMarkedCleanupReportsDescriptorExhaustion(t *testing.T) {
+	const childMode = "OWNGIT_TEST_MARKED_CLEANUP_NOFILE"
+	if os.Getenv(childMode) == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		child := exec.CommandContext(ctx, streamTestExecutable(t), "-test.run=^"+t.Name()+"$", "-test.v")
+		child.Env = append(os.Environ(), childMode+"=1")
+		output, err := child.CombinedOutput()
+		if err != nil {
+			t.Fatalf("descriptor exhaustion child: %v\n%s", err, output)
+		}
+		t.Logf("%s", output)
+		return
+	}
+
+	const token = "descriptor-exhaustion"
+	target := exec.Command("sleep", "60")
+	target.Env = append(os.Environ(), ownedRunMark(token))
+	noErr(t, target.Start())
+	defer func() { _ = target.Process.Kill(); _ = target.Wait() }()
+
+	var original syscall.Rlimit
+	noErr(t, syscall.Getrlimit(syscall.RLIMIT_NOFILE, &original))
+	limited := original
+	limited.Cur = 0
+	noErr(t, syscall.Setrlimit(syscall.RLIMIT_NOFILE, &limited))
+	err := killMarkedProcesses(token, 0)
+	noErr(t, syscall.Setrlimit(syscall.RLIMIT_NOFILE, &original))
+
+	var readErr *os.PathError
+	if !errors.As(err, &readErr) || !errors.Is(err, syscall.EMFILE) || readErr.Path != procDirectory {
+		t.Fatalf("cleanup error=%v, want the failed process listing with EMFILE", err)
+	}
+	fields := statFields(procDirectory + "/" + strconv.Itoa(target.Process.Pid))
+	if len(fields) == 0 || fields[0] == "Z" || fields[0] == "X" || fields[0] == "x" {
+		t.Fatalf("unconfirmed target is gone or not live: stat fields=%v", fields)
+	}
+	t.Logf("cleanup listing: %v; target state=%s (not a zombie)", err, fields[0])
 }
 
 func isSleep(pid int) bool {

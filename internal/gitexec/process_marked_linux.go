@@ -85,8 +85,8 @@ var warnProcessListOnce sync.Once
 // started during the scan is found. It fails when signalling fails, or when
 // marked processes are still there when markedProcessBound, counted from the
 // start, has passed, however many new ones keep appearing. When the process
-// list cannot be read, the run keeps what the process group gave it: a warning
-// is logged once and no error returned.
+// list is absent, the run keeps what the process group gave it: a warning is
+// logged once and no error returned. Other listing errors fail the cleanup.
 func killMarkedProcesses(token string, since uint64) error {
 	if token == "" {
 		return nil
@@ -109,11 +109,14 @@ func killMarkedProcesses(token string, since uint64) error {
 	}
 	for {
 		pids, unknown, err := listMarkedProcesses(token, since)
-		if err != nil {
+		switch {
+		case errors.Is(err, syscall.ENOENT):
 			warnProcessListOnce.Do(func() {
 				log.Printf("OwnGit could not read %s (%v); only the process group is stopped, so descendants that left it are not checked", procDirectory, err)
 			})
 			return failures
+		case err != nil:
+			return errors.Join(failures, fmt.Errorf("list the processes of the owned run: %w", err))
 		}
 		signalNew(pids)
 		elapsed := time.Since(start)
@@ -147,24 +150,32 @@ var errNotMarked = errors.New("process does not carry the mark of the run")
 
 // killMarkedProcess kills one process after checking again that it carries the
 // mark, so a reused PID is not signalled. It opens a pidfd first, so the check
-// and the signal address the same process. Without pidfd support (older
-// kernels) the check comes right before a plain kill, which leaves a window
-// that only a PID reused within microseconds could use.
+// and the signal address the same process. If pidfds are unavailable, the
+// check comes right before a plain kill, which leaves a window that only a
+// PID reused within microseconds could use. A failed check is reported unless
+// the process is gone or its environment is hidden by the kernel.
 func killMarkedProcess(pid int, token string) error {
 	needle := []byte("\x00" + ownedRunMark(token) + "\x00")
 	fd, err := unix.PidfdOpen(pid, 0)
-	switch {
-	case err == nil:
+	switch err {
+	case nil:
 		defer unix.Close(fd)
-	case err == syscall.ESRCH:
+	case syscall.ESRCH:
 		return nil
-	case err != syscall.ENOSYS && err != syscall.EINVAL && err != syscall.EPERM:
-		return err
-	default:
+	case syscall.ENOSYS, syscall.EINVAL, syscall.EPERM, syscall.EMFILE, syscall.ENFILE:
 		fd = -1
+	default:
+		return err
 	}
 	environment, err := os.ReadFile(procDirectory + "/" + strconv.Itoa(pid) + "/environ")
-	if err != nil || !bytes.Contains(append(append([]byte{0}, environment...), 0), needle) {
+	if err != nil {
+		if errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ESRCH) ||
+			errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM) {
+			return errNotMarked
+		}
+		return err
+	}
+	if !bytes.Contains(append(append([]byte{0}, environment...), 0), needle) {
 		return errNotMarked
 	}
 	if fd >= 0 {
