@@ -5,7 +5,17 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"owngit/internal/gitexec"
 )
+
+func TestWriteLockPreservesStorageUnavailable(t *testing.T) {
+	locks := gitexec.NewLocks()
+	locks.SetWriteGate(func(string) error { return ErrStorageUnavailable })
+	if err := writeLock(context.Background(), locks.For("sample")); !errors.Is(err, ErrStorageUnavailable) || errors.Is(err, ErrRepositoryInUse) {
+		t.Fatalf("storage lock error=%v", err)
+	}
+}
 
 // Reads for a request stop at its deadline while a Git operation holds the
 // repository, and say that the repository is in use. A page that lists

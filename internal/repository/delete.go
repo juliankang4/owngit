@@ -99,30 +99,10 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	}
 	// Maintenance never delays a deletion: a running one is stopped.
 	m.stopMaintenanceOf(id)
-	_, pending, err := m.Store.RepositoryDeletion(ctx, id)
-	if err != nil {
+	if err := m.lockCatalogWithin(ctx, id); err != nil {
 		return DeleteResult{}, err
 	}
-	lock := m.Locks.For(id)
-	if pending {
-		// Finish the old owned stage before preparing a newer registered row.
-		lockCtx, cancel := context.WithTimeout(ctx, deleteLockWait)
-		err := lock.LockContextUngated(lockCtx)
-		cancel()
-		if err != nil {
-			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-				return DeleteResult{}, ErrRepositoryInUse
-			}
-			return DeleteResult{}, err
-		}
-		if err := m.verifyRepositoryStorage(id, false); err != nil {
-			lock.UnlockWithoutRefChanges()
-			return DeleteResult{}, err
-		}
-	} else if err := lockWithin(ctx, lock); err != nil {
-		return DeleteResult{}, err
-	}
-	defer lock.Unlock()
+	defer m.Locks.For(id).Unlock()
 	// A backup holds the repository until its bundle is written. Checked
 	// with the lock held, so a backup that has not reached the repository
 	// yet waits for this deletion instead.
@@ -155,10 +135,8 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	} else if !exists {
 		return DeleteResult{}, ErrRepositoryNotFound
 	}
-	if pending {
-		if err := m.BindRepositoryStorage(id, path, nil); err != nil {
-			return DeleteResult{}, err
-		}
+	if err := m.BindRepositoryStorage(id, path, nil); err != nil {
+		return DeleteResult{}, err
 	}
 	moved, err := m.deletionTarget(root, id, mode)
 	if err != nil {
@@ -215,12 +193,7 @@ func (m *Manager) ReconcileDeletions(ctx context.Context) error {
 			problems = append(problems, err)
 			continue
 		}
-		err := m.verifyRepositoryStorage(deletion.RepositoryID, false)
-		if err == nil {
-			_, err = m.finishDeletion(ctx, root, deletion)
-		} else if errors.Is(err, ErrStorageUnavailable) {
-			err = errors.Join(err, checkDeletionMarker(root, deletion))
-		}
+		_, err := m.finishDeletion(ctx, root, deletion)
 		lock.Unlock()
 		if err != nil {
 			problems = append(problems, fmt.Errorf("repository %q: %w: %w", deletion.RepositoryID, ErrDeleteIncomplete, err))
@@ -235,6 +208,14 @@ func (m *Manager) ReconcileDeletions(ctx context.Context) error {
 func (m *Manager) finishDeletion(ctx context.Context, root string, deletion state.RepositoryDeletion) (DeleteResult, error) {
 	incomplete := func(err error) (DeleteResult, error) {
 		return DeleteResult{}, fmt.Errorf("%w: %w", ErrDeleteIncomplete, err)
+	}
+	if err := m.VerifyStorageHold(); err != nil {
+		return incomplete(err)
+	}
+	if binding := m.repositoryBinding(deletion.RepositoryID, m.Locks.For(deletion.RepositoryID).Incarnation()); binding != nil {
+		if err := m.verifyRepositoryIdentity(deletion.RepositoryID, binding); errors.Is(err, ErrStorageChanged) {
+			return incomplete(err)
+		}
 	}
 	_, reused, err := m.Store.Repository(ctx, deletion.RepositoryID)
 	if err != nil {
@@ -560,7 +541,7 @@ func (m *Manager) InUse(id string) bool {
 // writeLock is readLock for the write lock.
 func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
 	if err := lock.LockContext(ctx); err != nil {
-		if errors.Is(err, ErrStorageChanged) {
+		if errors.Is(err, ErrStorageChanged) || errors.Is(err, ErrStorageUnavailable) {
 			return err
 		}
 		return fmt.Errorf("%w (%w)", ErrRepositoryInUse, err)
@@ -568,11 +549,32 @@ func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
 	return nil
 }
 
+// lockCatalogWithin bounds a root-checked catalogue lock without checking a
+// repository directory that the operation does not write.
+func (m *Manager) lockCatalogWithin(ctx context.Context, id string) error {
+	lock := m.Locks.For(id)
+	return waitForWriteLock(ctx, func() (bool, error) {
+		if !lock.TryLock() {
+			return false, nil
+		}
+		if err := m.VerifyStorageHold(); err != nil {
+			lock.UnlockWithoutRefChanges()
+			return false, err
+		}
+		return true, nil
+	})
+}
+
 // lockWithin takes the write lock within the repository mutation wait.
 func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock) error {
+	return waitForWriteLock(ctx, lock.TryLockGated)
+}
+
+// Polling does not queue a writer ahead of new readers.
+func waitForWriteLock(ctx context.Context, take func() (bool, error)) error {
 	deadline := time.Now().Add(deleteLockWait)
 	for {
-		if taken, err := lock.TryLockGated(); err != nil {
+		if taken, err := take(); err != nil {
 			return err
 		} else if taken {
 			return nil

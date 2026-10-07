@@ -376,6 +376,11 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 				http.Error(writer, storageChangedMessage, http.StatusConflict)
 				return
 			}
+			if errors.Is(err, repository.ErrStorageUnavailable) {
+				logCause(operationContext, fmt.Sprintf("Git %s request for repository %q failed: repository storage is unavailable", requestKind(route, request.Method), route.repositoryID), err)
+				http.Error(writer, "repository storage is unavailable", http.StatusServiceUnavailable)
+				return
+			}
 			answerBusyLocked(writer, route, request.Method, lockWaitBound, lockWaitLimit, err)
 			return
 		}

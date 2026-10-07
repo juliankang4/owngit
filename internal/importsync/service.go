@@ -436,6 +436,9 @@ func (s *Service) ChangeOptions(ctx context.Context, repositoryID string, change
 // deadline means the repository is busy and the caller can retry; a cancelled
 // caller stays cancelled, or superseded when a newer authority took over.
 func preWriteLockProblem(ctx context.Context, err error) *Problem {
+	if errors.Is(err, repository.ErrStorageUnavailable) {
+		return newProblem(CodeRepositoryMissing, "repository storage is unavailable", err)
+	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return newProblem(CodeBusy, "another Git operation holds the repository; nothing was changed", err)
 	}
@@ -452,7 +455,7 @@ func (s *Service) configure(ctx context.Context, repositoryID string, replaces f
 	// The change waits for the repository lock at most until the caller's
 	// context ends, so a change queued behind another writer is not held past
 	// its deadline.
-	if err := lock.LockContext(ctx); err != nil {
+	if err := s.Repositories.LockCatalogContext(ctx, repositoryID); err != nil {
 		return state.ImportSource{}, preWriteLockProblem(ctx, err)
 	}
 	previous, exists, err := s.readSource(ctx, repositoryID)
@@ -621,7 +624,7 @@ func (s *Service) SetCredentials(ctx context.Context, repositoryID string, crede
 	lock := s.Repositories.Locks.For(repositoryID)
 	// As in configure, the wait ends at the caller's deadline instead of when
 	// the other writer finishes.
-	if err := lock.LockContext(ctx); err != nil {
+	if err := s.Repositories.LockCatalogContext(ctx, repositoryID); err != nil {
 		return preWriteLockProblem(ctx, err)
 	}
 	source, exists, err := s.Store.ImportSource(ctx, repositoryID)

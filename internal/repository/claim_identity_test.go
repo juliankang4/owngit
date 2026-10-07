@@ -104,6 +104,34 @@ func TestRegisteredRepositoryRefusesWritesUntilStorageIsPrepared(t *testing.T) {
 	publicationLock.UnlockWithoutRefChanges()
 }
 
+func TestCatalogueRenameAndDeleteWithoutStorageBinding(t *testing.T) {
+	ctx := context.Background()
+	manager, path, _ := newTestRepository(t)
+	manager = secondServer(manager)
+	noErr(t, manager.ClaimStorage())
+	t.Cleanup(manager.ReleaseStorage)
+	noErr(t, os.Rename(path, path+"-away"))
+	_, err := manager.Rename(ctx, "sample", "renamed", time.Now())
+	noErr(t, err)
+	if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrStorageUnavailable) || errors.Is(err, ErrDeleteIncomplete) {
+		t.Fatalf("missing-directory deletion error=%v", err)
+	}
+	_, exists, err := manager.Store.RepositoryDeletion(ctx, "sample")
+	noErr(t, err)
+	if exists {
+		t.Fatal("missing-directory deletion recorded an intent")
+	}
+	if _, exists, err := manager.Store.Repository(ctx, "sample"); err != nil || !exists {
+		t.Fatalf("refused deletion lost the repository: exists=%v err=%v", exists, err)
+	}
+	noErr(t, os.Rename(path+"-away", path))
+	_, err = manager.Delete(ctx, "sample", DeleteFiles)
+	noErr(t, err)
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Fatalf("returned directory was not deleted: %v", err)
+	}
+}
+
 // The claim must follow the folder and lock file it was taken on, not their
 // names: a removed lock name lets a second server claim the same folder, and a
 // replaced folder is not the claimed one.

@@ -138,6 +138,9 @@ func stoppedProblem(ctx context.Context, stage string, cause error) *Problem {
 	if errors.Is(cause, repository.ErrStorageChanged) {
 		return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped "+stage+"; restart OwnGit", cause)
 	}
+	if errors.Is(cause, repository.ErrStorageUnavailable) {
+		return newProblem(CodeRepositoryMissing, "repository storage is unavailable", cause)
+	}
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return newProblem(CodeLimit, "import run deadline expired "+stage, cause)
 	}

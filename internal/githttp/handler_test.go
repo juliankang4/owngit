@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -428,6 +429,54 @@ func TestBusyAnswerNamesTheLimitThatEndedTheWait(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestQueuedPushReportsUnavailableStorage(t *testing.T) {
+	manager, runner := newHTTPTestRepository(t)
+	handler, err := New(runner, manager, "")
+	noErr(t, err)
+	server := httptest.NewServer(handler)
+	defer server.Close()
+	logs := captureLog(t)
+	lock := manager.Locks.For("sample")
+	lock.Lock()
+	held := true
+	defer func() {
+		if held {
+			lock.UnlockWithoutRefChanges()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/git/sample.git/git-receive-pack", strings.NewReader("0000"))
+	noErr(t, err)
+	request.Header.Set("Content-Type", "application/x-git-receive-pack-request")
+	done := make(chan *http.Response, 1)
+	go func() {
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- response
+	}()
+	waitFor(t, 5*time.Second, "the push to wait for the writer", lock.Waiting)
+	path, err := manager.Path("sample")
+	noErr(t, err)
+	noErr(t, os.Rename(path, path+"-away"))
+	lock.UnlockWithoutRefChanges()
+	held = false
+	response := <-done
+	if response == nil {
+		return
+	}
+	body, err := io.ReadAll(response.Body)
+	noErr(t, err)
+	noErr(t, response.Body.Close())
+	waitFor(t, 5*time.Second, "the handler to finish", func() bool { return handler.Active() == 0 })
+	if response.StatusCode != http.StatusServiceUnavailable || string(body) != "repository storage is unavailable\n" || !strings.Contains(logs.String(), "request for repository \"sample\" failed: repository storage is unavailable") || strings.Contains(logs.String(), "stayed locked") {
+		t.Fatalf("unavailable push status=%d body=%q log=%q", response.StatusCode, body, logs.String())
+	}
+	noErr(t, os.Rename(path+"-away", path))
 }
 
 // useLimits makes every transfer of handler run under its current limits

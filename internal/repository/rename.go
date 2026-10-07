@@ -27,7 +27,7 @@ func (m *Manager) Rename(ctx context.Context, id, name string, now time.Time) (s
 		return state.Repository{}, err
 	}
 	lock := m.Locks.For(id)
-	if err := lockWithin(ctx, lock); err != nil {
+	if err := m.lockCatalogWithin(ctx, id); err != nil {
 		return state.Repository{}, err
 	}
 	defer lock.Unlock()
@@ -35,7 +35,7 @@ func (m *Manager) Rename(ctx context.Context, id, name string, now time.Time) (s
 	// name check until it is recorded, so a rename to that name waits for it.
 	if address := strings.ToLower(name); address != id {
 		addressLock := m.Locks.For(address)
-		if err := lockWithin(ctx, addressLock); err != nil {
+		if err := m.lockCatalogWithin(ctx, address); err != nil {
 			return state.Repository{}, err
 		}
 		defer addressLock.Unlock()

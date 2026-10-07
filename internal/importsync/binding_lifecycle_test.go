@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,19 @@ import (
 )
 
 const testCAPEM = "-----BEGIN CERTIFICATE-----\nc3ludGhldGlj\n-----END CERTIFICATE-----\n"
+
+func TestImportSettingsDoNotNeedRepositoryStorage(t *testing.T) {
+	f := newFixture(t)
+	f.mustImport(ImportInput{})
+	path := f.destinationPath()
+	noErr(t, os.Rename(path, path+"-away"))
+	_, err := f.service.ConfigureSource(context.Background(), ConfigureInput{
+		RepositoryID: "project", URL: "https://example.invalid/moved/project.git", Mode: ModeStandalone,
+	})
+	noErr(t, err)
+	noErr(t, f.service.SetCredentials(context.Background(), "project", nil))
+	noErr(t, os.Rename(path+"-away", path))
+}
 
 // Saving one part of the credentials keeps the other stored part. Only an
 // explicit clear removes both.

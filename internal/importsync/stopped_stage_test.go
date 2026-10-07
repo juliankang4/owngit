@@ -9,8 +9,21 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/repository"
 	"owngit/internal/state"
 )
+
+func TestStorageUnavailableLockProblemsKeepTheirCause(t *testing.T) {
+	cause := fmt.Errorf("directory disappeared: %w", repository.ErrStorageUnavailable)
+	for _, problem := range []*Problem{
+		preWriteLockProblem(context.Background(), cause),
+		stoppedProblem(context.Background(), "before publication", cause),
+	} {
+		if problem.Code != CodeRepositoryMissing || problem.Message != "repository storage is unavailable" || !errors.Is(problem, repository.ErrStorageUnavailable) {
+			t.Fatalf("storage lock problem=%+v", problem)
+		}
+	}
+}
 
 // hookDeadline is the parent context of a run whose deadline the test lets
 // pass at the seam under test. A run timeout starts at admission, and a slow

@@ -73,6 +73,14 @@ func TestReconcileAllReadsPullRequestRefsOnce(t *testing.T) {
 	}
 }
 
+func TestRequestLockReportsUnavailableStorage(t *testing.T) {
+	err := lockForRequest(context.Background(), func(context.Context) error { return repository.ErrStorageUnavailable })
+	var problem *Problem
+	if !errors.As(err, &problem) || problem.Code != "repository_unavailable" || problem.Message != "The repository storage is unavailable." || !errors.Is(err, repository.ErrStorageUnavailable) {
+		t.Fatalf("storage lock error=%v", err)
+	}
+}
+
 // TestReconcileAllNamesATimeoutCause proves that a Git read that exceeds its
 // bound reports the timeout in the message, not only that refs "could not be
 // read", and stays a failure.

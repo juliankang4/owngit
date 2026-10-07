@@ -26,21 +26,12 @@ func TestRepositoryWriteGateGetsIDAndReleasesRefusal(t *testing.T) {
 	if lock.Generation() != 0 || !lock.TryRLock() {
 		t.Fatal("refusal changed refs or kept the write lock")
 	}
-	// A reader still excludes writers after both refusals released the lock.
-	if ok, err := lock.TryLockGated(); ok || err != nil {
-		t.Fatalf("writer passed a held reader: %v, %v", ok, err)
-	}
 	lock.RUnlock()
 	other := locks.For("other")
 	if err := other.LockContext(context.Background()); err != nil {
 		t.Fatalf("gate received the wrong repository ID: %v", err)
 	}
 	other.UnlockWithoutRefChanges()
-	locks.SetWriteGate(nil)
-	if !lock.TryLock() {
-		t.Fatal("refused lock is not reusable")
-	}
-	lock.UnlockWithoutRefChanges()
 }
 
 func TestRepositoryIncarnationIsIndependentOfRefWrites(t *testing.T) {

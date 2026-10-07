@@ -340,6 +340,35 @@ func TestDeleteCompletesAfterInterruptionAtEveryStep(t *testing.T) {
 	}
 }
 
+func TestRecordedDeletionFinishesAfterDirectoryRemovedByHand(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		name := "same run"
+		if restart {
+			name = "after restart"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			manager, remote := newDeletionRepository(t)
+			crashAt(manager, "recorded")
+			if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrDeleteIncomplete) {
+				t.Fatalf("interrupted deletion error=%v", err)
+			}
+			manager.deletionHook = nil
+			noErr(t, os.Rename(remote, filepath.Join(t.TempDir(), "removed-by-hand.git")))
+			if restart {
+				manager = secondServer(manager)
+			}
+			noErr(t, manager.ReconcileDeletions(ctx))
+			if _, exists, err := manager.Store.RepositoryDeletion(ctx, "sample"); err != nil || exists {
+				t.Fatalf("deletion intent remains: exists=%v err=%v", exists, err)
+			}
+			if _, err := manager.Create(ctx, "sample", ""); err != nil {
+				t.Fatalf("name not released: %v", err)
+			}
+		})
+	}
+}
+
 func TestDeleteRetryResumesInterruptedDeletion(t *testing.T) {
 	ctx := context.Background()
 	manager, _ := newDeletionRepository(t)

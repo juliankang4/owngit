@@ -1181,6 +1181,9 @@ func lockForRequest(ctx context.Context, take func(context.Context) error) error
 		if errors.Is(err, repository.ErrStorageChanged) {
 			return &Problem{Code: "storage_changed", Message: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Check the folder, then restart OwnGit.", Cause: err}
 		}
+		if errors.Is(err, repository.ErrStorageUnavailable) {
+			return &Problem{Code: "repository_unavailable", Message: "The repository storage is unavailable.", Cause: err}
+		}
 		return &Problem{Code: "repository_busy", Message: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.", Cause: errors.Join(repository.ErrRepositoryInUse, err)}
 	}
 	return nil
