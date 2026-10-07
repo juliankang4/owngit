@@ -102,7 +102,7 @@ func TestNPMPackages(t *testing.T) {
 	if !reflect.DeepEqual(main.OptionalDependencies, wantOptional) {
 		t.Fatalf("optionalDependencies %v, want exact pins %v", main.OptionalDependencies, wantOptional)
 	}
-	if main.Name != "owngit" || main.License != "MIT" || main.Private || main.Note != "" ||
+	if main.Name != "owngit" || main.License != "GPL-3.0-or-later" || main.Private || main.Note != "" ||
 		main.Homepage != "https://example.test/owngit" ||
 		main.Repository != (npmRepository{Type: "git", URL: "git+https://example.test/owngit.git"}) ||
 		!reflect.DeepEqual(main.Bin, map[string]string{"owngit": "bin/owngit.js"}) ||

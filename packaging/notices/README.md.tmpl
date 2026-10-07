@@ -1,6 +1,6 @@
 # Third-party notices
 
-OwnGit's own source is MIT licensed, see `../LICENSE`. The compiled `owngit`
+OwnGit's own source is GPL-3.0-or-later licensed, see `../LICENSE`. The compiled `owngit`
 executable also contains third-party code, and this directory carries the
 original notice text for every module that is linked into it and every
 non-module asset it embeds.

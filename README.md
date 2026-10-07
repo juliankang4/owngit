@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.4-0A62C9?style=flat&colorA=222222" alt="Version 1.1.4"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-58A6FF?style=flat&colorA=222222" alt="GPL-3.0 License"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
   <a href="https://www.npmjs.com/package/owngit"><img src="https://img.shields.io/npm/v/owngit?style=flat&colorA=222222&color=CB3837&logo=npm&logoColor=white&label=npm" alt="npm package owngit"></a>
 </p>
@@ -131,4 +131,4 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 
 ## License
 
-[MIT](LICENSE). Notices for third-party code are in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES/README.md).
+[GPL-3.0-or-later](LICENSE). Versions 1.1.4 and earlier were released under the MIT license. Notices for third-party code are in [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES/README.md).

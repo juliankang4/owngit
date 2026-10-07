@@ -165,7 +165,7 @@ func TestAURPackaging(t *testing.T) {
 		"pkgrel":             {"1"},
 		"url":                {homepage},
 		"arch":               {"x86_64", "aarch64"},
-		"license":            {"MIT"},
+		"license":            {"GPL-3.0-or-later"},
 		"depends":            {"git"},
 		"provides":           {"owngit"},
 		"conflicts":          {"owngit"},

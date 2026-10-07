@@ -131,7 +131,7 @@ func renderNPM(outDir string, inputs npmInputs) error {
 		document := npmPackageJSON{
 			Note: note, Name: name, Version: inputs.version,
 			Description: "The OwnGit executable for " + npmPlatformLabels[current.String()] + ", installed by the owngit package",
-			License:     "MIT", Homepage: inputs.homepage, Repository: repository, Private: private,
+			License:     "GPL-3.0-or-later", Homepage: inputs.homepage, Repository: repository, Private: private,
 			OS: []string{npmOS(current)}, CPU: []string{npmCPU(current)},
 			Files: []string{npmBinaryPath(current), "README.md", "LICENSE", "THIRD_PARTY_NOTICES/"},
 		}
@@ -171,7 +171,7 @@ func renderNPM(outDir string, inputs npmInputs) error {
 	document := npmPackageJSON{
 		Note: note, Name: npmBaseName, Version: inputs.version,
 		Description: "Private Git storage and browser dashboard on your own computer",
-		License:     "MIT", Homepage: inputs.homepage, Repository: repository, Private: private,
+		License:     "GPL-3.0-or-later", Homepage: inputs.homepage, Repository: repository, Private: private,
 		Bin:                  map[string]string{"owngit": "bin/owngit.js"},
 		Files:                []string{"bin/owngit.js", "README.md", "LICENSE"},
 		Engines:              map[string]string{"node": npmNodeRange},

@@ -21,7 +21,7 @@ LABEL org.opencontainers.image.title="OwnGit" \
       org.opencontainers.image.url="https://github.com/juliankang4/owngit" \
       org.opencontainers.image.source="https://github.com/juliankang4/owngit" \
       org.opencontainers.image.documentation="https://github.com/juliankang4/owngit/blob/main/docs/OPERATIONS.md#run-in-a-container" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${REVISION}"
 

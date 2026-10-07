@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.4-0A62C9?style=flat&colorA=222222" alt="버전 1.1.4"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-58A6FF?style=flat&colorA=222222" alt="MIT 라이선스"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-58A6FF?style=flat&colorA=222222" alt="GPL-3.0 라이선스"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
   <a href="https://www.npmjs.com/package/owngit"><img src="https://img.shields.io/npm/v/owngit?style=flat&colorA=222222&color=CB3837&logo=npm&logoColor=white&label=npm" alt="npm 패키지 owngit"></a>
 </p>
@@ -131,4 +131,4 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 
 ## 라이선스
 
-[MIT](LICENSE). 서드파티 코드의 고지는 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES/README.md)에 있습니다.
+[GPL-3.0-or-later](LICENSE). 1.1.4 이하 버전은 MIT 라이선스로 배포되었습니다. 서드파티 코드의 고지는 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES/README.md)에 있습니다.
