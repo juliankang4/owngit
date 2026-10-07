@@ -71,7 +71,9 @@ func TestSHA256RepositoriesRestoreAndVerify(t *testing.T) {
 	}
 
 	restoredRoot := filepath.Join(root, "restored-repositories")
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""))
+	if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""); err != nil {
+		t.Fatal(err)
+	}
 	for id, wantTip := range map[string]string{"modern": tip, "modern-empty": "", "project": ""} {
 		path := filepath.Join(restoredRoot, id+".git")
 		format := strings.TrimSpace(gitOutput(t, path, "rev-parse", "--show-object-format"))

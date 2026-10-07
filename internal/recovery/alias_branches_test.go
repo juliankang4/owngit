@@ -29,7 +29,9 @@ func TestBackupReportsAliasBranchesAsOrdinaryBranches(t *testing.T) {
 		t.Fatalf("verification: %+v", verification)
 	}
 	restoredRoot := filepath.Join(root, "restored-repositories")
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""))
+	if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""); err != nil {
+		t.Fatal(err)
+	}
 	restored := filepath.Join(restoredRoot, "project.git")
 	assertRef(t, restored, "refs/heads/alias", oid)
 	if output, err := gitCombined(restored, "--git-dir", ".", "symbolic-ref", "refs/heads/alias"); err == nil {
@@ -90,7 +92,9 @@ func TestBackupAliasNoticeNamesImmediateTargets(t *testing.T) {
 		t.Skip("executing the POSIX reconnect command needs a POSIX shell")
 	}
 	restoredRoot := filepath.Join(root, "restored-repositories")
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""))
+	if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restoredRoot, ""); err != nil {
+		t.Fatal(err)
+	}
 	restored := filepath.Join(restoredRoot, "project.git")
 	for _, alias := range report.AliasBranches {
 		command := exec.Command("sh", "-c", alias.ReconnectCommand())

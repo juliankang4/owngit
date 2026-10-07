@@ -53,11 +53,8 @@ type Runner struct {
 	// Tests set it; production leaves it nil for the real operations.
 	processSeam *processCleanupSeam
 
-	// stdoutCopyTap and stderrCopyTap, when set by tests, observe bytes as they
-	// are copied into the output buffers. Production leaves them nil, and then
-	// the command writers are the buffers themselves.
+	// stdoutCopyTap, when set by tests, observes bytes copied into stdout.
 	stdoutCopyTap io.Writer
-	stderrCopyTap io.Writer
 }
 
 type Result struct {
@@ -342,6 +339,10 @@ type CommandLimits struct {
 	Timeout     time.Duration
 	OutputLimit int64
 	Environment []string
+	// Stderr receives stderr without the sample limit and is detached before
+	// return, including a cleanup failure. A write error stops the owned
+	// command and is returned to the caller.
+	Stderr io.Writer
 	// StopAtOutputLimit ends the command as soon as its output passes
 	// OutputLimit instead of letting it run to the end with the rest of its
 	// output discarded. The result is then the output up to the limit and a
@@ -358,7 +359,7 @@ func (r *Runner) RunWithLimits(ctx context.Context, dir string, stdin io.Reader,
 	if limits.OutputLimit > 0 {
 		limit = limits.OutputLimit
 	}
-	return r.runCommand(ctx, dir, stdin, limit, limits.Environment, limits.Timeout, limits.StopAtOutputLimit, args...)
+	return r.runCommand(ctx, dir, stdin, limit, limits.Environment, limits.Timeout, limits.StopAtOutputLimit, limits.Stderr, args...)
 }
 
 // RunWithEnvironment executes Git with the runner's isolated environment plus
@@ -373,10 +374,10 @@ func (r *Runner) RunWithOutputLimit(ctx context.Context, dir string, stdin io.Re
 }
 
 func (r *Runner) run(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, args ...string) (Result, error) {
-	return r.runCommand(ctx, dir, stdin, limit, extraEnv, commandTimeout, false, args...)
+	return r.runCommand(ctx, dir, stdin, limit, extraEnv, commandTimeout, false, nil, args...)
 }
 
-func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, stopAtLimit bool, args ...string) (Result, error) {
+func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, limit int64, extraEnv []string, commandTimeout time.Duration, stopAtLimit bool, stderrSink io.Writer, args ...string) (Result, error) {
 	if limit <= 0 {
 		limit = defaultOutputLimit
 	}
@@ -407,7 +408,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	cmd.Dir = dir
 	cmd.Env = r.environment(keepsTextSemantics(name), extraEnv...)
 	cmd.Stdout = observedCommandWriter(&stdout, r.stdoutCopyTap)
-	cmd.Stderr = observedCommandWriter(&stderr, r.stderrCopyTap)
+	cmd.Stderr = &stderr
 	// Copy caller stdin only after attachment succeeds. Assigning cmd.Stdin
 	// would let os/exec read the caller at Start, before attachment, and that
 	// copy can outlive a bounded attachment-failure return.
@@ -429,10 +430,22 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	}
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	var observer *commandStderr
+	if stderrSink != nil {
+		observer = &commandStderr{writer: stderrSink, cancel: cancel}
+		cmd.Stderr = observedCommandWriter(&stderr, observer)
+	}
 	if stopAtLimit {
 		stdout.exceededHook = cancel
 	}
 	waited, err := runOwnedProcess(runCtx, cmd, r.TerminationGrace, r.processSeam, stdin, stdinPipe, false)
+	var streamErr error
+	if observer != nil {
+		streamErr = observer.detach()
+		if streamErr != nil {
+			err = errors.Join(err, streamErr)
+		}
+	}
 	if !waited {
 		// Attachment cleanup returned while the delayed Wait still owns the
 		// output buffers, so copied output is not stable. Caller stdin is not
@@ -440,6 +453,9 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 		return Result{}, fmt.Errorf("%s: %w", name, err)
 	}
 	result := Result{Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}
+	if streamErr != nil {
+		return result, commandFailure(name, err, &stderr)
+	}
 	// A command stopped at its output limit ends with the cancellation that
 	// stopped it. That cancellation came from the limit only when neither the
 	// caller's context nor the timeout ended first. If stopping it failed, the
@@ -726,6 +742,37 @@ func closeInput(reader io.ReadCloser) {
 	if reader != nil {
 		_ = reader.Close()
 	}
+}
+
+type commandStderr struct {
+	writer io.Writer
+	cancel context.CancelFunc
+	mu     sync.Mutex
+	err    error
+}
+
+func (stream *commandStderr) Write(p []byte) (int, error) {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.writer == nil {
+		return len(p), nil
+	}
+	n, err := stream.writer.Write(p)
+	if err == nil && n != len(p) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		stream.err = err
+		stream.cancel()
+	}
+	return n, err
+}
+
+func (stream *commandStderr) detach() error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	stream.writer = nil
+	return stream.err
 }
 
 func observedCommandWriter(primary, tap io.Writer) io.Writer {

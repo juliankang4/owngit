@@ -52,7 +52,7 @@ func TestBackupOntoDiskImages(t *testing.T) {
 			backup := newTwoRepositoryBackup(t, t.TempDir())
 			stateTarget := filepath.Join(t.TempDir(), "state")
 			repositoryTarget := filepath.Join(destination, "repositories")
-			err := Restore(context.Background(), backup, stateTarget, repositoryTarget, "")
+			_, err := RestoreWithReport(context.Background(), backup, stateTarget, repositoryTarget, "")
 			if err == nil || !strings.Contains(err.Error(), "("+volume.name+")") {
 				t.Fatalf("restore onto %s: %v", volume.format, err)
 			}
@@ -73,7 +73,9 @@ func TestBackupOntoDiskImages(t *testing.T) {
 			// State is restored onto FAT, which renames exclusively.
 			if volume.name == "msdos" {
 				stateTarget = filepath.Join(destination, "state")
-				noErr(t, Restore(context.Background(), backup, stateTarget, filepath.Join(t.TempDir(), "repositories"), ""))
+				if _, err := RestoreWithReport(context.Background(), backup, stateTarget, filepath.Join(t.TempDir(), "repositories"), ""); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := os.Stat(filepath.Join(stateTarget, "owngit.sqlite")); err != nil {
 					t.Fatalf("restored state: %v", err)
 				}

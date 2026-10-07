@@ -51,7 +51,9 @@ func TestCheckPolicyAboveTheDefaultCeilingsRestoresAndWaits(t *testing.T) {
 	}
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
-	noErr(t, Restore(ctx, backup, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""); err != nil {
+		t.Fatal(err)
+	}
 	restored, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restored.Close()

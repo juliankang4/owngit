@@ -1282,11 +1282,12 @@ type offlineBackupResult struct {
 // restoreResult is the result of owngit restore, printed as text or as
 // JSON. Notes say what the restore did not bring back.
 type restoreResult struct {
-	OK             bool                   `json:"ok"`
-	StateDir       string                 `json:"state_dir"`
-	RepositoryRoot string                 `json:"repository_root"`
-	Verification   *recovery.Verification `json:"verification,omitempty"`
-	Notes          []string               `json:"notes"`
+	OK             bool                     `json:"ok"`
+	StateDir       string                   `json:"state_dir"`
+	RepositoryRoot string                   `json:"repository_root"`
+	Verification   *recovery.Verification   `json:"verification,omitempty"`
+	Notes          []string                 `json:"notes"`
+	ObjectWarnings []recovery.ObjectWarning `json:"object_warnings,omitempty"`
 }
 
 func restoreState(arguments []string) error {
@@ -1349,14 +1350,19 @@ func restoreState(arguments []string) error {
 			fmt.Printf("Backup verified: %d repositories and the database passed the rehearsal.\n", len(verification.Repositories))
 		}
 	}
-	if err := recovery.Restore(ctx, *input, *stateDir, *repositoryRoot, *gitPath); err != nil {
+	report, err := recovery.RestoreWithReport(ctx, *input, *stateDir, *repositoryRoot, *gitPath)
+	if err != nil {
 		return fail("restore_failed", err)
 	}
+	result.ObjectWarnings = report.ObjectWarnings
 	result.Notes = recovery.RestoreNotes()
 	if *asJSON {
 		return writeJSONValue(result)
 	}
 	fmt.Printf("Offline backup restored to %s with repositories at %s.\n", result.StateDir, result.RepositoryRoot)
+	for _, warning := range result.ObjectWarnings {
+		fmt.Printf("Repository %s: %s\n", warning.ID, warning.Message)
+	}
 	for _, note := range result.Notes {
 		fmt.Println("- " + note)
 	}

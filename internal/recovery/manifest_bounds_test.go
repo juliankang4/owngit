@@ -295,7 +295,7 @@ func TestRestoreRefusesAnOversizedManifestBeforeAnyStage(t *testing.T) {
 			noErr(t, os.Mkdir(backup, 0o700))
 			test.write(filepath.Join(backup, manifestName))
 			stateTarget, repositoryTarget := filepath.Join(root, "state"), filepath.Join(root, "repositories")
-			if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), test.want) {
+			if _, err := RestoreWithReport(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("restore error=%v, want %q", err, test.want)
 			}
 			for _, target := range []string{stateTarget, repositoryTarget} {

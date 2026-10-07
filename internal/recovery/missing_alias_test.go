@@ -143,7 +143,9 @@ func TestBackupReportsMissingAliasTargetsWithoutInventingRefs(t *testing.T) {
 				t.Fatalf("verification: %+v", verification)
 			}
 			restored := filepath.Join(root, "restored-repositories")
-			noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restored, ""))
+			if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restored, ""); err != nil {
+				t.Fatal(err)
+			}
 			for name := range wantTargets {
 				if _, err := os.Lstat(filepath.Join(restored, "project.git", filepath.FromSlash(name))); !os.IsNotExist(err) {
 					t.Fatalf("restore created the omitted alias %s: %v", name, err)

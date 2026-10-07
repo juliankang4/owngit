@@ -197,7 +197,9 @@ func TestBackupPreservesCheckRecordsAndDropsHelperAuthority(t *testing.T) {
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+		t.Fatal(err)
+	}
 	restored, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restored.Close()
@@ -536,7 +538,7 @@ func TestBackupRejectsTamperedCheckMetadata(t *testing.T) {
 			targetParent := t.TempDir()
 			stateTarget := filepath.Join(targetParent, "state")
 			repositoryTarget := filepath.Join(targetParent, "repositories")
-			if err := Restore(context.Background(), invalidBackup, stateTarget, repositoryTarget, ""); err == nil {
+			if _, err := RestoreWithReport(context.Background(), invalidBackup, stateTarget, repositoryTarget, ""); err == nil {
 				t.Fatal("restore accepted impossible check metadata")
 			}
 			for _, target := range []string{stateTarget, repositoryTarget} {
@@ -695,7 +697,7 @@ func TestUnreleasedBackupVersionsAreRefused(t *testing.T) {
 		}
 		stateTarget := filepath.Join(root, fmt.Sprintf("state-%d", version))
 		repositoryTarget := filepath.Join(root, fmt.Sprintf("repositories-%d", version))
-		if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || err.Error() != want {
+		if _, err := RestoreWithReport(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || err.Error() != want {
 			t.Fatalf("restore backup version %d error=%v", version, err)
 		}
 		for _, target := range []string{stateTarget, repositoryTarget} {
@@ -783,7 +785,7 @@ func TestCommittedBaselineUpgradesAndRoundTripsThroughBackup(t *testing.T) {
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	if err := Restore(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
 		t.Fatalf("restore of the upgraded baseline failed: %v", err)
 	}
 	restored, err := state.Open(ctx, restoredState)

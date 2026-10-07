@@ -44,7 +44,8 @@ func TestCheckJobClockCorrectionBackupRestore(t *testing.T) {
 				t.Fatalf("backup verification failed: %+v", verified)
 			}
 			stateDir := filepath.Join(root, "restored-state")
-			clockBackupRequire(t, recovery.Restore(ctx, backup, stateDir, filepath.Join(root, "restored-repositories"), ""))
+			_, err = recovery.RestoreWithReport(ctx, backup, stateDir, filepath.Join(root, "restored-repositories"), "")
+			clockBackupRequire(t, err)
 			restoredStore, err := state.Open(ctx, stateDir)
 			clockBackupRequire(t, err)
 			defer restoredStore.Close()
@@ -98,7 +99,8 @@ func TestCheckJobNormalClockBackupFormats(t *testing.T) {
 				t.Fatalf("format=%d jobs=%d, want format=%d with one job", manifest.Version, len(manifest.CheckJobs), version)
 			}
 			stateDir := filepath.Join(root, "normal-restored-state")
-			clockBackupRequire(t, recovery.Restore(ctx, backup, stateDir, filepath.Join(root, "normal-restored-repositories"), ""))
+			_, err = recovery.RestoreWithReport(ctx, backup, stateDir, filepath.Join(root, "normal-restored-repositories"), "")
+			clockBackupRequire(t, err)
 			restored, err := state.Open(ctx, stateDir)
 			clockBackupRequire(t, err)
 			defer restored.Close()

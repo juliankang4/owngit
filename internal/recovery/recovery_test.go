@@ -82,7 +82,9 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+		t.Fatal(err)
+	}
 	restoredStore, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restoredStore.Close()
@@ -195,7 +197,7 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 		{"repositories reached through the shared folder", filepath.Join(root, "state"), filepath.Join(owned, "repositories")},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := Restore(ctx, backup, test.state, test.repositories, "")
+			_, err := RestoreWithReport(ctx, backup, test.state, test.repositories, "")
 			if err == nil || !strings.Contains(err.Error(), refusal) {
 				t.Fatalf("Restore error=%v, want %q", err, refusal)
 			}
@@ -206,8 +208,10 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 
 	_, err = CreateWithReport(ctx, store, manager, filepath.Join(sticky, "backup"))
 	noErr(t, err)
-	noErr(t, Restore(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), ""))
-	noErr(t, Restore(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), ""))
+	_, err = RestoreWithReport(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), "")
+	noErr(t, err)
+	_, err = RestoreWithReport(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), "")
+	noErr(t, err)
 
 	// Missing folders on the way are created, but only where no other
 	// account can create names, as for a state directory.
@@ -216,7 +220,7 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 		{sticky, "other accounts can create names in " + sticky},
 	} {
 		missing := filepath.Join(test.folder, "missing")
-		err := Restore(ctx, backup, filepath.Join(missing, "state"), filepath.Join(root, "unused-repositories"), "")
+		_, err := RestoreWithReport(ctx, backup, filepath.Join(missing, "state"), filepath.Join(root, "unused-repositories"), "")
 		if err == nil || !strings.Contains(err.Error(), test.refusal) {
 			t.Fatalf("Restore below %s: error=%v, want %q", missing, err, test.refusal)
 		}
@@ -224,7 +228,8 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 			t.Fatalf("the refused restore created %s (%v)", missing, err)
 		}
 	}
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "new", "state"), filepath.Join(root, "other", "deeper", "repositories"), ""))
+	_, err = RestoreWithReport(ctx, backup, filepath.Join(root, "new", "state"), filepath.Join(root, "other", "deeper", "repositories"), "")
+	noErr(t, err)
 	_, err = CreateWithReport(ctx, store, manager, filepath.Join(root, "backups", "daily", "backup"))
 	noErr(t, err)
 }
@@ -242,7 +247,7 @@ func TestRestoreAsRootIntoAnotherAccountsFolder(t *testing.T) {
 	home = filepath.Join(home, "home")
 	noErr(t, os.Mkdir(home, 0o755))
 	noErr(t, os.Chown(home, nobody, nobody))
-	err = Restore(context.Background(), t.TempDir(), filepath.Join(home, "restored"), filepath.Join(home, "restored-git"), "")
+	_, err = RestoreWithReport(context.Background(), t.TempDir(), filepath.Join(home, "restored"), filepath.Join(home, "restored-git"), "")
 	var other *state.OtherAccountError
 	if !errors.As(err, &other) || other.Path != home {
 		t.Fatalf("Restore error=%v, want %s named as another account's", err, home)
@@ -315,7 +320,9 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-pr-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-pr-repositories"))
-	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+		t.Fatal(err)
+	}
 	restoredStore, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restoredStore.Close()
@@ -384,7 +391,9 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 		t.Fatalf("backup reviews=%+v, want sequence %d with event %s", eventManifest.PullRequestReviews, pending.Sequence, eventID)
 	}
 	eventState := canonicalTestTarget(t, filepath.Join(root, "restored-event-state"))
-	noErr(t, Restore(ctx, eventBackup, eventState, canonicalTestTarget(t, filepath.Join(root, "restored-event-repositories")), ""))
+	if _, err := RestoreWithReport(ctx, eventBackup, eventState, canonicalTestTarget(t, filepath.Join(root, "restored-event-repositories")), ""); err != nil {
+		t.Fatal(err)
+	}
 	eventStore, err := state.Open(ctx, eventState)
 	noErr(t, err)
 	defer eventStore.Close()
@@ -397,7 +406,7 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	eventManifest.PullRequestReviews[eventIndex].ReviewEventID = "not-a-review-event"
 	writeManifestFile(t, filepath.Join(eventBackup, manifestName), eventManifest)
 	malformedState, malformedRepositories := filepath.Join(root, "malformed-event-state"), filepath.Join(root, "malformed-event-repositories")
-	if err := Restore(ctx, eventBackup, malformedState, malformedRepositories, ""); err == nil || !strings.Contains(err.Error(), "invalid pull request review event identity") {
+	if _, err := RestoreWithReport(ctx, eventBackup, malformedState, malformedRepositories, ""); err == nil || !strings.Contains(err.Error(), "invalid pull request review event identity") {
 		t.Fatalf("restore with malformed review event identity err=%v", err)
 	}
 	for _, target := range []string{malformedState, malformedRepositories} {
@@ -458,7 +467,9 @@ func TestBackupAfterRefusedThenResolvedMerge(t *testing.T) {
 		}
 		restoredState := canonicalTestTarget(t, filepath.Join(root, name+"-state"))
 		restoredRepositories := canonicalTestTarget(t, filepath.Join(root, name+"-repositories"))
-		noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+		if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+			t.Fatal(err)
+		}
 		assertRef(t, filepath.Join(restoredRepositories, "project.git"), "refs/heads/main", merged.Merge.OID)
 		runGit(t, "", "--git-dir", filepath.Join(restoredRepositories, "project.git"), "fsck", "--full")
 	}
@@ -559,7 +570,9 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			noErr(t, store.Close())
 			restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-"+intentStatus+"-state"))
 			restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-"+intentStatus+"-repositories"))
-			noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+			if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+				t.Fatal(err)
+			}
 			restoredStore, err := state.Open(ctx, restoredState)
 			noErr(t, err)
 			defer restoredStore.Close()
@@ -602,7 +615,7 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 			if runtime.GOOS != "windows" {
 				oldState := canonicalTestTarget(t, filepath.Join(root, "old-git-"+intentStatus+"-state"))
 				oldRepositories := canonicalTestTarget(t, filepath.Join(root, "old-git-"+intentStatus+"-repositories"))
-				if err := Restore(ctx, backup, oldState, oldRepositories, oldGitPath); err != nil {
+				if _, err := RestoreWithReport(ctx, backup, oldState, oldRepositories, oldGitPath); err != nil {
 					t.Fatalf("restore pending %s merge on old Git: %v", intentStatus, err)
 				}
 				if _, err := os.Stat(mergeTreeMarker); !os.IsNotExist(err) {
@@ -674,7 +687,9 @@ func TestRestoreReconcilesGitPublishedMergeWithPendingSQLiteState(t *testing.T) 
 	noErr(t, store.Close())
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "pending-restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "pending-restored-repositories"))
-	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+		t.Fatal(err)
+	}
 	restoredStore, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restoredStore.Close()
@@ -714,7 +729,7 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 	noErr(t, file.Close())
 	legacyState := canonicalTestTarget(t, filepath.Join(root, "legacy-state"))
 	legacyRepositories := canonicalTestTarget(t, filepath.Join(root, "legacy-repositories"))
-	if err := Restore(ctx, backup, legacyState, legacyRepositories, ""); err != nil {
+	if _, err := RestoreWithReport(ctx, backup, legacyState, legacyRepositories, ""); err != nil {
 		t.Fatalf("strict version 1 backup was rejected: %v", err)
 	}
 	restored, err := state.Open(ctx, legacyState)
@@ -777,7 +792,7 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	malformed := filepath.Join(root, "malformed-backup")
 	noErr(t, os.Mkdir(malformed, 0o700))
 	noErr(t, os.WriteFile(filepath.Join(malformed, manifestName), []byte("{not json"), 0o600))
-	if err := Restore(ctx, malformed, filepath.Join(root, "malformed-state"), filepath.Join(root, "malformed-repositories"), ""); err == nil || !strings.Contains(err.Error(), "decode backup manifest") {
+	if _, err := RestoreWithReport(ctx, malformed, filepath.Join(root, "malformed-state"), filepath.Join(root, "malformed-repositories"), ""); err == nil || !strings.Contains(err.Error(), "decode backup manifest") {
 		t.Fatalf("malformed manifest error=%v", err)
 	}
 
@@ -795,7 +810,7 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	file.Close()
 	stateTarget := filepath.Join(root, "corrupt-state")
 	repositoryTarget := filepath.Join(root, "corrupt-repositories")
-	if err := Restore(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
+	if _, err := RestoreWithReport(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
 		t.Fatalf("corrupt restore error=%v", err)
 	}
 	if _, err := os.Stat(stateTarget); !os.IsNotExist(err) {
@@ -808,7 +823,7 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	existing := filepath.Join(root, "existing-state")
 	noErr(t, os.Mkdir(existing, 0o700))
 	noErr(t, os.WriteFile(filepath.Join(existing, "sentinel"), []byte("preserve"), 0o600))
-	if err := Restore(ctx, backup, existing, filepath.Join(root, "unused-repositories"), ""); err == nil || !strings.Contains(err.Error(), "already exists") {
+	if _, err := RestoreWithReport(ctx, backup, existing, filepath.Join(root, "unused-repositories"), ""); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("existing destination error=%v", err)
 	}
 	if content, err := os.ReadFile(filepath.Join(existing, "sentinel")); err != nil || string(content) != "preserve" {
@@ -903,7 +918,7 @@ func TestRestoreRejectsTargetThroughAncestorSymlinkIntoBackup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		refusal = "is a link, a junction or a mounted volume"
 	}
-	if err := Restore(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), refusal) {
+	if _, err := RestoreWithReport(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), refusal) {
 		t.Fatalf("ancestor-symlink restore error=%v, want %q", err, refusal)
 	}
 	if _, err := os.Lstat(filepath.Join(backup, "inside-state")); !os.IsNotExist(err) {
@@ -1091,7 +1106,7 @@ func TestRestorePreservesAndMarksPathsWhenPublicationRollbackFails(t *testing.T)
 	if _, err := os.Stat(filepath.Join(stages[0], pendingRestoreName)); err != nil {
 		t.Fatalf("preserved repository stage is not marked pending: %v", err)
 	}
-	if err := Restore(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "incomplete OwnGit restore") {
+	if _, err := RestoreWithReport(ctx, backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "incomplete OwnGit restore") {
 		t.Fatalf("retry did not identify preserved incomplete restore: %v", err)
 	}
 }
@@ -1123,7 +1138,7 @@ func TestRestoreRejectsNonportableRepositoryIDBeforePublishing(t *testing.T) {
 	noErr(t, file.Close())
 	stateTarget := filepath.Join(root, "state-target")
 	repositoryTarget := filepath.Join(root, "repository-target")
-	if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "not portable") {
+	if _, err := RestoreWithReport(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || !strings.Contains(err.Error(), "not portable") {
 		t.Fatalf("nonportable manifest error=%v", err)
 	}
 	assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")

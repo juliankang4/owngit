@@ -59,7 +59,9 @@ func TestBackupAndRestoreOmitDeletedRepositories(t *testing.T) {
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-	noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+	if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+		t.Fatal(err)
+	}
 	restoredStore, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restoredStore.Close()

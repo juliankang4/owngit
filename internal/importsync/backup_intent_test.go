@@ -66,8 +66,8 @@ func TestBackupCarriesSettledIntentOfAnInitialImportThatNeverPublished(t *testin
 	noErr(t, err,
 		"backup refused a settled intent without a repository")
 	restoredState := filepath.Join(f.root, "restored-state")
-	noErr(t, recovery.Restore(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath),
-		"restore")
+	_, restoreErr := recovery.RestoreWithReport(context.Background(), output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath)
+	noErr(t, restoreErr, "restore")
 	restored, err := state.Open(context.Background(), restoredState)
 	noErr(t, err)
 	defer restored.Close()
@@ -99,8 +99,8 @@ func TestBackupCarriesOwnerResolvedIntent(t *testing.T) {
 	_, err = recovery.CreateWithReport(ctx, f.store, f.manager, output)
 	noErr(t, err, "backup with an owner-resolved intent")
 	restoredState := filepath.Join(f.root, "restored-state")
-	noErr(t, recovery.Restore(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath),
-		"restore")
+	_, restoreErr := recovery.RestoreWithReport(ctx, output, restoredState, filepath.Join(f.root, "restored-repositories"), f.gitPath)
+	noErr(t, restoreErr, "restore")
 	restored, err := state.Open(ctx, restoredState)
 	noErr(t, err)
 	defer restored.Close()

@@ -324,7 +324,7 @@ func TestRestoreSaysItWasInterrupted(t *testing.T) {
 	stateTarget, repositoryTarget := filepath.Join(root, "restored-state"), filepath.Join(root, "restored-repositories")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Restore(ctx, backup, stateTarget, repositoryTarget, "")
+	_, err := RestoreWithReport(ctx, backup, stateTarget, repositoryTarget, "")
 	var interrupted *Interrupted
 	if !errors.As(err, &interrupted) || err.Error() != "the restore was interrupted: nothing was restored" || !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v", err)

@@ -140,7 +140,6 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 		stdoutTap, stdoutReady := newCopyTap("stdout-payload")
 		stderrTap, stderrReady := newCopyTap("stderr-payload")
 		runner.stdoutCopyTap = stdoutTap
-		runner.stderrCopyTap = stderrTap
 		child := &exactChild{}
 		child.installCleanup(t, nil)
 		runner.processSeam = &processCleanupSeam{
@@ -156,7 +155,7 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 			},
 		}
 		result, err := runner.RunWithLimits(context.Background(), t.TempDir(), nil, CommandLimits{
-			Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=success"},
+			Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=success"}, Stderr: stderrTap,
 		})
 		if errors.Is(err, errOutputNotReady) {
 			t.Fatalf("output readiness was not established: %v", err)
@@ -177,6 +176,7 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 		runner.TerminationGrace = 40 * time.Millisecond
 		stdoutTap, stdoutReady := newCopyTap("ready\n")
 		runner.stdoutCopyTap = stdoutTap
+		stderrProbe := &joinProbe{ready: make(chan struct{})}
 		entered := make(chan struct{})
 		release := make(chan struct{})
 		finished := make(chan struct{})
@@ -198,13 +198,16 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 				defer close(finished)
 				close(entered)
 				<-release
+				// The delayed copy can still write through the command's sink.
+				_, copyErr := cmd.Stderr.Write([]byte("late stderr"))
 				_ = cmd.Process.Kill()
-				return errors.Join(waitErr, child.reap(cmd))
+				return errors.Join(copyErr, waitErr, child.reap(cmd))
 			},
 		}
 		result, err := runner.RunWithLimits(context.Background(), t.TempDir(), nil, CommandLimits{
-			Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=hold-stdout"},
+			Timeout: 2 * time.Second, Environment: []string{streamFixtureEnv + "=hold-stdout"}, Stderr: stderrProbe,
 		})
+		stderrProbe.returned.Store(true)
 		if elapsed := time.Since(cleanupStarted); cleanupStarted.IsZero() || elapsed > 3*time.Second {
 			t.Fatalf("pending cleanup exceeded its bound: started=%v elapsed=%s", !cleanupStarted.IsZero(), elapsed)
 		}
@@ -233,6 +236,9 @@ func TestRunAttachmentFailureKeepsOrDropsCopiedOutput(t *testing.T) {
 		case <-finished:
 		case <-time.After(10 * time.Second):
 			t.Fatal("delayed wait was not rejoined after release")
+		}
+		if stderrProbe.late.Load() {
+			t.Fatal("caller stderr writer was used after return")
 		}
 	})
 }

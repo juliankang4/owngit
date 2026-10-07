@@ -141,7 +141,7 @@ func TestUpgradeBackupRestoresTheStateBeforeTheUpgrade(t *testing.T) {
 
 	root := t.TempDir()
 	restoredState, restoredRepositories := filepath.Join(root, "state"), filepath.Join(root, "repositories")
-	if err := recovery.Restore(context.Background(), backup, restoredState, restoredRepositories, ""); err != nil {
+	if _, err := recovery.RestoreWithReport(context.Background(), backup, restoredState, restoredRepositories, ""); err != nil {
 		t.Fatal(err)
 	}
 	store, err := state.Open(context.Background(), restoredState)
@@ -198,7 +198,7 @@ func TestUpgradeBackupWithReleasedAbandonedMergePlans(t *testing.T) {
 			if err != nil || !result.Verified {
 				t.Fatalf("upgrade backup verification: %+v err=%v", result, err)
 			}
-			if err := recovery.Restore(context.Background(), backup, filepath.Join(root, "restored-state"), filepath.Join(root, "restored-repositories"), ""); err != nil {
+			if _, err := recovery.RestoreWithReport(context.Background(), backup, filepath.Join(root, "restored-state"), filepath.Join(root, "restored-repositories"), ""); err != nil {
 				t.Fatal(err)
 			}
 		})

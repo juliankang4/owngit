@@ -578,6 +578,7 @@ func requireApartFromStorage(store *state.Store, manager *repository.Manager, ou
 }
 
 type restoreOperations struct {
+	report          *RestoreReport
 	rename          func(string, string) error
 	openState       func(context.Context, string) (*state.Store, error)
 	prepareExisting func(context.Context, *repository.Manager, *gitexec.Runner) error
@@ -604,19 +605,26 @@ func defaultRestoreOperations() restoreOperations {
 	}
 }
 
-// Restore restores the backup input into two new folders. When ctx ends
-// first, it stops and returns an *Interrupted error that says what it left.
-func Restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath string) error {
-	err := restore(ctx, input, stateDirectory, repositoryRoot, gitPath, defaultRestoreOperations())
-	if err == nil || ctx.Err() == nil {
-		return err
+// RestoreWithReport restores the backup into two new folders and names
+// repositories with malformed objects, preserving their history for repair.
+// When ctx ends first, it returns an *Interrupted error that says what it left.
+func RestoreWithReport(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath string) (RestoreReport, error) {
+	var report RestoreReport
+	operations := defaultRestoreOperations()
+	operations.report = &report
+	err := restore(ctx, input, stateDirectory, repositoryRoot, gitPath, operations)
+	if err == nil {
+		return report, nil
+	}
+	if ctx.Err() == nil {
+		return RestoreReport{}, err
 	}
 	// A restore stopped by its context removed its stages, or rolled the
 	// state back; an error that says otherwise is passed on.
 	if errors.Is(err, ctx.Err()) && absentPath(stateDirectory) && absentPath(repositoryRoot) {
-		return &Interrupted{What: "restore", Detail: "nothing was restored", Cause: err}
+		return RestoreReport{}, &Interrupted{What: "restore", Detail: "nothing was restored", Cause: err}
 	}
-	return &Interrupted{What: "restore", Detail: err.Error(), Cause: err}
+	return RestoreReport{}, &Interrupted{What: "restore", Detail: err.Error(), Cause: err}
 }
 
 // Interrupted is work that stopped because its context ended. Detail, when
@@ -746,6 +754,11 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 			return err
 		}
 		err := restoreRepository(ctx, runner, source, repositoryStage, item)
+		// The actual restore reports semantic faults; a rehearsal checks
+		// whether the backup can be restored, without refusing that history.
+		if err == nil {
+			err = operations.report.checkObjects(ctx, runner, repositoryStage, item.ID)
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -1283,10 +1296,8 @@ func (reader contextReader) Read(buffer []byte) (int, error) {
 // manifest records (copyBundle), is complete, the refs and HEAD
 // are the ones the manifest records, and git fsck finds every object that
 // they reach. Git computed each object's name from its content when it
-// indexed the bundle, so fsck checks only that the objects connect, as
-// import verification does; a full fsck would also refuse history that
-// OwnGit accepts on push and import, such as a commit with a malformed time
-// zone.
+// indexed the bundle, so this check verifies connectivity; the actual restore
+// also checks object contents and reports malformed history separately.
 func restoreRepository(ctx context.Context, runner commandRunner, input *backupInput, repositoryStage string, item RepositoryManifest) error {
 	repositoryPath := filepath.Join(repositoryStage, item.ID+".git")
 	objectFormat := repository.ObjectFormatSHA1

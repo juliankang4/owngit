@@ -65,7 +65,9 @@ func TestBackupVerifyRestoreKeepsDecomposedRefs(t *testing.T) {
 		}
 		stateTarget := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 		repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-		noErr(t, Restore(ctx, backup, stateTarget, repositoryTarget, ""))
+		if _, err := RestoreWithReport(ctx, backup, stateTarget, repositoryTarget, ""); err != nil {
+			t.Fatal(err)
+		}
 		restored := filepath.Join(repositoryTarget, "project.git")
 		result, err := runner.Run(ctx, restored, nil, "for-each-ref", "--format=%(refname) %(objectname)")
 		noErr(t, err)

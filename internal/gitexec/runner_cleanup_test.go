@@ -48,10 +48,15 @@ func injectCleanupFaults(runner *Runner, terminateErr, closeErr error) *cleanupF
 	return faults
 }
 
+type failingStderr struct{ err error }
+
+func (writer failingStderr) Write([]byte) (int, error) { return 0, writer.err }
+
 // A failed termination or owner release stays a failure with its causes. It is
 // never an output limit or a status a caller could read as Git's answer, and
 // the output copied before it stays available.
 func TestRunReportsOwnedProcessCleanupFailures(t *testing.T) {
+	writeErr := errors.New("stderr destination failed")
 	terminateErr := errors.New("injected termination failure")
 	closeErr := errors.New("injected owner release failure")
 	hold := "hold-stdout"
@@ -68,6 +73,8 @@ func TestRunReportsOwnedProcessCleanupFailures(t *testing.T) {
 	}{
 		{name: "clean success", mode: "success", exit: -1, stdout: "stdout-payload"},
 		{name: "exit error", mode: "exit", exit: 94},
+		{name: "stderr write failure", mode: "stderr-limit", limits: CommandLimits{Stderr: failingStderr{writeErr}}, want: []error{context.Canceled, writeErr}, exit: -1, stdout: "*", terminations: 1},
+		{name: "stderr short write", mode: "stderr-limit", limits: CommandLimits{Stderr: failingStderr{}}, want: []error{context.Canceled, io.ErrShortWrite}, exit: -1, stdout: "*", terminations: 1},
 		{name: "caller cancellation", mode: hold, cancel: true, want: []error{context.Canceled}, exit: -1, stdout: "ready\n", terminations: 1},
 		{name: "deadline", mode: hold, limits: CommandLimits{Timeout: 300 * time.Millisecond}, want: []error{context.DeadlineExceeded}, exit: -1, stdout: "*", terminations: 1},
 		{name: "termination failure", mode: hold, cancel: true, terminateErr: terminateErr, want: []error{context.Canceled, terminateErr}, cleanupFailed: true, exit: -1, stdout: "ready\n", terminations: 1},

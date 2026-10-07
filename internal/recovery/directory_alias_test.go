@@ -66,7 +66,9 @@ func TestBackupReportsAliasesToDirectoryTargets(t *testing.T) {
 				t.Fatalf("verification: %+v", verification)
 			}
 			restored := filepath.Join(root, "restored-repositories")
-			noErr(t, Restore(context.Background(), backup, filepath.Join(root, "restored-state"), restored, ""))
+			if _, err := RestoreWithReport(context.Background(), backup, filepath.Join(root, "restored-state"), restored, ""); err != nil {
+				t.Fatal(err)
+			}
 			manifest, err := readManifest(filepath.Join(backup, manifestName))
 			noErr(t, err)
 			for _, ref := range manifest.Repositories[0].Refs {

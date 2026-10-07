@@ -93,15 +93,7 @@ func TestBackupVerifyAndRestoreVerify(t *testing.T) {
 // without it; a verification that ran is the details of a refused restore.
 func TestOfflineBackupAndRestorePrintJSON(t *testing.T) {
 	root := t.TempDir()
-	stateDir := filepath.Join(root, "state")
-	repositoryRoot := filepath.Join(root, "repositories")
-	noErr(t, os.Mkdir(repositoryRoot, 0o700))
-	store, err := state.Open(context.Background(), stateDir)
-	noErr(t, err)
-	adminHash, _ := auth.HashPassword("admin-password")
-	err = store.CompleteSetup(context.Background(), repositoryRoot, "open", "", adminHash, false)
-	store.Close()
-	noErr(t, err)
+	stateDir := aliasBackupState(t, root, false)
 	temporary := filepath.Join(root, "temporary")
 	noErr(t, os.Mkdir(temporary, 0o700))
 	// refused runs command, which must fail, and returns what the error
@@ -167,7 +159,8 @@ func TestOfflineBackupAndRestorePrintJSON(t *testing.T) {
 	output, err = captureStdout(restore(backup))
 	var restored restoreResult
 	if err != nil || json.Unmarshal([]byte(output), &restored) != nil || !restored.OK || restored.StateDir != restoredState || restored.RepositoryRoot != restoredRepositories ||
-		restored.Verification == nil || !restored.Verification.Verified || !reflect.DeepEqual(restored.Notes, recovery.RestoreNotes()) {
+		restored.Verification == nil || !restored.Verification.Verified || !reflect.DeepEqual(restored.Notes, recovery.RestoreNotes()) ||
+		len(restored.ObjectWarnings) != 0 || strings.Contains(output, "object_warnings") {
 		t.Fatalf("restore output=%q err=%v", output, err)
 	}
 	if _, err := os.Stat(filepath.Join(restoredState, "owngit.sqlite")); err != nil {

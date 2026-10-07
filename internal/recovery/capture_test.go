@@ -144,7 +144,9 @@ func TestBackupWhileServingKeepsItsInstant(t *testing.T) {
 		t.Fatalf("verification=%+v", verification)
 	}
 	restored := filepath.Join(root, "restored-repositories")
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restored, ""))
+	if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restored, ""); err != nil {
+		t.Fatal(err)
+	}
 	for ref, want := range map[string]string{"second.git refs/heads/main": secondMain, "second.git refs/heads/topic": secondMain, "project.git refs/heads/main": projectMain} {
 		name := strings.Fields(ref)
 		if got := gitOutput(t, filepath.Join(restored, name[0]), "--git-dir", ".", "rev-parse", name[1]); got != want {
@@ -658,7 +660,9 @@ func TestBackupKeepsAnUnbornHeadBesideANestedBranch(t *testing.T) {
 		t.Fatalf("verification=%+v", verification)
 	}
 	restored := filepath.Join(root, "restored-repositories")
-	noErr(t, Restore(ctx, backup, filepath.Join(root, "restored-state"), restored, ""))
+	if _, err := RestoreWithReport(ctx, backup, filepath.Join(root, "restored-state"), restored, ""); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(restored, "nested.git")
 	if head := gitOutput(t, path, "--git-dir", ".", "symbolic-ref", "HEAD"); head != "refs/heads/main" {
 		t.Fatalf("restored HEAD=%s", head)

@@ -59,7 +59,9 @@ func TestReleasedAbandonedMergePlansRemainRecoverable(t *testing.T) {
 			}
 			restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 			restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "restored-repositories"))
-			noErr(t, Restore(ctx, backup, restoredState, restoredRepositories, ""))
+			if _, err := RestoreWithReport(ctx, backup, restoredState, restoredRepositories, ""); err != nil {
+				t.Fatal(err)
+			}
 			remote := filepath.Join(restoredRepositories, "project.git")
 			assertRef(t, remote, "refs/heads/main", before.PullRequests[0].MergeOID)
 			runGit(t, "", "--git-dir", remote, "fsck", "--full")

@@ -32,7 +32,7 @@ func TestBackupRefusesPortableDirectReviewResidue(t *testing.T) {
 	}
 	assertBackupOmits(t, allowed, "provider-token")
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
-	if err := Restore(ctx, allowed, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""); err != nil {
+	if _, err := RestoreWithReport(ctx, allowed, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""); err != nil {
 		t.Fatalf("restore of a backup taken beside residue: %v", err)
 	}
 
@@ -65,7 +65,7 @@ func TestRestoreRefusesManifestWithDirectReviewRecords(t *testing.T) {
 			noErr(t, os.WriteFile(manifestPath, content, 0o600))
 			const want = "backup contains direct-review records written by an unreleased development build; this build cannot restore them"
 			stateTarget, repositoryTarget := filepath.Join(root, "state"), filepath.Join(root, "repositories")
-			if err := Restore(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || err.Error() != want {
+			if _, err := RestoreWithReport(context.Background(), backup, stateTarget, repositoryTarget, ""); err == nil || err.Error() != want {
 				t.Fatalf("restore error=%v", err)
 			}
 			for _, target := range []string{stateTarget, repositoryTarget} {

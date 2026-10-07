@@ -20,7 +20,9 @@ func TestBackupRestoresRefsWithUnicodeWhitespace(t *testing.T) {
 			_, err = CreateWithReport(context.Background(), store, manager, backup)
 			noErr(t, err)
 			restored := filepath.Join(root, "restored-repositories")
-			noErr(t, Restore(context.Background(), backup, filepath.Join(root, "restored-state"), restored, ""))
+			if _, err := RestoreWithReport(context.Background(), backup, filepath.Join(root, "restored-state"), restored, ""); err != nil {
+				t.Fatal(err)
+			}
 			assertRef(t, filepath.Join(restored, "project.git"), name, oid)
 		})
 	}
