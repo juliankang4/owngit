@@ -235,6 +235,13 @@ What to know:
 - `pr diff` shows the changes from the merge base to the source. `--stat`
   leaves out the patch and `--patch` prints only the patch. Large diffs are
   cut at file boundaries and the result says so (`truncated`).
+- A file too large for the server to compare as text has `too_large: true`,
+  no `additions` or `deletions`, and no section in the patch. When such files
+  are all that the patch leaves out, `reason` is `too_large`, and
+  `pr diff --patch` names them on a note line. The changes in
+  `repo restore preview` mark such files the same way. A file whose line
+  counts were not read, as when a change holds more than 100 too-large files,
+  also has no `additions` or `deletions`.
 - `pr mergeability` answers `clean`, `conflict`, `unavailable` or `stale`. It
   changes nothing, and `pr merge` checks again when it runs.
 - A merge is a fast-forward or a merge commit by `OwnGit <owngit@localhost>`.

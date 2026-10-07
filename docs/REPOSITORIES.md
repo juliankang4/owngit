@@ -210,7 +210,14 @@ curl --fail --remote-name --remote-header-name --user owngit \
 
 `ref` is a branch, tag or full commit ID, and defaults to the default branch. `--user` makes curl ask for the shared password. If the download stops early, curl reports an error and the file is not a valid archive.
 
-Before it creates an archive, OwnGit checks that no two files or folders of the commit share one path. It refuses the archive with HTTP 409 when two do, or when the commit has too many files to check. If the check itself fails, the answer is HTTP 502 and no archive is created.
+Before it creates an archive, OwnGit checks the commit's files. It refuses the archive with HTTP 409 in these cases, and the API error `code` names the case:
+
+- Two files or folders of the commit share one path (`archive_repeated_path`).
+- The commit has too many files to check (`archive_too_many_files`).
+- On a Linux host, one file needs more memory to rebuild from Git's stored delta than OwnGit can give Git (`archive_memory`). Clone the repository with Git instead, or run OwnGit on a computer with more memory. [Memory on a small Linux host](OPERATIONS.md#memory-on-a-small-linux-host) explains the estimate.
+- On a Linux host, one file is stored in a delta chain deeper than Git builds, so OwnGit cannot check the commit's files (`archive_deep_chain`). Pack the repository again on a computer with enough memory, or clone it with Git instead.
+
+If the check itself fails, the answer is HTTP 502 and no archive is created.
 
 ## All activity
 

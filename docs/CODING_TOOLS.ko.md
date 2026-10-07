@@ -181,6 +181,7 @@ owngit pr reopen --number 1
 - 읽은 뒤에 브랜치가 움직였다면 리뷰와 병합은 `stale_revision`으로 실패합니다. 풀 리퀘스트를 다시 읽고 새 커밋을 기준으로 판단하세요.
 - `pr edit`에는 `pr show`가 준 `edit_revision`이 필요합니다. 그사이 누가 고쳤다면 `stale_edit`로 실패합니다. 풀 리퀘스트를 다시 보고 변경을 새로 적용하세요.
 - `pr diff`는 병합 기준(merge base)부터 원본까지의 변경을 보여 줍니다. `--stat`은 패치를 빼고 `--patch`는 패치만 출력합니다. 큰 diff는 파일 단위로 잘리고 결과에 `truncated`로 표시됩니다.
+- 서버가 텍스트로 비교하기에 너무 큰 파일은 `too_large: true`로 표시되고 `additions`, `deletions`, 패치 구간이 모두 빠집니다. 패치에서 빠진 것이 이런 파일뿐이면 `reason`은 `too_large`이고 `pr diff --patch`는 빠진 파일 이름을 안내 줄로 알려 줍니다. `repo restore preview`의 변경 목록도 이런 파일을 같은 방식으로 표시합니다. 줄 수를 읽지 않은 파일에도 `additions`와 `deletions`가 없습니다. 한 변경에 너무 큰 파일이 100개를 넘을 때가 그런 경우입니다.
 - `pr mergeability`는 `clean`, `conflict`, `unavailable`, `stale` 중 하나로 답합니다. 아무것도 바꾸지 않으며 `pr merge`는 실행할 때 다시 확인합니다.
 - 병합은 빨리 감기(fast-forward)이거나 `OwnGit <owngit@localhost>`가 만든 병합 커밋입니다. 스쿼시나 리베이스를 하지 않고 원본 브랜치도 지우지 않습니다. 다시 시도해도 커밋이 두 번 생기지 않습니다. 서버에 Git 2.38 이상이 있어야 병합할 수 있습니다.
 - 리뷰와 체크는 참고용입니다. 어느 쪽도 병합을 막지 않습니다.

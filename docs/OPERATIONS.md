@@ -678,12 +678,22 @@ An import can leave a file named `objects/pack/pack-<hash>.keep` in a repository
 
 ### Memory on a small Linux host
 
-On Linux, OwnGit reads how much memory its computer or container allows and fits its work into it. On macOS and Windows it cannot read this, and the saved limits apply as they are.
+On Linux, OwnGit reads how much memory its computer or container allows and fits its work into it, as this section describes. On macOS and Windows it cannot read this, so none of these rules apply there: the saved limits apply as they are, and no file is refused for the memory it needs.
 
 - OwnGit keeps its own memory near half of the limit. Setting `GOMEMLIMIT` replaces that figure for OwnGit, not for Git.
 - With a 512 MiB memory limit, at most about 3 Git transfers run at once, and 6 with 1 GiB, even when the saved limits allow more. Only 1 clone, fetch or archive download builds a pack at a time with 512 MiB, and 2 with 1 GiB; pushes are not held back by this. Requests over these numbers wait up to the transfer queue time for a slot, then get the 503 answer above. Settings still shows the saved values.
+- A page or raw download that reads file content takes one of the same transfer slots while Git reads. If no slot frees up within 10 seconds, it answers HTTP 503 with `Retry-After` and asks you to try again in a moment.
 - Files above about 16 MiB (with a 512 MiB limit) or 32 MiB (with 1 GiB) are stored without new delta compression, so each new version of such a file takes its full compressed size in storage, backups and clones.
 - The dashboard does not show a file above that size. The page says "This file is too large to show here. Clone the repository to get this file.", and the raw download is refused with the same message.
+
+Git stores many files as a delta: only the changes against another stored version, its base. A base can be a delta too, so one file can depend on a chain of stored versions. To read such a file, Git rebuilds it in memory, and a small file on a large base can need hundreds of MiB. Before Git rebuilds a file for a file view, a raw download, a commit page, a pull request comparison or an archive, OwnGit estimates that memory. The estimate counts the largest size in the chain twice and adds the next two largest sizes and a margin for Git's buffers, so a longer chain does not raise it. When the estimate is above about three eighths of the memory limit (192 MiB with 512 MiB), OwnGit does not ask Git to rebuild the file. With 512 MiB, this happens whenever the chain holds a version larger than about 73 MiB, even if the file itself is small.
+
+- The file view says "This file needs more memory to rebuild than this computer gives Git, so it is not shown here.", and the raw download is refused with the same message. Files that Git stores whole are still shown up to the size named above.
+- A commit page or pull request comparison shows such a file, and any file above the size named above (about 16 MiB with 512 MiB), as "Too large to compare", without its lines or line counts. When a change holds more than 100 such files, OwnGit reads no line counts for that change, and its other files show "Line counts not read".
+- The archive of a commit that holds such a file is refused with HTTP 409 (see [Download an archive](REPOSITORIES.md#download-an-archive)). Clone the repository with Git instead, or run OwnGit on a computer with more memory.
+- Before an archive, OwnGit lists the commit's files to check their paths. That list may use a sixteenth of the memory limit (32 MiB with 512 MiB) instead of 64 MiB, so a commit with very many files can be refused as having too many files to check.
+- A full clone sends the stored deltas as they are. A clone of one branch (`git clone --single-branch`) can still make Git rebuild such a file, and this check does not cover it.
+- These refusals do not change the repository. The file needs the same memory until the repository is packed again on a computer with enough memory.
 
 When OwnGit finds a memory limit, its startup log says how much.
 
