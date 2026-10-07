@@ -220,9 +220,11 @@ A Linux system service runs with systemd hardening: nothing it starts can gain p
 
 On this computer, `owngit health` exits 0 and prints `OwnGit answers at http://ADDRESS` only when the server of this state directory answers and proves who it is. Each time the server starts, it writes a new key to `health-run.json` in the state directory, readable only by its account, and removes the file when it stops. `owngit health` sends a fresh challenge and accepts only an answer made with that key, so another program that listens on the same address cannot pass. `owngit service install`, `start` and `restart` use the same check before they report that the service runs.
 
+`owngit doctor` and `owngit service status` require the same proof before reporting that OwnGit runs and answers. The icon uses proven status answers and the same checkup when no status connection is available. If the proof is missing or invalid, these checks report why they cannot confirm OwnGit. A server started before version 1.1.5 needs one restart to publish its key. Service status still shows what the service manager reports, separately from the health result.
+
 `owngit health` reads the state directory and writes nothing, so it also works when the state directory is read-only. Run it as the account that runs OwnGit. The file is not part of backups.
 
-When it cannot confirm the server, it exits non-zero and says why:
+When `owngit health` cannot confirm the server, it exits non-zero and says why:
 
 | Message | Meaning |
 | --- | --- |
@@ -231,6 +233,10 @@ When it cannot confirm the server, it exits non-zero and says why:
 | `OwnGit is still starting` | Try again shortly. |
 | `OwnGit is not running` | No server runs for this state directory. |
 | `another program holds the state directory` | OwnGit cannot tell which program runs with this state directory. |
+
+### State directory permissions
+
+On macOS and Linux, the OwnGit server and commands refuse a state directory that other accounts can write, even if it has the sticky bit. The icon stays visible with the permission problem and a repair command. OwnGit prints the command to fix the permissions or access list and changes nothing itself. For shared group or other write permission, the command is `chmod g-w,o-w 'STATE_DIRECTORY'`. For a macOS access list that allows changes, use the `chmod -N 'STATE_DIRECTORY'` command shown. Then start OwnGit again. The account's private Linux group and groups that already have administrator privileges on macOS remain trusted.
 
 ## Checkup
 
