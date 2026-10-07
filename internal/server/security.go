@@ -111,10 +111,6 @@ func (policy *HostPolicy) allow(requestHost, peer string) (bool, *int64) {
 	return allowed, admission
 }
 
-func (policy *HostPolicy) Middleware(next http.Handler) http.Handler {
-	return policy.MiddlewareAdmitting(nil, nil, next)
-}
-
 // MiddlewareAdmitting is Middleware with one exception: a request whose Host
 // the policy refuses still passes when admit, if not nil, accepts it. When
 // admit could not decide, unavailable answers the request with the cause:

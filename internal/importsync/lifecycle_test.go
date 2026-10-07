@@ -239,8 +239,8 @@ func TestReconcileLatchesRestoredMarkerLossBeforeMutation(t *testing.T) {
 		if stimulusErr != nil {
 			return
 		}
-		availability := f.service.Availability(ctx)
-		lossReported = !availability.Available && availability.Code == CodeRuntimeUnavailable
+		_, runtimeErr := f.service.currentRuntime("")
+		lossReported = errors.Is(runtimeErr, ErrRuntimeLost)
 		restoreErr = restore()
 	}
 	reconcileErr := f.service.Reconcile(ctx)
@@ -470,7 +470,7 @@ func TestAcquireStagingClaimsExistingInformationalRow(t *testing.T) {
 	require(t, err == nil && exists, "claimed row exists=%v err=%v", exists, err)
 	require(t, row.State == state.ImportStagingActive && row.Token == dir.token && row.RunID == runID &&
 		row.RepositoryID == "project", "claim did not take ownership: %+v", row)
-	_, err = f.service.proveStagingOwnership(ctx, dir)
+	err = f.service.proveStagingOwnership(ctx, dir)
 	noErr(t, err, "marker and row disagree after the claim")
 }
 

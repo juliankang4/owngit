@@ -57,7 +57,7 @@ func TestBrowserPullRequestWorkflowUsesObservedHeadsAndAdvisoryEvidence(t *testi
 	if missingCSRF.status != http.StatusForbidden {
 		t.Fatalf("create without csrf status=%d", missingCSRF.status)
 	}
-	if records, err := fixture.store.PullRequests(context.Background(), "project"); err != nil || len(records) != 0 {
+	if records, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000); err != nil || len(records) != 0 {
 		t.Fatalf("missing csrf changed pull requests: count=%d err=%v", len(records), err)
 	}
 

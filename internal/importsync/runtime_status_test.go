@@ -39,8 +39,6 @@ func TestStatusReportsSchedulerAvailability(t *testing.T) {
 	require(t, err == nil && !status.Runtime.SchedulerRunning && status.Runtime.SchedulerFailed &&
 		status.Runtime.Code != "" && status.Runtime.Reason != "",
 		"status after a failed scheduler start runtime=%+v err=%v", status.Runtime, err)
-	availability := blocked.service.Availability(ctx)
-	require(t, availability.Code != "", "availability hides the scheduler failure: %+v", availability)
 }
 
 // Status does not wait for a writer that holds the repository lock, such as

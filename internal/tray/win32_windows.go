@@ -32,7 +32,6 @@ var (
 	procSetForegroundWindow           = user32.NewProc("SetForegroundWindow")
 	procSetFocus                      = user32.NewProc("SetFocus")
 	procGetFocus                      = user32.NewProc("GetFocus")
-	procInvalidateRect                = user32.NewProc("InvalidateRect")
 	procBeginPaint                    = user32.NewProc("BeginPaint")
 	procEndPaint                      = user32.NewProc("EndPaint")
 	procFillRect                      = user32.NewProc("FillRect")

@@ -1658,16 +1658,7 @@ func (s *Store) ImportStagingsPage(ctx context.Context, afterName string, limit 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var records []ImportStaging
-	for rows.Next() {
-		record, err := scanImportStaging(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, rows.Err()
+	return collectRows(rows, scanImportStaging)
 }
 
 func (s *Store) ImportSchedulesPage(ctx context.Context, afterID string, limit int) ([]ImportSchedule, error) {
@@ -1678,16 +1669,7 @@ func (s *Store) ImportSchedulesPage(ctx context.Context, afterID string, limit i
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var records []ImportSchedule
-	for rows.Next() {
-		record, err := scanImportSchedule(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, rows.Err()
+	return collectRows(rows, scanImportSchedule)
 }
 
 func (s *Store) ImportInitialDestinationsPage(ctx context.Context, afterName string, limit int) ([]ImportInitialDestination, error) {
@@ -1698,16 +1680,7 @@ func (s *Store) ImportInitialDestinationsPage(ctx context.Context, afterName str
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var records []ImportInitialDestination
-	for rows.Next() {
-		record, err := scanImportInitialDestination(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, rows.Err()
+	return collectRows(rows, scanImportInitialDestination)
 }
 
 func (s *Store) ImportStagings(ctx context.Context) ([]ImportStaging, error) {

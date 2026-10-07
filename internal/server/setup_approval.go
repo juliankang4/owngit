@@ -371,7 +371,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 		switch {
 		case errors.Is(err, state.ErrSetupComplete):
 			// Another browser or the terminal finished setup meanwhile.
-			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie))
 			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupAlreadyDone, http.StatusConflict
 		case err != nil:
 			// The cookie stays: an approval that was not used up can still be
@@ -381,7 +381,7 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 			http.Redirect(writer, request, "/setup", http.StatusSeeOther)
 			return
 		default:
-			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie))
 			page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 		}
 	case approvalPending:
@@ -391,11 +391,11 @@ func (app *App) handleSetupApprovalPage(writer http.ResponseWriter, request *htt
 		// again at once.
 		page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalRejected, http.StatusForbidden
 	case approvalExpired:
-		app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
+		app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie))
 		page.Stage, page.Reason, status = webui.SetupUnavailable, webui.MsgSetupApprovalExpired, http.StatusGone
 	default:
 		if hasCookie {
-			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
+			app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie))
 		}
 	}
 	if page.Stage == webui.SetupUnavailable {
@@ -426,8 +426,8 @@ func (app *App) startApprovedSession(writer http.ResponseWriter, request *http.R
 		return false, err
 	}
 	app.setCookie(writer, request, cookieNameForScheme(request, setupCookie), sessionToken, expires, true)
-	app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie), true)
-	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie), true)
+	app.clearCookie(writer, request, cookieNameForScheme(request, approvalCookie))
+	app.clearCookie(writer, request, cookieNameForScheme(request, preauthCookie))
 	return true, nil
 }
 

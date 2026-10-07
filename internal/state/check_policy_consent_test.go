@@ -362,7 +362,7 @@ func TestEveryPublishedNumericFieldIsCoveredByTheBoundaryTest(t *testing.T) {
 		// Covered by its own test, because its floor moves.
 		FieldSourceMaxTotalBytes: true,
 	}
-	for _, field := range PublishedPolicyFields() {
+	for field := range checkPolicyBounds {
 		if !covered[field] {
 			t.Errorf("%s publishes bounds with no boundary case", field)
 		}

@@ -362,49 +362,49 @@ func readInitialMarker(directory string) (initialMarker, error) {
 	return marker, nil
 }
 
-func (s *Service) proveInitialOwnership(ctx context.Context, dest *initialDestination) (state.ImportInitialDestination, error) {
+func (s *Service) proveInitialOwnership(ctx context.Context, dest *initialDestination) error {
 	if dest == nil || dest.generation == "" {
-		return state.ImportInitialDestination{}, errors.New("initial destination has no runtime generation")
+		return errors.New("initial destination has no runtime generation")
 	}
 	root, err := s.currentRuntime(dest.generation)
 	if err != nil {
-		return state.ImportInitialDestination{}, err
+		return err
 	}
 	if !ownedUnpublishedName(dest.name) || filepath.Dir(dest.path) != dest.storageRoot {
-		return state.ImportInitialDestination{}, errors.New("initial destination path is not task-owned")
+		return errors.New("initial destination path is not task-owned")
 	}
 	info, err := os.Lstat(dest.path)
 	if err != nil {
-		return state.ImportInitialDestination{}, err
+		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return state.ImportInitialDestination{}, errors.New("initial destination path is not a directory")
+		return errors.New("initial destination path is not a directory")
 	}
 	// Through the storage folder's handle, Windows records the file ID now.
 	if dest.identity, err = directoryIdentityIn(dest.storageRoot, dest.name); err != nil {
-		return state.ImportInitialDestination{}, err
+		return err
 	}
 	marker, err := readInitialMarker(dest.path)
 	if err != nil {
-		return state.ImportInitialDestination{}, fmt.Errorf("initial destination marker: %w", err)
+		return fmt.Errorf("initial destination marker: %w", err)
 	}
 	if marker.RootID != root.rootID || marker.RootID != dest.rootID || marker.Name != dest.name || marker.Token != dest.token || marker.RunID != dest.runID || marker.RepositoryID != dest.repositoryID {
-		return state.ImportInitialDestination{}, errors.New("initial destination marker does not match this run")
+		return errors.New("initial destination marker does not match this run")
 	}
 	row, exists, err := s.Store.ImportInitialDestination(ctx, dest.name)
 	if err != nil {
-		return state.ImportInitialDestination{}, err
+		return err
 	}
 	if !exists {
-		return state.ImportInitialDestination{}, errors.New("initial destination has no ownership record")
+		return errors.New("initial destination has no ownership record")
 	}
 	if row.State != state.ImportInitialPreparing && row.State != state.ImportInitialReady && row.State != state.ImportInitialCleanupFailed {
-		return row, errors.New("initial destination ownership record does not authorize this run")
+		return errors.New("initial destination ownership record does not authorize this run")
 	}
 	if row.RootID != marker.RootID || row.Token != marker.Token || row.RunID != marker.RunID || row.RepositoryID != marker.RepositoryID {
-		return row, errors.New("initial destination ownership record does not match the marker")
+		return errors.New("initial destination ownership record does not match the marker")
 	}
-	return row, nil
+	return nil
 }
 
 // directoryIdentityIn returns the identity of the directory name in the
@@ -446,7 +446,7 @@ func removeDirectoryWithIdentity(storageRoot, name string, identity os.FileInfo)
 }
 
 func (s *Service) removeOwnedInitialDirectory(ctx context.Context, dest *initialDestination, now time.Time) error {
-	if _, err := s.proveInitialOwnership(ctx, dest); err != nil {
+	if err := s.proveInitialOwnership(ctx, dest); err != nil {
 		_ = s.Store.SetImportInitialDestinationState(ctx, dest.name, state.ImportInitialCleanupFailed, boundedImportMessage(err.Error()), now)
 		return err
 	}
@@ -645,7 +645,7 @@ func (s *Service) reconcileInitialDestinations(ctx context.Context, generation s
 				continue
 			}
 			now := s.clock()
-			count, err := s.reconcileLandedInitialDestination(ctx, generation, root.rootID, storageRoot, row, now)
+			count, err := s.reconcileLandedInitialDestination(ctx, generation, root.rootID, row, now)
 			if err != nil {
 				return issues, err
 			}
@@ -681,7 +681,7 @@ func (s *Service) reconcileOneInitialDestination(ctx context.Context, generation
 		storageRoot: storageRoot, rootID: rootID, generation: generation, name: name, path: path,
 		token: row.Token, repositoryID: row.RepositoryID, runID: row.RunID,
 	}
-	if _, err := s.proveInitialOwnership(ctx, dest); err != nil {
+	if err := s.proveInitialOwnership(ctx, dest); err != nil {
 		if errors.Is(err, ErrRuntimeLost) {
 			return 0, err
 		}
@@ -874,16 +874,16 @@ func (s *Service) settleStrandedInitialRuns(ctx context.Context, repositoryID st
 }
 
 // settleGoneInitialIntent settles an intent whose initial publication can no
-// longer become a repository. It reports whether the intent was settled.
-func (s *Service) settleGoneInitialIntent(ctx context.Context, intent state.ImportIntent, now time.Time) (bool, error) {
+// longer become a repository.
+func (s *Service) settleGoneInitialIntent(ctx context.Context, intent state.ImportIntent, now time.Time) error {
 	if intent.Status != state.ImportIntentPlanning && intent.Status != state.ImportIntentApplied && intent.Status != state.ImportIntentUnresolved {
-		return false, nil
+		return nil
 	}
 	gone, err := s.initialPublicationGone(ctx, intent)
 	if err != nil || !gone {
-		return false, err
+		return err
 	}
-	return true, s.settleNeverPublishedInitial(ctx, intent, "", now)
+	return s.settleNeverPublishedInitial(ctx, intent, "", now)
 }
 
 // abandonUnpublishedInitial settles a partial publication inside this run's
@@ -944,7 +944,7 @@ func (s *Service) publishReconciledInitial(ctx context.Context, dest *initialDes
 	return 0, nil
 }
 
-func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generation, rootID, storageRoot string, row state.ImportInitialDestination, now time.Time) (int, error) {
+func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generation, rootID string, row state.ImportInitialDestination, now time.Time) (int, error) {
 	if s.runIsLive(row.RunID) || !ownedUnpublishedName(row.Name) {
 		return 0, nil
 	}

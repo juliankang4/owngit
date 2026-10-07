@@ -65,10 +65,5 @@ var mergeabilityCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range mergeabilityCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(mergeabilityCatalog)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql/driver"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -22,6 +23,14 @@ import (
 // releasing storage under that work. This includes the running-network
 // cleanup, which waits for the store's only SQLite connection.
 func TestShutdownWaitsShareOneDeadline(t *testing.T) {
+	if os.Getenv("OWNGIT_TEST_SHUTDOWN") != "1" {
+		command := exec.Command(os.Args[0], "-test.run=^TestShutdownWaitsShareOneDeadline$", "-test.timeout=30s")
+		command.Env = append(os.Environ(), "OWNGIT_TEST_SHUTDOWN=1")
+		if output, err := command.CombinedOutput(); err != nil {
+			t.Fatalf("shutdown subprocess: %v\n%s", err, output)
+		}
+		return
+	}
 	var mu sync.Mutex
 	var logged []string
 	var exits []int
@@ -72,7 +81,6 @@ func TestShutdownWaitsShareOneDeadline(t *testing.T) {
 		go func() { childGone <- child.Wait() }()
 	}
 
-	t.Cleanup(gitexec.ReopenOwnedProcesses)
 	endServing()
 	started := time.Now()
 	clock.stop(logf, "imports", blocked)

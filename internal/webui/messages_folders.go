@@ -63,12 +63,7 @@ var folderCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range folderCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(folderCatalog)
 }
 
 // FolderMessages are the server-rendered status texts used by the chooser.

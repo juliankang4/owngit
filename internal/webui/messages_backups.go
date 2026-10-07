@@ -598,10 +598,5 @@ var backupsCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range backupsCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(backupsCatalog)
 }

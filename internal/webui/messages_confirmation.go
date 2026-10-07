@@ -168,10 +168,5 @@ func confirmAfter(choice string) MessageCode {
 }
 
 func init() {
-	for code, entry := range confirmationCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(confirmationCatalog)
 }

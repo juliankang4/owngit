@@ -15,14 +15,13 @@ import (
 	"owngit/internal/webui"
 )
 
-func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome) {
+func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary) {
 	writer.Header().Set("Cache-Control", "no-store")
 	adminSession, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
 	}
-	var err error
-	chrome, err = app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
+	chrome, err := app.chrome(writer, request, webui.SectionRepository, stored.ID, adminSession.CSRF)
 	if err != nil {
 		app.answerUnavailable(writer, request, "page frame read", err)
 		return
@@ -34,7 +33,6 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 
 	// Every credential mutation, including an early refusal, is private and
 	// must not be cached. No response path puts a token in a redirect URL.
-	writer.Header().Set("Cache-Control", "no-store")
 	if !app.parseForm(writer, request) {
 		return
 	}
@@ -95,7 +93,7 @@ func (app *App) handleHelperCredentials(writer http.ResponseWriter, request *htt
 				[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, unavailable(request, "helper credential revoke", err))
 			return
 		}
-		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.Address)+"?notice=helper_credential_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, baseHelperCredentialsURL(stored.Address)+"?notice=helper_credential_revoked")
 	default:
 		app.renderHelperCredentials(writer, request, stored, summary, chrome, action, credentialID, "",
 			[]webui.Notice{webui.Error("", webui.MsgHelperFailed)}, http.StatusBadRequest)

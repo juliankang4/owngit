@@ -151,7 +151,8 @@ func TestVerifyManyRepositoriesAndALargeOne(t *testing.T) {
 		}
 	}
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 
 	temporary := t.TempDir()
 	result, err := Verify(ctx, backup, temporary, "")

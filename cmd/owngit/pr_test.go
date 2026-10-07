@@ -170,7 +170,7 @@ func TestPRCLIEndToEndKeepsPushIndependentAndMergesExactRevisions(t *testing.T) 
 	ctx := context.Background()
 	fixture := newPRCLIFixture(t)
 	store, manager, sourceOID, targetOID := fixture.store, fixture.manager, fixture.sourceOID, fixture.targetOID
-	if records, err := store.PullRequests(ctx, "project"); err != nil || len(records) != 0 {
+	if records, _, err := store.PullRequestSummaries(ctx, "project", "", 0, 1000); err != nil || len(records) != 0 {
 		t.Fatalf("ordinary push created pull requests: records=%v err=%v", records, err)
 	}
 
@@ -370,7 +370,7 @@ func TestPRTextIsCheckedBeforeSending(t *testing.T) {
 			t.Fatalf("%s: error=%v code=%q, want %s", test.arguments[:2], err, got, test.code)
 		}
 	}
-	if records, err := fixture.store.PullRequests(context.Background(), "project"); err != nil || len(records) != 0 {
+	if records, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000); err != nil || len(records) != 0 {
 		t.Fatalf("a refused text created records=%v err=%v", records, err)
 	}
 }
@@ -418,7 +418,7 @@ func TestPRTextThatIsNotUTF8IsRefused(t *testing.T) {
 			t.Fatalf("%s: code=%q, want %s", test.name, got, test.code)
 		}
 	}
-	if records, err := fixture.store.PullRequests(context.Background(), "project"); err != nil || len(records) != 0 {
+	if records, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000); err != nil || len(records) != 0 {
 		t.Fatalf("refused text created records=%v err=%v", records, err)
 	}
 	const text = "한글 שלום مرحبا 🙂\n"

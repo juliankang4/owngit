@@ -78,3 +78,13 @@ func assertRuntimeStillOwned(service *Service) error {
 func runtimeLockPath(service *Service) string {
 	return filepath.Join(service.stagingRootPath(), runtimeRootLockName)
 }
+
+// preparedRuntime reports the in-memory lease without touching the filesystem.
+func (s *Service) preparedRuntime() (runtimeRoot, bool) {
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if s.runtime == nil {
+		return runtimeRoot{}, false
+	}
+	return *s.runtime, true
+}

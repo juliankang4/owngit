@@ -4,8 +4,8 @@ package webui
 // these codes instead of English strings, so both languages stay complete and
 // the wording can change without touching handler code.
 //
-// An unknown code renders as a generic message and is reported by
-// MissingMessages, which the package tests use to keep the catalog complete.
+// An unknown code renders as a generic message. Package tests check catalog
+// completeness in both languages.
 type MessageCode string
 
 // Shared interface chrome. These live in the same catalog as everything else
@@ -264,7 +264,6 @@ const (
 	MsgLogoutSecureKept MessageCode = "login.logout_secure_kept"
 
 	MsgAdminTitle            MessageCode = "admin.title"
-	MsgAdminBody             MessageCode = "admin.body"
 	MsgAdminField            MessageCode = "admin.field"
 	MsgAdminSubmit           MessageCode = "admin.submit"
 	MsgAdminFailed           MessageCode = "admin.failed"
@@ -274,7 +273,6 @@ const (
 	MsgAdminConfirmed        MessageCode = "admin.confirmed"
 	MsgAdminEnded            MessageCode = "admin.ended"
 	MsgAdminSecureKept       MessageCode = "admin.secure_kept"
-	MsgAdminTemporary        MessageCode = "admin.temporary_notice"
 	MsgAdminForgot           MessageCode = "admin.forgot"
 )
 
@@ -1015,10 +1013,6 @@ var catalog = map[MessageCode]message{
 		en: "Confirm as administrator",
 		ko: "관리자 확인",
 	},
-	MsgAdminBody: {
-		en: "Security settings need the administrator password. Confirmation lasts for this short session only.",
-		ko: "보안 설정에는 관리자 비밀번호가 필요합니다. 확인은 이번 짧은 세션 동안만 유지됩니다.",
-	},
 	MsgAdminField: {
 		en: "Administrator password",
 		ko: "관리자 비밀번호",
@@ -1054,10 +1048,6 @@ var catalog = map[MessageCode]message{
 	MsgAdminSecureKept: {
 		en: "The HTTPS address keeps its own administrator confirmation: end it there too.",
 		ko: "HTTPS 주소는 관리자 확인을 따로 유지하므로 그 주소에서도 끝내세요.",
-	},
-	MsgAdminTemporary: {
-		en: "This browser is not remembered as an administrator. Confirmation is asked again when it lapses.",
-		ko: "이 브라우저를 관리자로 기억하지 않습니다. 확인 시간이 지나면 다시 묻습니다.",
 	},
 	MsgAdminForgot: {
 		en: "Forgot it? Reset the administrator password from the computer running OwnGit. Repositories are not touched.",
@@ -2037,6 +2027,15 @@ var catalog = map[MessageCode]message{
 	},
 }
 
+func registerMessages(entries map[MessageCode]message) {
+	for code, entry := range entries {
+		if _, exists := catalog[code]; exists {
+			panic("webui: duplicate message code " + string(code))
+		}
+		catalog[code] = entry
+	}
+}
+
 // Text returns the localized sentence for code. An unknown or empty code
 // resolves to the generic error text so a template never renders a raw key.
 func Text(lang Lang, code MessageCode) string {
@@ -2054,17 +2053,4 @@ func Text(lang Lang, code MessageCode) string {
 func Has(code MessageCode) bool {
 	_, ok := catalog[code]
 	return ok
-}
-
-// MissingMessages lists catalog entries without text in one of the languages.
-// The package test uses it; it exists so an incomplete translation fails a
-// check instead of silently shipping English to Korean readers.
-func MissingMessages() []MessageCode {
-	var missing []MessageCode
-	for code, entry := range catalog {
-		if entry.en == "" || entry.ko == "" {
-			missing = append(missing, code)
-		}
-	}
-	return missing
 }

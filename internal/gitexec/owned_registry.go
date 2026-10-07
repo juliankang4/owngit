@@ -38,14 +38,6 @@ func unregisterOwner(owner *ProcessOwner) {
 	delete(liveOwners.set, owner)
 }
 
-// ReopenOwnedProcesses undoes the closing by TerminateAllOwnedProcesses. Only
-// tests call it; the process exits after a real termination.
-func ReopenOwnedProcesses() {
-	liveOwners.Lock()
-	defer liveOwners.Unlock()
-	liveOwners.closed = false
-}
-
 // TerminateAllOwnedProcesses closes the registry, then ends, concurrently and
 // within about grace, every process group or job that this process started
 // through the ownership functions and has not closed. It signals nothing

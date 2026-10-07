@@ -16,7 +16,7 @@ import (
 	"owngit/internal/webui"
 )
 
-func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
+func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Request) {
 	session, ok := app.requireAdminPage(writer, request)
 	if !ok {
 		return
@@ -124,7 +124,7 @@ func (app *App) handleNewImport(writer http.ResponseWriter, request *http.Reques
 		}
 		notice = "import_run_cancelled"
 	}
-	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(result.RepositoryID)+"/import?notice="+notice, http.StatusSeeOther)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(result.RepositoryID)+"/import?notice="+notice)
 }
 
 // handleImportPage serves the repository's Import tab. Anyone who may read
@@ -166,7 +166,6 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	notice := "import_saved"
-	status := http.StatusSeeOther
 	refresh := false
 	switch postValue(request, "action") {
 	case webui.ActionImportConfigure:
@@ -268,7 +267,7 @@ func (app *App) handleImportPage(writer http.ResponseWriter, request *http.Reque
 		app.renderImportPage(writer, request, stored, summary, chrome, importProblemStatus(request, "import change", err))
 		return
 	}
-	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.Address)+"/import?notice="+notice, status)
+	app.noticeRedirect(writer, request, "/repositories/"+url.PathEscape(stored.Address)+"/import?notice="+notice)
 }
 
 func (app *App) renderImportPage(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, status int) {

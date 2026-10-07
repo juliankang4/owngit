@@ -491,12 +491,12 @@ func renderArchiveReadme(templatePath, appVersion string, current target, iconAp
 }
 
 // writeTarGz writes a deterministic gzip-compressed tar archive.
-func writeTarGz(path string, files []stagedFile) error {
+func writeTarGz(path string, files []stagedFile) (err error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	compressed := gzip.NewWriter(file)
 	archive := tar.NewWriter(compressed)
 	for _, entry := range files {
@@ -522,12 +522,12 @@ func writeTarGz(path string, files []stagedFile) error {
 }
 
 // writeZip writes a deterministic deflate zip archive.
-func writeZip(path string, files []stagedFile) error {
+func writeZip(path string, files []stagedFile) (err error) {
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { err = errors.Join(err, file.Close()) }()
 	archive := zip.NewWriter(file)
 	for _, entry := range files {
 		header := &zip.FileHeader{Name: entry.name, Method: zip.Deflate, Modified: fixedModTime}

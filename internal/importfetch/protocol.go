@@ -242,20 +242,24 @@ func appendBounded(destination *bytes.Buffer, value string, maximum int64) error
 }
 
 func readNAK(source io.Reader) error {
+	return readExpectedPacket(source, "NAK", "read upload-pack acknowledgement")
+}
+
+func readExpectedPacket(source io.Reader, expected, operation string) error {
 	var header [4]byte
 	if _, err := io.ReadFull(source, header[:]); err != nil {
 		return uploadProtocolReadError(err)
 	}
 	length, ok := strictHexLength(header)
-	if !ok || (length != 7 && length != 8) {
-		return fetchError("read upload-pack acknowledgement", ErrUploadPackProtocol, nil)
+	if !ok || (length != len(expected)+4 && length != len(expected)+5) {
+		return fetchError(operation, ErrUploadPackProtocol, nil)
 	}
 	payload := make([]byte, length-4)
 	if _, err := io.ReadFull(source, payload); err != nil {
 		return uploadProtocolReadError(err)
 	}
-	if string(payload) != "NAK" && string(payload) != "NAK\n" {
-		return fetchError("read upload-pack acknowledgement", ErrUploadPackProtocol, nil)
+	if string(payload) != expected && string(payload) != expected+"\n" {
+		return fetchError(operation, ErrUploadPackProtocol, nil)
 	}
 	return nil
 }
@@ -287,22 +291,7 @@ func sidebandOverhead(maxPack int64) int64 {
 // refused: this request asked for none, and a shallow pack is not a full
 // snapshot.
 func readPackfileSection(source io.Reader) error {
-	var header [4]byte
-	if _, err := io.ReadFull(source, header[:]); err != nil {
-		return uploadProtocolReadError(err)
-	}
-	length, ok := strictHexLength(header)
-	if !ok || (length != 12 && length != 13) {
-		return fetchError("read upload-pack section", ErrUploadPackProtocol, nil)
-	}
-	payload := make([]byte, length-4)
-	if _, err := io.ReadFull(source, payload); err != nil {
-		return uploadProtocolReadError(err)
-	}
-	if string(payload) != "packfile" && string(payload) != "packfile\n" {
-		return fetchError("read upload-pack section", ErrUploadPackProtocol, nil)
-	}
-	return nil
+	return readExpectedPacket(source, "packfile", "read upload-pack section")
 }
 
 // sidebandReader returns the pack data of a protocol v2 packfile section:

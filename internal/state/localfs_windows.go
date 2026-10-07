@@ -450,9 +450,7 @@ func handleFinalPath(handle windows.Handle) (string, error) {
 	if strings.HasPrefix(strings.ToUpper(resolved), `\\?\UNC\`) {
 		return `\\` + resolved[len(`\\?\UNC\`):], nil
 	}
-	if strings.HasPrefix(resolved, `\\?\`) {
-		resolved = resolved[len(`\\?\`):]
-	}
+	resolved = strings.TrimPrefix(resolved, `\\?\`)
 	return resolved, nil
 }
 
@@ -976,23 +974,6 @@ func describeNotPrivate(descriptor *windows.SECURITY_DESCRIPTOR, user *windows.S
 		Fix:     privatePathRepairCommand(path, user, setOwner, false),
 		Shell:   "PowerShell",
 	}
-}
-
-// userOnlyACLCommand is a PowerShell line that replaces the whole access list
-// of path with one full-control entry for user and no inherited entries
-// (SDDL "D:P(A;;FA;;;SID)"). It writes the complete list instead of editing
-// entries with icacls, because icacls can leave entries behind: /remove turns
-// an inherited entry in a protected list into an explicit one instead of
-// removing it.
-//
-// The line writes only the access section, so the owner and any audit entries
-// stay; Set-Acl would write the whole security descriptor and, run elevated,
-// drop the audit entries. Windows PowerShell 5.1 uses the path overloads on
-// [IO.File] or [IO.Directory]; PowerShell 7 uses the matching FileInfo or
-// DirectoryInfo overloads on [IO.FileSystemAclExtensions]. Get-Item resolves
-// the literal path and stops the line with a clear error if it is missing.
-func userOnlyACLCommand(path string, user *windows.SID) string {
-	return privatePathRepairCommand(path, user, false, false)
 }
 
 // privatePathRepairCommand makes each plain visited item owner-only without

@@ -66,7 +66,8 @@ func TestFormat11RecordsSurviveBackupAndRestore(t *testing.T) {
 	noErr(t, err)
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if manifest.Version != backupVersion || format11Content(manifest) == "" {
@@ -188,7 +189,8 @@ func TestBackupWithoutFormat11RecordsStaysFormat10(t *testing.T) {
 	noErr(t, err)
 	noErr(t, store.Exec(ctx, `UPDATE import_sources SET authority_revision=5,sign_in_revision=4`))
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if manifest.Version != closedPullRequestBackupVersion {
@@ -253,7 +255,8 @@ func TestBackupAtTheProductTextLimits(t *testing.T) {
 	}
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	info, err := os.Stat(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	texts := int64(pullRequests * (1 + reviewsEach) * state.MaximumPullRequestTextBytes)

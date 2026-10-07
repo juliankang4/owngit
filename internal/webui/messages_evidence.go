@@ -4,8 +4,7 @@ package webui
 //
 // These entries live beside the rest of the catalog rather than inside it so
 // one large map does not have to be edited for every new screen. They are
-// merged at startup and are indistinguishable afterwards: Text, Has,
-// and MissingMessages all see one catalog.
+// merged at startup and are indistinguishable afterwards: Text and Has see one catalog.
 
 // Shared evidence vocabulary.
 const (
@@ -895,10 +894,5 @@ var evidenceCatalog = map[MessageCode]message{
 // file loaded last silently winning. That is a mistake in this package, so it
 // fails at startup the same way an unparsable template does.
 func init() {
-	for code, entry := range evidenceCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(evidenceCatalog)
 }

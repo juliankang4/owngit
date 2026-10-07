@@ -212,56 +212,55 @@ func readStagingMarker(directory string) (stagingMarker, error) {
 }
 
 // proveStagingOwnership requires the current root identity, the marker, the
-// directory name, and an authorizing row to agree before any cleanup. The row
-// is returned even on failure so callers can report without mutating it.
-func (s *Service) proveStagingOwnership(ctx context.Context, dir stagingDir) (state.ImportStaging, error) {
+// directory name, and an authorizing row to agree before any cleanup.
+func (s *Service) proveStagingOwnership(ctx context.Context, dir stagingDir) error {
 	if dir.generation == "" {
-		return state.ImportStaging{}, errors.New("staging directory has no runtime generation")
+		return errors.New("staging directory has no runtime generation")
 	}
 	root, err := s.currentRuntime(dir.generation)
 	if err != nil {
-		return state.ImportStaging{}, err
+		return err
 	}
 	if !validStagingName(dir.name) || filepath.Dir(dir.path) != root.staging {
-		return state.ImportStaging{}, errors.New("staging directory name is not task-owned")
+		return errors.New("staging directory name is not task-owned")
 	}
 	info, err := os.Lstat(dir.path)
 	if err != nil {
-		return state.ImportStaging{}, err
+		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return state.ImportStaging{}, errors.New("staging path is not a directory")
+		return errors.New("staging path is not a directory")
 	}
 	marker, err := readStagingMarker(dir.path)
 	if err != nil {
-		return state.ImportStaging{}, fmt.Errorf("staging marker: %w", err)
+		return fmt.Errorf("staging marker: %w", err)
 	}
 	if marker.RootID != root.rootID {
-		return state.ImportStaging{}, errors.New("staging marker belongs to another runtime root")
+		return errors.New("staging marker belongs to another runtime root")
 	}
 	if marker.Name != dir.name || marker.RepositoryID != dir.repositoryID {
-		return state.ImportStaging{}, errors.New("staging marker does not match its directory")
+		return errors.New("staging marker does not match its directory")
 	}
 	if dir.runID != "" && marker.RunID != dir.runID {
-		return state.ImportStaging{}, errors.New("staging marker run does not match its directory")
+		return errors.New("staging marker run does not match its directory")
 	}
 	if dir.token != "" && marker.Token != dir.token {
-		return state.ImportStaging{}, errors.New("staging marker token does not match the run")
+		return errors.New("staging marker token does not match the run")
 	}
 	row, exists, err := s.Store.ImportStaging(ctx, dir.name)
 	if err != nil {
-		return state.ImportStaging{}, err
+		return err
 	}
 	if !exists {
-		return state.ImportStaging{}, errors.New("staging directory has no authorization record")
+		return errors.New("staging directory has no authorization record")
 	}
 	if !authorizedStagingState(row.State) {
-		return row, errors.New("staging authorization record was not written by a run")
+		return errors.New("staging authorization record was not written by a run")
 	}
 	if row.RunID != marker.RunID || row.Token != marker.Token || row.RepositoryID != marker.RepositoryID {
-		return row, errors.New("staging authorization record does not match the marker")
+		return errors.New("staging authorization record does not match the marker")
 	}
-	return row, nil
+	return nil
 }
 
 // settleStaging deletes a proven staging directory and records the outcome on
@@ -273,7 +272,7 @@ func (s *Service) settleStaging(ctx context.Context, dir stagingDir, run state.I
 
 // settleStagingAt avoids invoking Clock while a publication lock is held.
 func (s *Service) settleStagingAt(ctx context.Context, dir stagingDir, run state.ImportRun, now time.Time) state.ImportRun {
-	_, err := s.proveStagingOwnership(ctx, dir)
+	err := s.proveStagingOwnership(ctx, dir)
 	if err != nil {
 		appendImportCleanup(&run, fmt.Sprintf("%s: %v", dir.name, err))
 		return run
@@ -370,7 +369,7 @@ func (s *Service) reconcileStaging(ctx context.Context, generation string) (int,
 			continue
 		}
 		dir.runID, dir.token, dir.repositoryID = row.RunID, row.Token, row.RepositoryID
-		if _, err := s.proveStagingOwnership(ctx, dir); err != nil {
+		if err := s.proveStagingOwnership(ctx, dir); err != nil {
 			if errors.Is(err, ErrRuntimeLost) {
 				return issues, err
 			}

@@ -80,7 +80,8 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	noErr(t, store.RecordCheckObservation(ctx, "project", "refs/heads/main", sourceOID, now))
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if manifest.Version != closedPullRequestBackupVersion || len(manifest.CheckPolicies) != 1 || len(manifest.CheckJobs) != 2 {
@@ -145,7 +146,8 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 
 	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner(t, restoredState), Locks: gitexec.NewLocks(), Root: restoredRepositories}
 	rebackup := filepath.Join(root, "rebackup")
-	noErr(t, Create(ctx, restored, restoredManager, rebackup))
+	_, err = CreateWithReport(ctx, restored, restoredManager, rebackup)
+	noErr(t, err)
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
 	noErr(t, err)
 	if rebacked.Version != closedPullRequestBackupVersion || len(rebacked.CheckJobs) != 2 {
@@ -218,7 +220,8 @@ func TestBackupKeepsJobsFinishedByARunnerWithAnEarlierClock(t *testing.T) {
 	}
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	temporary := filepath.Join(root, "temporary")
 	noErr(t, os.Mkdir(temporary, 0o700))
 	result, err := Verify(ctx, backup, temporary, "")

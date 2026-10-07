@@ -239,7 +239,7 @@ func lstatAt(dir *os.File, name, path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || uint64(stat.Dev) != uint64(held.Dev) || uint64(stat.Ino) != uint64(held.Ino) {
+	if stat, ok := info.Sys().(*syscall.Stat_t); !ok || uint64(stat.Dev) != uint64(held.Dev) || stat.Ino != held.Ino {
 		return nil, fmt.Errorf("%s changed while it was checked", path)
 	}
 	return info, nil

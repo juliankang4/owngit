@@ -151,7 +151,7 @@ func openUpgradedSchema(t *testing.T, directory string, want int) *Store {
 	if err != nil {
 		t.Fatalf("open released schema: %v", err)
 	}
-	if version, err := store.schemaVersion(ctx); err != nil || version != want {
+	if version, _, err := readSchemaVersion(ctx, store.db); err != nil || version != want {
 		store.Close()
 		t.Fatalf("upgraded schema version=%d err=%v", version, err)
 	}

@@ -86,10 +86,5 @@ var trayCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range trayCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(trayCatalog)
 }

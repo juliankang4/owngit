@@ -31,7 +31,8 @@ func newTwoRepositoryBackup(t *testing.T, root string) string {
 	noErr(t, err)
 	runGit(t, filepath.Join(root, "backup-work"), "push", second, "HEAD:refs/heads/main", "HEAD:refs/heads/other")
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	return backup
 }
 

@@ -10,10 +10,18 @@ import (
 	"time"
 )
 
+// reopenOwnedProcesses undoes the closing by TerminateAllOwnedProcesses. Only
+// tests call it; the process exits after a real termination.
+func reopenOwnedProcesses() {
+	liveOwners.Lock()
+	defer liveOwners.Unlock()
+	liveOwners.closed = false
+}
+
 // Giving up must end a process whose attachment is still in progress, and
 // any process that is attached after giving up began.
 func TestTerminateAllEndsStartingAndLaterProcesses(t *testing.T) {
-	t.Cleanup(ReopenOwnedProcesses)
+	t.Cleanup(reopenOwnedProcesses)
 	start := func() *exec.Cmd {
 		command := exec.Command("sleep", "60")
 		ConfigureOwnedProcess(command)
@@ -46,7 +54,7 @@ func TestTerminateAllEndsStartingAndLaterProcesses(t *testing.T) {
 
 	// A group is still ended after its leader was reaped, while a child of
 	// the group runs.
-	ReopenOwnedProcesses()
+	reopenOwnedProcesses()
 	leader := exec.Command("sh", "-c", "sleep 60 & echo $!; exit 0")
 	ConfigureOwnedProcess(leader)
 	out, err := leader.StdoutPipe()

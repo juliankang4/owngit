@@ -50,7 +50,7 @@ func TestSecondPullRequestForABranchPairIsRefusedEverywhere(t *testing.T) {
 			t.Fatalf("%s browser second create status=%d, want a refusal linking #1", lang, result.status)
 		}
 	}
-	records, err := fixture.store.PullRequests(context.Background(), "project")
+	records, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("pull requests=%d err=%v, want only the first", len(records), err)
 	}

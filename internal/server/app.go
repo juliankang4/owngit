@@ -480,7 +480,7 @@ func (app *App) serveHTTP(writer http.ResponseWriter, request *http.Request) {
 	case request.URL.Path == "/repositories/new" && request.Method == http.MethodGet:
 		app.handleNewRepositoryGet(writer, request, settings, "", "", nil)
 	case request.URL.Path == "/repositories/new-import" && (request.Method == http.MethodGet || request.Method == http.MethodPost):
-		app.handleNewImport(writer, request, settings)
+		app.handleNewImport(writer, request)
 	case request.URL.Path == "/repositories" && request.Method == http.MethodPost:
 		app.handleCreateRepository(writer, request, settings)
 	case request.URL.Path == releaseDismissPath && request.Method == http.MethodPost:
@@ -703,13 +703,4 @@ func constantEqual(left, right string) bool {
 		different |= left[index] ^ right[index]
 	}
 	return different == 0
-}
-
-func firstError(errs ...error) error {
-	for _, err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-	return nil
 }

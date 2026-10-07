@@ -157,10 +157,5 @@ var navigationCatalog = map[MessageCode]message{
 }
 
 func init() {
-	for code, entry := range navigationCatalog {
-		if _, exists := catalog[code]; exists {
-			panic("webui: duplicate message code " + string(code))
-		}
-		catalog[code] = entry
-	}
+	registerMessages(navigationCatalog)
 }

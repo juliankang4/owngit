@@ -126,7 +126,7 @@ func TestPullRequestTextLimits(t *testing.T) {
 	if problemCode(err) != "invalid_body" {
 		t.Fatalf("oversized description err=%v", err)
 	}
-	if records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID); err != nil || len(records) != 0 {
+	if records, _, err := fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000); err != nil || len(records) != 0 {
 		t.Fatalf("a refused description created records=%v err=%v", records, err)
 	}
 }

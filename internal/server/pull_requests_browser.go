@@ -187,25 +187,16 @@ func (app *App) renderNewPullRequest(writer http.ResponseWriter, request *http.R
 	} else if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID, changeView(request))
-		if err != nil {
-			// Every failed comparison is shown as unavailable, and makes the
-			// page's answer unavailable unless it already has another status.
-			var comparison int
-			comparison, page.ChangesReason = comparisonFailure(request, err)
-			page.ChangesUnavailable = true
-			if status == http.StatusOK {
-				status = comparison
-			}
-		} else {
-			page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
-			addFileLinks(request, &page.ChangesPages)
-			page.ChangesBase = changes.Base
-			page.ChangesUnavailable = changes.Unavailable != ""
-			page.ChangesReason = changes.Unavailable
-			page.DiffTruncated = changes.PatchesIncomplete
-			page.FilesTruncated = changes.FilesIncomplete
+		changes, comparisonStatus := app.browserPullRequestChanges(request, stored.ID, page.Source.OID, page.Target.OID)
+		if status == http.StatusOK {
+			status = comparisonStatus
 		}
+		page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
+		page.ChangesBase = changes.Base
+		page.ChangesUnavailable = changes.Unavailable != ""
+		page.ChangesReason = changes.Unavailable
+		page.DiffTruncated = changes.PatchesIncomplete
+		page.FilesTruncated = changes.FilesIncomplete
 	}
 	app.render(writer, request, status, page)
 }
@@ -257,11 +248,11 @@ func (app *App) handleCreatePullRequest(writer http.ResponseWriter, request *htt
 	}
 	app.trayOrigins.note(request, originKey(state.NotifyPullRequest, pullRequestID(stored.ID, created.Number)))
 	writer.Header().Set("Cache-Control", "no-store")
-	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, created.Number)+"?notice=pull_request_created", http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, created.Number)+"?notice=pull_request_created")
 }
 
 func (app *App) handlePullRequestGet(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64) {
-	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, nil, pullRequestDrafts{}, nil, http.StatusOK)
+	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, nil, pullRequestDrafts{}, nil, http.StatusOK)
 }
 
 // handlePullRequestMergeability answers Check mergeability on the page where
@@ -279,10 +270,10 @@ func (app *App) handlePullRequestMergeability(writer http.ResponseWriter, reques
 	writer.Header().Set("Cache-Control", "no-store")
 	if err != nil {
 		notice, status := browserPullRequestProblem(request, "pull request mergeability", err, "mergeability")
-		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{notice}, nil, pullRequestDrafts{}, nil, status)
+		app.renderPullRequest(writer, request, stored, summary, chrome, number, []webui.Notice{notice}, nil, pullRequestDrafts{}, nil, status)
 		return
 	}
-	app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{}, nil, pullRequestDrafts{}, answer, http.StatusOK)
+	app.renderPullRequest(writer, request, stored, summary, chrome, number, []webui.Notice{}, nil, pullRequestDrafts{}, answer, http.StatusOK)
 }
 
 // pullRequestDrafts are the forms a refused change shows again, open and
@@ -369,26 +360,23 @@ func (app *App) handlePullRequestAction(writer http.ResponseWriter, request *htt
 		if action == "merge" {
 			blockers = browserMergeProblemBlockers(err)
 		}
-		app.renderPullRequest(writer, request, stored, summary, chrome, number, nil, []webui.Notice{problemNotice}, blockers, drafts, nil, status)
+		app.renderPullRequest(writer, request, stored, summary, chrome, number, []webui.Notice{problemNotice}, blockers, drafts, nil, status)
 		return
 	}
 	writer.Header().Set("Cache-Control", "no-store")
-	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, view.Number)+"?notice="+url.QueryEscape(notice), http.StatusSeeOther)
+	app.noticeRedirect(writer, request, pullRequestURL(stored.Address, view.Number)+"?notice="+url.QueryEscape(notice))
 }
 
-func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, view *pullrequest.View, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, answer *pullrequest.Mergeability, status int) {
-	if view == nil {
-		var err error
-		view, err = app.PullRequests.Show(request.Context(), stored.ID, number)
-		if err != nil {
-			problem := pullrequest.AsProblem(err)
-			if problem.Code == "pull_request_not_found" || problem.Code == "invalid_pull_request_number" {
-				app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
-				return
-			}
-			app.renderError(writer, request, apiStatus(request, "pull request read", err), webui.MsgPRFailed, "")
+func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, number int64, notices []webui.Notice, extraBlockers []webui.MergeBlocker, drafts pullRequestDrafts, answer *pullrequest.Mergeability, status int) {
+	view, err := app.PullRequests.Show(request.Context(), stored.ID, number)
+	if err != nil {
+		problem := pullrequest.AsProblem(err)
+		if problem.Code == "pull_request_not_found" || problem.Code == "invalid_pull_request_number" {
+			app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
 			return
 		}
+		app.renderError(writer, request, apiStatus(request, "pull request read", err), webui.MsgPRFailed, "")
+		return
 	}
 	if view.Repository != stored.ID {
 		app.renderError(writer, request, http.StatusNotFound, webui.MsgPRNotFound, "")
@@ -482,25 +470,16 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 	if !page.Source.Resolved() || !page.Target.Resolved() {
 		page.ChangesUnavailable = true
 	} else {
-		changes, err := app.comparePullRequestRevisions(request.Context(), stored.ID, page.Source.OID, page.Target.OID, changeView(request))
-		if err != nil {
-			// Every failed comparison is shown as unavailable, and makes the
-			// page's answer unavailable unless it already has another status.
-			var comparison int
-			comparison, page.ChangesReason = comparisonFailure(request, err)
-			page.ChangesUnavailable = true
-			if status == http.StatusOK {
-				status = comparison
-			}
-		} else {
-			page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
-			addFileLinks(request, &page.ChangesPages)
-			page.ChangesBase = changes.Base
-			page.ChangesUnavailable = changes.Unavailable != ""
-			page.ChangesReason = changes.Unavailable
-			page.DiffTruncated = changes.PatchesIncomplete
-			page.FilesTruncated = changes.FilesIncomplete
+		changes, comparisonStatus := app.browserPullRequestChanges(request, stored.ID, page.Source.OID, page.Target.OID)
+		if status == http.StatusOK {
+			status = comparisonStatus
 		}
+		page.Changes, page.ChangesPages, page.ChangesAllURL, page.ChangesLines = changes.Files, changes.Pages, changes.AllURL, changes.Lines
+		page.ChangesBase = changes.Base
+		page.ChangesUnavailable = changes.Unavailable != ""
+		page.ChangesReason = changes.Unavailable
+		page.DiffTruncated = changes.PatchesIncomplete
+		page.FilesTruncated = changes.FilesIncomplete
 	}
 	app.render(writer, request, status, page)
 }
@@ -937,6 +916,16 @@ type pullRequestChanges struct {
 	PatchesIncomplete bool
 	// FilesIncomplete is set when the list of changed files was cut off.
 	FilesIncomplete bool
+}
+
+func (app *App) browserPullRequestChanges(request *http.Request, repositoryID, sourceOID, targetOID string) (pullRequestChanges, int) {
+	changes, err := app.comparePullRequestRevisions(request.Context(), repositoryID, sourceOID, targetOID, changeView(request))
+	if err != nil {
+		status, reason := comparisonFailure(request, err)
+		return pullRequestChanges{Unavailable: reason}, status
+	}
+	addFileLinks(request, &changes.Pages)
+	return changes, http.StatusOK
 }
 
 // comparisonFailure logs a comparison that failed and returns the status

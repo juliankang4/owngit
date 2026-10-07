@@ -678,7 +678,10 @@ func TestCleanupWorkspaceRootRemovesOnlyAuthenticatedJobEnvelopes(t *testing.T) 
 	noErr(t, os.Mkdir(unrelated, 0o700))
 	workspace.Close()
 
-	removed, more, err := CleanupWorkspaceRoot(root, 10)
+	workspace, err = AcquireWorkspaceRoot(root)
+	noErr(t, err)
+	defer workspace.Close()
+	removed, more, err := workspace.Cleanup(10)
 	if err == nil || more || removed != 1 {
 		t.Fatalf("cleanup removed=%d more=%v err=%v, want an observable preserved entry", removed, more, err)
 	}
@@ -696,9 +699,12 @@ func TestCleanupWorkspaceRootPreservesUnownedHexDirectory(t *testing.T) {
 	noErr(t, os.Mkdir(unrelated, 0o700))
 	sentinel := filepath.Join(unrelated, "unrelated-fixture.txt")
 	noErr(t, os.WriteFile(sentinel, []byte("not a check workspace"), 0o600))
-	removed, _, err := CleanupWorkspaceRoot(root, 10)
-	if removed != 0 || err == nil {
-		t.Fatalf("cleanup removed=%d err=%v, want a fail-closed refusal", removed, err)
+	workspace, err := AcquireWorkspaceRoot(root)
+	if workspace != nil {
+		defer workspace.Close()
+	}
+	if err == nil {
+		t.Fatalf("unowned workspace was acquired, want a fail-closed refusal")
 	}
 	if content, err := os.ReadFile(sentinel); err != nil || string(content) != "not a check workspace" {
 		t.Fatalf("unowned sentinel content=%q err=%v", content, err)
@@ -714,7 +720,10 @@ func TestOwnedWorkspaceRootReportsAndPreservesUnknownHexDirectory(t *testing.T) 
 	noErr(t, os.Mkdir(unknown, 0o700))
 	sentinel := filepath.Join(unknown, "sentinel")
 	noErr(t, os.WriteFile(sentinel, []byte("preserve"), 0o600))
-	removed, _, err := CleanupWorkspaceRoot(root, 10)
+	workspace, err = AcquireWorkspaceRoot(root)
+	noErr(t, err)
+	defer workspace.Close()
+	removed, _, err := workspace.Cleanup(10)
 	if removed != 0 || err == nil {
 		t.Fatalf("cleanup removed=%d err=%v, want an observable refusal", removed, err)
 	}

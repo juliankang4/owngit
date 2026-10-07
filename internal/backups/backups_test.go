@@ -938,14 +938,14 @@ func TestTheRemovalSlotCountsEveryHolder(t *testing.T) {
 	another, other := f.run(t, first.ID), f.run(t, second.ID)
 	f.service.holdRemoval(&another)
 	f.service.holdRemoval(&other)
-	f.service.dropRemoval(&another)
+	f.service.dropRemoval()
 	if _, err := f.service.StartNow(); !errors.Is(err, state.ErrBackupRunning) {
 		t.Fatalf("a backup started after the first holder let go: %v", err)
 	}
 	if _, err := f.service.StartCheck(ctx, second.ID); !errors.Is(err, state.ErrBackupRunning) {
 		t.Fatalf("a verification started after the first holder let go: %v", err)
 	}
-	f.service.dropRemoval(&other)
+	f.service.dropRemoval()
 	if _, err := f.service.StartNow(); err != nil {
 		t.Fatalf("the slot was not free after every holder let go: %v", err)
 	}
@@ -966,7 +966,7 @@ func TestARunHoldingTheSlotBeforeItsRecordIsSavedStaysRunning(t *testing.T) {
 	finished := run
 	finished.Status, finished.FinishedAt = state.BackupSucceeded, f.clock.Now()
 	f.service.holdRemoval(&finished)
-	defer f.service.dropRemoval(&finished)
+	defer f.service.dropRemoval()
 	status, err := f.service.Status(ctx)
 	noErr(t, err)
 	if status.LastRun != nil || status.Running == nil || status.Running.ID != run.ID || strings.Contains(status.Running.Message, "removing") {

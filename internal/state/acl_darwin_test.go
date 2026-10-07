@@ -278,7 +278,7 @@ func TestProtectPrivateRemovesMacOSAccessLists(t *testing.T) {
 	defer held.Close()
 	inspection, err := inspectState(context.Background(), held)
 	noErr(t, err)
-	noErr(t, inspection.accept(context.Background(), walState))
+	noErr(t, inspection.accept(context.Background()))
 	noErr(t, inspection.release())
 	if allows(wal) || allows(shm) {
 		t.Error("WAL or SHM keeps an entry after acceptance")

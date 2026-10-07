@@ -335,10 +335,6 @@ type portableInputSnapshot struct {
 	manifestSHA256 string
 }
 
-func snapshotPortableInputs(manifestPath string) (portableInputSnapshot, error) {
-	return snapshotPortableInputsWithCleanup(manifestPath, os.RemoveAll)
-}
-
 func snapshotPortableInputsWithCleanup(manifestPath string, cleanup func(string) error) (result portableInputSnapshot, resultErr error) {
 	manifestData, err := readPinnedRegularFile(manifestPath)
 	if err != nil {

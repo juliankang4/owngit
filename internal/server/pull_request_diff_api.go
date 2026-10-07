@@ -21,7 +21,7 @@ func pullRequestDiffQueryAllowed(request *http.Request) bool {
 	if request.Method != http.MethodGet {
 		return false
 	}
-	if _, _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); !ok || (operation != "diff" && operation != "mergeability") {
+	if _, operation, ok := parsePullRequestAPIRoute(request.URL.Path); !ok || (operation != "diff" && operation != "mergeability") {
 		return false
 	}
 	for key, values := range request.URL.Query() {

@@ -214,7 +214,7 @@ func backUpOntoFolder(t *testing.T, destination string) {
 	for _, backup := range []string{filepath.Join(destination, "offline"), filepath.Join(destination, "serving")} {
 		var err error
 		if strings.HasSuffix(backup, "offline") {
-			err = Create(ctx, store, manager, backup)
+			_, err = CreateWithReport(ctx, store, manager, backup)
 		} else {
 			_, err = CreateWhileServing(ctx, store, manager, backup)
 		}

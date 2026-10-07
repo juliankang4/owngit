@@ -27,7 +27,7 @@ func TestBackupRefusesPortableDirectReviewResidue(t *testing.T) {
 		t.Fatal(err)
 	}
 	allowed := filepath.Join(root, "allowed")
-	if err := Create(ctx, store, manager, allowed); err != nil {
+	if _, err := CreateWithReport(ctx, store, manager, allowed); err != nil {
 		t.Fatalf("backup with machine-local residue: %v", err)
 	}
 	assertBackupOmits(t, allowed, "provider-token")
@@ -42,7 +42,7 @@ func TestBackupRefusesPortableDirectReviewResidue(t *testing.T) {
 		t.Fatal(err)
 	}
 	refused := filepath.Join(root, "refused")
-	if err := Create(ctx, store, manager, refused); !errors.Is(err, state.ErrDirectReviewRecords) {
+	if _, err := CreateWithReport(ctx, store, manager, refused); !errors.Is(err, state.ErrDirectReviewRecords) {
 		t.Fatalf("backup with portable residue err=%v", err)
 	}
 	assertNoRecoveryOutputOrStages(t, refused, ".owngit-backup-")

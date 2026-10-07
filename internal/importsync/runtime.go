@@ -255,16 +255,6 @@ func (s *Service) takeRuntime() (runtimeRoot, bool) {
 	return root, true
 }
 
-// preparedRuntime reports the in-memory lease without touching the filesystem.
-func (s *Service) preparedRuntime() (runtimeRoot, bool) {
-	s.runtimeMu.Lock()
-	defer s.runtimeMu.Unlock()
-	if s.runtime == nil {
-		return runtimeRoot{}, false
-	}
-	return *s.runtime, true
-}
-
 func runtimeLostError(cause error) error {
 	return newProblem(CodeRuntimeUnavailable, "import runtime ownership was lost", errors.Join(ErrRuntimeLost, cause))
 }
@@ -292,13 +282,6 @@ func (s *Service) currentRuntime(generation string) (runtimeRoot, error) {
 		return runtimeRoot{}, runtimeLostError(errors.New("import runtime generation changed"))
 	}
 	return root, nil
-}
-
-// runtimeCurrent is the passive form used by status and legacy ownership
-// checks. A failed validation still latches the loss.
-func (s *Service) runtimeCurrent() (runtimeRoot, bool) {
-	root, err := s.currentRuntime("")
-	return root, err == nil
 }
 
 func (s *Service) runtimeCurrentForRun(run *runState) error {

@@ -100,7 +100,7 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 	// Maintenance never delays a deletion: a running one is stopped.
 	m.stopMaintenanceOf(id)
 	lock := m.Locks.For(id)
-	if err := lockWithin(ctx, lock, deleteLockWait); err != nil {
+	if err := lockWithin(ctx, lock); err != nil {
 		return DeleteResult{}, err
 	}
 	defer lock.Unlock()
@@ -531,9 +531,9 @@ func writeLock(ctx context.Context, lock *gitexec.RepositoryLock) error {
 	return nil
 }
 
-// lockWithin takes the write lock unless wait or ctx ends first.
-func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock, wait time.Duration) error {
-	deadline := time.Now().Add(wait)
+// lockWithin takes the write lock within the repository mutation wait.
+func lockWithin(ctx context.Context, lock *gitexec.RepositoryLock) error {
+	deadline := time.Now().Add(deleteLockWait)
 	for {
 		if taken, err := lock.TryLockGated(); err != nil {
 			return err

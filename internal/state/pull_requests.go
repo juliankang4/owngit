@@ -332,16 +332,8 @@ func (s *Store) OpenPullRequests(ctx context.Context, repositoryID string, limit
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
-	var records []PullRequest
-	for rows.Next() {
-		record, err := scanPullRequest(rows)
-		if err != nil {
-			return nil, false, err
-		}
-		records = append(records, record)
-	}
-	if err := rows.Err(); err != nil {
+	records, err := collectRows(rows, scanPullRequest)
+	if err != nil {
 		return nil, false, err
 	}
 	more := len(records) > limit
@@ -428,23 +420,6 @@ func (s *Store) PullRequestSummaries(ctx context.Context, repositoryID, status s
 	return records, more, nil
 }
 
-func (s *Store) PullRequests(ctx context.Context, repositoryID string) ([]PullRequest, error) {
-	rows, err := s.db.QueryContext(ctx, pullRequestSelect+` WHERE repository_id=? AND status!='creating' ORDER BY number`, repositoryID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var records []PullRequest
-	for rows.Next() {
-		record, err := scanPullRequest(rows)
-		if err != nil {
-			return nil, err
-		}
-		records = append(records, record)
-	}
-	return records, rows.Err()
-}
-
 const pullRequestSelect = `SELECT repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
 	merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at,
 	body,edit_revision,edited_at,created_by,edited_by,merged_by FROM pull_requests`
@@ -454,6 +429,19 @@ const pullRequestSelect = `SELECT repository_id,number,title,source_branch,targe
 const pullRequestSummarySelect = `SELECT repository_id,number,title,source_branch,target_branch,status,created_at,updated_at,
 	merge_source_oid,merge_target_oid,merge_oid,merge_receipt_ref,merged_at,
 	'',edit_revision,edited_at,created_by,edited_by,merged_by FROM pull_requests`
+
+func collectRows[T any](rows *sql.Rows, scan func(rowScanner) (T, error)) ([]T, error) {
+	defer rows.Close()
+	var records []T
+	for rows.Next() {
+		record, err := scan(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
 
 type rowScanner interface {
 	Scan(...any) error
@@ -633,16 +621,8 @@ func (s *Store) PullRequestReviewNotes(ctx context.Context, repositoryID string,
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
-	var reviews []PullRequestReview
-	for rows.Next() {
-		review, err := scanPullRequestReview(rows)
-		if err != nil {
-			return nil, false, err
-		}
-		reviews = append(reviews, review)
-	}
-	if err := rows.Err(); err != nil {
+	reviews, err := collectRows(rows, scanPullRequestReview)
+	if err != nil {
 		return nil, false, err
 	}
 	more := len(reviews) > limit

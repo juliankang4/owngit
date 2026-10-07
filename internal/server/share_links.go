@@ -124,7 +124,7 @@ func (app *App) handleShareLinks(writer http.ResponseWriter, request *http.Reque
 		var done bool
 		switch postValue(request, "action") {
 		case webui.ActionCreateShareLink:
-			status, done = app.createShareLinkForm(writer, request, stored, &page)
+			status = app.createShareLinkForm(writer, request, stored, &page)
 		case webui.ActionRevokeShareLink:
 			status, done = app.revokeShareLinkForm(writer, request, stored, &page)
 		default:
@@ -148,12 +148,12 @@ func (app *App) handleShareLinks(writer http.ResponseWriter, request *http.Reque
 
 // createShareLinkForm creates a link from the form and puts it, or the
 // refusal, on page. The form's password is never shown again.
-func (app *App) createShareLinkForm(writer http.ResponseWriter, request *http.Request, stored state.Repository, page *webui.ShareLinksPage) (int, bool) {
+func (app *App) createShareLinkForm(writer http.ResponseWriter, request *http.Request, stored state.Repository, page *webui.ShareLinksPage) int {
 	page.Form = webui.ShareLinkForm{Label: postValue(request, "label"), Scope: postValue(request, "scope"), Expiry: postValue(request, "expiry")}
 	if _, err := app.confirmAdmin(writer, request, &page.Chrome, false); err != nil {
 		notice, status := adminPasswordNotice(request, err, "admin_password")
 		page.FormNotices = append(page.FormNotices, notice)
-		return status, false
+		return status
 	}
 	input := shareLinkInput{label: page.Form.Label, scope: page.Form.Scope, password: postValue(request, "share_password"), days: shareFormDays(page.Form.Expiry)}
 	link, secret, err := app.createShareLink(request.Context(), stored.ID, input)
@@ -161,17 +161,17 @@ func (app *App) createShareLinkForm(writer http.ResponseWriter, request *http.Re
 	case err == nil:
 	case errors.Is(err, errShareLabel):
 		page.FormNotices = append(page.FormNotices, webui.Error("label", webui.MsgShareLabelInvalid))
-		return http.StatusUnprocessableEntity, false
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, errShareChoice):
 		page.Form.Scope, page.Form.Expiry = state.ShareBrowse, webui.ShareExpiryDefault
 		page.FormNotices = append(page.FormNotices, webui.Error("", webui.MsgShareChoiceInvalid))
-		return http.StatusUnprocessableEntity, false
+		return http.StatusUnprocessableEntity
 	case errors.Is(err, auth.ErrPasswordTooShort), errors.Is(err, auth.ErrPasswordTooLong):
 		page.FormNotices = append(page.FormNotices, webui.Error("share_password", webui.MsgSharePasswordRule))
-		return http.StatusUnprocessableEntity, false
+		return http.StatusUnprocessableEntity
 	default:
 		page.FormNotices = append(page.FormNotices, webui.Error("", webui.MsgShareFailed))
-		return unavailable(request, "share link creation", err), false
+		return unavailable(request, "share link creation", err)
 	}
 	created := &webui.CreatedShareLink{Label: link.Label, URL: app.serverOrigin(request) + sharePrefix + secret, Warnings: shareWarnings(link)}
 	if link.Scope == state.ShareClone {
@@ -181,7 +181,7 @@ func (app *App) createShareLinkForm(writer http.ResponseWriter, request *http.Re
 	page.Created = created
 	page.Form = webui.ShareLinkForm{Scope: state.ShareBrowse, Expiry: webui.ShareExpiryDefault}
 	page.Chrome.Notices = append(page.Chrome.Notices, webui.Success(webui.MsgShareCreatedNotice))
-	return http.StatusOK, false
+	return http.StatusOK
 }
 
 // shareFormDays reads the create form's expiry: a number of days that
@@ -211,7 +211,7 @@ func (app *App) revokeShareLinkForm(writer http.ResponseWriter, request *http.Re
 	_, err := app.Store.RevokeShareLink(request.Context(), stored.ID, page.RevokeID, app.now())
 	switch {
 	case err == nil:
-		app.noticeRedirect(writer, request, shareLinksURL(stored.Address)+"?notice=share_link_revoked", http.StatusSeeOther)
+		app.noticeRedirect(writer, request, shareLinksURL(stored.Address)+"?notice=share_link_revoked")
 		return 0, true
 	case errors.Is(err, state.ErrShareLinkNotFound):
 		page.RevokeNotices = append(page.RevokeNotices, webui.Error("", webui.MsgShareNotActive))

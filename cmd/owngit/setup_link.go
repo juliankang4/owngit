@@ -123,7 +123,7 @@ func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel
 	if err != nil {
 		return nil, "", err
 	}
-	listen, base := server.DefaultListenAddress, ""
+	var listen, base string
 	if observed.Server == state.ServerRunning && observed.Record != nil {
 		listen, base = observed.Record.Address, observed.Record.BaseURL
 	} else {
@@ -131,8 +131,7 @@ func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel
 		if err != nil {
 			return nil, "", err
 		}
-		listen = cmp.Or(saved.Listen, listen)
-		base = saved.BaseURL
+		listen, base = cmp.Or(saved.Listen, server.DefaultListenAddress), saved.BaseURL
 	}
 	if base != "" {
 		bases = append(bases, base)
@@ -164,9 +163,6 @@ func setupBases(ctx context.Context, store *state.Store) (bases []string, tunnel
 	if headless && len(private) == 0 {
 		bases = append(bases, loopback)
 		tunnel = sshTunnelCommand(port)
-	}
-	if len(bases) == 0 {
-		bases = append(bases, loopback)
 	}
 	return slices.Compact(bases), tunnel, nil
 }

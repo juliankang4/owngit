@@ -224,10 +224,3 @@ func (cache *objectCache) forget(present []string) {
 		cache.drop(id)
 	}
 }
-
-// usage reports the cached entry count and bytes, for tests.
-func (cache *objectCache) usage() (int, int64) {
-	cache.mu.Lock()
-	defer cache.mu.Unlock()
-	return len(cache.entries), cache.bytes
-}

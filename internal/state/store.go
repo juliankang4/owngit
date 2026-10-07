@@ -187,7 +187,7 @@ func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (re
 			return nil, err
 		}
 	}
-	if err := inspected.accept(ctx, absolute); err != nil {
+	if err := inspected.accept(ctx); err != nil {
 		return nil, err
 	}
 	class := inspected.class
@@ -378,11 +378,6 @@ func describeReleasedSchemas() string {
 	default:
 		return "released schemas " + strings.Join(versions[:len(versions)-1], ", ") + " and " + versions[len(versions)-1]
 	}
-}
-
-func (s *Store) schemaVersion(ctx context.Context) (int, error) {
-	version, _, err := readSchemaVersion(ctx, s.db)
-	return version, err
 }
 
 func readSchemaVersion(ctx context.Context, db queryRower) (int, bool, error) {

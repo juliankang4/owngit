@@ -252,7 +252,7 @@ func TestStatusAndHistoryUseBoundedPages(t *testing.T) {
 		run.Message = "failed"
 		noErr(t, f.store.FinishImportRun(ctx, run))
 	}
-	page, more, err := f.service.History(ctx, "project", 1)
+	page, more, err := f.service.HistoryBefore(ctx, "project", 1, 0)
 	require(t, err == nil && len(page) == 1 && more && page[0].RowID != 0,
 		"history page=%+v more=%v err=%v", page, more, err)
 	next, _, err := f.service.HistoryBefore(ctx, "project", 10000, page[0].RowID)
@@ -266,7 +266,7 @@ func TestHistoryPagingReturnsEveryRunBeyondOnePage(t *testing.T) {
 	f := newFixture(t)
 	f.mustImport(ImportInput{})
 	ctx := context.Background()
-	existing, more, err := f.service.History(ctx, "project", maxHistoryPage)
+	existing, more, err := f.service.HistoryBefore(ctx, "project", maxHistoryPage, 0)
 	require(t, err == nil && !more, "initial history=%+v more=%v err=%v", existing, more, err)
 	const added = 2*maxHistoryPage + 37
 	now := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)

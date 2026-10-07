@@ -106,7 +106,7 @@ func TestFreshSchemaOpen(t *testing.T) {
 			}
 			store, err := Open(ctx, directory)
 			noErr(t, err)
-			version, err := store.schemaVersion(ctx)
+			version, _, err := readSchemaVersion(ctx, store.db)
 			if err != nil || version != currentSchemaVersion() {
 				store.Close()
 				t.Fatalf("schema version=%d err=%v", version, err)
@@ -223,7 +223,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from the committed baseline (no schema version) to schema 16" {
 		t.Fatalf("baseline upgrade reported %q", upgrade)
 	}
-	if version, err := store.schemaVersion(ctx); err != nil || version != currentSchemaVersion() {
+	if version, _, err := readSchemaVersion(ctx, store.db); err != nil || version != currentSchemaVersion() {
 		t.Fatalf("upgraded schema version=%d err=%v", version, err)
 	}
 	// The only upgrade path must produce exactly the catalog a fresh store has.
@@ -521,7 +521,7 @@ func TestInitializeClassifiesOneSnapshot(t *testing.T) {
 	if !migrated {
 		t.Fatal("the hook did not run, so the race was not exercised")
 	}
-	version, err := store.schemaVersion(ctx)
+	version, _, err := readSchemaVersion(ctx, store.db)
 	noErr(t, err)
 	if version != currentSchemaVersion() {
 		t.Fatalf("schema version %d, want %d", version, currentSchemaVersion())
@@ -557,7 +557,7 @@ func TestCancelledMigrationLeavesForeignKeysOn(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), deadline)
 		migrateErr := store.migrate(ctx, class)
 		cancel()
-		version, err := store.schemaVersion(context.Background())
+		version, _, err := readSchemaVersion(context.Background(), store.db)
 		noErr(t, err)
 		return migrateErr, foreignKeys(t, db), version
 	}

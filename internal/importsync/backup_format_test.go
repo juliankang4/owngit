@@ -22,7 +22,8 @@ func (f *fixture) backupVersion() int {
 	output, err := os.MkdirTemp(f.root, "backup-")
 	noErr(f.t, err)
 	output = filepath.Join(output, "backup")
-	noErr(f.t, recovery.Create(ctx, f.store, f.manager, output))
+	_, err = recovery.CreateWithReport(ctx, f.store, f.manager, output)
+	noErr(f.t, err)
 	contents, err := os.ReadFile(filepath.Join(output, "manifest.json"))
 	noErr(f.t, err)
 	var manifest recovery.Manifest

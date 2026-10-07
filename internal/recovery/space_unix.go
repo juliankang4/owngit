@@ -16,7 +16,7 @@ func diskFreeSpace(dir string) (uint64, bool, error) {
 	if err := unix.Statfs(dir, &stat); err != nil {
 		return 0, false, err
 	}
-	return uint64(stat.Bavail) * uint64(stat.Bsize), true, nil
+	return stat.Bavail * uint64(stat.Bsize), true, nil
 }
 
 func diskFullError(err error) bool { return errors.Is(err, syscall.ENOSPC) }

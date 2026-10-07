@@ -309,7 +309,7 @@ func TestLoadPortablePayloadRevalidatesSnapshotEntries(t *testing.T) {
 		t.Skip("builds the shared release dist of every target")
 	}
 	portable := copyDist(t, sharedDist(t))
-	snapshot, err := snapshotPortableInputs(filepath.Join(portable, "manifest.json"))
+	snapshot, err := snapshotPortableInputsWithCleanup(filepath.Join(portable, "manifest.json"), os.RemoveAll)
 	noErr(t, err)
 	t.Cleanup(func() {
 		if err := os.RemoveAll(snapshot.dir); err != nil {
@@ -438,7 +438,7 @@ func assertSnapshotCleanupError(t *testing.T, err, failure error, cleanedPath st
 func TestPortableInputSnapshotIsPrivate(t *testing.T) {
 	portable := copyDist(t, sharedDist(t))
 	manifestPath := filepath.Join(portable, "manifest.json")
-	snapshot, err := snapshotPortableInputs(manifestPath)
+	snapshot, err := snapshotPortableInputsWithCleanup(manifestPath, os.RemoveAll)
 	noErr(t, err)
 	defer os.RemoveAll(snapshot.dir)
 

@@ -76,7 +76,8 @@ func TestOfflineBackupRestorePreservesPortableStateAndAllRefs(t *testing.T) {
 	runGit(t, "", "--git-dir", detachedRemote, "update-ref", "-d", "refs/heads/temporary")
 
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	noErr(t, store.Close())
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
@@ -177,11 +178,12 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 	noErr(t, os.Mkdir(sticky, 0o700))
 	noErr(t, os.Chmod(sticky, 0o777|os.ModeSticky))
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 
 	refusal := "is not protected: another account can change " + shared
 	for _, output := range []string{filepath.Join(shared, "backup"), filepath.Join(owned, "backup")} {
-		err := Create(ctx, store, manager, output)
+		_, err := CreateWithReport(ctx, store, manager, output)
 		if err == nil || !strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "choose a folder that other accounts cannot change") {
 			t.Fatalf("backup to %s: error=%v, want %q", output, err, refusal)
 		}
@@ -202,7 +204,8 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 		})
 	}
 
-	noErr(t, Create(ctx, store, manager, filepath.Join(sticky, "backup")))
+	_, err = CreateWithReport(ctx, store, manager, filepath.Join(sticky, "backup"))
+	noErr(t, err)
 	noErr(t, Restore(ctx, backup, filepath.Join(sticky, "state"), filepath.Join(sticky, "repositories"), ""))
 	noErr(t, Restore(ctx, filepath.Join(sticky, "backup"), filepath.Join(root, "state"), filepath.Join(root, "repositories"), ""))
 
@@ -222,7 +225,8 @@ func TestRecoveryTargetParentRules(t *testing.T) {
 		}
 	}
 	noErr(t, Restore(ctx, backup, filepath.Join(root, "new", "state"), filepath.Join(root, "other", "deeper", "repositories"), ""))
-	noErr(t, Create(ctx, store, manager, filepath.Join(root, "backups", "daily", "backup")))
+	_, err = CreateWithReport(ctx, store, manager, filepath.Join(root, "backups", "daily", "backup"))
+	noErr(t, err)
 }
 
 // Root restoring into a folder that another account owns is told to run the
@@ -296,7 +300,8 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	}
 
 	backup := filepath.Join(root, "pr-backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
 	if manifest.Version != closedPullRequestBackupVersion || len(manifest.PullRequests) != 2 || len(manifest.PullRequestReviews) != 3 || len(manifest.PullRequestMergeIntents) != 1 {
@@ -346,7 +351,7 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 		t.Fatalf("restored merged pull request=%+v err=%v", merged, err)
 	}
 	rebackup := filepath.Join(root, "pr-backup-current")
-	if err := Create(ctx, restoredStore, restoredManager, rebackup); err != nil {
+	if _, err := CreateWithReport(ctx, restoredStore, restoredManager, rebackup); err != nil {
 		t.Fatalf("re-backup after format 2 restore: %v", err)
 	}
 	rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
@@ -365,7 +370,8 @@ func TestBackupV2RoundTripPreservesPullRequestsReviewsRevisionsAndReceipts(t *te
 	})
 	noErr(t, err)
 	eventBackup := filepath.Join(root, "pr-backup-event")
-	noErr(t, Create(ctx, restoredStore, restoredManager, eventBackup))
+	_, err = CreateWithReport(ctx, restoredStore, restoredManager, eventBackup)
+	noErr(t, err)
 	eventManifest, err := readManifest(filepath.Join(eventBackup, manifestName))
 	noErr(t, err)
 	eventIndex := -1
@@ -437,7 +443,7 @@ func TestBackupAfterRefusedThenResolvedMerge(t *testing.T) {
 		if serving {
 			_, err = CreateWhileServing(ctx, store, manager, backup)
 		} else {
-			err = Create(ctx, store, manager, backup)
+			_, err = CreateWithReport(ctx, store, manager, backup)
 		}
 		noErr(t, err)
 		if serving {
@@ -535,7 +541,8 @@ func TestBackupRestorePreservesUnpublishedNonFastForwardMergeIntent(t *testing.T
 				noErr(t, err)
 				manager.Git = oldBackupRunner
 			}
-			noErr(t, Create(ctx, store, manager, backup))
+			_, err = CreateWithReport(ctx, store, manager, backup)
+			noErr(t, err)
 			manager.Git = realRunner
 			if mergeTreeMarker != "" {
 				if _, err := os.Stat(mergeTreeMarker); !os.IsNotExist(err) {
@@ -662,7 +669,8 @@ func TestRestoreReconcilesGitPublishedMergeWithPendingSQLiteState(t *testing.T) 
 	assertRef(t, remote, pullrequest.MergeReceiptRef(created.Number), sourceOID)
 
 	backup := filepath.Join(root, "pending-merge-backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	noErr(t, store.Close())
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "pending-restored-state"))
 	restoredRepositories := canonicalTestTarget(t, filepath.Join(root, "pending-restored-repositories"))
@@ -682,7 +690,7 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 	root := t.TempDir()
 	store, manager := newBackupStore(t, root)
 	backup := filepath.Join(root, "legacy-backup")
-	if err := Create(ctx, store, manager, backup); err != nil {
+	if _, err := CreateWithReport(ctx, store, manager, backup); err != nil {
 		store.Close()
 		t.Fatal(err)
 	}
@@ -718,7 +726,7 @@ func TestRestoreAcceptsStrictLegacyV1AndRejectsV1PullRequestFields(t *testing.T)
 	}
 	restoredManager := &repository.Manager{Store: restored, Git: restoredRunner, Locks: gitexec.NewLocks(), Root: legacyRepositories}
 	rebackup := filepath.Join(root, "legacy-rebackup")
-	if err := Create(ctx, restored, restoredManager, rebackup); err != nil {
+	if _, err := CreateWithReport(ctx, restored, restoredManager, rebackup); err != nil {
 		restored.Close()
 		t.Fatalf("re-backup after format 1 restore: %v", err)
 	}
@@ -776,7 +784,8 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err := CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	bundle := filepath.Join(backup, "repositories", "project.bundle")
 	file, err := os.OpenFile(bundle, os.O_APPEND|os.O_WRONLY, 0)
 	noErr(t, err)
@@ -853,7 +862,7 @@ func TestBackupPublishesOnlyAfterBundleSuccessAndCleansCanceledStages(t *testing
 	canceledOutput := filepath.Join(root, "canceled-backup")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Create(ctx, store, manager, canceledOutput); !errors.Is(err, context.Canceled) {
+	if _, err := CreateWithReport(ctx, store, manager, canceledOutput); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled backup error=%v, want context cancellation", err)
 	}
 	assertNoRecoveryOutputOrStages(t, canceledOutput, ".owngit-backup-")
@@ -870,7 +879,7 @@ func TestBackupRejectsDestinationThroughAncestorSymlinkIntoState(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		refusal = "is a link, a junction or a mounted volume"
 	}
-	if err := Create(context.Background(), store, manager, output); err == nil || !strings.Contains(err.Error(), refusal) {
+	if _, err := CreateWithReport(context.Background(), store, manager, output); err == nil || !strings.Contains(err.Error(), refusal) {
 		t.Fatalf("ancestor-symlink backup error=%v, want %q", err, refusal)
 	}
 	if _, err := os.Lstat(filepath.Join(root, "source-state", "inside-backup")); !os.IsNotExist(err) {
@@ -884,7 +893,8 @@ func TestRestoreRejectsTargetThroughAncestorSymlinkIntoBackup(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err := CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	alias := ancestorSymlink(t, root)
 	stateTarget := filepath.Join(alias, "backup", "inside-state")
 	repositoryTarget := filepath.Join(root, "restored-repositories")
@@ -927,7 +937,8 @@ func TestGuardedStateBlocksOpenBetweenRestorePublications(t *testing.T) {
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err := CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	stateTarget := canonicalTestTarget(t, filepath.Join(root, "guarded-state"))
 	repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "guarded-repositories"))
 	published := make(chan struct{})
@@ -973,7 +984,8 @@ func TestRestorePreparationAndPublicationFailuresLeaveNoFinalDestinations(t *tes
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err := CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 
 	tests := []struct {
 		name   string
@@ -1029,7 +1041,7 @@ func TestRestorePreparationAndPublicationFailuresLeaveNoFinalDestinations(t *tes
 			repositoryTarget := canonicalTestTarget(t, filepath.Join(root, strings.ReplaceAll(test.name, " ", "-")+"-repositories"))
 			operations := defaultRestoreOperations()
 			test.mutate(&operations, stateTarget, repositoryTarget)
-			if err := restore(ctx, backup, stateTarget, repositoryTarget, "", operations); err == nil {
+			if err = restore(ctx, backup, stateTarget, repositoryTarget, "", operations); err == nil {
 				t.Fatal("injected restore failure unexpectedly succeeded")
 			}
 			assertNoRecoveryOutputOrStages(t, stateTarget, ".owngit-restore-")
@@ -1044,7 +1056,8 @@ func TestRestorePreservesAndMarksPathsWhenPublicationRollbackFails(t *testing.T)
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 	backup := filepath.Join(root, "backup")
-	noErr(t, Create(ctx, store, manager, backup))
+	_, err := CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
 	stateTarget := canonicalTestTarget(t, filepath.Join(root, "partial-state"))
 	repositoryTarget := canonicalTestTarget(t, filepath.Join(root, "partial-repositories"))
 	operations := defaultRestoreOperations()
@@ -1058,7 +1071,7 @@ func TestRestorePreservesAndMarksPathsWhenPublicationRollbackFails(t *testing.T)
 			return os.Rename(oldPath, newPath)
 		}
 	}
-	err := restore(ctx, backup, stateTarget, repositoryTarget, "", operations)
+	err = restore(ctx, backup, stateTarget, repositoryTarget, "", operations)
 	if err == nil || !strings.Contains(err.Error(), "remains pending") {
 		t.Fatalf("partial publication error=%v", err)
 	}
@@ -1276,6 +1289,16 @@ func assertRef(t *testing.T, repositoryPath, ref, want string) {
 	if got := gitOutput(t, "", "--git-dir", repositoryPath, "rev-parse", "--verify", ref); got != want {
 		t.Fatalf("%s=%s, want %s", ref, got, want)
 	}
+}
+
+func readManifest(manifestPath string) (Manifest, error) {
+	input, err := openBackupInput(filepath.Dir(manifestPath))
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer input.Close()
+	manifest, _, err := input.readManifest()
+	return manifest, err
 }
 
 // noErr stops the test on an unexpected error. t.Helper keeps the failure

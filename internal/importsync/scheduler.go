@@ -108,20 +108,6 @@ func (s *Scheduler) Stop(ctx context.Context) error {
 	return nil
 }
 
-// Wake requests an immediate due check. It never blocks.
-func (s *Scheduler) Wake() {
-	s.mu.Lock()
-	wake := s.wake
-	s.mu.Unlock()
-	if wake == nil {
-		return
-	}
-	select {
-	case wake <- struct{}{}:
-	default:
-	}
-}
-
 func (s *Scheduler) loop(ctx context.Context, interval time.Duration, done chan<- struct{}, wake <-chan struct{}, slots chan struct{}) {
 	defer close(done)
 	ticker := time.NewTicker(interval)

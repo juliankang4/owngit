@@ -149,7 +149,8 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 				t.Fatalf("snapshot changed producer history: %s", difference)
 			}
 			backup := filepath.Join(root, "backup")
-			noErr(t, Create(ctx, store, manager, backup))
+			_, err = CreateWithReport(ctx, store, manager, backup)
+			noErr(t, err)
 			unchanged, found, err := store.CheckJob(ctx, "project", job.ID)
 			if difference := checkJobDifference(job, unchanged); err != nil || !found || difference != "" {
 				t.Fatalf("recovery calls changed stored job: found=%v err=%v difference=%s", found, err, difference)
@@ -200,7 +201,8 @@ func TestCheckJobProducerHistoryRoundTrip(t *testing.T) {
 			}
 			restoredManager := &repository.Manager{Store: restored, Git: restoredRunner(t, restoredState), Locks: gitexec.NewLocks(), Root: restoredRepositories}
 			rebackup := filepath.Join(root, "rebackup")
-			noErr(t, Create(ctx, restored, restoredManager, rebackup))
+			_, err = CreateWithReport(ctx, restored, restoredManager, rebackup)
+			noErr(t, err)
 			rebacked, err := readManifest(filepath.Join(rebackup, manifestName))
 			noErr(t, err)
 			if !reflect.DeepEqual(rebacked.CheckJobs, manifest.CheckJobs) || !reflect.DeepEqual(rebacked.CheckAttempts, manifest.CheckAttempts) ||

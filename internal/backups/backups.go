@@ -386,7 +386,7 @@ func (s *Service) execute(ctx context.Context, run state.BackupRun, schedule sta
 	// backup removes then.
 	if retains(run) && ctx.Err() == nil {
 		s.holdRemoval(&run)
-		defer s.dropRemoval(&run)
+		defer s.dropRemoval()
 	}
 	if !s.record(ctx, run) {
 		return
@@ -503,7 +503,7 @@ func (s *Service) holdRemoval(run *state.BackupRun) {
 
 // dropRemoval releases one hold; the slot is free when the last holder
 // releases it.
-func (s *Service) dropRemoval(run *state.BackupRun) {
+func (s *Service) dropRemoval() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.removing = max(0, s.removing-1)

@@ -20,6 +20,16 @@ import (
 	"owngit/internal/testfixture"
 )
 
+func countObserved(revisions []CurrentRevision) int {
+	count := 0
+	for _, revision := range revisions {
+		if revision.NewlyObserved {
+			count++
+		}
+	}
+	return count
+}
+
 func TestReviewBoundMergeCreatesExactMergeCommitAndIsIdempotent(t *testing.T) {
 	fixture := newServiceFixture(t)
 	base := fixture.commitFile("shared.txt", "base\n", "base")
@@ -156,7 +166,8 @@ func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 	newSource := fixture.commitFile("feature.txt", "second\n", "feature two")
 	fixture.push("HEAD:refs/heads/feature")
 
-	observed, more, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64)
+	observations, more, err := fixture.service.ObserveCurrentRevisionsAfter(fixture.ctx, fixture.repositoryID, 0, 64)
+	observed := countObserved(observations)
 	if err != nil || more || observed != 1 {
 		t.Fatalf("observed=%d more=%v err=%v", observed, more, err)
 	}
@@ -171,8 +182,8 @@ func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 	if !found {
 		t.Fatalf("new source revision %s was not durably observed: %+v", newSource, revisions)
 	}
-	if observed, _, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64); err != nil || observed != 0 {
-		t.Fatalf("repeated observation count=%d err=%v", observed, err)
+	if observations, _, err := fixture.service.ObserveCurrentRevisionsAfter(fixture.ctx, fixture.repositoryID, 0, 64); err != nil || countObserved(observations) != 0 {
+		t.Fatalf("repeated observation count=%d err=%v", countObserved(observations), err)
 	}
 }
 
@@ -308,8 +319,8 @@ func TestRevisionObservationInvalidatesTheRefSnapshotOnlyWhenBinding(t *testing.
 		return false
 	}
 	observe := func() (int, error) {
-		observed, _, err := fixture.service.ObserveCurrentRevisions(fixture.ctx, fixture.repositoryID, 64)
-		return observed, err
+		observations, _, err := fixture.service.ObserveCurrentRevisionsAfter(fixture.ctx, fixture.repositoryID, 0, 64)
+		return countObserved(observations), err
 	}
 	if hasBranch("unrelated") {
 		t.Fatal("fixture already has the unrelated branch")
@@ -902,7 +913,7 @@ func TestFailedCreateRefPreservationDoesNotExposePRAndRetryCreatesOne(t *testing
 	if _, err := fixture.service.Create(fixture.ctx, input); err == nil {
 		t.Fatal("ref obstruction did not fail pull request creation")
 	}
-	records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+	records, _, err := fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 	noErr(t, err)
 	if len(records) != 0 {
 		t.Fatalf("failed creation exposed pull requests: %+v", records)
@@ -923,7 +934,7 @@ func TestFailedCreateRefPreservationDoesNotExposePRAndRetryCreatesOne(t *testing
 	if created.Number != 1 {
 		t.Fatalf("retry allocated pull request #%d, want the never-visible number 1", created.Number)
 	}
-	records, err = fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+	records, _, err = fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 	noErr(t, err)
 	if len(records) != 1 || records[0].Number != created.Number {
 		t.Fatalf("retry exposed %d pull requests: %+v", len(records), records)
@@ -955,7 +966,7 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 	if problemCode(err) != "stale_revision" {
 		t.Fatalf("create error=%v, want stale_revision", err)
 	}
-	records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+	records, _, err := fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 	noErr(t, err)
 	if len(records) != 0 {
 		t.Fatalf("branch movement exposed pull requests: %+v", records)
@@ -985,7 +996,7 @@ func TestBranchMovementDuringCreateLeavesNoVisiblePullRequestAndRetryCreatesOne(
 	if created.Source.OID != newSourceOID || created.Target.OID != targetOID {
 		t.Fatalf("retry revision=%s/%s, want %s/%s", created.Source.OID, created.Target.OID, newSourceOID, targetOID)
 	}
-	records, err = fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+	records, _, err = fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 	noErr(t, err)
 	if len(records) != 1 || records[0].Number != created.Number {
 		t.Fatalf("retry exposed %d pull requests: %+v", len(records), records)
@@ -1020,7 +1031,7 @@ func TestReconcileAllResolvesProvisionalCreateCrashWindows(t *testing.T) {
 			if len(provisional) != 0 {
 				t.Fatalf("reconciliation left provisional records: %+v", provisional)
 			}
-			records, err := fixture.store.PullRequests(fixture.ctx, fixture.repositoryID)
+			records, _, err := fixture.store.PullRequestSummaries(fixture.ctx, fixture.repositoryID, "", 0, 1000)
 			noErr(t, err)
 			if retained {
 				if len(records) != 1 || records[0].Number != record.Number || records[0].Status != state.PullRequestOpen {

@@ -36,7 +36,7 @@ func TestUnknownRoutesAnswerNotFoundWithoutSideEffects(t *testing.T) {
 	server := httptest.NewServer(fixture.app.Handler())
 	defer server.Close()
 	client, jar := newBrowserClient(t)
-	before, err := fixture.store.PullRequests(context.Background(), "project")
+	before, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000)
 	if err != nil || len(before) != 1 {
 		t.Fatalf("pull requests=%d err=%v", len(before), err)
 	}
@@ -76,7 +76,7 @@ func TestUnknownRoutesAnswerNotFoundWithoutSideEffects(t *testing.T) {
 		}
 	}
 
-	after, err := fixture.store.PullRequests(context.Background(), "project")
+	after, _, err := fixture.store.PullRequestSummaries(context.Background(), "project", "", 0, 1000)
 	if err != nil || len(after) != 1 || !after[0].UpdatedAt.Equal(before[0].UpdatedAt) {
 		t.Fatalf("unknown routes changed pull request state: count=%d err=%v", len(after), err)
 	}
