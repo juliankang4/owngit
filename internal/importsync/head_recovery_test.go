@@ -120,6 +120,13 @@ func TestImportPublicationCrashChild(t *testing.T) {
 
 func killedPublicationFixture(t *testing.T, phase string) *fixture {
 	t.Helper()
+	ctx := context.Background()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		// Leave time to reap the child and report its output before the test timeout.
+		ctx, cancel = context.WithDeadline(ctx, deadline.Add(-time.Second))
+		defer cancel()
+	}
 	controller := t.TempDir()
 	marker := filepath.Join(controller, "reached.json")
 	log, err := os.Create(filepath.Join(controller, "child.log"))
@@ -135,34 +142,54 @@ func killedPublicationFixture(t *testing.T, phase string) *fixture {
 		}
 		childTest = "TestLegacyLockCrashFixture"
 	}
-	cmd := exec.Command(binary, "-test.run=^"+childTest+"$", "-test.timeout=45s")
+	childTimeout := time.Duration(0)
+	if deadline, ok := ctx.Deadline(); ok {
+		// Let the child write its timeout stack before the parent reaps it.
+		childTimeout = max(time.Until(deadline)-time.Second, time.Nanosecond)
+	}
+	cmd := exec.Command(binary, "-test.run=^"+childTest+"$", "-test.timeout="+childTimeout.String())
 	cmd.Env = append(os.Environ(), "OWNGIT_IMPORT_CRASH_PHASE="+phase, "OWNGIT_IMPORT_CRASH_MARKER="+marker, "TMPDIR="+controller)
 	cmd.Stdout, cmd.Stderr = log, log
 	noErr(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
 	stopped := false
 	defer func() {
 		if !stopped {
 			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			<-done
 		}
 	}()
-	deadline := time.Now().Add(30 * time.Second)
+	poll := time.NewTicker(20 * time.Millisecond)
+	defer poll.Stop()
 	var gate map[string]string
-	for time.Now().Before(deadline) {
+	for {
 		content, readErr := os.ReadFile(marker)
 		if readErr == nil && json.Unmarshal(content, &gate) == nil {
 			break
 		}
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case err := <-done:
+			stopped = true
+			content, _ := os.ReadFile(log.Name())
+			t.Fatalf("child exited before publication pause: %v\n%s", err, content)
+		case <-ctx.Done():
+			_ = cmd.Process.Kill()
+			<-done
+			stopped = true
+			content, _ := os.ReadFile(log.Name())
+			t.Fatalf("publication pause not reached before test deadline: %s", content)
+		case <-poll.C:
+		}
 	}
 	if gate["root"] == "" || gate["phase"] != phase {
 		content, _ := os.ReadFile(log.Name())
-		t.Fatalf("publication pause not reached: %s", content)
+		t.Fatalf("invalid publication pause: %s", content)
 	}
 	noErr(t, cmd.Process.Kill())
-	require(t, cmd.Wait() != nil, "child was not killed")
+	waitErr := <-done
 	stopped = true
-	ctx := context.Background()
+	require(t, waitErr != nil, "child was not killed")
 	root := gate["root"]
 	store, err := state.Open(ctx, filepath.Join(root, "state"))
 	noErr(t, err)

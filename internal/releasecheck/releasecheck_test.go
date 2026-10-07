@@ -263,9 +263,16 @@ func TestRunChecksAfterTheInitialDelay(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { checker.Run(ctx); close(done) }()
-	waitFor(t, func() bool { return hits.Load() == 1 })
+	defer func() {
+		cancel()
+		<-done
+	}()
+	waitFor(t, func() bool { _, newer := checker.Newer(); return newer })
 	cancel()
 	<-done
+	if hits.Load() != 1 {
+		t.Fatalf("requests=%d, want 1", hits.Load())
+	}
 	if release, newer := checker.Newer(); !newer || release.Version != "1.0.3" {
 		t.Fatalf("release %+v newer %v", release, newer)
 	}
