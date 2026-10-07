@@ -189,6 +189,8 @@ owngit restore \
 
 `--verify` rehearses the restore first and restores only a backup that passes. Restore also checks every bundle, ref and record before it finishes, and names any repository that fails.
 
+Restore preserves malformed Git history and reports each affected repository in text and JSON (`object_warnings` entries with `id` and `message`, omitted when there are no warnings), with instructions to run `git fsck --strict` in a separate copy, repair the history, and import the repaired repository.
+
 - The disk of the new repository folder needs room for all bundles plus the largest one again. Restore checks this first.
 - Ctrl+C stops a restore. It removes what it made and exits with status 130.
 - OwnGit restores backups made by the same or an earlier version. An earlier version may refuse a backup from a later one.
