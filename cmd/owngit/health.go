@@ -39,6 +39,8 @@ func healthCommand(arguments []string) error {
 	return nil
 }
 
+var errHealthKeyMissing = errors.New("it published no health key; restart OwnGit")
+
 // confirmedHealth returns the address where the server of stateDir answered
 // with its proof. It reads the health file the server published and writes
 // nothing, so it works on a read-only state. Only a valid proof confirms; the
@@ -78,7 +80,7 @@ func explainUnconfirmed(stateDir string, proofErr error) error {
 		if proofErr != nil {
 			return proofErr
 		}
-		return fmt.Errorf("cannot confirm that the OwnGit running for state directory %s is this one: it published no health key; restart OwnGit", stateDir)
+		return fmt.Errorf("cannot confirm that the OwnGit running for state directory %s is this one: %w", stateDir, errHealthKeyMissing)
 	}
 	switch observed.Server {
 	case state.ServerStarting:
@@ -101,17 +103,6 @@ func healthRun(stateDir string) (state.HealthRun, bool, error) {
 		return state.HealthRun{}, false, err
 	}
 	return state.ReadHealthRun(stateDir)
-}
-
-// healthAddress returns the host:port to check on this computer, and
-// whether a running server published it. Without a published address it
-// is the saved listen address or the default.
-func healthAddress(stateDir string) (string, bool, error) {
-	target, running, _, err := healthStatus(stateDir)
-	if errors.Is(err, state.ErrNotExist) {
-		target, err = localTarget(server.DefaultListenAddress)
-	}
-	return target, running, err
 }
 
 // healthStatus keeps the observation beside the target so health can say
@@ -224,6 +215,29 @@ var healthClient = &http.Client{
 	Timeout:       5 * time.Second,
 	Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+}
+
+func statusHealthProblem(stateDir string, healthErr error, active bool) bool {
+	if healthErr == nil {
+		return false
+	}
+	var private *state.NotPrivateError
+	return active || errors.As(healthErr, &private) || checkHealthIfPublished(stateDir)
+}
+
+// checkHealthIfPublished explains a failed proof without confirming a server.
+func checkHealthIfPublished(stateDir string) bool {
+	run, published, err := healthRun(stateDir)
+	if err != nil {
+		return false
+	}
+	var target string
+	if published {
+		target, err = localIPTarget(run.Address)
+	} else {
+		target, _, _, err = healthStatus(stateDir)
+	}
+	return err == nil && checkHealth(target) == nil
 }
 
 // checkHealth asks the liveness check at target once.

@@ -112,6 +112,7 @@ type doctorSubject struct {
 	server doctor.Server
 	// serverReason is why server is doctor.ServerUnknown.
 	serverReason  string
+	serverFinding *webui.Finding
 	setupComplete bool
 	service       servingService
 	listen        string
@@ -135,10 +136,9 @@ type servingService struct {
 }
 
 // commandSubject reads the installation of stateDir from outside the
-// server: its service, and from one reading of the state whether its
-// server runs, where it listens and its saved setup. The server runs when
-// the state says so and it answers there; an answer at the address of a
-// state whose server does not run comes from another program.
+// server: its service, running record, listen address and saved setup.
+// Only the per-start health proof confirms that this server answers.
+// An answer without a running record belongs to another program.
 func commandSubject(stateDir string) (doctorSubject, error) {
 	subject := doctorSubject{stateDir: stateDir, service: findServingService(stateDir)}
 	observed := state.RunningObservation{Server: state.ServerNotRunning}
@@ -184,16 +184,26 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 	if err != nil {
 		return doctorSubject{}, err
 	}
-	answers := checkHealth(target) == nil
 	switch observed.Server {
 	case state.ServerRunning, state.ServerStarting:
-		subject.server = doctor.ServerSilent
-		if answers {
+		if _, err := confirmedHealth(stateDir); err == nil {
 			subject.server = doctor.ServerRunning
+		} else if checkHealth(target) != nil {
+			subject.server = doctor.ServerSilent
+		} else {
+			subject.server = doctor.ServerUnknown
+			finding := webui.Finding{Code: webui.MsgTrayUnproven, Unchecked: true}
+			if errors.Is(err, errHealthKeyMissing) {
+				finding.Code, finding.Args = webui.MsgTrayHealthKey, []string{stateDir}
+				if subject.service.found {
+					finding.Repair = "owngit service restart"
+				}
+			}
+			subject.serverFinding = &finding
 		}
 	case state.ServerNotRunning:
 		subject.server = doctor.ServerStopped
-		if answers {
+		if checkHealth(target) == nil {
 			subject.server = doctor.ServerElsewhere
 		}
 	default:
@@ -233,6 +243,9 @@ func serverDiagnosis(stateDir, listen string, asService bool, repositoryStorage 
 // diagnose reads what this computer says about subject and returns the
 // findings. Every tool it runs ends with ctx.
 func diagnose(ctx context.Context, subject doctorSubject) []webui.Finding {
+	if subject.serverFinding != nil {
+		return []webui.Finding{*subject.serverFinding}
+	}
 	facts := doctor.Facts{
 		GOOS: runtime.GOOS, Server: subject.server, ServerReason: subject.serverReason, Service: subject.service.found,
 		SetupComplete: subject.setupComplete, Listen: subject.listen, Program: subject.program,

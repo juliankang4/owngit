@@ -224,10 +224,15 @@ func trayDiagnosis(stateDir string) func(context.Context, string) (tray.Diagnosi
 		language, _ := webui.ParseLang(lang)
 		for _, finding := range diagnose(ctx, subject) {
 			switch finding.Code {
-			case webui.MsgDoctorNotRunning, webui.MsgDoctorSilent, webui.MsgDoctorAddressTaken, webui.MsgDoctorUncheckedServer:
+			case webui.MsgDoctorNotRunning, webui.MsgDoctorSilent, webui.MsgDoctorAddressTaken, webui.MsgDoctorUncheckedServer,
+				webui.MsgTrayUnproven, webui.MsgTrayHealthKey:
+				message := finding.Sentence(language)
+				if finding.Code == webui.MsgDoctorUncheckedServer {
+					message = webui.Text(language, webui.MsgTrayNoStatus)
+				}
 				return tray.Diagnosis{
 					Stopped: finding.Code == webui.MsgDoctorNotRunning,
-					Message: finding.Sentence(language), Repair: finding.Repair,
+					Message: message, Repair: finding.Repair,
 				}, nil
 			}
 		}

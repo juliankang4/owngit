@@ -15,6 +15,7 @@ import (
 	"owngit/internal/server"
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 type trayReport struct {
@@ -360,5 +361,11 @@ func TestTrayDiagnosis(t *testing.T) {
 	diagnosis, err = trayDiagnosis(stateDir)(context.Background(), "en")
 	if err != nil || diagnosis.Stopped || !strings.Contains(diagnosis.Message, "another program answers") {
 		t.Errorf("another program: %+v, %v", diagnosis, err)
+	}
+	runningDir := publishedHealthRun(t, health, state.RunningNetwork{Listen: "127.0.0.1:18966", Address: "127.0.0.1:18966"})
+	health.key = ""
+	diagnosis, err = trayDiagnosis(runningDir)(context.Background(), "ko")
+	if err != nil || diagnosis.Stopped || diagnosis.Message != webui.Text(webui.LangKO, webui.MsgTrayUnproven) {
+		t.Errorf("unproven answer: %+v, %v", diagnosis, err)
 	}
 }

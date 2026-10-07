@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
@@ -136,6 +137,22 @@ func runHealthCheck(t *testing.T, command, stateDir string) (string, error) {
 	if command == "waitHealthy" {
 		return waitHealthy(stateDir, 0)
 	}
+	if command == "doctor" {
+		output, err := captureStdout(func() error { return run([]string{"doctor", "--json", "--state-dir", stateDir}) })
+		noErr(t, err)
+		var report struct {
+			Running  bool
+			Findings []struct{ Message string }
+		}
+		noErr(t, json.Unmarshal([]byte(output), &report))
+		if report.Running {
+			return "", nil
+		}
+		if len(report.Findings) == 0 {
+			t.Fatal("doctor did not explain its unconfirmed result")
+		}
+		return "", errors.New(report.Findings[0].Message)
+	}
 	return captureStdout(func() error { return run([]string{"health", "--state-dir", stateDir}) })
 }
 
@@ -173,7 +190,7 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 							t.Fatalf("bound target: output %q, requests %q, Host headers %q, want %q with Host %q", output, health.checked, health.hosts, want, test.host)
 						}
 					}
-					target, running, err := healthAddress(stateDir)
+					target, running, _, err := healthStatus(stateDir)
 					noErr(t, err)
 					if !running || target != test.legacy {
 						t.Fatalf("legacy address selection changed: %q, running=%v, want %q", target, running, test.legacy)
@@ -185,7 +202,7 @@ func TestHealthUsesBoundAddress(t *testing.T) {
 }
 
 func TestHealthRejectsAnAnswerWithoutTheRunsProof(t *testing.T) {
-	for _, command := range []string{"health", "waitHealthy"} {
+	for _, command := range []string{"health", "waitHealthy", "doctor"} {
 		t.Run(command, func(t *testing.T) {
 			for _, test := range []struct {
 				name, key, want string
@@ -205,7 +222,11 @@ func TestHealthRejectsAnAnswerWithoutTheRunsProof(t *testing.T) {
 						noErr(t, os.Remove(filepath.Join(stateDir, state.HealthRunFile)))
 					}
 					output, err := runHealthCheck(t, command, stateDir)
-					if err == nil || !strings.Contains(err.Error(), test.want) || output != "" {
+					want := test.want
+					if command == "doctor" && !test.withoutFile {
+						want = "did not prove"
+					}
+					if err == nil || !strings.Contains(err.Error(), want) || output != "" {
 						t.Fatalf("answer without the proof: output %q, error %v, want %q", output, err, test.want)
 					}
 				})
@@ -224,7 +245,7 @@ func TestHealthCommandWithAStoppedHostname(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "OwnGit is not running for state directory") || !strings.Contains(err.Error(), stateDir) || output != "" || len(health.checked) != 0 {
 		t.Fatalf("stopped hostname: output %q, error %v, requests %q", output, err, health.checked)
 	}
-	target, running, err := healthAddress(stateDir)
+	target, running, _, err := healthStatus(stateDir)
 	noErr(t, err)
 	if running || target != "localhost:18968" {
 		t.Fatalf("saved-address selection changed: %q, running=%v", target, running)
@@ -259,6 +280,8 @@ func TestHealthWithAHostnameAndBaseURL(t *testing.T) {
 	if !strings.Contains(output, `"installed": false`) || !strings.Contains(output, `"on": false`) {
 		t.Fatalf("Tailscale isolation: %s", output)
 	}
+	_, err = runHealthCheck(t, "doctor", stateDir)
+	noErr(t, err)
 	previous := healthClient
 	transport := &recordingHealthTransport{next: previous.Transport}
 	healthClient = &http.Client{Timeout: previous.Timeout, Transport: transport, CheckRedirect: previous.CheckRedirect}

@@ -340,6 +340,26 @@ func (fake *fakeHealth) RoundTrip(request *http.Request) (*http.Response, error)
 	return response, nil
 }
 
+func TestSystemdStatusRequiresTheRunsProof(t *testing.T) {
+	fixture := newInstallFixture(t, desktopEnv, &service.Installed{Mode: service.ModeUser}, false)
+	health := useFakeHealth(t)
+	health.answering = true
+	dir := publishedHealthRun(t, health, state.RunningNetwork{Listen: "127.0.0.1:18966", Address: "127.0.0.1:18966"})
+	findInstalled = func(string) (service.Installed, bool, error) {
+		return service.Installed{Mode: service.ModeUser, StateDir: dir}, true, nil
+	}
+	noErr(t, fixture.host.status())
+	if !strings.Contains(fixture.out.String(), "OwnGit is running") || !strings.Contains(fixture.out.String(), "Address: http://127.0.0.1:18966") {
+		t.Fatalf("proven status: %s", fixture.out.String())
+	}
+	health.key = ""
+	fixture.out.Reset()
+	noErr(t, fixture.host.status())
+	if strings.Contains(fixture.out.String(), "OwnGit is running") || !strings.Contains(fixture.out.String(), "another program answers") {
+		t.Fatalf("unproven status: %s", fixture.out.String())
+	}
+}
+
 func TestServiceCommandsAreRefusedWithoutABackend(t *testing.T) {
 	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		t.Skip("Linux, macOS and Windows have service backends")

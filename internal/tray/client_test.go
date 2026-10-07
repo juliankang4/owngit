@@ -14,6 +14,7 @@ import (
 
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // fakeServer answers the tray status for the token in the access file of
@@ -246,7 +247,7 @@ func TestReadUsesOnlyProvenAnswers(t *testing.T) {
 			checkup := &diagnosis{result: Diagnosis{Stopped: true}}
 			client := NewClient(fake.stateDir, checkup.run)
 			for range 2 {
-				if report := client.Read(context.Background(), "en"); report.Condition != Unavailable || report.Status != nil || report.Dashboard != "" || checkup.ran != 0 {
+				if report := client.Read(context.Background(), "en"); report.Condition != Unavailable || report.Message != webui.Text(webui.LangEN, webui.MsgTrayUnproven) || report.Status != nil || report.Dashboard != "" || checkup.ran != 0 {
 					t.Fatalf("%+v, checkup ran %d times", report, checkup.ran)
 				}
 			}

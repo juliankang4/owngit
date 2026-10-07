@@ -66,11 +66,11 @@ func NewView(report Report, lang webui.Lang, now time.Time) View {
 	}
 	status := report.Status
 	if status == nil {
-		switch {
-		case report.Message != "":
-			view.Notice = []string{report.Message}
-		case report.Condition == Unavailable:
+		if report.Condition == Unavailable {
 			view.Notice = []string{text(webui.MsgTrayNoStatus)}
+		}
+		if report.Message != "" && report.Message != text(webui.MsgTrayNoStatus) {
+			view.Notice = append(view.Notice, report.Message)
 		}
 		// The checkup's command for a stopped OwnGit ("owngit service
 		// start", or "owngit service install" when the service is gone)

@@ -20,6 +20,7 @@ import (
 	"unicode/utf16"
 
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
 
 // fakeWindows stands in for schtasks, PowerShell and UAC, so that the
@@ -887,12 +888,23 @@ func TestTaskStatusExplainsAQueuedTask(t *testing.T) {
 	if !strings.Contains(out.String(), "  Firewall: no OwnGit rule for this owngit.exe; \"owngit doctor\" says whether other devices are blocked and how to let them in\n") {
 		t.Errorf("no firewall warning for a server on every address:\n%s", out.String())
 	}
-	// A server that answers is running, whatever state the task is in.
-	fake.health.answering = true
+	// A server that proves its answer is running, whatever state the task is in.
+	held, err := state.OpenStateDirectory(stateDir)
+	noErr(t, err)
+	run, err := state.PublishHealthRun(held, "0.0.0.0:"+port, address)
+	noErr(t, err)
+	noErr(t, held.Close())
+	fake.health.answering, fake.health.key = true, run.Key
 	out.Reset()
 	noErr(t, host.status())
 	if !strings.HasPrefix(out.String(), "OwnGit is running and answers its health check.\n") || !strings.Contains(out.String(), "  Address:  http://127.0.0.1:"+port) || strings.Contains(out.String(), "queued") {
 		t.Errorf("status of an answering server:\n%s", out.String())
+	}
+	fake.health.key = "another key"
+	out.Reset()
+	noErr(t, host.status())
+	if strings.Contains(out.String(), "OwnGit is running and answers") || !strings.Contains(out.String(), "another program answers") {
+		t.Errorf("status accepted an unproven answer:\n%s", out.String())
 	}
 	// Every check went to the address the state names.
 	if len(fake.health.checked) == 0 || slices.ContainsFunc(fake.health.checked, func(checked string) bool { return checked != address }) {

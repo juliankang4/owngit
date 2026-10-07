@@ -510,7 +510,9 @@ final class PanelViewController: NSViewController {
             case .addressTaken:
                 return [label(words.addressTakenLine)]
             case .unchecked(let detail):
-                return [label(String(format: words.uncheckedLine, detail), selectable: true)]
+                return words.lang == "ko" ? [label(words.noAnswerLine)] : [label(String(format: words.uncheckedLine, detail), selectable: true)]
+            case .unconfirmed:
+                return [label(words.noAnswerLine), label(words.notConfirmed, selectable: true)]
             }
         }
     }

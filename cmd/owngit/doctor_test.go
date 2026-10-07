@@ -289,9 +289,8 @@ func TestDoctorCommandWithoutAServer(t *testing.T) {
 	}
 }
 
-// A state whose server runs but does not answer, and one that something
-// else holds, are said so, never taken as running. The health check is a
-// fake that does not answer.
+// A state whose server does not answer, or that something else holds,
+// is never reported as running.
 func TestDoctorCommandTrustsTheStateOnly(t *testing.T) {
 	useFakeHealth(t)
 	codes := func(stateDir string) []string {

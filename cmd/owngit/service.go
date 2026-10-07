@@ -583,22 +583,27 @@ func (host *serviceHost) status() error {
 		return err
 	}
 	address, answered := "", false
+	var healthErr error
 	if readable {
-		if target, _, err := healthAddress(installed.StateDir); err == nil {
-			address = "http://" + target
-			answered = checkHealth(target) == nil
+		var target string
+		target, healthErr = confirmedHealth(installed.StateDir)
+		answered = healthErr == nil
+		if answered {
+			address = ownerAddresses(installed.StateDir, target)
 		}
 	}
 	switch {
 	case answered:
 		host.printf("OwnGit is running (systemd: %s) and answers its health check.\n", active)
-		address = ownerAddresses(installed.StateDir, strings.TrimPrefix(address, "http://"))
 	case active == "active" && !readable:
-		host.printf("OwnGit is running (systemd: active).\n")
+		host.printf("The service is active (systemd: active); OwnGit's health could not be confirmed.\n")
 	case active == "active":
 		host.printf("OwnGit is starting or not answering yet (systemd: active).\n")
 	default:
 		host.printf("OwnGit is not running (systemd: %s).\n", active)
+	}
+	if statusHealthProblem(installed.StateDir, healthErr, active == "active") {
+		host.printf("  Health:  %v\n", healthErr)
 	}
 	host.printf("  Mode:    %s\n", installed.Mode.Describe())
 	host.printServiceFacts(installed.Mode, installed.UnitPath, installed.StateDir, "")

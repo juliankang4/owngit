@@ -21,6 +21,7 @@ import (
 
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // Condition is what the icon says about the server.
@@ -77,6 +78,7 @@ type Client struct {
 // errNoConnection means nothing answered at the address, or the access file
 // that names the address could not be read.
 var errNoConnection = errors.New("no connection to OwnGit")
+var errUnproven = errors.New("the answer does not prove that OwnGit sent it")
 
 // accessFileLimit bounds the tray access file that is read.
 const accessFileLimit = 4 << 10
@@ -116,16 +118,25 @@ func (client *Client) Read(ctx context.Context, lang string) Report {
 	case err == nil:
 		return Report{Condition: Running, Status: &status, Dashboard: dashboard}
 	case !errors.Is(err, errNoConnection) || client.Diagnose == nil:
-		return Report{Condition: Unavailable}
+		return client.unavailable(err, lang)
 	}
 	diagnosis, err := client.Diagnose(ctx, lang)
 	switch {
 	case err != nil:
-		return Report{Condition: Unavailable}
+		return client.unavailable(err, lang)
 	case diagnosis.Stopped:
 		return Report{Condition: Stopped, Message: diagnosis.Message, Repair: diagnosis.Repair}
 	}
 	return Report{Condition: Unavailable, Message: diagnosis.Message, Repair: diagnosis.Repair}
+}
+
+func (client *Client) unavailable(err error, lang string) Report {
+	language, _ := webui.ParseLang(lang)
+	report := Report{Condition: Unavailable}
+	if errors.Is(err, errUnproven) {
+		report.Message = webui.Text(language, webui.MsgTrayUnproven)
+	}
+	return report
 }
 
 // Dashboard asks the server again and returns the dashboard's address
@@ -229,7 +240,7 @@ func (client *Client) ask(ctx context.Context, access state.TrayAccess, path str
 	// holds the secret of the access file, answered this request.
 	proof := state.TrayProof(access.Proof, nonce, body)
 	if !hmac.Equal([]byte(response.Header.Get(state.TrayProofHeader)), []byte(proof)) {
-		return nil, response.StatusCode, errors.New("the answer does not prove that OwnGit sent it")
+		return nil, response.StatusCode, errUnproven
 	}
 	if kind, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type")); kind != "application/json" {
 		return nil, response.StatusCode, errors.New("the answer is not JSON")
