@@ -364,7 +364,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, UNU
                 case .notFound:
                     askDoctor(.notFound, done: done)
                 case .unauthorized, .unavailable:
-                    done(.unavailable(why: .noAnswer))
+                    done(.unavailable(why: .unconfirmed))
                 case .noConnection:
                     askDoctor(.refused, done: done)
                 }

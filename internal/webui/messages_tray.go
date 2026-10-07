@@ -37,9 +37,13 @@ const (
 	MsgTrayRepairRun     MessageCode = "tray.repair_run"
 	MsgTrayStartRun      MessageCode = "tray.start_run"
 	MsgTrayNoStatus      MessageCode = "tray.no_status"
+	MsgTrayUnproven      MessageCode = "tray.unproven"
+	MsgTrayHealthKey     MessageCode = "tray.health_key"
 )
 
 var trayCatalog = map[MessageCode]message{
+	MsgTrayUnproven:     {en: "The answer did not prove that OwnGit sent it. Another program may be answering, or OwnGit may have restarted.", ko: "이 응답이 OwnGit에서 왔는지 확인하지 못했습니다. 다른 프로그램이 응답하거나 OwnGit이 다시 시작했을 수 있습니다."},
+	MsgTrayHealthKey:    {en: "Cannot confirm the OwnGit for state directory %s: it published no health key; restart OwnGit.", ko: "이 상태 폴더의 OwnGit을 확인하지 못했습니다. 서버가 확인용 키를 쓰지 않았습니다. OwnGit을 다시 시작하세요. 상태 폴더: %s"},
 	MsgTrayRunning:      {en: "Running", ko: "실행 중"},
 	MsgTrayAttention:    {en: "Needs attention", ko: "확인 필요"},
 	MsgTrayStopped:      {en: "Not running", ko: "실행되지 않음"},

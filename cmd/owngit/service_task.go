@@ -1406,12 +1406,11 @@ func (host *taskHost) status() error {
 		return nil
 	}
 	state, result, stateErr := host.taskState()
-	address, answered := "", false
-	if target, _, err := healthAddress(installed.StateDir); err == nil {
-		answered = checkHealth(target) == nil
-		if answered {
-			address = ownerAddresses(installed.StateDir, target)
-		}
+	target, healthErr := confirmedHealth(installed.StateDir)
+	answered := healthErr == nil
+	address := ""
+	if answered {
+		address = ownerAddresses(installed.StateDir, target)
 	}
 	// A server that starts listening removes the error of the last start.
 	lastError, failed := serveErrorSince(installed.StateDir, time.Time{})
@@ -1432,6 +1431,9 @@ func (host *taskHost) status() error {
 	}
 	if failed {
 		host.printf("  Last error: %s\n", lastError)
+	}
+	if statusHealthProblem(installed.StateDir, healthErr, state == service.TaskRunning) {
+		host.printf("  Health:   %v\n", healthErr)
 	}
 	host.printf("  Mode:     %s\n", installed.Mode.Describe())
 	host.printTaskFacts(installed.StateDir, address, installed.Executable)

@@ -647,6 +647,7 @@ require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\",\"repair\":\"owngi
 require(doctor("{\"code\":\"doctor.silent\",\"message\":\"m\"}") == .unavailable(why: .silent(restart: [])), "silent without a service")
 require(doctor("{\"code\":\"doctor.address_taken\",\"message\":\"m\"}") == .unavailable(why: .addressTaken), "address taken")
 require(doctor("{\"code\":\"doctor.unchecked_server\",\"message\":\"why\",\"unchecked\":true}") == .unavailable(why: .unchecked(detail: "why")), "unchecked")
+require(doctor(#"{"code":"tray.unproven","message":"m"}"#) == .unavailable(why: .unconfirmed), "an unproven answer is not silent")
 require(doctor("", running: true) == .unavailable(why: .starting), "refused, then answering doctor: starting")
 require(doctor("", running: true, asked: .notFound) == .unavailable(why: .noStatus), "a running OwnGit without the status route")
 require(doctor("", running: true, asked: .noAccessFile) == .unavailable(why: .noStatus), "a running OwnGit that wrote no access file")
@@ -1105,6 +1106,10 @@ panel.render(model)
 keepsFocus("panel-size", to: .larger)
 keepsFocus("notify-push", to: .large)
 keepsFocus("quit", to: .standard)
+model.showingSettings = false
+model.state = .unavailable(why: .silent(restart: ["service", "restart"]))
+panel.render(model)
+require(control("restart") is NSButton, "a silent server offers restart")
 window.contentView = nil
 
 // Only the integer choices count; anything else reads as Default.
@@ -1131,7 +1136,7 @@ func TestMacPanelKeepsFocusAndReadsStoredSize(t *testing.T) {
 	noErr(t, os.WriteFile(fixture, []byte(macPanelFixture), 0o600))
 	binary := filepath.Join(dir, "panel-fixture")
 	sources := filepath.Join(repoRoot(t), "packaging", "macos")
-	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "Panel.swift"), filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "Notifications.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
+	if output, err := exec.Command("xcrun", "swiftc", filepath.Join(sources, "Panel.swift"), filepath.Join(sources, "TrayStatus.swift"), filepath.Join(sources, "Notifications.swift"), filepath.Join(sources, "ProtectedPath.swift"), fixture, "-o", binary).CombinedOutput(); err != nil {
 		t.Fatalf("compile panel fixture: %v\n%s", err, output)
 	}
 	// Its home is in the test's folder, so whatever AppKit keeps stays

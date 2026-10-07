@@ -124,6 +124,28 @@ func writeJob(t *testing.T, path, label string, arguments ...string) {
 `), 0o644))
 }
 
+func TestLaunchAgentStatusRequiresTheRunsProof(t *testing.T) {
+	host, out := testLaunchAgentHost(t, macDesktop(), "")
+	recordLaunchctl(t, "gui/501/"+service.LaunchAgentLabel)
+	health := useFakeHealth(t)
+	health.answering = true
+	dir := publishedHealthRun(t, health, state.RunningNetwork{Listen: "127.0.0.1:18966", Address: "127.0.0.1:18966"})
+	agent, err := service.RenderLaunchAgent(host.agentPlan(dir, nil, service.Installed{}, false))
+	noErr(t, err)
+	noErr(t, os.MkdirAll(filepath.Dir(host.agentPath), 0o755))
+	noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
+	noErr(t, host.status())
+	if !strings.Contains(out.String(), "OwnGit is running") || !strings.Contains(out.String(), "http://127.0.0.1:18966") {
+		t.Fatalf("proven status: %s", out.String())
+	}
+	health.key = ""
+	out.Reset()
+	noErr(t, host.status())
+	if strings.Contains(out.String(), "OwnGit is running") || !strings.Contains(out.String(), "another program answers") {
+		t.Fatalf("unproven status: %s", out.String())
+	}
+}
+
 // A loaded hand-made job that runs "owngit serve" is left alone and no
 // second server starts.
 func TestLaunchAgentInstallLeavesAnotherServeJobAlone(t *testing.T) {

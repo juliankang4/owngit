@@ -182,6 +182,7 @@ enum Unavailable: Equatable {
     case addressTaken
     /// The check itself could not tell; detail is its message.
     case unchecked(detail: String)
+    case unconfirmed
 }
 
 /// How one status request ended.
@@ -316,6 +317,12 @@ func doctorState(output: Data?, asked: DoctorAsked) -> PanelState {
     }
     if codes["doctor.address_taken"] != nil {
         return .unavailable(why: .addressTaken)
+    }
+    if codes["tray.unproven"] != nil {
+        return .unavailable(why: .unconfirmed)
+    }
+    if codes["tray.health_key"] != nil {
+        return .unavailable(why: .noStatus)
     }
     if let unchecked = codes["doctor.unchecked_server"] {
         return .unavailable(why: .unchecked(detail: unchecked.message))

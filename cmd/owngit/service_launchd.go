@@ -522,12 +522,11 @@ func (host *launchAgentHost) status() error {
 			launchd += ", last exit code " + state.LastExit
 		}
 	}
-	address, answered := "", false
-	if target, _, err := healthAddress(installed.StateDir); err == nil {
-		answered = checkHealth(target) == nil
-		if answered {
-			address = ownerAddresses(installed.StateDir, target)
-		}
+	target, healthErr := confirmedHealth(installed.StateDir)
+	answered := healthErr == nil
+	address := ""
+	if answered {
+		address = ownerAddresses(installed.StateDir, target)
 	}
 	switch {
 	case answered:
@@ -536,6 +535,9 @@ func (host *launchAgentHost) status() error {
 		host.printf("OwnGit is starting or not answering yet (%s).\n", launchd)
 	default:
 		host.printf("OwnGit is not running (%s).\n", launchd)
+	}
+	if statusHealthProblem(installed.StateDir, healthErr, state.Running) {
+		host.printf("  Health:  %v\n", healthErr)
 	}
 	host.printf("  Mode:    %s, started when %s logs in on this Mac\n", installed.Mode.Describe(), host.account.Username)
 	host.printServiceFacts(installed.Mode, installed.UnitPath, installed.StateDir, address)

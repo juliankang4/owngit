@@ -155,7 +155,7 @@ func pollState(t *testing.T, stateDir string, count int, pause time.Duration) (s
 	for range count {
 		pollers.Go(func() {
 			for {
-				_, _, _ = healthAddress(stateDir)
+				_, _, _, _ = healthStatus(stateDir)
 				select {
 				case <-done:
 					return

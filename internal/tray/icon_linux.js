@@ -496,8 +496,11 @@ function panelContent() {
     const sentences = notice ? [notice, ...panel.notice] : panel.notice;
     if (sentences.length > 0 || panel.command) {
         const notes = new Gtk.Box({orientation: Gtk.Orientation.VERTICAL, spacing: 6, css_classes: ['owngit-notice']});
-        for (const sentence of sentences)
-            notes.append(text(sentence));
+        for (const sentence of sentences) {
+            const line = text(sentence);
+            line.set_selectable(true);
+            notes.append(line);
+        }
         if (panel.command) {
             notes.append(text(panel.command_intro));
             notes.append(field(panel.command, 'command', labels.copy_command));
