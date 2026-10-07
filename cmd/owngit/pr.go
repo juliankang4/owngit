@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"owngit/internal/apiclient"
 	"owngit/internal/bidi"
@@ -280,10 +281,41 @@ func writeDiffPatch(content []byte, output, notes io.Writer) error {
 		}
 		fmt.Fprintf(notes, "owngit: %s (%s)\n", scope, diff.Reason)
 	}
+	if note := tooLargeNote(diff.Files); note != "" {
+		fmt.Fprintf(notes, "owngit: %s\n", note)
+	}
 	if _, err := io.WriteString(output, diff.Patch); err != nil {
 		return &apiclient.Error{Code: "output_failed", Message: "The patch could not be written.", Cause: err}
 	}
 	return nil
+}
+
+// noteFileNames is how many file names one note names; a longer list is
+// counted instead, so the note stays one readable line.
+const noteFileNames = 10
+
+// tooLargeNote names the files the patch of diff leaves out because this
+// computer cannot compare them as text, so a reader of the bare patch does not
+// take it for a complete change. Each such file is in the file list with
+// too_large set; the patch itself cannot show that they are missing.
+func tooLargeNote(files []pullrequest.DiffFile) string {
+	var paths []string
+	for _, file := range files {
+		if file.TooLarge {
+			paths = append(paths, file.Path)
+		}
+	}
+	switch {
+	case len(paths) == 0:
+		return ""
+	case len(paths) == 1:
+		return "the patch leaves out " + paths[0] + ", which is too large to compare here"
+	case len(paths) <= noteFileNames:
+		return "the patch leaves out these files, which are too large to compare here: " + strings.Join(paths, ", ")
+	default:
+		return fmt.Sprintf("the patch leaves out %d files too large to compare here, including %s",
+			len(paths), strings.Join(paths[:3], ", "))
+	}
 }
 
 func valueOr(value, fallback string) string {

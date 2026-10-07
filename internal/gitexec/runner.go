@@ -139,7 +139,7 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 // commands are unaffected. Packing is bounded by the memory the computer
 // allows OwnGit (see package hostmem), so clones, fetches and backups finish
 // on a small host instead of being killed.
-func (r *Runner) commandConfig(textOutput bool) [][2]string {
+func (r *Runner) commandConfig(mergesText bool) [][2]string {
 	config := [][2]string{
 		{"maintenance.auto", "false"},
 		{"gc.auto", "0"},
@@ -150,9 +150,12 @@ func (r *Runner) commandConfig(textOutput bool) [][2]string {
 		config = append(config, [2]string{"core.longpaths", "true"})
 	}
 	config = append(config, hostmem.PackingConfig(hostmem.Ceiling(), runtime.NumCPU(), r.packingTransfers())...)
-	// A large-file threshold changes what a diff or merge shows, so commands
-	// that read text output (see readsTextOutput) do not get one.
-	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), r.packingTransfers()); !textOutput && threshold != "" {
+	// The large-file threshold bounds what Git holds when it reads an object.
+	// The commands that present content (see keepsTextSemantics) show a file
+	// above the threshold as binary instead of reading it, so a large file
+	// costs no memory there; a merge or a patch keeps Git's default, because
+	// the threshold would refuse a large text merge.
+	if threshold := hostmem.BigFileThreshold(hostmem.Ceiling(), r.packingTransfers()); !mergesText && threshold != "" {
 		config = append(config, [2]string{"core.bigFileThreshold", threshold})
 	}
 	return config
@@ -187,21 +190,53 @@ func packsInBackground(name string) bool {
 	return false
 }
 
-// readsTextOutput reports whether the Git command named by commandName
-// produces output that depends on telling text from binary files or on
-// merging text: diff, diff-tree, diff-index, log, show, blame, format-patch,
-// range-diff, grep (all show a file above core.bigFileThreshold as binary),
-// and merge-tree, merge-file, merge, apply, rebase, cherry-pick (a text merge
-// or patch above it is refused or treated as binary). Every other command,
-// archive, cat-file, hash-object, pack and ref commands included, gives the
-// same bytes with or without the threshold and gets it, which bounds memory.
-func readsTextOutput(name string) bool {
+// keepsTextSemantics reports whether the Git command named by commandName
+// produces a result whose meaning depends on merging text or on reading a
+// large file as text: merge-tree, merge-file, merge, apply, rebase and
+// cherry-pick refuse a text merge or patch above core.bigFileThreshold or
+// treat it as binary, so they keep Git's default threshold. Every other
+// command gets the threshold, which bounds memory: the commands that present
+// content (diff, diff-tree, diff-index, log, show, blame, format-patch,
+// range-diff, grep) then show a file above it as binary and do not rebuild
+// it, and archive, cat-file, hash-object, pack and ref commands give the same
+// bytes with or without it.
+func keepsTextSemantics(name string) bool {
 	switch strings.TrimPrefix(name, "git ") {
-	case "diff", "diff-tree", "diff-index", "log", "show", "blame", "format-patch", "range-diff", "grep",
-		"merge-tree", "merge-file", "merge", "apply", "rebase", "cherry-pick":
+	case "merge-tree", "merge-file", "merge", "apply", "rebase", "cherry-pick":
 		return true
 	}
 	return false
+}
+
+// ErrReadMemoryBusy reports that a read of repository content found no free
+// slot of the shared memory gate within ReadSlotWait, or that its context
+// ended first. A caller answers it as busy and tries again later.
+var ErrReadMemoryBusy = errors.New("Git memory is in use by transfers")
+
+// ReadSlotWait bounds how long one bounded read waits for a slot of the
+// shared memory gate. It is a variable so tests can lower it.
+var ReadSlotWait = 10 * time.Second
+
+// ReadSlot takes a slot of the shared memory gate for one bounded read of
+// repository content, so concurrent reads cannot use more memory than the
+// computer allows. It returns a no-op release when OwnGit has no gate (an
+// unknown ceiling), and ErrReadMemoryBusy when no slot became free within
+// ReadSlotWait or ctx ended. A caller takes the slot before a repository lock
+// and never waits for a slot while holding one, so a transfer that holds a
+// slot and waits for a lock cannot block a reader that holds a lock and waits
+// for a slot.
+func (r *Runner) ReadSlot(ctx context.Context) (func(), error) {
+	gate := hostmem.Shared.Load()
+	if gate == nil {
+		return func() {}, nil
+	}
+	wait, cancel := context.WithTimeout(ctx, ReadSlotWait)
+	defer cancel()
+	release, err := gate.Acquire(wait)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrReadMemoryBusy, err)
+	}
+	return release, nil
 }
 
 // ReadBound is the size above which reading one object into memory is not
@@ -370,7 +405,7 @@ func (r *Runner) runCommand(ctx context.Context, dir string, stdin io.Reader, li
 	stderr.limit = stderrLimit
 	cmd := exec.Command(r.GitPath, args...)
 	cmd.Dir = dir
-	cmd.Env = r.environment(readsTextOutput(name), extraEnv...)
+	cmd.Env = r.environment(keepsTextSemantics(name), extraEnv...)
 	cmd.Stdout = observedCommandWriter(&stdout, r.stdoutCopyTap)
 	cmd.Stderr = observedCommandWriter(&stderr, r.stderrCopyTap)
 	// Copy caller stdin only after attachment succeeds. Assigning cmd.Stdin
@@ -532,7 +567,7 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 // and the output in consume; returning an error from consume, or cancelling
 // ctx, stops Git and its owned descendants before StreamGit returns.
 func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
-	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), readsTextOutput(commandName(args)), dir, nil, nil, consume)
+	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), keepsTextSemantics(commandName(args)), dir, nil, nil, consume)
 }
 
 // stream runs cmd for Stream and StreamGit; name names it in error text. Its

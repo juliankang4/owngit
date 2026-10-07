@@ -105,6 +105,13 @@ type Source interface {
 	// ListTree returns every entry reachable from the commit tree, recursively,
 	// without entering gitlinks. metadataLimit bounds the raw listing bytes.
 	ListTree(ctx context.Context, metadataLimit int64) ([]Entry, error)
+	// CheckBlobRebuilds refuses the whole list when this server cannot read any
+	// of the named objects without rebuilding a stored delta beyond the memory
+	// it gives Git. Materialize prices every file it will read in one call, so
+	// one metadata walk answers for the whole source instead of one per file.
+	// The object IDs come from ListTree. A source that reads its objects from
+	// another host prices nothing here.
+	CheckBlobRebuilds(ctx context.Context, oids []string) error
 	// ReadBlob returns exactly size bytes of the blob named by oid.
 	ReadBlob(ctx context.Context, oid string, size int64) ([]byte, error)
 }
@@ -274,6 +281,22 @@ func Materialize(ctx context.Context, source Source, destination string, options
 	files, totalBytes, err := planFiles(entries, limits)
 	if err != nil {
 		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// Every file is priced in one pass before the destination is created, so a
+	// file this host cannot rebuild from its stored delta refuses the whole
+	// source without writing anything, and the walk costs one process per
+	// chain level for the source instead of one per file.
+	oids := make([]string, 0, len(files))
+	for _, file := range files {
+		oids = append(oids, file.OID)
+	}
+	if len(oids) > 0 {
+		if err := source.CheckBlobRebuilds(ctx, oids); err != nil {
+			return nil, fmt.Errorf("price check source blobs: %w", err)
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

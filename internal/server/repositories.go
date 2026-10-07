@@ -17,6 +17,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/gitexec"
 	"owngit/internal/logtext"
 	"owngit/internal/markdown"
 	"owngit/internal/repository"
@@ -571,6 +572,11 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 		writer.Header().Set("Retry-After", "30")
 	case errors.Is(cause, repository.ErrRepositoryInUse):
 		page.Repo.UnreadableReason = webui.MsgRepoBusyInUse
+		writer.Header().Set("Retry-After", "10")
+	case errors.Is(cause, gitexec.ErrReadMemoryBusy):
+		// The memory this computer gives Git is given to other Git work right
+		// now, as the transfer gate allows; the same read succeeds shortly.
+		page.Repo.UnreadableReason = webui.MsgRepoBusyMemory
 		writer.Header().Set("Retry-After", "10")
 	case errors.As(cause, new(*state.PolicyError)):
 		// A saved setting stops the read; the page names it.
@@ -1209,7 +1215,8 @@ func (app *App) fillCode(request *http.Request, page *webui.RepositoryPage, snap
 			parent = ""
 		}
 		file := &webui.FileView{
-			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated, TooLarge: blob.TooLarge,
+			Path: requestedPath, Size: int64(len(blob.Content)), Binary: binary, Truncated: blob.Truncated,
+			TooLarge: blob.TooLarge, TooLargeMemory: blob.TooLargeMemory,
 			RawURL:     rawURL(page.Repo.URL, selectedRef, requestedPath),
 			RestoreURL: ownerRestoreURL(page, commitOID, target, requestedPath),
 		}
@@ -1475,7 +1482,15 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		return err
 	}
 	if requestedPath != "" {
-		patch, truncated, err := app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, limits.FilePatchBytes)
+		// A file larger than this computer compares as text is not diffed:
+		// Git would rebuild it in memory (measured on Git 2.47.3: a 220 MiB
+		// delta used 665 MiB, and the large-file threshold does not stop an
+		// added file's patch). The page says why instead.
+		patch, truncated := "", false
+		var err error
+		if !binaryBySize(files, requestedPath) {
+			patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, limits.FilePatchBytes)
+		}
 		if err != nil {
 			return err
 		}
@@ -1506,19 +1521,10 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		view.FilePages = filePages
 	}
 	files = files[from : from+max(0, filePages.Last-filePages.First+1)]
-	// A file with more changed lines than the page shows is left out of the
-	// diff read, so it cannot use up the size limit of the files after it.
-	deferred := map[string]bool{}
-	var excluded []string
-	for _, file := range files {
-		if !file.Binary && file.Additions+file.Deletions > maximumCommitDiffLines && len(excluded) < maximumDeferredFiles {
-			deferred[file.Path] = true
-			excluded = append(excluded, file.Path)
-		}
-	}
+	excluded, deferred, readPatch := excludedFromDiff(files)
 	var patch string
 	var truncated bool
-	if len(excluded) < len(files) {
+	if readPatch {
 		patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, "", excluded, limits.CommitPatchBytes)
 		if err != nil {
 			return err
@@ -1526,6 +1532,15 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 	}
 	view.Truncated = truncated
 	view.Files, _ = diffFileItems(files, patch, truncated, deferred, fileURL, limits.CommitFileBytes)
+	if !readPatch {
+		// A read that could not leave the files above out could not be
+		// bounded, so the page shows every file it did not compare instead.
+		for index := range view.Files {
+			if !view.Files[index].Binary {
+				view.Files[index].NotLoaded = true
+			}
+		}
+	}
 	page.Commits.Detail = &view
 	return nil
 }
@@ -1537,12 +1552,15 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 // otherwise make a page many times larger than the diff. Files left out for
 // any of these reasons are listed and marked as not loaded, with a link to
 // their diff alone where the page has one. A commit leaves at most
-// maximumDeferredFiles large files out of its diff read by name, which
-// keeps the Git command line short. The same line bound applies to one
+// maximumExcludedFiles large files out of its diff read by name, which
+// keeps the Git command line short; past that the diff read is left out and
+// each file is offered on its own. The same line bound applies to one
 // source or selected-file diff page, with navigation to its remaining lines.
 const (
 	maximumCommitDiffLines = 10000
-	maximumDeferredFiles   = 100
+	// maximumExcludedFiles is how many files one commit or comparison leaves
+	// out of its diff read by name, which keeps the Git command line short.
+	maximumExcludedFiles = 100
 	// maximumDiffFiles is how many file sections one page shows. Each section
 	// carries its own header markup, so many small files would otherwise make
 	// a page far larger than the line limit suggests.
@@ -1623,11 +1641,58 @@ func addFileLinks(request *http.Request, page *webui.PageContinuation) {
 	}
 }
 
+// excludedFromDiff returns the paths of the files left out of the commit's
+// patch read, the files whose diff is deferred for the page, and whether the
+// read may run at all.
+//
+// A file larger than this computer compares as text is left out because Git
+// reads such a file whole while it writes its patch, whatever the large-file
+// threshold says, and the page says why it has no lines. A file with more
+// changed lines than the page shows is left out so that it cannot use up the
+// size limit of the files after it. Every left out file is one more pathspec
+// on the Git command line, so past the cap the patch is not read at all: the
+// page offers each file on its own instead of a read that could not be
+// bounded.
+func excludedFromDiff(files []repository.ChangedFile) (excluded []string, deferred map[string]bool, readPatch bool) {
+	deferred = map[string]bool{}
+	largeFiles := 0
+	for _, file := range files {
+		if file.BinaryBySize {
+			largeFiles++
+		}
+	}
+	if largeFiles > maximumExcludedFiles {
+		return nil, deferred, false
+	}
+	for _, file := range files {
+		if file.BinaryBySize {
+			excluded = append(excluded, file.Path)
+			continue
+		}
+		if !file.Binary && file.Additions+file.Deletions > maximumCommitDiffLines && len(excluded) < maximumExcludedFiles {
+			deferred[file.Path] = true
+			excluded = append(excluded, file.Path)
+		}
+	}
+	return excluded, deferred, len(excluded) < len(files)
+}
+
+// binaryBySize reports whether the changed file at path is larger than this
+// computer compares as text, so its change was not read as lines.
+func binaryBySize(files []repository.ChangedFile, path string) bool {
+	for _, file := range files {
+		if file.Path == path {
+			return file.BinaryBySize
+		}
+	}
+	return false
+}
+
 // diffFileItem is the list row of one changed file, without its diff.
 func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webui.DiffFile {
 	item := webui.DiffFile{
 		Path: file.Path, OldPath: file.OldPath, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions,
-		Binary: file.Binary,
+		Binary: file.Binary, BinaryBySize: file.BinaryBySize, CountsUnknown: !file.CountsRead,
 	}
 	if fileURL != nil {
 		item.URL = fileURL(file.Path)
@@ -1638,9 +1703,10 @@ func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webu
 // diffFileItems pairs changed files with their parts of patch, a diff read
 // without rename detection, within the page's limits. A file in deferred was
 // left out of patch on purpose. When truncated, the patch stopped early, so
-// a file with changed lines and no complete part is not loaded, and so is
-// one whose part is larger than fileBytes. notLoaded reports whether any
-// file's changes are missing from the page.
+// a file with changed lines and no complete part is not loaded, and so is a
+// file whose line counts were never read (see ChangedFile.CountsRead) and
+// whose part is not shown. notLoaded reports whether any file's changes are
+// missing from the page.
 func diffFileItems(files []repository.ChangedFile, patch string, truncated bool, deferred map[string]bool, fileURL func(string) string, fileBytes int64) (items []webui.DiffFile, notLoaded bool) {
 	sections := splitPatchByFile(patch, truncated)
 	shownLines := 0
@@ -1653,7 +1719,7 @@ func diffFileItems(files []repository.ChangedFile, patch string, truncated bool,
 			case ok && int64(len(section)) <= fileBytes && shownLines+lines <= maximumCommitDiffLines:
 				item.Hunks = parsePatch(section)
 				shownLines += lines
-			case ok || deferred[file.Path] || truncated && file.Additions+file.Deletions > 0:
+			case ok || deferred[file.Path] || !file.CountsRead || truncated && file.Additions+file.Deletions > 0:
 				item.NotLoaded = true
 				notLoaded = true
 			}

@@ -1095,6 +1095,11 @@ type FileView struct {
 	// memory. The page then shows one notice instead of lines, a kind guess
 	// or a download link.
 	TooLarge bool
+	// TooLargeMemory is true when the read was refused not by this file's own
+	// size but by the memory its stored delta needs to rebuild: a small file
+	// on a much larger base costs more to read than this computer gives Git.
+	// The notice names that reason instead of the size.
+	TooLargeMemory bool
 	// RawURL downloads the file. Empty when the backend does not offer it.
 	RawURL string
 	// RawCurrentRef distinguishes a moving-ref download from a pinned page.
@@ -1245,6 +1250,13 @@ type DiffFile struct {
 	Deletions int
 	// Binary is true when no text diff exists.
 	Binary bool
+	// BinaryBySize is true when Binary is true because the file is larger
+	// than this computer compares as text, not because its content is binary.
+	BinaryBySize bool
+	// CountsUnknown is true when the line counts were never read, because the
+	// file was left out of the read (see repository.ChangedFile.CountsRead),
+	// so a zero count must not be shown as no changes.
+	CountsUnknown bool
 	// URL shows this file's changes alone, for example within a commit.
 	URL string
 	// Selected marks the file a single-file commit view was opened for.

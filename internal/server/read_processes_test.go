@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 	"owngit/internal/testfixture"
@@ -26,6 +27,20 @@ func wroteRefs(app *App, id string) {
 	lock := app.Repositories.Locks.For(id)
 	lock.Lock()
 	lock.Unlock()
+}
+
+// knownMemoryCeiling gives the read paths a host whose memory limit is known for
+// the duration of one test, the way a Linux host and a container report it. Only
+// such a host prices a stored delta and marks a file by size: on macOS and
+// Windows the limit is unknown, so nothing is priced and a comparison starts one
+// process fewer. A test that counts those processes states the host it assumes
+// here instead of passing on one platform and failing on another. Call it before
+// countGit, which builds the counting runner from the current limit.
+func knownMemoryCeiling(t *testing.T) {
+	t.Helper()
+	previous := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	t.Cleanup(func() { hostmem.Ceiling = previous })
 }
 
 // countGit replaces the app's Git with a wrapper that records one line per
@@ -97,7 +112,7 @@ func warmSnapshot(t *testing.T, app *App, id string) {
 // of the path's own levels and the file itself. A folder view lists the folder
 // and reads its README, and starts the same two. Viewing either again starts
 // none.
-func TestFileAndFolderViewsStartTwoGitProcessesAndNoneWhenCached(t *testing.T) {
+func TestFileAndFolderViewsStartFewProcessesAndNoneWhenCached(t *testing.T) {
 	app := newConfiguredApp(t)
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	seedRepository(t, app, "views", map[string]string{
@@ -121,8 +136,11 @@ func TestFileAndFolderViewsStartTwoGitProcessesAndNoneWhenCached(t *testing.T) {
 		if status != http.StatusOK || !strings.Contains(body, view.content) {
 			t.Fatalf("GET %s status=%d, content shown=%v", view.address, status, strings.Contains(body, view.content))
 		}
-		if len(processes) > 2 {
-			t.Fatalf("GET %s started %d Git processes, want at most 2: %q", view.address, len(processes), processes)
+		if len(processes) > 3 {
+			// The file view reads the tree, prices the file's delta chain and
+			// reads the content; the folder view reads the tree and the files
+			// it lists.
+			t.Fatalf("GET %s started %d Git processes, want at most 3: %q", view.address, len(processes), processes)
 		}
 		body, status = dashboardGET(t, client, server.URL+view.address)
 		if processes := started(); status != http.StatusOK || !strings.Contains(body, view.content) || len(processes) != 0 {
@@ -138,7 +156,7 @@ func TestFileAndFolderViewsStartTwoGitProcessesAndNoneWhenCached(t *testing.T) {
 
 // A commit opened from the list of commits reads its metadata and files with
 // one process and its diff with another. Opening it again starts none.
-func TestCommitDetailStartsTwoGitProcessesAndNoneWhenCached(t *testing.T) {
+func TestCommitDetailStartsFourGitProcessesAndNoneWhenCached(t *testing.T) {
 	app := newConfiguredApp(t)
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	work, first := seedRepository(t, app, "history", map[string]string{"a.txt": "alpha\n"}, when)
@@ -158,8 +176,8 @@ func TestCommitDetailStartsTwoGitProcessesAndNoneWhenCached(t *testing.T) {
 	if status != http.StatusOK || !strings.Contains(body, `class="difftable"`) || !strings.Contains(body, "alpha") || strings.Contains(body, "bravo") || !strings.Contains(body, "ref=refs%2Fheads%2Fmain") {
 		t.Fatalf("commit status=%d, diff shown=%v", status, strings.Contains(body, "alpha"))
 	}
-	if len(processes) > 2 {
-		t.Fatalf("commit detail started %d Git processes, want at most 2: %q", len(processes), processes)
+	if len(processes) > 4 {
+		t.Fatalf("commit detail started %d Git processes, want at most 4: %q", len(processes), processes)
 	}
 	if body, status = dashboardGET(t, client, address); status != http.StatusOK || !strings.Contains(body, "alpha") {
 		t.Fatalf("repeated commit status=%d", status)
@@ -169,8 +187,9 @@ func TestCommitDetailStartsTwoGitProcessesAndNoneWhenCached(t *testing.T) {
 	}
 }
 
-// The file list, the counts and every patch of a commit come from a fixed
-// number of processes however many files it changes.
+// The file list, the object metadata that says which files are above the
+// memory line, the counts and every patch of a commit come from a fixed number
+// of processes however many files it changes.
 func TestCommitDiffProcessesDoNotGrowWithFiles(t *testing.T) {
 	app := newConfiguredApp(t)
 	when := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
@@ -198,7 +217,7 @@ func TestCommitDiffProcessesDoNotGrowWithFiles(t *testing.T) {
 			t.Fatalf("many commit shows %d files", strings.Count(body, `<section class="dfile"`))
 		}
 	}
-	if counts["few"] != counts["many"] || counts["many"] > 2 {
+	if counts["few"] != counts["many"] || counts["many"] > 4 {
 		t.Fatalf("processes for 2 files=%d, for 60 files=%d", counts["few"], counts["many"])
 	}
 }
@@ -217,10 +236,15 @@ func pullRequestRepository(t *testing.T, app *App, id string, sourceFiles map[st
 }
 
 // A pull request shows what its source changed since it branched from the
-// target, not the difference between the two tips, and reads it with two
-// processes, none when cached, however many files changed.
+// target, not the difference between the two tips, and reads it with five
+// processes (the merge base, the file records, the object metadata, the line
+// counts, and the patch), none when cached, however many files changed. The
+// records are read before the metadata and the counts so a file this computer
+// cannot compare as text is left out of both instead of being read whole into
+// memory.
 func TestPullRequestComparisonUsesTheMergeBase(t *testing.T) {
 	app := newConfiguredApp(t)
+	knownMemoryCeiling(t)
 	_, base, source, target := pullRequestRepository(t, app, "compare", map[string]string{"feature.txt": "feature line\n"})
 	started := countGit(t, app)
 
@@ -231,8 +255,8 @@ func TestPullRequestComparisonUsesTheMergeBase(t *testing.T) {
 		len(changes.Files) != 1 || changes.Files[0].Path != "feature.txt" || len(changes.Files[0].Hunks) == 0 || changes.Files[0].Additions != 1 {
 		t.Fatalf("changes=%+v", changes)
 	}
-	if len(processes) != 2 {
-		t.Fatalf("comparison started %d Git processes, want 2: %q", len(processes), processes)
+	if len(processes) != 5 {
+		t.Fatalf("comparison started %d Git processes, want 5: %q", len(processes), processes)
 	}
 	if again, err := app.comparePullRequestRevisions(context.Background(), "compare", source, target, changesView{first: 1}); err != nil || len(again.Files) != 1 || len(started()) != 0 {
 		t.Fatalf("cached comparison files=%d err=%v", len(again.Files), err)
@@ -251,6 +275,7 @@ func TestPullRequestComparisonProcessesDoNotGrowWithFiles(t *testing.T) {
 	counts := map[int]int{}
 	for _, size := range []int{3, 80} {
 		app := newConfiguredApp(t)
+		knownMemoryCeiling(t)
 		files := map[string]string{}
 		for index := 0; index < size; index++ {
 			files[fmt.Sprintf("dir/f%03d.txt", index)] = fmt.Sprintf("file %d\n", index)
@@ -269,8 +294,8 @@ func TestPullRequestComparisonProcessesDoNotGrowWithFiles(t *testing.T) {
 			}
 		}
 	}
-	if counts[3] != 2 || counts[80] != 2 {
-		t.Fatalf("processes for 3 files=%d, for 80 files=%d, want 2", counts[3], counts[80])
+	if counts[3] != 5 || counts[80] != 5 {
+		t.Fatalf("processes for 3 files=%d, for 80 files=%d, want 5", counts[3], counts[80])
 	}
 }
 

@@ -413,6 +413,15 @@ const (
 	MsgCommitDiffNone   MessageCode = "commits.diff_unavailable"
 	MsgCommitDiffMerge  MessageCode = "commits.diff_merge"
 	MsgCommitBinaryFile MessageCode = "commits.binary_file"
+	// MsgDiffBinaryBySize and MsgDiffBinaryBySizeNote explain a file that no
+	// text diff was made for because it is larger than this computer compares
+	// as text, so a reader does not take it for a binary file.
+	MsgDiffBinaryBySize     MessageCode = "diff.binary_by_size"
+	MsgDiffBinaryBySizeNote MessageCode = "diff.binary_by_size_note"
+	// MsgDiffCountsUnread names a file whose line counts were never read,
+	// because it or its neighbours were left out of the count read, so the
+	// reader does not take a zero for a count of zero lines.
+	MsgDiffCountsUnread MessageCode = "diff.counts_unread"
 	MsgCommitCommitter  MessageCode = "commits.committer"
 )
 
@@ -495,6 +504,10 @@ const (
 	MsgErrBadRequest   MessageCode = "error.bad_request"
 	MsgErrCSRF         MessageCode = "error.csrf"
 	MsgErrHostRejected MessageCode = "error.host_rejected"
+	// MsgErrRefused heads a page that answers a refused request whose own
+	// message says why, such as an archive this computer cannot unpack in
+	// memory; the message is shown as the page detail.
+	MsgErrRefused      MessageCode = "error.refused"
 	MsgErrMethod       MessageCode = "error.method_not_allowed"
 	MsgErrTooLarge     MessageCode = "error.payload_too_large"
 	MsgErrFormTooLarge MessageCode = "error.form_too_large"
@@ -1649,6 +1662,12 @@ var catalog = map[MessageCode]message{
 		en: "Binary file, no line changes shown.",
 		ko: "바이너리 파일이라 줄 단위 변경을 표시하지 않습니다.",
 	},
+	MsgDiffBinaryBySize: {en: "Too large to compare", ko: "너무 커서 비교 못 함"},
+	MsgDiffBinaryBySizeNote: {
+		en: "This file is larger than this computer compares as text, so its change is not shown line by line and its line counts are unknown.",
+		ko: "이 파일은 이 컴퓨터가 텍스트로 비교하는 크기보다 커서, 변경 내용을 줄 단위로 표시하지 않고 줄 수는 알 수 없습니다.",
+	},
+	MsgDiffCountsUnread: {en: "Line counts not read", ko: "줄 수를 읽지 않음"},
 	// A label, not a conclusion. Git's author and committer fields are
 	// metadata a client may set freely: the committer date can be earlier than
 	// the author date, and two names can share one instant. Naming the field
@@ -2003,6 +2022,10 @@ var catalog = map[MessageCode]message{
 	MsgErrUnavailable: {
 		en: "This is temporarily unavailable.",
 		ko: "지금은 사용할 수 없습니다.",
+	},
+	MsgErrRefused: {
+		en: "OwnGit refused this download.",
+		ko: "OwnGit이 이 다운로드를 거부했습니다.",
 	},
 	MsgErrGeneric: {
 		en: "Something went wrong.",

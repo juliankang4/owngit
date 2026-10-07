@@ -12,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 // A Git operation that holds one repository, like a push queued behind a
@@ -195,5 +198,43 @@ func TestBusyDashboardFallbackKeepsDeletionsAndUnreadableRepositories(t *testing
 		if _, listed := dashboardRow(body, name); listed {
 			t.Fatalf("the dashboard lists %s, deleted while it waited", name)
 		}
+	}
+}
+
+// A read that finds the memory this computer gives Git in use by other Git
+// work answers with a retryable busy page, not with a repository that cannot
+// be read: the same request succeeds shortly, and it says so.
+func TestPageReadWithoutAMemorySlotAnswersBusy(t *testing.T) {
+	app := newConfiguredApp(t)
+	addActivityRepository(t, app, "bounded", 1)
+	server := serve(t, app.Handler())
+	client := &http.Client{}
+	previousGate := hostmem.Shared.Load()
+	gate := hostmem.NewGate(1)
+	hostmem.Shared.Store(gate)
+	held, err := gate.Acquire(context.Background())
+	noErr(t, err)
+	previousWait := gitexec.ReadSlotWait
+	gitexec.ReadSlotWait = 100 * time.Millisecond
+	t.Cleanup(func() {
+		hostmem.Shared.Store(previousGate)
+		gitexec.ReadSlotWait = previousWait
+	})
+
+	for _, target := range []string{"/code?ref=refs%2Fheads%2Fmain&path=file.txt", "/raw?ref=refs%2Fheads%2Fmain&path=file.txt"} {
+		result := browserGET(t, client, server.URL+"/repositories/bounded"+target)
+		if result.status != http.StatusServiceUnavailable || result.header.Get("Retry-After") != "10" {
+			t.Fatalf("%s without a memory slot: status=%d Retry-After=%q", target, result.status, result.header.Get("Retry-After"))
+		}
+		for _, language := range []webui.Lang{webui.LangEN, webui.LangKO} {
+			if !strings.Contains(result.body, webui.Text(language, webui.MsgRepoBusyMemory)) {
+				t.Fatalf("%s does not say the computer is busy with other Git work in %s:\n%s", target, language, result.body)
+			}
+		}
+	}
+	held()
+	result := browserGET(t, client, server.URL+"/repositories/bounded/code?ref=refs%2Fheads%2Fmain&path=file.txt")
+	if result.status != http.StatusOK {
+		t.Fatalf("the page with a free memory slot: status=%d", result.status)
 	}
 }

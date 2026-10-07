@@ -194,7 +194,7 @@ func (app *App) restorePage(request *http.Request, stored state.Repository, summ
 			for _, change := range preview.Changes {
 				item := webui.DiffFile{
 					Path: change.Path, Status: change.Status, Additions: change.Additions,
-					Deletions: change.Deletions, Binary: change.Binary, Selected: true,
+					Deletions: change.Deletions, Binary: change.Binary, BinaryBySize: change.BinaryBySize, Selected: true,
 				}
 				if patch := preview.Patches[change.Path]; patch != "" {
 					item.Hunks = parsePatch(patch)

@@ -83,6 +83,7 @@ const (
 	MsgRepoBusyCheck               MessageCode = "repoadmin.busy.check"
 	MsgRepoBusyCheckCleanup        MessageCode = "repoadmin.busy.check_cleanup"
 	MsgRepoBusyInUse               MessageCode = "repoadmin.busy.in_use"
+	MsgRepoBusyMemory              MessageCode = "repoadmin.busy.memory"
 	MsgRepoBusyPreparing           MessageCode = "repoadmin.busy.preparing"
 	MsgRepoBusyBackup              MessageCode = "repoadmin.busy.backup"
 	MsgRepoRenameTitle             MessageCode = "repoadmin.rename.title"
@@ -282,6 +283,10 @@ var repositoryAdminCatalog = map[MessageCode]message{
 	MsgRepoBusyInUse: {
 		en: "Another Git operation, such as a push or a clone, is using the repository. Try again in a moment.",
 		ko: "푸시나 클론 같은 다른 Git 작업이 이 저장소를 쓰고 있습니다. 잠시 뒤 다시 시도하세요.",
+	},
+	MsgRepoBusyMemory: {
+		en: "This computer is using the memory it gives Git for other Git work right now. Try again in a moment.",
+		ko: "이 컴퓨터가 Git에 주는 메모리를 지금 다른 Git 작업에 쓰고 있습니다. 잠시 뒤 다시 시도하세요.",
 	},
 	MsgRepoBusyPreparing: {
 		en: "OwnGit is preparing this repository right now. Try again in a moment. Between preparation attempts the repository can be deleted.",

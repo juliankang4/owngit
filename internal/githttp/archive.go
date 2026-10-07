@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 	"owngit/internal/logtext"
 	"owngit/internal/repository"
 )
@@ -38,9 +39,74 @@ type ArchiveError struct {
 	RetryAfter time.Duration
 	// Message is a short English explanation for the client.
 	Message string
+	// Reason names a refusal that a page explains in the language of its
+	// reader (see the package webui), so the English sentence is not the only
+	// explanation. It is empty when English says all there is to say.
+	Reason ArchiveRefusal
+	// Detail holds the repository data a Reason refers to, shown as it is by
+	// every language.
+	Detail string
 }
 
+// ArchiveRefusal names why an archive request was refused.
+type ArchiveRefusal string
+
+const (
+	// ArchiveRefusalRepeatedPath: one path of the commit's tree appears twice.
+	ArchiveRefusalRepeatedPath ArchiveRefusal = "repeated_path"
+	// ArchiveRefusalManyFiles: the commit's files cannot be checked before the
+	// archive runs.
+	ArchiveRefusalManyFiles ArchiveRefusal = "too_many_files"
+	// ArchiveRefusalDeepChain: an object of the commit is stored in a delta
+	// chain deeper than Git builds, so the check cannot price the commit's
+	// files. This is a property of the repository's packing, not of the number
+	// of files, and has its own wording for the owner.
+	ArchiveRefusalDeepChain ArchiveRefusal = "deep_chain"
+	// ArchiveRefusalMemory: one file needs more memory to rebuild from its
+	// stored delta than this computer gives Git at once.
+	ArchiveRefusalMemory ArchiveRefusal = "memory"
+)
+
 func (e *ArchiveError) Error() string { return e.Message }
+
+// archivePrecheckFailure turns the result of the path check into the refusal
+// the caller answers, or nil when the check succeeded. Every reason that
+// establishes itself is answered with 409 and a name of its own, so a page can
+// state it in the reader's language (see the package webui); a check that could
+// not tell keeps the plain gateway failure.
+func archivePrecheckFailure(repositoryID string, err error) *ArchiveError {
+	var limitErr *gitexec.LimitError
+	var budget *repository.DeltaRebuildError
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, repository.ErrRepeatedTreePath):
+		log.Printf("Git archive request for repository %q: the commit's tree names one path twice", repositoryID)
+		return &ArchiveError{Status: http.StatusConflict, Reason: ArchiveRefusalRepeatedPath,
+			Message: "This commit holds two entries with one path, so OwnGit cannot make a faithful archive of it."}
+	case errors.Is(err, repository.ErrDeltaChainTooDeep):
+		// The metadata of this repository describes a chain deeper than Git
+		// builds, so no file of it can be judged. The owner sees a refusal that
+		// names the repository's packing; the log names the same shape.
+		log.Printf("Git archive request for repository %q: an object's delta chain is deeper than Git builds, so the commit's files could not be checked", repositoryID)
+		return &ArchiveError{Status: http.StatusConflict, Reason: ArchiveRefusalDeepChain,
+			Message: "One object of this commit is stored in a delta chain deeper than Git builds, so OwnGit cannot check the commit's files and did not create the archive. Pack the repository again on a computer with enough memory, or clone it with Git instead."}
+	case errors.As(err, &limitErr), errors.Is(err, repository.ErrTreeCheckTooLarge):
+		log.Printf("Git archive request for repository %q: the commit's file list is too large to check", repositoryID)
+		return &ArchiveError{Status: http.StatusConflict, Reason: ArchiveRefusalManyFiles,
+			Message: "This commit has too many files for OwnGit to check its paths, so it did not create the archive."}
+	case errors.As(err, &budget):
+		log.Printf("Git archive request for repository %q: %v", repositoryID, budget)
+		return &ArchiveError{Status: http.StatusConflict, Reason: ArchiveRefusalMemory,
+			Detail: fmt.Sprintf("%s (%d MiB > %d MiB)", budget.Path, budget.Cost/(1<<20), budget.Bound/(1<<20)),
+			Message: fmt.Sprintf(
+				"This computer cannot rebuild %s (%d MiB) in memory, so OwnGit did not create the archive. Clone the repository with Git instead, or run OwnGit on a computer with more memory.",
+				budget.Path, budget.Cost/(1<<20))}
+	default:
+		log.Printf("Git archive request for repository %q: could not read the commit's paths, so no archive was created: %s", repositoryID, logtext.Cause(err))
+		return &ArchiveError{Status: http.StatusBadGateway, Message: "Git could not create the archive."}
+	}
+}
 
 // ServeArchive streams a ZIP or tar.gz archive of commit commitOID of
 // repository repositoryID. The caller has authorized the request, resolved
@@ -130,20 +196,16 @@ func (h *Handler) ServeArchive(writer http.ResponseWriter, request *http.Request
 	// two entries with one name, and an unpacker silently overwrites the first
 	// with the second. The pages refuse such a tree the same way. A check that
 	// did not succeed proves nothing about the commit's paths, so the archive
-	// is refused rather than packed unchecked.
-	var limitErr *gitexec.LimitError
-	switch err := h.Repositories.VerifyTreePaths(ctx, repositoryPath, commitOID, archiveTreeCheckLimit); {
-	case errors.Is(err, repository.ErrRepeatedTreePath):
-		log.Printf("Git archive request for repository %q: the commit's tree names one path twice", repositoryID)
-		return &ArchiveError{Status: http.StatusConflict,
-			Message: "This commit holds two entries with one path, so OwnGit cannot make a faithful archive of it."}
-	case errors.As(err, &limitErr):
-		log.Printf("Git archive request for repository %q: the commit's file list is too large to check", repositoryID)
-		return &ArchiveError{Status: http.StatusConflict,
-			Message: "This commit has too many files for OwnGit to check its paths, so it did not create the archive."}
-	case err != nil:
-		log.Printf("Git archive request for repository %q: could not read the commit's paths, so no archive was created: %s", repositoryID, logtext.Cause(err))
-		return &ArchiveError{Status: http.StatusBadGateway, Message: "Git could not create the archive."}
+	// is refused rather than packed unchecked. The check also refuses a file
+	// that Git would rebuild in memory while it writes the archive, when the
+	// rebuild needs more memory than this computer can give Git at once: the
+	// large-file threshold does not bound that read (measured on Git 2.47.3: a
+	// 220 MiB delta used 477 MiB, and a 4 MiB file whose base is 100 MiB used
+	// 122 MiB).
+	bound := archiveRebuildBound()
+	err = h.Repositories.VerifyTreePaths(ctx, repositoryPath, commitOID, hostmem.TreeCheckBound(hostmem.Ceiling()), bound)
+	if failure := archivePrecheckFailure(repositoryID, err); failure != nil {
+		return failure
 	}
 
 	sent := &archiveResponse{ResponseWriter: writer, deadlines: deadlines, limit: limits.MaximumResponse, contentType: contentType, disposition: attachmentDisposition(filename, repositoryID+"-"+shortCommitID(commitOID)+extension)}
@@ -274,10 +336,12 @@ func archiveFailureReason(err error, deadline time.Time) string {
 
 var errArchiveWrite = errors.New("archive response write failed")
 
-// archiveTreeCheckLimit bounds the tree listing that the repeated-path check
-// reads before Git starts the archive, so a tree too large to check fails with
-// the runner's limit error instead of being archived unchecked.
-const archiveTreeCheckLimit = 64 << 20
+// archiveRebuildBound is the memory this computer can give Git at once (see
+// the package hostmem), the line above which the archive refuses a file it
+// would have to rebuild in memory. It is 0 when the ceiling is unknown: the
+// computer is assumed to be ordinary then and nothing is refused. It is a
+// variable so a test can hold a small fixture to a smaller line.
+var archiveRebuildBound = func() int64 { return int64(hostmem.GitBudget(hostmem.Ceiling())) }
 
 // archiveResponse writes archive bytes to the client and refuses to pass the
 // size limit. The first byte commits the status and the archive headers; until

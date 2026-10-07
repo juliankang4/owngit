@@ -17,6 +17,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"owngit/internal/githttp"
+	"owngit/internal/webui"
 )
 
 func archiveNames(t *testing.T, format string, content []byte) string {
@@ -227,5 +230,52 @@ func TestArchiveNameKeepsNoPathCharacters(t *testing.T) {
 		if got := archiveName("project", ref); got != want {
 			t.Errorf("archiveName(%q) = %q, want %q", ref, got, want)
 		}
+	}
+}
+
+// A refused archive download explains itself in the language of the reader:
+// the English sentence stays with the API route, and a page shows a message
+// code that both languages carry. A memory refusal names the file and the
+// sizes as data, which is the same in either language.
+func TestArchiveRefusalExplainsItselfInBothLanguages(t *testing.T) {
+	for _, test := range []struct {
+		reason githttp.ArchiveRefusal
+		want   webui.MessageCode
+	}{
+		{githttp.ArchiveRefusalRepeatedPath, webui.MsgArchiveRepeatedPath},
+		{githttp.ArchiveRefusalManyFiles, webui.MsgArchiveManyFiles},
+		{githttp.ArchiveRefusalDeepChain, webui.MsgArchiveDeepChain},
+		{githttp.ArchiveRefusalMemory, webui.MsgArchiveMemory},
+	} {
+		failure := &githttp.ArchiveError{Status: http.StatusConflict, Reason: test.reason,
+			Message: "This computer cannot rebuild big.txt (600 MiB) in memory.", Detail: "big.txt (600 MiB > 192 MiB)"}
+		code, detail := archiveRefusalMessage(failure)
+		if code != test.want {
+			t.Errorf("reason %q answers with %q, want %q", test.reason, code, test.want)
+		}
+		english, korean := webui.Text(webui.LangEN, code), webui.Text(webui.LangKO, code)
+		if korean == "" || korean == english {
+			t.Errorf("reason %q is not explained in Korean: en=%q ko=%q", test.reason, english, korean)
+		}
+		want := ""
+		if test.reason == githttp.ArchiveRefusalMemory {
+			want = failure.Detail
+		}
+		if detail != want {
+			t.Errorf("reason %q shows the detail %q, want %q", test.reason, detail, want)
+		}
+	}
+	// A refusal that carries no reason keeps the English sentence of the
+	// route, as every other refused download does.
+	failure := &githttp.ArchiveError{Status: http.StatusConflict, Message: "Another refusal."}
+	if code, detail := archiveRefusalMessage(failure); code != webui.MsgErrRefused || detail != failure.Message {
+		t.Errorf("a refusal without a reason answers with %q/%q", code, detail)
+	}
+	// A chain deeper than Git builds is a property of the repository's packing
+	// and says so: the owner does not read that the commit has too many files.
+	deep := webui.Text(webui.LangEN, webui.MsgArchiveDeepChain)
+	many := webui.Text(webui.LangEN, webui.MsgArchiveManyFiles)
+	if deep == many || !strings.Contains(deep, "chain") {
+		t.Errorf("the deep-chain message does not name the chain: %q", deep)
 	}
 }

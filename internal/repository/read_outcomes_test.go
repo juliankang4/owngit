@@ -69,6 +69,9 @@ func newReadOutcomeRepository(t *testing.T, format string) readOutcomeRepository
 // are failures, not absence, and no failure or absence is cached.
 func TestReadsTellAbsenceFromFailure(t *testing.T) {
 	requirePOSIX(t)
+	// The file records, the object metadata and the line counts are three
+	// processes only where the host can price a delta rebuild.
+	knownMemoryCeiling(t)
 	for _, format := range []string{ObjectFormatSHA1, ObjectFormatSHA256} {
 		t.Run(format, func(t *testing.T) {
 			r := newReadOutcomeRepository(t, format)
@@ -193,8 +196,13 @@ func TestReadsTellAbsenceFromFailure(t *testing.T) {
 			if _, _, err := m.CommitFiles(ctx, r.id, r.commit); err != nil {
 				t.Fatal(err)
 			}
-			if started := count() - before; started != 1 {
-				t.Fatalf("reading an existing commit started %d Git processes, want 1", started)
+			// The file records, then the line counts, then the object metadata that
+			// says whether the change is above the memory line: the records name
+			// every changed file without reading content, the metadata is read
+			// once the files are known, and the counts come last so the files
+			// above the line are left out of them (see commitFileCounts).
+			if started := count() - before; started != 3 {
+				t.Fatalf("reading an existing commit started %d Git processes, want 3", started)
 			}
 		})
 	}

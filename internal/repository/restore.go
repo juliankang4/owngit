@@ -466,16 +466,49 @@ func (m *Manager) emptyTree(ctx context.Context, repositoryPath string) (string,
 }
 
 // restoreChanges lists every path whose Git entry differs between oldTree
-// and newTree, with its modes, so a symbolic link or a mode change is
-// reported as the Git data it is.
+// and newTree, with its modes and line counts, so a symbolic link or a mode
+// change is reported as the Git data it is. The entries are read before the
+// counts, so a file this computer cannot compare as text is known first and
+// its counts are not read (see markBinaryBySize).
 func (m *Manager) restoreChanges(ctx context.Context, repositoryPath, oldTree, newTree string) ([]ChangedFile, error) {
-	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--raw", "--numstat", "--no-renames", "--no-ext-diff", "--no-textconv", "-r", "-z", oldTree, newTree)
+	// --no-abbrev keeps the object IDs of the records complete, so a file this
+	// computer cannot compare as text is marked as such on the preview page.
+	result, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "diff-tree", "--no-commit-id", "--raw", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", "-r", "-z", oldTree, newTree)
 	if err != nil {
 		return nil, fmt.Errorf("read restore changes: %w", err)
 	}
-	changes, end, complete, _ := parseChanges(result.Stdout)
+	changes, end, complete := parseChanges(result.Stdout)
 	if !complete || end != len(result.Stdout) {
 		return nil, errors.New("Git returned malformed restore changes")
+	}
+	// The preview shows these changes, so a file this computer compares as
+	// binary by size says so instead of looking like a binary file.
+	if err := m.markBinaryBySizeAt(ctx, repositoryPath, changes); err != nil {
+		return nil, err
+	}
+	excluded, ok := pathExclusions(changes)
+	if !ok {
+		return nil, ErrTreeCheckTooLarge
+	}
+	if len(excluded) == len(changes) {
+		return changes, nil
+	}
+	args := exclusionSpecs([]string{"--git-dir", ".", "diff-tree", "--no-commit-id", "--numstat", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", "-r", "-z", oldTree, newTree}, excluded)
+	result, err = m.Git.Run(ctx, repositoryPath, nil, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read restore line counts: %w", err)
+	}
+	lineCounts, err := changeLineCounts(result.Stdout)
+	if err != nil {
+		return nil, err
+	}
+	for index := range changes {
+		count, ok := lineCounts[changes[index].Path]
+		if !ok {
+			continue
+		}
+		changes[index].Additions, changes[index].Deletions, changes[index].Binary = count.additions, count.deletions, count.binary
+		changes[index].CountsRead = true
 	}
 	return changes, nil
 }
@@ -488,7 +521,9 @@ func (m *Manager) restorePatches(ctx context.Context, repositoryPath, oldTree, n
 			truncated = true
 			continue
 		}
-		if change.Binary {
+		if change.Binary || change.BinaryBySize {
+			// A file this computer did not compare as text has no patch: reading
+			// it would cost the memory the mark says it cannot have.
 			continue
 		}
 		result, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, nil, 256<<10,

@@ -146,6 +146,13 @@ func TestCodeTabDocumentAndSource(t *testing.T) {
 	if out = render(t, r, codePage(LangKO, &big)); strings.Contains(out, "code.truncated") || strings.Contains(out, `class="hm__warn"`) {
 		t.Error("a binary file, which shows no lines, says only its beginning is shown")
 	}
+	// A file refused for the memory its stored delta needs says so, and does
+	// not call the file itself too large: the file can be small.
+	refused := FileView{Path: "small.txt", Size: 7 << 20, TooLarge: true, TooLargeMemory: true}
+	out = render(t, r, codePage(LangKO, &refused))
+	if !strings.Contains(out, wantText(LangKO, MsgCodeTooLargeMemory)) || strings.Contains(out, wantText(LangKO, MsgCodeTooLarge)) {
+		t.Error("a file refused for the memory of its stored delta does not name that reason")
+	}
 }
 
 func TestCodeTabFileHasDrawerAndFullWidth(t *testing.T) {
@@ -196,6 +203,34 @@ func manyDiffFiles(n int) []DiffFile {
 			Hunks: []DiffHunk{{Header: "@@ -1 +1 @@", Lines: []DiffLine{{Kind: "del", OldLine: 1, Text: "old"}, {Kind: "add", NewLine: 1, Text: "new"}}}}})
 	}
 	return files
+}
+
+// A file that Git shows as binary only because this computer compares large
+// files that way must say so: otherwise a text file reads as a binary file,
+// and its missing line counts could read as none. A file whose content is
+// binary keeps its own wording.
+func TestASizeBasedBinaryFileSaysWhyItHasNoDiff(t *testing.T) {
+	r := newRenderer(t)
+	for _, lang := range Langs() {
+		page := repoPage(fullChrome(lang), RepoTabCommits)
+		page.Commits.Detail.Files = []DiffFile{
+			{Path: "logs/service.txt", Status: "modified", Binary: true, BinaryBySize: true},
+			{Path: "docs/logo.png", Status: "modified", Binary: true},
+		}
+		out := render(t, r, page)
+		if !strings.Contains(out, wantText(lang, MsgDiffBinaryBySizeNote)) {
+			t.Errorf("%s: a file too large to compare does not say why it has no diff", lang)
+		}
+		if !strings.Contains(out, wantText(lang, MsgDiffBinaryBySize)) {
+			t.Errorf("%s: the file list does not mark the file as too large to compare", lang)
+		}
+		if !strings.Contains(out, wantText(lang, MsgCommitBinaryFile)) {
+			t.Errorf("%s: a binary file lost its own note", lang)
+		}
+		if strings.Contains(out, `<span class="add">+0</span>`) {
+			t.Errorf("%s: a file with no line counts shows them as zero", lang)
+		}
+	}
 }
 
 func TestDiffListCollapsesPastTwentyFiles(t *testing.T) {

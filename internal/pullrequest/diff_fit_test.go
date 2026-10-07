@@ -14,7 +14,7 @@ func TestFitKeepsEveryWholeFileThatFits(t *testing.T) {
 		name := "f" + strconv.Itoa(index) + ".html"
 		// Markup is escaped to six bytes per character.
 		sections = append(sections, "diff --git a/"+name+" b/"+name+"\n+"+strings.Repeat("<&>", 100+index*50)+"\n")
-		files = append(files, DiffFile{Path: name, Status: "added", Additions: 1})
+		files = append(files, DiffFile{Path: name, Status: "added", Additions: new(1)})
 	}
 	whole := strings.Join(sections, "")
 	newDiff := func() *Diff {

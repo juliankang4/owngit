@@ -51,13 +51,15 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 		heap     int64
 		slots    int
 		packers  int
+		tree     int64
+		budget   uint64
 		settings string
 	}{
-		{"unknown", 0, 0, 0, 5, "threads=4 window=20372333 cache=81489334 base=81489334 big="},
-		{"512 MiB", 512 << 20, 256 << 20, 1, 1, "threads=1 window=8388608 cache=8388608 base=8388608 big=16777216"},
-		{"1 GiB", 1 << 30, 512 << 20, 2, 2, "threads=1 window=16777216 cache=16777216 base=16777216 big=33554432"},
-		{"8 GiB", 8 << 30, 4 << 30, 36, 5, "threads=4 window=49133275 cache=196533101 base=196533101 big=393066203"},
-		{"64 GiB", 64 << 30, 32 << 30, 305, 5, "threads=4 window=268435456 cache=268435456 base=268435456 big=536870912"},
+		{"unknown", 0, 0, 0, 5, 64 << 20, 0, "threads=4 window=20372333 cache=81489334 base=81489334 big="},
+		{"512 MiB", 512 << 20, 256 << 20, 1, 1, 32 << 20, 192 << 20, "threads=1 window=8388608 cache=8388608 base=8388608 big=16777216"},
+		{"1 GiB", 1 << 30, 512 << 20, 2, 2, 64 << 20, 384 << 20, "threads=1 window=16777216 cache=16777216 base=16777216 big=33554432"},
+		{"8 GiB", 8 << 30, 4 << 30, 36, 5, 64 << 20, 3 << 30, "threads=4 window=49133275 cache=196533101 base=196533101 big=393066203"},
+		{"64 GiB", 64 << 30, 32 << 30, 305, 5, 64 << 20, 24 << 30, "threads=4 window=268435456 cache=268435456 base=268435456 big=536870912"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -69,6 +71,27 @@ func TestBudgetFollowsTheCeiling(t *testing.T) {
 			}
 			if got := DefaultPackers(test.ceiling); got != test.packers {
 				t.Errorf("default packers = %d, want %d", got, test.packers)
+			}
+			// A path check holds the tree listing and one map entry per path
+			// beside it, so its listing is smaller than the part of memory one
+			// Git process may use, and 64 MiB where the ceiling is unknown.
+			if got := TreeCheckBound(test.ceiling); got != test.tree {
+				t.Errorf("tree check bound = %d, want %d", got, test.tree)
+			}
+			// The memory the computer gives Git is the share the transfer
+			// slots divide, and a read that cannot be bounded is measured
+			// against it instead of against one process's part. It is 0 where
+			// the ceiling is unknown, and the metadata of a tree check is then
+			// bounded by the listing instead.
+			if got := GitBudget(test.ceiling); got != test.budget {
+				t.Errorf("git budget = %d, want %d", got, test.budget)
+			}
+			wantMetadata := int64(test.budget)
+			if wantMetadata == 0 {
+				wantMetadata = test.tree
+			}
+			if got := TreeMetadataBound(test.ceiling); got != wantMetadata {
+				t.Errorf("tree metadata bound = %d, want %d", got, wantMetadata)
 			}
 			config := PackingConfig(test.ceiling, 4, test.packers)
 			got := "threads=" + config[0][1] + " window=" + config[1][1] + " cache=" + config[2][1] + " base=" + config[3][1] + " big=" + BigFileThreshold(test.ceiling, test.packers)

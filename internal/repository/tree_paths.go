@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/hostmem"
 )
 
 // A tree entry whose name contains "/" flattens two entries into one path:
@@ -33,6 +34,74 @@ func repeatedTreePath(listing []byte) error {
 		seen[string(name)] = struct{}{}
 	}
 	return nil
+}
+
+// treeBudgetChunk is how many blobs one metadata pass of the rebuild check
+// covers. A tree with very many files is checked in chunks, so the check holds
+// one chunk of paths and one chunk of metadata at a time whatever the tree
+// holds, and one chunk is all the metadata bound applies to.
+const treeBudgetChunk = 32768
+
+// checkTreeBudget reports the first file of a full tree listing that Git
+// cannot rebuild within rebuildBound bytes of memory, the memory this computer
+// can give Git at once (see rebuildCosts). It reads object metadata only and
+// reports nothing when rebuildBound is 0: an unknown memory ceiling keeps the
+// behavior of a computer with memory to spare. metadataAllowance bounds the
+// metadata of one pass, which is what the check holds at once: a pass that
+// needs more than that fails with ErrTreeCheckTooLarge instead of being read,
+// and a tree of any size is checked in passes that each fit.
+func (m *Manager) checkTreeBudget(ctx context.Context, repositoryPath string, listing []byte, metadataAllowance, rebuildBound int64) error {
+	if rebuildBound <= 0 {
+		return nil
+	}
+	chunk := int64(treeBudgetChunk)
+	if fits := metadataAllowance / metadataLineBytes; fits < chunk {
+		chunk = fits
+	}
+	if chunk <= 0 {
+		// Not even one object's metadata fits the bound, so no tree can be
+		// checked within it.
+		return ErrTreeCheckTooLarge
+	}
+	entries := make([]TreeEntry, 0, chunk)
+	check := func() error {
+		if len(entries) == 0 {
+			return nil
+		}
+		oids := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			oids = append(oids, entry.OID)
+		}
+		costs, _, _, err := m.rebuildCosts(ctx, repositoryPath, oids, metadataAllowance)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if cost := costs[entry.OID]; cost > rebuildBound {
+				return &DeltaRebuildError{Path: entry.Path, Cost: cost, Bound: rebuildBound}
+			}
+		}
+		entries = entries[:0]
+		return nil
+	}
+	for _, record := range bytes.Split(listing, []byte{0}) {
+		meta, name, found := bytes.Cut(record, []byte{'\t'})
+		if !found {
+			continue
+		}
+		fields := bytes.Fields(meta)
+		if len(fields) != 3 || !bytes.Equal(fields[1], []byte("blob")) {
+			continue
+		}
+		entries = append(entries, TreeEntry{Path: string(name), OID: string(fields[2]), Type: "blob"})
+		if int64(len(entries)) < chunk {
+			continue
+		}
+		if err := check(); err != nil {
+			return err
+		}
+	}
+	return check()
 }
 
 // treeListingOrder reports a streamed listing whose records do not follow the
@@ -217,18 +286,26 @@ func treeAboveEntry(fullPath, directory string) bool {
 	return false
 }
 
-// VerifyTreePaths reads the whole tree of commitOID and reports
-// ErrRepeatedTreePath when one path appears twice. ls-tree -r lists leaves
-// only, so -t adds the tree entries themselves: a file beside a directory of
-// the same path, and two directories of one path, are then one path twice.
-// limit bounds the listing bytes, so a tree too large to check fails with the
-// runner's limit error instead of being read unchecked. The caller holds the
-// repository read lock.
-func (m *Manager) VerifyTreePaths(ctx context.Context, repositoryPath, commitOID string, limit int64) error {
+// VerifyTreePaths reads the whole tree of commitOID and refuses it when one
+// path appears twice, the way every reader of the tree does. ls-tree -r lists
+// leaves only, so -t adds the tree entries themselves: a file beside a
+// directory of the same path, and two directories of one path, are then one
+// path twice. It also reports the first file whose rebuild as a stored delta
+// would need more memory than the computer can give Git at once; Git rebuilds
+// such a file in memory while it writes an archive, and no file threshold
+// bounds that (rebuildBound 0 checks nothing beyond the paths). limit bounds
+// the listing, and the metadata of the check is bounded by the memory model of
+// this computer, so a tree too large to check fails with the runner's limit
+// error or with ErrTreeCheckTooLarge instead of being used unchecked. The
+// caller holds the repository read lock.
+func (m *Manager) VerifyTreePaths(ctx context.Context, repositoryPath, commitOID string, limit, rebuildBound int64) error {
 	result, err := m.Git.RunWithLimits(ctx, repositoryPath, nil, gitexec.CommandLimits{OutputLimit: limit},
 		"--git-dir", ".", "ls-tree", "-r", "-t", "-z", commitOID)
 	if err != nil {
 		return err
 	}
-	return repeatedTreePath(result.Stdout)
+	if err := repeatedTreePath(result.Stdout); err != nil {
+		return err
+	}
+	return m.checkTreeBudget(ctx, repositoryPath, result.Stdout, hostmem.TreeMetadataBound(hostmem.Ceiling()), rebuildBound)
 }

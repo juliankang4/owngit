@@ -988,14 +988,22 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 	}
 	patch, patchTruncated := comparison.Patch, comparison.PatchTruncated
 	if len(window) < len(comparison.Files) && !comparison.FilesTruncated {
-		paths := make([]string, len(window))
-		for index, file := range window {
-			paths[index] = file.Path
+		// A file this computer cannot compare as text is left out of the read
+		// of one window as well: Git reads such a file whole while it writes
+		// its patch, and the page says why it has no lines.
+		paths := make([]string, 0, len(window))
+		for _, file := range window {
+			if !file.BinaryBySize {
+				paths = append(paths, file.Path)
+			}
 		}
-		var err error
-		patch, patchTruncated, err = app.Repositories.ComparePatch(ctx, repositoryID, comparison.Base, sourceOID, paths, limits.CompareBytes, limits.CompareTime)
-		if err != nil {
-			return pullRequestChanges{}, fmt.Errorf("read pull request changes: %w", err)
+		patch, patchTruncated = "", false
+		if len(paths) > 0 {
+			read, cut, err := app.Repositories.ComparePatch(ctx, repositoryID, comparison.Base, sourceOID, paths, limits.CompareBytes, limits.CompareTime)
+			if err != nil {
+				return pullRequestChanges{}, fmt.Errorf("read pull request changes: %w", err)
+			}
+			patch, patchTruncated = read, cut
 		}
 	}
 	files, notLoaded := diffFileItems(window, patch, patchTruncated, nil, view.fileURL, limits.CommitFileBytes)
@@ -1046,7 +1054,7 @@ func (app *App) pullRequestFile(ctx context.Context, repositoryID, sourceOID, ta
 		lines = lineContinuation(view.fileURL(item.Path), first, shown, total)
 		lines.Incomplete = truncated
 		// Changed lines that were counted but not read are not an empty diff.
-		item.NotLoaded = len(item.Hunks) == 0 && file.Additions+file.Deletions > 0
+		item.NotLoaded = len(item.Hunks) == 0 && (file.Additions+file.Deletions > 0 || !file.CountsRead)
 	}
 	return pullRequestChanges{
 		Files: []webui.DiffFile{item}, Lines: lines, AllURL: view.allURL, Base: bases[0],

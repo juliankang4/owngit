@@ -45,6 +45,10 @@ type Blob struct {
 	// Git ran. The result has no content and is not a prefix, so callers
 	// show their own too-large state instead of an empty file.
 	TooLarge bool
+	// TooLargeMemory is true when the refusal above is not the size of this
+	// file but the memory its stored delta needs to rebuild: a small file on
+	// a much larger base costs more to read than this computer gives Git.
+	TooLargeMemory bool
 }
 
 const commitLogFormat = "%H%x00%P%x00%an%x00%ae%x00%ad%x00%cn%x00%ce%x00%cd%x00%s%x00%b"
@@ -80,6 +84,19 @@ type ChangedFile struct {
 	Additions int
 	Deletions int
 	Binary    bool
+	// BinaryBySize is true when no text diff was shown because the file is
+	// larger than this computer compares as text, not because its content is
+	// binary (see the package hostmem).
+	BinaryBySize bool
+	// CountsRead is true when the added and deleted line counts were read. A
+	// change left out of that read, because it is above the memory line or
+	// because more changes are than one command line can leave out, keeps a
+	// zero count that no read established, and callers show it as unknown.
+	CountsRead bool
+	// oldOID and newOID are the objects of the change, kept for the size
+	// lookup that decides BinaryBySize. They are not part of the public view.
+	oldOID string
+	newOID string
 }
 
 // readLockedPath resolves a repository and takes its read lock. The caller

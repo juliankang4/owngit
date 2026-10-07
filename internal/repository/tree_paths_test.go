@@ -116,7 +116,7 @@ func TestReadersRefuseAStoredTreeThatNamesOnePathTwice(t *testing.T) {
 	verifications := func(commit string) []storedTreeReading {
 		return []storedTreeReading{
 			{name: "full tree check", want: ErrRepeatedTreePath.Error(), read: func() error {
-				return manager.VerifyTreePaths(ctx, repositoryPath, commit, 1<<20)
+				return manager.VerifyTreePaths(ctx, repositoryPath, commit, 1<<20, 0)
 			}},
 			{name: "language count", want: ErrRepeatedTreePath.Error(), read: func() error {
 				_, err := manager.Languages(ctx, "sample", commit)
@@ -224,7 +224,7 @@ func TestReadersRefuseAStoredTreeThatNamesOnePathTwice(t *testing.T) {
 	if _, err := manager.Languages(ctx, "sample", valid); err != nil {
 		t.Errorf("valid language count: %v", err)
 	}
-	if err := manager.VerifyTreePaths(ctx, repositoryPath, valid, 1<<20); err != nil {
+	if err := manager.VerifyTreePaths(ctx, repositoryPath, valid, 1<<20, 0); err != nil {
 		t.Errorf("valid tree check: %v", err)
 	}
 }

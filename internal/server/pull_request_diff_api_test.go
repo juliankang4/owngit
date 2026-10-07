@@ -66,7 +66,7 @@ func TestPullRequestDiffAPIPinsRevisions(t *testing.T) {
 		first.Source.Branch != "feature" || first.Target.Branch != "main" || first.State != "open" || first.Moved || first.Current != nil {
 		t.Fatalf("first diff revisions: %+v", first)
 	}
-	if diffPaths(first) != "added:feature.txt" || first.Files[0].Additions != 1 || first.Truncated || first.Incomplete || first.Reason != "" ||
+	if diffPaths(first) != "added:feature.txt" || first.Files[0].Additions == nil || *first.Files[0].Additions != 1 || first.Truncated || first.Incomplete || first.Reason != "" ||
 		!strings.HasPrefix(first.Patch, "diff --git a/feature.txt b/feature.txt\n") || !strings.Contains(first.Patch, "+feature\n") {
 		t.Fatalf("first diff content: %+v", first)
 	}

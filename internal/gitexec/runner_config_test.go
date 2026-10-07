@@ -124,33 +124,36 @@ func environmentGitConfig(t *testing.T, environment []string) [][2]string {
 	return config
 }
 
-// A large-file threshold changes what a diff or merge shows, so Git commands
-// that read text output get none; every other command, archive included,
-// gets one where the memory ceiling is known.
-func TestLargeFileThresholdSkipsOnlyTextReadingCommands(t *testing.T) {
+// The large-file threshold bounds what Git holds when it reads an object, so
+// a command that only presents content gets it and shows a file above it as
+// binary, while a command that merges or applies text keeps Git's default: the
+// threshold would refuse a large text merge or treat a patch as binary.
+func TestLargeFileThresholdSkipsOnlyCommandsThatMergeText(t *testing.T) {
 	runner, err := New("", filepath.Join(t.TempDir(), "runtime"))
 	noErr(t, err)
 	for _, test := range []struct {
-		args []string
-		text bool
+		args       []string
+		mergesText bool
 	}{
-		{[]string{"diff", "--numstat"}, true}, {[]string{"--git-dir", ".", "diff-tree", "x"}, true},
-		{[]string{"log"}, true}, {[]string{"show", "x"}, true}, {[]string{"blame", "f"}, true},
-		{[]string{"format-patch", "x"}, true}, {[]string{"merge-tree", "a", "b"}, true},
-		{[]string{"merge-file", "a", "b", "c"}, true}, {[]string{"apply", "p"}, true},
+		{[]string{"merge-tree", "a", "b"}, true}, {[]string{"merge-file", "a", "b", "c"}, true},
+		{[]string{"apply", "p"}, true}, {[]string{"-C", ".", "rebase", "x"}, true},
+		{[]string{"cherry-pick", "x"}, true}, {[]string{"-C", ".", "merge", "x"}, true},
+		{[]string{"diff", "--numstat"}, false}, {[]string{"--git-dir", ".", "diff-tree", "x"}, false},
+		{[]string{"diff-index", "x"}, false}, {[]string{"log"}, false}, {[]string{"show", "x"}, false},
+		{[]string{"blame", "f"}, false}, {[]string{"format-patch", "x"}, false}, {[]string{"grep", "x"}, false},
 		{[]string{"archive", "HEAD"}, false}, {[]string{"cat-file", "blob", "x"}, false},
 		{[]string{"bundle", "create", "x", "--all"}, false}, {[]string{"-C", ".", "repack", "-d"}, false},
 		{[]string{"index-pack", "x.pack"}, false},
 	} {
 		name := commandName(test.args)
-		if got := readsTextOutput(name); got != test.text {
-			t.Errorf("readsTextOutput(%q) = %v, want %v", name, got, test.text)
+		if got := keepsTextSemantics(name); got != test.mergesText {
+			t.Errorf("keepsTextSemantics(%q) = %v, want %v", name, got, test.mergesText)
 		}
 		has := false
-		for _, setting := range environmentGitConfig(t, runner.environment(readsTextOutput(name))) {
+		for _, setting := range environmentGitConfig(t, runner.environment(keepsTextSemantics(name))) {
 			has = has || setting[0] == "core.bigFileThreshold"
 		}
-		if want := !test.text && hostmem.Ceiling() > 0; has != want {
+		if want := !test.mergesText && hostmem.Ceiling() > 0; has != want {
 			t.Errorf("%s: core.bigFileThreshold set = %v, want %v", name, has, want)
 		}
 	}

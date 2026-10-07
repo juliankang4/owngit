@@ -74,6 +74,15 @@ func (g *Gate) Acquire(ctx context.Context) (func(), error) {
 	return g.release, nil
 }
 
+// Waiting reports how many holders are waiting for a slot. A caller that must
+// not wait while it holds a lock can use it to tell that another holder is
+// queued, and a test can wait for a read to reach the gate without a timer.
+func (g *Gate) Waiting() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.waiting
+}
+
 func (g *Gate) release() {
 	g.mu.Lock()
 	g.used--

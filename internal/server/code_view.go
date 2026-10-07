@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 
+	"owngit/internal/gitexec"
 	"owngit/internal/markdown"
 	"owngit/internal/repository"
 	"owngit/internal/state"
@@ -216,14 +217,24 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 			return
 		}
 		writer.Header().Set("Retry-After", "10")
-		app.renderError(writer, request, unavailable(request, "file read", err), webui.MsgErrUnavailable, "")
+		code := webui.MsgErrUnavailable
+		if errors.Is(err, gitexec.ErrReadMemoryBusy) {
+			code = webui.MsgRepoBusyMemory
+		}
+		app.renderError(writer, request, unavailable(request, "file read", err), code, "")
 		return
 	}
 	if blob.TooLarge {
 		// The file view never links here, so this answers an address kept from
 		// before or typed by hand. The download is refused because the server
 		// cannot read the file, not by the saved download limit.
-		app.renderError(writer, request, http.StatusForbidden, webui.MsgCodeTooLarge, "")
+		code := webui.MsgCodeTooLarge
+		if blob.TooLargeMemory {
+			// The file itself fits; the base its stored delta rebuilds does
+			// not. The notice names that reason rather than the size.
+			code = webui.MsgCodeTooLargeMemory
+		}
+		app.renderError(writer, request, http.StatusForbidden, code, "")
 		return
 	}
 	if blob.Truncated {

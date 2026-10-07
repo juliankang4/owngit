@@ -73,6 +73,24 @@ func downloadNotFound(err error) bool {
 	return errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrRepositoryNotFound)
 }
 
+// archiveRefusalMessage returns the message code and the untranslated detail
+// for an archive refusal. The English message of the error stays with the API
+// route; a page states the same reason in the language of its reader, and
+// shows the file and the sizes a memory refusal names as data.
+func archiveRefusalMessage(failure *githttp.ArchiveError) (webui.MessageCode, string) {
+	switch failure.Reason {
+	case githttp.ArchiveRefusalRepeatedPath:
+		return webui.MsgArchiveRepeatedPath, ""
+	case githttp.ArchiveRefusalManyFiles:
+		return webui.MsgArchiveManyFiles, ""
+	case githttp.ArchiveRefusalDeepChain:
+		return webui.MsgArchiveDeepChain, ""
+	case githttp.ArchiveRefusalMemory:
+		return webui.MsgArchiveMemory, failure.Detail
+	}
+	return webui.MsgErrRefused, failure.Message
+}
+
 // archiveName is REPOSITORY-REF with every character other than a letter, a
 // digit, ".", "-" or "_" replaced by "-", so the name holds no path, and cut
 // to maximumArchiveNameBytes.
@@ -138,10 +156,17 @@ func (app *App) handleArchive(writer http.ResponseWriter, request *http.Request,
 	case http.StatusOK:
 		if failure := app.serveArchive(writer, request, stored.ID, target); failure != nil {
 			code := webui.MsgErrUnavailable
-			if failure.Status == http.StatusNotFound {
+			detail := ""
+			switch failure.Status {
+			case http.StatusNotFound:
 				code = webui.MsgErrNotFound
+			case http.StatusConflict:
+				// A refusal says what happened and what the owner can do
+				// instead, in the language of the reader, with the file
+				// and the sizes it names shown as data.
+				code, detail = archiveRefusalMessage(failure)
 			}
-			app.renderError(writer, request, failure.Status, code, "")
+			app.renderError(writer, request, failure.Status, code, detail)
 		}
 	case http.StatusServiceUnavailable:
 		writer.Header().Set("Retry-After", "10")
@@ -198,6 +223,11 @@ func (app *App) handleArchiveAPI(writer http.ResponseWriter, request *http.Reque
 				code = "archive_not_found"
 			case http.StatusServiceUnavailable:
 				code = "repository_unavailable"
+			}
+			if failure.Reason != "" {
+				// The message stays English for clients, and the code names
+				// the reason a page explains in the reader's language.
+				code = "archive_" + string(failure.Reason)
 			}
 			writeAPIError(writer, failure.Status, code, failure.Message, nil)
 		}

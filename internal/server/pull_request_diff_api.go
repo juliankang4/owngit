@@ -88,20 +88,38 @@ func diffFromComparison(revisions pullrequest.DiffRevisions, comparison reposito
 		return diff
 	}
 	diff.MergeBase = comparison.Base
+	tooLarge := false
 	for _, file := range comparison.Files {
+		tooLarge = tooLarge || file.BinaryBySize
 		diff.Files = append(diff.Files, pullrequest.DiffFile{
-			Path: file.Path, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions, Binary: file.Binary,
+			Path: file.Path, Status: file.Status, Binary: file.Binary && !file.BinaryBySize, TooLarge: file.BinaryBySize,
+			Additions: lineCount(file.Additions, countsUnknown(file)), Deletions: lineCount(file.Deletions, countsUnknown(file)),
 		})
 	}
 	diff.Patch = comparison.Patch
 	diff.Incomplete = comparison.FilesTruncated
-	diff.Truncated = comparison.PatchTruncated || comparison.FilesTruncated
-	if diff.Truncated {
+	// A file above the memory line is never in the patch, so a patch that
+	// holds such a file in its comparison is incomplete as well.
+	diff.Truncated = comparison.PatchTruncated || comparison.FilesTruncated || tooLarge
+	if comparison.PatchTruncated || comparison.FilesTruncated {
 		// The last file of a cut patch may be partial, so it is left out.
 		diff.Patch = diff.Patch[:patchSectionStart(diff.Patch, len(diff.Patch))]
-		diff.Reason = "output_limit"
-		if comparison.TimedOut {
+	}
+	if diff.Truncated {
+		switch {
+		case comparison.PatchTooLarge:
+			// No patch read was attempted: the comparison holds more files
+			// above the memory line than one command line can leave out, and no
+			// limit or retry would add them.
+			diff.Reason = "too_large"
+		case comparison.TimedOut:
 			diff.Reason = "time_limit"
+		case comparison.PatchTruncated || comparison.FilesTruncated:
+			diff.Reason = "output_limit"
+		default:
+			// A file above the memory line is missing from the patch whatever
+			// the limits are.
+			diff.Reason = "too_large"
 		}
 	}
 	return diff

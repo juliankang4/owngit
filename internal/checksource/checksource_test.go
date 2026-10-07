@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"owngit/internal/repository"
 )
 
 // fakeSource serves a fixed entry list from memory. It lets the tests cover
@@ -25,6 +28,12 @@ type fakeSource struct {
 	beforeList func() error
 	// listErr replaces a successful listing.
 	listErr error
+	// pricedOIDs records every CheckBlobRebuilds call, so a test can see that
+	// the whole source is priced in one call.
+	pricedOIDs [][]string
+	// checkErr replaces a successful price; it sees the call number, so a test
+	// can make the first attempt busy and the next one succeed.
+	checkErr func(call int) error
 }
 
 func newFakeSource(t *testing.T, files map[string]string, modes map[string]string) *fakeSource {
@@ -63,6 +72,14 @@ func (s *fakeSource) ListTree(ctx context.Context, metadataLimit int64) ([]Entry
 		return nil, s.listErr
 	}
 	return append([]Entry(nil), s.entries...), nil
+}
+
+func (s *fakeSource) CheckBlobRebuilds(ctx context.Context, oids []string) error {
+	s.pricedOIDs = append(s.pricedOIDs, append([]string(nil), oids...))
+	if s.checkErr != nil {
+		return s.checkErr(len(s.pricedOIDs))
+	}
+	return nil
 }
 
 func (s *fakeSource) ReadBlob(ctx context.Context, oid string, size int64) ([]byte, error) {
@@ -755,5 +772,82 @@ func TestMaterializeAcceptsAnEmptyTree(t *testing.T) {
 	entries, err := os.ReadDir(destination)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("empty tree produced %d entries, err=%v", len(entries), err)
+	}
+}
+
+// One call prices the whole source: the walk then costs one process per chain
+// level for every file together, not one walk per file, and an empty tree is
+// not priced at all.
+func TestMaterializePricesEveryFileInOneCall(t *testing.T) {
+	source := newFakeSource(t, map[string]string{"a.txt": "a\n", "dir/b.txt": "b\n"}, nil)
+	destination := destinationIn(t)
+	_, err := Materialize(context.Background(), source, destination, Options{})
+	noErr(t, err)
+	if len(source.pricedOIDs) != 1 {
+		t.Fatalf("the source was priced in %d calls, want 1", len(source.pricedOIDs))
+	}
+	listed, err := source.ListTree(context.Background(), 1<<20)
+	noErr(t, err)
+	wanted := map[string]bool{}
+	for _, entry := range listed {
+		wanted[entry.OID] = true
+	}
+	for _, oid := range source.pricedOIDs[0] {
+		delete(wanted, oid)
+	}
+	if len(source.pricedOIDs[0]) != len(listed) || len(wanted) != 0 {
+		t.Fatalf("priced %v, want every listed object %d", source.pricedOIDs[0], len(listed))
+	}
+	empty := newFakeSource(t, nil, nil)
+	if _, err := Materialize(context.Background(), empty, destinationIn(t), Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.pricedOIDs) != 0 {
+		t.Fatalf("an empty tree was priced in %d calls", len(empty.pricedOIDs))
+	}
+}
+
+// A price this host cannot pay refuses the whole source before the destination
+// exists and before any blob is read, with the reason the caller matches on.
+func TestMaterializeRefusesTheSourceWhenABlobCannotBeRebuilt(t *testing.T) {
+	source := newFakeSource(t, map[string]string{"a.txt": "a\n", "b.txt": "b\n"}, nil)
+	source.checkErr = func(int) error { return repository.ErrPinnedBlobTooLarge }
+	reads := 0
+	source.afterRead = func(string) { reads++ }
+	destination := destinationIn(t)
+	result, err := Materialize(context.Background(), source, destination, Options{})
+	if result != nil || !errors.Is(err, repository.ErrPinnedBlobTooLarge) {
+		t.Fatalf("result=%+v err=%v, want the pinned refusal", result, err)
+	}
+	if reads != 0 {
+		t.Fatalf("a refused source read %d blobs", reads)
+	}
+	if _, statErr := os.Stat(destination); !os.IsNotExist(statErr) {
+		t.Fatalf("a refused source created the destination: %v", statErr)
+	}
+}
+
+// A repository write in progress makes the first price fail with the pinned
+// busy error; the retry loop the check runner uses starts the whole read again
+// and succeeds, so a brief push does not end a check job.
+func TestMaterializeRetriesWhileTheSourceIsBusy(t *testing.T) {
+	source := newFakeSource(t, map[string]string{"a.txt": "a\n"}, nil)
+	source.checkErr = func(call int) error {
+		if call == 1 {
+			return repository.ErrPinnedRepositoryBusy
+		}
+		return nil
+	}
+	destination := destinationIn(t)
+	err := RetryWhileRepositoryBusy(context.Background(), 5*time.Second, func() error {
+		_, err := Materialize(context.Background(), source, destination, Options{})
+		return err
+	})
+	noErr(t, err)
+	if len(source.pricedOIDs) != 2 {
+		t.Fatalf("the source was priced %d times, want a busy attempt and a retry", len(source.pricedOIDs))
+	}
+	if _, err := os.Stat(filepath.Join(destination, "a.txt")); err != nil {
+		t.Fatalf("the retry did not materialize the source: %v", err)
 	}
 }

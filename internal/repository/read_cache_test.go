@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"owngit/internal/hostmem"
 )
 
 // commitTree commits files in work, pushes the commit to branch and records
@@ -42,6 +44,19 @@ func requirePOSIX(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the command-counting wrapper is a POSIX-shell fixture")
 	}
+}
+
+// knownMemoryCeiling gives the memory model a host whose limit is known for the
+// duration of one test, the way a Linux host and a container report it. The read
+// paths price a stored delta and mark a file by size only when the limit is
+// known; on macOS and Windows the limit is unknown, so nothing is priced and a
+// process count is one lower. A test that counts those processes states the host
+// it assumes here instead of passing on one platform and failing on another.
+func knownMemoryCeiling(t *testing.T) {
+	t.Helper()
+	previous := hostmem.Ceiling
+	hostmem.Ceiling = func() uint64 { return 512 << 20 }
+	t.Cleanup(func() { hostmem.Ceiling = previous })
 }
 
 // A branch and a lightweight tag resolve from the ref snapshot without Git.
@@ -125,6 +140,8 @@ func TestCachedListingsKeepTheirPaths(t *testing.T) {
 // recently used entry, and never keeps a file larger than one entry.
 func TestObjectCacheEvictsAndSkipsLargeFiles(t *testing.T) {
 	requirePOSIX(t)
+	// The evicted entry starts the chain price and the content read.
+	knownMemoryCeiling(t)
 	manager, _, work := newTestRepository(t)
 	files := map[string]string{"big.txt": strings.Repeat("b", 3000)}
 	for index := 0; index < 5; index++ {
@@ -160,10 +177,12 @@ func TestObjectCacheEvictsAndSkipsLargeFiles(t *testing.T) {
 	if started := read("f4.txt"); started != 0 {
 		t.Fatalf("the newest entry started %d Git processes", started)
 	}
-	if started := read("f0.txt"); started != 1 {
-		t.Fatalf("an evicted entry started %d Git processes, want 1", started)
+	if started := read("f0.txt"); started != 2 {
+		t.Fatalf("an evicted entry started %d Git processes, want 2 (the chain price and the content)", started)
 	}
-	if read("big.txt") != 1 || read("big.txt") != 1 {
+	// A file larger than one entry is never cached itself, but the price of
+	// its delta chain is, so the second read starts only the content read.
+	if read("big.txt") != 2 || read("big.txt") != 1 {
 		t.Fatal("a file larger than one entry was cached")
 	}
 }
@@ -194,6 +213,8 @@ func TestObjectCacheRunsConcurrentMissesOnce(t *testing.T) {
 		t.Skip("holds one real cat-file while eight callers wait")
 	}
 	requirePOSIX(t)
+	// Eight misses share one chain price and one content read.
+	knownMemoryCeiling(t)
 	manager, _, work := newTestRepository(t)
 	commit := commitTree(t, manager, work, "main", map[string]string{"file.txt": "shared\n"})
 	entries, err := manager.TreeAt(context.Background(), "sample", commit, "")
@@ -233,8 +254,8 @@ func TestObjectCacheRunsConcurrentMissesOnce(t *testing.T) {
 			t.Fatalf("caller %d got %q %v", index, results[index], errs[index])
 		}
 	}
-	if started := count() - before; started != 1 {
-		t.Fatalf("8 concurrent misses started %d Git processes, want 1", started)
+	if started := count() - before; started != 2 {
+		t.Fatalf("8 concurrent misses started %d Git processes, want 2 (the chain price and the content)", started)
 	}
 }
 
@@ -311,12 +332,14 @@ func TestCompareLimits(t *testing.T) {
 	}
 	count, _, slowPath := countGitProcesses(t, manager, "diff")
 
-	// A limit inside the patches keeps the whole file list.
+	// A limit inside the patches keeps the whole file list. The records, the
+	// counts and the patch are read apart, so this reads with three processes:
+	// one lists the files, one counts their lines, one reads the patch.
 	half := int64(len(full.Patch) / 2)
 	before := count()
 	cut, err := compare(half, 20*time.Second)
 	noErr(t, err)
-	if !cut.PatchTruncated || cut.FilesTruncated || cut.TimedOut || len(cut.Files) != 20 || len(cut.Patch) >= len(full.Patch) || count()-before != 1 {
+	if !cut.PatchTruncated || cut.FilesTruncated || cut.TimedOut || len(cut.Files) != 20 || len(cut.Patch) >= len(full.Patch) || count()-before != 3 {
 		t.Fatalf("patch cut: files=%d cut=%v/%v patch=%d processes=%d", len(cut.Files), cut.PatchTruncated, cut.FilesTruncated, len(cut.Patch), count()-before)
 	}
 	before = count()

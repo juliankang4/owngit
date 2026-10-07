@@ -331,7 +331,9 @@ type Diff struct {
 	Truncated bool `json:"truncated"`
 	// Reason says why output is missing: output_limit (the diff reached its
 	// size limit), time_limit (the diff ran out of time; a retry may read
-	// more), or response_limit (cut to fit the API response).
+	// more), too_large (too many of the changed files are too large to compare
+	// here, so no patch read was attempted and each such file is listed with
+	// too_large), or response_limit (cut to fit the API response).
 	Reason string `json:"reason,omitempty"`
 	Patch  string `json:"patch"`
 }
@@ -350,11 +352,19 @@ type DiffCurrent struct {
 
 // DiffFile is one changed file with its line counts.
 type DiffFile struct {
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Binary    bool   `json:"binary"`
+	Path   string `json:"path"`
+	Status string `json:"status"`
+	// Additions and Deletions are the changed line counts. Both are omitted
+	// when the counts are unknown, which is the case for a file this computer
+	// did not compare as text (see TooLarge); a count of zero is sent.
+	Additions *int `json:"additions,omitempty"`
+	Deletions *int `json:"deletions,omitempty"`
+	// Binary says the file's content is not text, so it has no line counts.
+	Binary bool `json:"binary"`
+	// TooLarge says this computer did not compare the file as text because
+	// reading it would need more memory than it gives Git at once, so its
+	// counts and its diff are unknown. Binary stays false then.
+	TooLarge bool `json:"too_large,omitempty"`
 }
 
 type CreateInput struct {

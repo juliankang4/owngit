@@ -18,6 +18,10 @@ var (
 	ErrPinnedRepositoryChanged = errors.New("pinned repository storage changed")
 	ErrPinnedRepositoryBusy    = errors.New("pinned repository is busy")
 	ErrPinnedOutputLimit       = errors.New("pinned Git output exceeded its limit")
+	// ErrPinnedBlobTooLarge reports that this server cannot read the exact
+	// object without a Git process that may not fit in the memory it gives
+	// Git: either the object is above the server read bound, or the delta it
+	// is stored as rebuilds a larger base (see BlobAt).
 	ErrPinnedBlobTooLarge      = errors.New("pinned Git blob is above the server read bound")
 	ErrPinnedUnsupportedObject = errors.New("pinned Git object type is unsupported")
 	ErrPinnedOffset            = errors.New("pinned blob offset is invalid")
@@ -283,6 +287,10 @@ func (p *PinnedRepository) ListTreeRecursive(ctx context.Context, side PinnedSid
 // truncated or replaced object cannot be mistaken for exact content. The blob
 // is held in memory, so callers bound size before calling; a size above the
 // server read bound is refused with ErrPinnedBlobTooLarge before Git runs.
+//
+// The memory a stored delta needs to rebuild is not checked per object here:
+// a caller that reads a whole tree prices it with CheckBlobRebuilds first, so
+// one metadata walk answers for every object instead of one walk per object.
 func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size int64) ([]byte, error) {
 	if !isOID(oid) {
 		return nil, errors.New("invalid pinned blob ID")
@@ -291,12 +299,19 @@ func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size 
 		return nil, ErrPinnedOffset
 	}
 	// Git rebuilds a large stored delta in memory before the output limit
-	// can stop it, so a blob above the bound is refused before it is read.
+	// can stop it, so a blob above the size bound is refused before it is
+	// read. The listed size does not bound a smaller blob whose stored delta
+	// rebuilds a larger base; that set is priced by CheckBlobRebuilds.
 	if bound := p.manager.Git.ReadBound(); bound > 0 && size > bound {
 		return nil, ErrPinnedBlobTooLarge
 	}
+	release, err := p.manager.Git.ReadSlot(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrPinnedRepositoryBusy, err)
+	}
+	defer release()
 	var content []byte
-	err := p.withReadLock(ctx, func(repositoryPath string) error {
+	err = p.withReadLock(ctx, func(repositoryPath string) error {
 		// The limit is one byte above the recorded size so an oversized object
 		// is detected by the length check rather than silently truncated.
 		result, runErr := runPinnedGit(ctx, p.manager.Git, size+1, repositoryPath, nil, "cat-file", "blob", oid)
@@ -313,6 +328,39 @@ func (p *PinnedRepository) ReadBlobObject(ctx context.Context, oid string, size 
 		return nil, err
 	}
 	return content, nil
+}
+
+// CheckBlobRebuilds refuses the whole list when any of the named objects would
+// rebuild a stored delta in memory beyond what this computer gives Git. A
+// caller that reads many objects of one pinned tree prices them here, before
+// reading any content: one metadata walk answers for the whole list, whatever
+// the number of objects and the depth of each chain, and nothing is read when
+// one object is refused. The object IDs must come from a pinned tree listing.
+//
+// The check follows the pinned rules: it holds the pinned read lock with
+// TryRLock, so a repository write in progress answers ErrPinnedRepositoryBusy
+// for the caller to retry, it reads the path whose identity was pinned rather
+// than the registered path, and the pinned error contract is kept. A chain
+// whose cost cannot be bounded is an error, not a refusal.
+func (p *PinnedRepository) CheckBlobRebuilds(ctx context.Context, oids []string) error {
+	if len(oids) == 0 || memoryBudget() <= 0 {
+		return nil
+	}
+	for _, oid := range oids {
+		if !isOID(oid) {
+			return errors.New("invalid pinned blob ID")
+		}
+	}
+	return p.withReadLock(ctx, func(repositoryPath string) error {
+		over, err := p.manager.blobsAboveMemoryLineWithin(ctx, repositoryPath, oids)
+		if err != nil {
+			return err
+		}
+		if over {
+			return ErrPinnedBlobTooLarge
+		}
+		return nil
+	})
 }
 
 // ReadBlob exposes one bounded chunk from a blob prefix. metadataLimit bounds
@@ -333,6 +381,11 @@ func (p *PinnedRepository) ReadBlob(ctx context.Context, side PinnedSide, filePa
 	if err != nil {
 		return PinnedBlobChunk{}, err
 	}
+	release, err := p.manager.Git.ReadSlot(ctx)
+	if err != nil {
+		return PinnedBlobChunk{}, fmt.Errorf("%w: %w", ErrPinnedRepositoryBusy, err)
+	}
+	defer release()
 	var blob PinnedBlobChunk
 	err = p.withReadLock(ctx, func(repositoryPath string) error {
 		if err := verifyPinnedCommit(ctx, p.manager.Git, repositoryPath, commitOID); err != nil {
@@ -349,8 +402,15 @@ func (p *PinnedRepository) ReadBlob(ctx context.Context, side PinnedSide, filePa
 			return errTreeEntryNotFound
 		}
 		// The same rule as the ordinary blob read: a listed size above the
-		// server read bound is refused before Git rebuilds the object.
+		// server read bound is refused before Git rebuilds the object, and a
+		// smaller object whose stored delta rebuilds a larger base is refused
+		// because the whole set was priced in this lock's own terms.
 		if bound := p.manager.Git.ReadBound(); bound > 0 && entry.Size > bound {
+			return ErrPinnedBlobTooLarge
+		}
+		if over, err := p.manager.blobsAboveMemoryLineWithin(ctx, repositoryPath, []string{entry.OID}); err != nil {
+			return err
+		} else if over {
 			return ErrPinnedBlobTooLarge
 		}
 		if offset > entry.Size {

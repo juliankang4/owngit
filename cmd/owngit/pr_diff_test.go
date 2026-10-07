@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -23,6 +24,43 @@ func runDiffCommand(t *testing.T, arguments ...string) (stdout, stderr string, e
 		return nil
 	})
 	return stdout, stderr, err
+}
+
+func TestPRDiffPatchNamesTheFilesItLeavesOut(t *testing.T) {
+	cases := []struct {
+		name  string
+		files []pullrequest.DiffFile
+		want  string
+	}{
+		{"none", []pullrequest.DiffFile{{Path: "a.txt", Additions: new(1)}}, ""},
+		{"one", []pullrequest.DiffFile{{Path: "big.bin", TooLarge: true}}, "owngit: the patch leaves out big.bin, which is too large to compare here\n"},
+		{"two", []pullrequest.DiffFile{{Path: "big.bin", TooLarge: true}, {Path: "big.csv", TooLarge: true}},
+			"owngit: the patch leaves out these files, which are too large to compare here: big.bin, big.csv\n"},
+		{"many", manyTooLargeFiles(24), "owngit: the patch leaves out 24 files too large to compare here, including f00.bin, f01.bin, f02.bin\n"},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			content, err := json.Marshal(pullrequest.Diff{OK: true, Files: test.files, Patch: "diff --git a/a.txt b/a.txt\n"})
+			noErr(t, err)
+			var patch, notes strings.Builder
+			noErr(t, writeDiffPatch(content, &patch, &notes))
+			if patch.String() != "diff --git a/a.txt b/a.txt\n" {
+				t.Fatalf("the patch text changed: %q", patch.String())
+			}
+			if !strings.HasSuffix(notes.String(), test.want) {
+				t.Fatalf("notes=%q, want them to end with %q", notes.String(), test.want)
+			}
+		})
+	}
+}
+
+// manyTooLargeFiles returns count files above the memory line.
+func manyTooLargeFiles(count int) []pullrequest.DiffFile {
+	files := make([]pullrequest.DiffFile, 0, count)
+	for index := 0; index < count; index++ {
+		files = append(files, pullrequest.DiffFile{Path: fmt.Sprintf("f%02d.bin", index), TooLarge: true})
+	}
+	return files
 }
 
 func TestPRDiffPrintsTheServerDiffAndCompactForms(t *testing.T) {

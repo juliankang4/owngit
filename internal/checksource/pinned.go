@@ -17,6 +17,7 @@ type PinnedTree interface {
 	HeadOID() string
 	ObjectFormat() string
 	ListTreeRecursive(ctx context.Context, side repository.PinnedSide, limit int64) ([]repository.TreeEntry, error)
+	CheckBlobRebuilds(ctx context.Context, oids []string) error
 	ReadBlobObject(ctx context.Context, oid string, size int64) ([]byte, error)
 }
 
@@ -67,6 +68,10 @@ func (s *PinnedSource) ListTree(ctx context.Context, metadataLimit int64) ([]Ent
 		})
 	}
 	return entries, nil
+}
+
+func (s *PinnedSource) CheckBlobRebuilds(ctx context.Context, oids []string) error {
+	return s.tree.CheckBlobRebuilds(ctx, oids)
 }
 
 func (s *PinnedSource) ReadBlob(ctx context.Context, oid string, size int64) ([]byte, error) {

@@ -263,8 +263,9 @@
     {{if .TooLarge}}
       {{/* The read was refused before Git ran, so there are no lines to
            show. Only this notice is shown: the file is not a text prefix
-           and its kind is unknown. */}}
-      <p class="hm__note">{{bi $lang "code.too_large"}}</p>
+           and its kind is unknown. The notice names which line refused it:
+           the file's own size, or the memory its stored delta rebuilds. */}}
+      <p class="hm__note">{{if .TooLargeMemory}}{{bi $lang "code.too_large_memory"}}{{else}}{{bi $lang "code.too_large"}}{{end}}</p>
     {{else if .Image}}
       {{/* A raster picture loads through the raw endpoint, which sends it as
            an attachment with a sandboxing policy. An img element never runs

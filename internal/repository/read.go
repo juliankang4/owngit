@@ -311,6 +311,19 @@ func (m *Manager) commitReadFailed(ctx context.Context, id, oid string, failure 
 // preparation are checked first, on every call. kind and key must name
 // everything the result depends on.
 func (m *Manager) cachedRead(ctx context.Context, id, kind, key string, read func(repositoryPath string) (cachedResult, bool, error)) (cachedResult, error) {
+	return m.cachedPreparationRead(ctx, id, kind, key, read, false)
+}
+
+// cachedBlobRead is cachedRead for a read of blob content: while the read
+// runs, it holds a slot of the shared memory gate, so concurrent reads cannot
+// use more memory than the computer allows. The slot is taken before the
+// repository read lock, because a caller that waits for a slot while holding
+// a lock could wait on a transfer that holds a slot and waits for that lock.
+func (m *Manager) cachedBlobRead(ctx context.Context, id, kind, key string, read func(repositoryPath string) (cachedResult, bool, error)) (cachedResult, error) {
+	return m.cachedPreparationRead(ctx, id, kind, key, read, true)
+}
+
+func (m *Manager) cachedPreparationRead(ctx context.Context, id, kind, key string, read func(repositoryPath string) (cachedResult, bool, error), countsMemory bool) (cachedResult, error) {
 	repositoryPath, stored, exists, err := m.ExistingPath(ctx, id)
 	if err != nil {
 		return cachedResult{}, err
@@ -319,6 +332,13 @@ func (m *Manager) cachedRead(ctx context.Context, id, kind, key string, read fun
 		return cachedResult{}, ErrRepositoryNotFound
 	}
 	return m.objects.load(ctx, namespaceFor(id, repositoryPath, stored.CreatedAt), kind, key, func() (cachedResult, bool, error) {
+		if countsMemory {
+			release, err := m.Git.ReadSlot(ctx)
+			if err != nil {
+				return cachedResult{}, false, err
+			}
+			defer release()
+		}
 		lock := m.Locks.For(id)
 		if err := readLock(ctx, lock); err != nil {
 			return cachedResult{}, false, err
@@ -891,7 +911,9 @@ func (m *Manager) FileAt(ctx context.Context, id, commitOID, filePath string, li
 // BlobAt reads the file entry, as listed by TreeAt, by its object ID. A file
 // no larger than one cache entry is read whole and cached; the caller gets at
 // most limit bytes of it. A file above what one Git process may use here is
-// refused with TooLarge set and no content.
+// refused with TooLarge set and no content, either because of its own size or
+// because the delta it is stored as rebuilds a larger base (see
+// TooLargeMemory).
 func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit int64) (Blob, error) {
 	if !isOID(entry.OID) || entry.Type != "blob" {
 		return Blob{}, errFileNotFound
@@ -907,6 +929,17 @@ func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit 
 	if bound := m.Git.ReadBound(); bound > 0 && entry.Size > bound {
 		return Blob{Path: entry.Path, OID: entry.OID, TooLarge: true}, nil
 	}
+	// A file below that size can still be stored as a delta on a much larger
+	// base, and reading it makes Git rebuild that base in memory, which no
+	// size line bounds. The same memory line the change pages use refuses it
+	// here, before Git runs, and the page says why rather than showing an
+	// empty file. A chain whose cost cannot be bounded is an error, not a
+	// refusal: it is not this file's size that was judged.
+	if over, err := m.blobBelowMemoryLine(ctx, id, entry.OID); err != nil {
+		return Blob{}, err
+	} else if !over {
+		return Blob{Path: entry.Path, OID: entry.OID, TooLarge: true, TooLargeMemory: true}, nil
+	}
 	// A whole file fits in the cache only when its listed size does; a
 	// larger one is read up to limit and not kept.
 	whole := entry.Size >= 0 && entry.Size <= objectCacheItem
@@ -915,7 +948,7 @@ func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit 
 	if whole {
 		readLimit, key = entry.Size+1, entry.OID
 	}
-	result, err := m.cachedRead(ctx, id, "blob", key, func(repositoryPath string) (cachedResult, bool, error) {
+	result, err := m.cachedBlobRead(ctx, id, "blob", key, func(repositoryPath string) (cachedResult, bool, error) {
 		output, err := m.Git.RunWithOutputLimit(ctx, repositoryPath, nil, readLimit, "--git-dir", ".", "cat-file", "blob", entry.OID)
 		var limitErr *gitexec.LimitError
 		if err != nil && !errors.As(err, &limitErr) {
@@ -1064,8 +1097,13 @@ func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []Ch
 		return Commit{}, nil, errInvalidCommitID
 	}
 	result, err := m.cachedRead(ctx, id, "commit-files", oid, func(repositoryPath string) (cachedResult, bool, error) {
+		// --raw without --numstat names every changed file and its objects
+		// without reading any content, so the files above the memory line are
+		// known before the counts are read (see commitFileCounts). --no-abbrev
+		// keeps the object IDs of the records complete, so the size of each
+		// changed file can be looked up by its object.
 		output, err := m.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "log", "--no-walk", "--max-count=1", "-z", "--no-decorate",
-			GitDateOption, "--format="+commitLogFormat, "--raw", "--numstat", "--no-renames", "--root", "--no-ext-diff", "--no-textconv", oid)
+			GitDateOption, "--format="+commitLogFormat, "--raw", "--no-abbrev", "--no-renames", "--root", "--no-ext-diff", "--no-textconv", oid)
 		if err != nil {
 			return cachedResult{}, false, err
 		}
@@ -1098,11 +1136,65 @@ func (m *Manager) CommitFiles(ctx context.Context, id, oid string) (Commit, []Ch
 	if err != nil || len(commits) != 1 || commits[0].OID != oid {
 		return Commit{}, nil, notDescribed()
 	}
-	files, _, complete, _ := parseChanges(bytes.TrimPrefix(data[end:], []byte{'\n'}))
+	files, _, complete := parseChanges(bytes.TrimPrefix(data[end:], []byte{'\n'}))
 	if !complete {
 		return Commit{}, nil, errors.New("Git returned malformed changed-file records")
 	}
+	if err := m.markBinaryBySize(ctx, id, files); err != nil {
+		return Commit{}, nil, err
+	}
+	if err := m.commitFileCounts(ctx, id, oid, files); err != nil {
+		return Commit{}, nil, err
+	}
 	return commits[0], files, nil
+}
+
+// commitFileCounts reads the added and deleted line counts of the changed
+// files of one commit, leaving out the files this computer did not compare as
+// text. Counting the lines of a file reads its content, and Git rebuilds a
+// stored delta in memory to do it, so a file above the memory line is left out
+// by name (see markBinaryBySize) and keeps an unknown count. A commit whose
+// files are all above the line is read no further. The counts are cached for
+// the same files and exclusions, and a count that a cut read left out stays
+// unknown rather than zero (see ChangedFile.CountsRead).
+func (m *Manager) commitFileCounts(ctx context.Context, id, oid string, files []ChangedFile) error {
+	excluded, ok := pathExclusions(files)
+	if !ok {
+		// More files are above the memory line than one command line can leave
+		// out, so their counts are not read and stay unknown; the page reads no
+		// patch for them either (see excludedFromDiff).
+		return nil
+	}
+	if len(excluded) == len(files) {
+		return nil
+	}
+	args := []string{"--git-dir", ".", "log", "--no-walk", "--max-count=1", "-z", "--no-decorate", "--format=",
+		"--numstat", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv", oid}
+	args = exclusionSpecs(args, excluded)
+	key := strings.Join(args[3:], "\x00")
+	result, err := m.cachedRead(ctx, id, "commit-counts", key, func(repositoryPath string) (cachedResult, bool, error) {
+		output, err := m.Git.Run(ctx, repositoryPath, nil, args...)
+		if err != nil {
+			return cachedResult{}, false, err
+		}
+		return cachedResult{data: output.Stdout}, true, nil
+	})
+	if err != nil {
+		return err
+	}
+	counts, err := changeLineCounts(result.data)
+	if err != nil {
+		return err
+	}
+	for index := range files {
+		count, ok := counts[files[index].Path]
+		if !ok {
+			continue
+		}
+		files[index].Additions, files[index].Deletions, files[index].Binary = count.additions, count.deletions, count.binary
+		files[index].CountsRead = true
+	}
+	return nil
 }
 
 // CommitPatch reads the text diff of commit oid against its parent, or
@@ -1145,15 +1237,12 @@ func (m *Manager) CommitPatch(ctx context.Context, id, oid, filePath string, exc
 	return string(result.data), result.truncated, nil
 }
 
-// parseChanges reads the file records of a -z --raw --numstat diff at the
-// start of data: first ":modes oids status" and the path for every file,
-// then "additions<TAB>deletions<TAB>path" for every file, each ended by NUL.
-// It returns the files in Git's order and the offset after the records. A
-// NUL right after them, which Git writes before a patch, is included in the
-// offset and reported by separated. complete is false when data ends inside
-// the records, as a cut output does; files then holds the files read in
-// full.
-func parseChanges(data []byte) (files []ChangedFile, end int, complete, separated bool) {
+// parseChanges reads the file records of a -z --raw diff at the start of data:
+// ":modes oids status" and the path for every file, each ended by NUL. It
+// returns the files in Git's order and the offset after the records. complete is
+// false when data ends inside the records, as a cut output does, or when one
+// path is named twice; files then holds the files read in full.
+func parseChanges(data []byte) (files []ChangedFile, end int, complete bool) {
 	position := 0
 	token := func() ([]byte, bool) {
 		next := bytes.IndexByte(data[position:], 0)
@@ -1164,37 +1253,51 @@ func parseChanges(data []byte) (files []ChangedFile, end int, complete, separate
 		position += next + 1
 		return value, true
 	}
+	seen := make(map[string]struct{})
 	for position < len(data) && data[position] == ':' {
 		start := position
 		meta, ok := token()
 		if !ok {
-			return files, start, false, false
+			return files, start, false
 		}
 		path, ok := token()
 		fields := strings.Fields(string(meta))
 		if !ok || len(fields) != 5 || len(path) == 0 {
-			return files, start, false, false
+			return files, start, false
 		}
+		if _, duplicate := seen[string(path)]; duplicate {
+			// A tree that names one path twice makes Git list it twice. The
+			// line counts are keyed by path, so a repeat would silently merge
+			// the two files' counts; the records are then not one per file and
+			// the caller refuses them like a cut record.
+			return files, start, false
+		}
+		seen[string(path)] = struct{}{}
 		files = append(files, ChangedFile{
 			Path: string(path), Status: changedStatus(fields[4][0]),
 			OldMode: strings.TrimPrefix(fields[0], ":"), NewMode: fields[1],
+			oldOID: fields[2], newOID: fields[3],
 		})
 	}
-	counts := make(map[string]lineCount, len(files))
-	for position < len(data) {
-		start := position
-		record, ok := token()
-		if !ok {
-			return files, start, false, false
+	return files, position, true
+}
+
+// changeLineCounts reads the line counts of a -z numstat listing: one record
+// per file, "added<TAB>deleted<TAB>path", each ended by NUL. Git writes a dash
+// instead of the two counts for a file it compares as binary, which is not a
+// count. A record that is not a count, such as a commit header, is skipped.
+func changeLineCounts(data []byte) (map[string]lineCount, error) {
+	counts := make(map[string]lineCount)
+	for len(data) > 0 {
+		next := bytes.IndexByte(data, 0)
+		if next < 0 {
+			return counts, errors.New("Git returned a file record that does not end")
 		}
-		if len(record) == 0 {
-			// The separator before a patch.
-			separated = true
-			break
-		}
+		record := data[:next]
+		data = data[next+1:]
 		fields := bytes.SplitN(record, []byte{'\t'}, 3)
 		if len(fields) != 3 || len(fields[2]) == 0 {
-			return files, start, false, false
+			continue
 		}
 		count := lineCount{}
 		if string(fields[0]) == "-" || string(fields[1]) == "-" {
@@ -1205,21 +1308,5 @@ func parseChanges(data []byte) (files []ChangedFile, end int, complete, separate
 		}
 		counts[string(fields[2])] = count
 	}
-	if len(counts) != len(files) {
-		// A tree that names one path twice makes Git list it twice. The counts
-		// are keyed by path, so a repeat would silently merge the two files'
-		// line counts; the records are then not one per file and the caller
-		// refuses them like a cut record.
-		return files, position, false, separated
-	}
-	for index := range files {
-		count, ok := counts[files[index].Path]
-		if !ok {
-			// Every listed file has a count; a missing one means the counts
-			// were cut off.
-			return files[:index], position, false, separated
-		}
-		files[index].Additions, files[index].Deletions, files[index].Binary = count.additions, count.deletions, count.binary
-	}
-	return files, position, true, separated
+	return counts, nil
 }

@@ -188,6 +188,20 @@ func HeapLimit(ceiling uint64, ownerSetting string) int64 {
 
 func gitShare(ceiling uint64) uint64 { return known(ceiling) / 8 * 3 }
 
+// GitBudget is the memory the computer can give Git at once: three eighths of
+// the ceiling, the share the transfer slots, the packing bounds and the tree
+// check divide (see the package comment). It is the line a read that cannot be
+// bounded is measured against, so a large computer keeps doing work its
+// memory allows. It is 0 when the ceiling is unknown: nothing is refused then,
+// because the computer is assumed to be ordinary and its owner's saved limits
+// apply (see part).
+func GitBudget(ceiling uint64) uint64 {
+	if ceiling == 0 {
+		return 0
+	}
+	return gitShare(ceiling)
+}
+
 // maxPackers is the most requests that build a pack the ceiling lets run at
 // once, never fewer than one.
 func maxPackers(ceiling uint64) int {
@@ -278,4 +292,30 @@ func PartBound(ceiling uint64, packers int) uint64 {
 		return 0
 	}
 	return min(part(ceiling, packers), 512*mib)
+}
+
+// TreeCheckBound is the largest tree listing that one path check may hold in
+// memory. The check keeps the listing and one map entry per path beside it
+// (measured: a 13.8 MB listing added about 13 MB for the map), so the listing
+// is a sixteenth of the ceiling at most, and 64 MiB where the ceiling is
+// unknown (any system other than Linux).
+func TreeCheckBound(ceiling uint64) int64 {
+	const largest = 64 << 20
+	if ceiling == 0 {
+		return largest
+	}
+	return int64(min(uint64(largest), ceiling/16))
+}
+
+// TreeMetadataBound is how much object metadata one tree check may read. A
+// check reads one level of delta bases at a time, so its own use stays below
+// this, and a tree whose files need more is refused instead of being reported
+// as checked. It is the memory the computer gives Git at once, or the listing
+// bound where the ceiling is unknown, so a large computer checks the same tree
+// the listing bound already allows.
+func TreeMetadataBound(ceiling uint64) int64 {
+	if budget := GitBudget(ceiling); budget > 0 {
+		return int64(budget)
+	}
+	return TreeCheckBound(ceiling)
 }

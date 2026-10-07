@@ -45,7 +45,10 @@ const (
 	MsgReadmeUnreadable  MessageCode = "code.readme_unreadable"
 	MsgCodeRawTooLarge   MessageCode = "code.raw_too_large"
 	MsgCodeTooLarge      MessageCode = "code.too_large"
-	MsgCommitsToList     MessageCode = "commits.back_to_list"
+	// MsgCodeTooLargeMemory names the other reason a file is not shown here:
+	// the file itself fits, but the base its stored delta rebuilds does not.
+	MsgCodeTooLargeMemory MessageCode = "code.too_large_memory"
+	MsgCommitsToList      MessageCode = "commits.back_to_list"
 
 	MsgDiffFiles       MessageCode = "diff.files"
 	MsgDiffCollapseAll MessageCode = "diff.collapse_all"
@@ -128,6 +131,10 @@ var navigationCatalog = map[MessageCode]message{
 	MsgCodeTooLarge: {
 		en: "This file is too large to show here. Clone the repository to get this file.",
 		ko: "이 파일은 너무 커서 여기에 보여 줄 수 없습니다. 저장소를 클론해서 받으세요.",
+	},
+	MsgCodeTooLargeMemory: {
+		en: "This file needs more memory to rebuild than this computer gives Git, so it is not shown here. Clone the repository to get this file, or run OwnGit on a computer with more memory.",
+		ko: "이 파일은 다시 만드는 데 이 컴퓨터가 Git에 주는 메모리보다 더 많이 필요해 여기에 보여 줄 수 없습니다. 저장소를 클론해서 받거나 메모리가 더 많은 컴퓨터에서 OwnGit을 실행하세요.",
 	},
 	MsgCommitsToList: {en: "Commits", ko: "커밋 목록"},
 

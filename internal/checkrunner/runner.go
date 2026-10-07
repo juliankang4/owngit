@@ -447,6 +447,14 @@ func (source *remoteSource) ListTree(ctx context.Context, metadataLimit int64) (
 	return entries, nil
 }
 
+// CheckBlobRebuilds prices nothing for this source: the objects arrive over the
+// network from the server that holds the repository, and that server refuses an
+// object it cannot read without rebuilding a stored delta beyond its memory
+// when the runner asks for it.
+func (source *remoteSource) CheckBlobRebuilds(ctx context.Context, oids []string) error {
+	return nil
+}
+
 // ReadBlob checks that the server sent the requested manifest blob at its
 // listed size. checksource.Materialize hashes the bytes against oid before it
 // writes them, so the content itself is verified there.

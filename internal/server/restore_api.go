@@ -61,13 +61,20 @@ type restoreApplyInput struct {
 }
 
 type restoreChange struct {
-	Path      string `json:"path"`
-	Status    string `json:"status"`
-	OldMode   string `json:"old_mode"`
-	NewMode   string `json:"new_mode"`
-	Additions int    `json:"additions"`
-	Deletions int    `json:"deletions"`
-	Binary    bool   `json:"binary"`
+	Path    string `json:"path"`
+	Status  string `json:"status"`
+	OldMode string `json:"old_mode"`
+	NewMode string `json:"new_mode"`
+	// Additions and Deletions are omitted when the counts are unknown, which
+	// is the case for a file this computer did not compare as text (see
+	// TooLarge); a count of zero is sent.
+	Additions *int `json:"additions,omitempty"`
+	Deletions *int `json:"deletions,omitempty"`
+	// Binary says the file's content is not text.
+	Binary bool `json:"binary"`
+	// TooLarge says this computer did not compare the file as text because
+	// reading it would need more memory than it gives Git at once.
+	TooLarge bool `json:"too_large,omitempty"`
 }
 
 type restorePreviewJSON struct {
@@ -181,10 +188,30 @@ func restorePreviewView(input restorePreviewInput, preview repository.RestorePre
 	for _, change := range preview.Changes {
 		view.Changes = append(view.Changes, restoreChange{
 			Path: change.Path, Status: change.Status, OldMode: change.OldMode, NewMode: change.NewMode,
-			Additions: change.Additions, Deletions: change.Deletions, Binary: change.Binary,
+			Additions: lineCount(change.Additions, countsUnknown(change)), Deletions: lineCount(change.Deletions, countsUnknown(change)),
+			Binary: change.Binary && !change.BinaryBySize, TooLarge: change.BinaryBySize,
 		})
 	}
 	return view
+}
+
+// lineCount returns the changed line count of a file, or nil when the count is
+// unknown. It is unknown when this computer did not compare the file as text,
+// and when the file held no count record because the read left it out (see
+// countsUnknown).
+func lineCount(count int, unknown bool) *int {
+	if unknown {
+		return nil
+	}
+	return &count
+}
+
+// countsUnknown reports whether a file's line counts were never read. A file
+// above the memory line is left out of the read, and so is every file of a
+// change whose files above the line are more than one command line can leave
+// out. A zero count of such a file is not a count of zero lines.
+func countsUnknown(file repository.ChangedFile) bool {
+	return file.BinaryBySize || !file.CountsRead
 }
 
 // keptHistoryAPI lists the repository's kept history as the Overview does,
