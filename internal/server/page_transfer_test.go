@@ -3,11 +3,13 @@ package server
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,10 +21,15 @@ func pageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBu
 	return server, results
 }
 
-func timedPageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBuffer ...int) (*httptest.Server, <-chan error, <-chan time.Duration) {
+type pageTransferTiming struct {
+	elapsed         time.Duration
+	deadlineExpired bool
+}
+
+func timedPageTransferServer(t *testing.T, idle time.Duration, content []byte, sendBuffer ...int) (*httptest.Server, <-chan error, <-chan pageTransferTiming) {
 	t.Helper()
 	results := make(chan error, 8)
-	transfers := make(chan time.Duration, 8)
+	transfers := make(chan pageTransferTiming, 8)
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		request, deadlines, cancel := startDeadlines(writer, request, idle, idle/4, time.Hour, time.Second)
 		defer cancel()
@@ -30,7 +37,7 @@ func timedPageTransferServer(t *testing.T, idle time.Duration, content []byte, s
 		writer.Header().Set("Content-Length", fmt.Sprint(len(content)))
 		started := time.Now()
 		err := writePage(writer, request, http.StatusOK, content)
-		transfers <- time.Since(started)
+		transfers <- pageTransferTiming{elapsed: time.Since(started), deadlineExpired: !time.Now().Before(deadlines.current)}
 		results <- err
 		if err != nil {
 			panic(http.ErrAbortHandler)
@@ -162,7 +169,7 @@ func TestPageTransferLongProgressCompletesByteIdentical(t *testing.T) {
 	if err := <-results; err != nil {
 		t.Fatal(err)
 	}
-	serverElapsed := <-transfers
+	serverElapsed := (<-transfers).elapsed
 	if serverElapsed <= idle {
 		t.Fatalf("server transfer ended after %s; buffered client reads do not prove renewed deadlines", serverElapsed)
 	}
@@ -174,23 +181,24 @@ func TestPageTransferLongStallIsCut(t *testing.T) {
 	if testing.Short() {
 		t.Skip("real-time stalled socket")
 	}
-	server, results := pageTransferServer(t, 30*time.Second, bytes.Repeat([]byte("x"), 16<<20))
+	server, results, transfers := timedPageTransferServer(t, 30*time.Second, bytes.Repeat([]byte("x"), 16<<20))
 	connection, err := net.DialTimeout("tcp", server.Listener.Addr().String(), time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer connection.Close()
 	fmt.Fprint(connection, "GET /page HTTP/1.1\r\nHost: example.invalid\r\n\r\n")
-	started := time.Now()
 	select {
 	case err := <-results:
-		if err == nil || time.Since(started) < 30*time.Second {
-			t.Fatalf("stalled reader ended early or passed: %v after %s", err, time.Since(started))
+		timing := <-transfers
+		// Compare with the server's last write deadline, not the client's request time.
+		if !errors.Is(err, os.ErrDeadlineExceeded) || !timing.deadlineExpired || timing.elapsed < 30*time.Second {
+			t.Fatalf("stalled reader did not reach its write deadline: %v after %s (expired=%v)", err, timing.elapsed, timing.deadlineExpired)
 		}
+		t.Logf("stalled reader cut after %s on the server", timing.elapsed)
 	case <-time.After(40 * time.Second):
 		t.Fatal("default-deadline stalled reader did not stop")
 	}
-	t.Logf("stalled reader cut after %s", time.Since(started))
 }
 
 func TestPageTransferStallAndDisconnectAreNotCompleteReplies(t *testing.T) {
