@@ -184,10 +184,6 @@ func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, erro
 	}, nil
 }
 
-// buildIconApp builds OwnGit.app, the menu bar icon, at app: its Info.plist,
-// PkgInfo and the launcher compiled from packaging/macos. It holds no owngit
-// program; the disk image adds one inside it, and a release archive has one
-// beside it.
 func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 	if !appleBundleVersionPattern.MatchString(version) {
 		return fmt.Errorf("version %q is not valid for CFBundleVersion", version)
@@ -224,6 +220,15 @@ func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 		return err
 	}
 	_, err = run("plutil", []string{"-lint", filepath.Join(contents, "Info.plist")}, nil)
+	return err
+}
+
+func copyAppHelper(binary, app string) error {
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		return err
+	}
+	_, err = writeFile(filepath.Join(app, appHelperPath), data, 0o755)
 	return err
 }
 

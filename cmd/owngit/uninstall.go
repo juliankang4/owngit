@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 
 	"owngit/internal/service"
@@ -47,6 +48,16 @@ func uninstallCommand(arguments []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: %v\nCheck these keys and run \"owngit uninstall\" again.\n", err)
 	}
 	fmt.Fprintln(os.Stdout, programStaysLine(install, runtime.GOOS, sudo))
+	if runtime.GOOS == "darwin" && install.Route != service.RouteApp {
+		app := service.AppPath(install.Executable, applicationsFolder)
+		if app == filepath.Join(applicationsFolder, service.AppName) {
+			if install.Route == service.RouteHomebrew {
+				fmt.Fprintln(os.Stdout, "To remove the menu bar app, run: brew uninstall --cask juliankang4/tap/owngit")
+			} else {
+				fmt.Fprintf(os.Stdout, "To remove the menu bar app, move %s to the Trash.\n", app)
+			}
+		}
+	}
 	if err != nil {
 		return loggedError{err}
 	}

@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"owngit/internal/state"
+	"owngit/internal/version"
 )
 
 // The macOS service is a LaunchAgent of the installing user. launchd starts
@@ -381,26 +382,45 @@ func stringList(value any) []string {
 }
 
 // AppPath returns OwnGit.app, the menu bar icon, that belongs to the
-// program at executable: the app that holds it as its helper, at
-// APP.app/Contents/Helpers; else OwnGit.app beside it, as a release
-// archive, the installer and npm lay them out; else OwnGit.app beside its
-// bin folder, as Homebrew installs it. It returns "" when there is none.
-func AppPath(executable string) string {
+// program at executable. A matching app in applicationsFolder is preferred;
+// otherwise it uses the app holding the helper, the app beside the program,
+// or the app beside its bin folder. It returns "" without an app.
+func AppPath(executable, applicationsFolder string) string {
+	app := filepath.Join(applicationsFolder, AppName)
+	if appCanOpen(app) {
+		return app
+	}
+	if apps := localAppPaths(executable); len(apps) > 0 {
+		return apps[0]
+	}
+	return ""
+}
+
+// AppPaths lists known OwnGit apps to stop during an install-location change,
+// including older versions. The applicationsFolder candidate comes first,
+// followed by local copies. Every entry has OwnGit's bundle identifier.
+func AppPaths(executable, applicationsFolder string) []string {
+	apps := append([]string{filepath.Join(applicationsFolder, AppName)}, localAppPaths(executable)...)
+	return slices.DeleteFunc(slices.Compact(apps), func(app string) bool {
+		identifier, _ := appIdentity(app)
+		return identifier != ownGitAppID
+	})
+}
+
+func localAppPaths(executable string) []string {
 	folder := filepath.Dir(executable)
 	contents := filepath.Dir(folder)
 	if filepath.Base(folder) == "Helpers" && filepath.Base(contents) == "Contents" && filepath.Ext(filepath.Dir(contents)) == ".app" {
-		return filepath.Dir(contents)
+		return []string{filepath.Dir(contents)}
 	}
 	candidates := []string{filepath.Join(folder, AppName)}
 	if filepath.Base(folder) == "bin" {
 		candidates = append(candidates, filepath.Join(filepath.Dir(folder), AppName))
 	}
-	for _, app := range candidates {
-		if info, err := os.Stat(app); err == nil && info.IsDir() {
-			return app
-		}
-	}
-	return ""
+	return slices.DeleteFunc(candidates, func(app string) bool {
+		info, err := os.Stat(app)
+		return err != nil || !info.IsDir()
+	})
 }
 
 // AppName is the folder name of the icon app.
@@ -415,6 +435,31 @@ const AppSignInOff = "--sign-in-off"
 // no panel opens.
 const AppAtSignIn = "--at-sign-in"
 
+const ownGitAppID = "app.owngit.OwnGit"
+
+func appIdentity(app string) (identifier, release string) {
+	info, err := readAnyPlist(context.Background(), nil, filepath.Join(app, "Contents", "Info.plist"))
+	if err != nil {
+		return "", ""
+	}
+	identifier, _ = info["CFBundleIdentifier"].(string)
+	release, _ = info["CFBundleShortVersionString"].(string)
+	return identifier, release
+}
+
+func appCanOpen(app string) bool {
+	identifier, release := appIdentity(app)
+	if identifier != ownGitAppID || release != version.Version {
+		return false
+	}
+	for _, program := range []string{AppLauncher(app), filepath.Join(app, "Contents", "Helpers", "owngit")} {
+		if stat, err := os.Stat(program); err != nil || !stat.Mode().IsRegular() || stat.Mode().Perm()&0o111 == 0 {
+			return false
+		}
+	}
+	return true
+}
+
 // AppLauncher is the icon's executable inside app.
 func AppLauncher(app string) string {
 	return filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")
@@ -422,8 +467,8 @@ func AppLauncher(app string) string {
 
 // AppBundleID returns the bundle identifier of the app AppPath finds for
 // executable, from the app's Info.plist, or "" when there is no app.
-func AppBundleID(ctx context.Context, run Runner, executable string) (string, error) {
-	app := AppPath(executable)
+func AppBundleID(ctx context.Context, run Runner, executable, applicationsFolder string) (string, error) {
+	app := AppPath(executable, applicationsFolder)
 	if app == "" {
 		return "", nil
 	}

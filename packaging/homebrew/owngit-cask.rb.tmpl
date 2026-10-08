@@ -1,0 +1,36 @@
+# frozen_string_literal: true
+
+{{- if .HomebrewCaskUnready}}
+# UNREADY: {{.HomebrewCaskUnready}}
+{{- end}}
+cask "owngit" do
+  version "{{ruby .Version}}"
+  sha256 "{{ruby .DarwinArm64.SHA256}}"
+
+  url "{{ruby .BaseURL}}/{{ruby .DarwinArm64.Name}}"
+  name "OwnGit"
+  desc "Private Git storage and browser dashboard on your own computer"
+  homepage "{{ruby .Homepage}}"
+
+  depends_on arch: :arm64
+  depends_on macos: :ventura
+  depends_on formula: "{{ruby .TapFormula}}"
+
+  app "OwnGit.app"
+
+  uninstall quit:   "app.owngit.OwnGit",
+            script: {
+              executable: "#{appdir}/OwnGit.app/Contents/MacOS/OwnGitLauncher",
+              args:       ["--sign-in-off"],
+              sudo:       false,
+            }
+
+  caveats <<~EOS
+    Run owngit service install to use the app in /Applications.
+    The formula supplies the command and brew services. The cask supplies
+    the menu bar app. OwnGit uses the /Applications app when its version
+    matches the command, and otherwise uses the formula's app.
+    To update both, run: brew upgrade --formula owngit && brew upgrade --cask owngit
+    Removing the cask leaves the formula, state and repositories in place.
+  EOS
+end

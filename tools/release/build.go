@@ -296,8 +296,7 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 	if _, err := runGo(goTool, root, environment, "build", "-trimpath", "-buildvcs=false", "-o", binaryPath, "./cmd/owngit"); err != nil {
 		return artifact{}, err
 	}
-	// The macOS archive holds OwnGit.app, the menu bar icon, beside the
-	// program. Building it takes Xcode's Swift compiler, so another host
+	// Building the app takes Xcode's Swift compiler, so another host
 	// builds the archive without it; a signed build runs on macOS.
 	app := ""
 	if current.goos == "darwin" {
@@ -314,6 +313,10 @@ func buildTarget(goTool, root, outDir, readmeTemplate string, current target, ap
 	if signer != nil && current.goos == "darwin" {
 		var err error
 		if signature, err = signer.signTool(binaryPath, app); err != nil {
+			return artifact{}, err
+		}
+	} else if app != "" {
+		if err := copyAppHelper(binaryPath, app); err != nil {
 			return artifact{}, err
 		}
 	}

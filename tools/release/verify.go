@@ -3,6 +3,7 @@ package main
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"compress/gzip"
 	"encoding/json"
 	"flag"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -258,11 +260,6 @@ func verifyArtifact(dir, goTool, appVersion string, built artifact) (artifactCov
 // plistStringPattern finds a string value of an XML property list key.
 var plistStringPattern = regexp.MustCompile(`<key>([A-Za-z]+)</key>\s*<string>([^<]*)</string>`)
 
-// verifyIconApp checks OwnGit.app in the macOS archive: its bundle ID and
-// version, its launcher, no owngit program inside it (the archive has the
-// program beside it), and on macOS the Developer ID signature of a signed
-// archive. A signed macOS archive must hold the app; an unsigned one may be
-// built without it on another host. Other archives never hold it.
 func verifyIconApp(run commandRunner, host string, expected target, entries []archiveEntry, built artifact, appVersion string) error {
 	prefix := iconAppName + "/"
 	app := map[string]archiveEntry{}
@@ -295,10 +292,13 @@ func verifyIconApp(run commandRunner, host string, expected target, entries []ar
 	if launcher, ok := app["Contents/MacOS/OwnGitLauncher"]; !ok || launcher.mode&0o111 == 0 {
 		return fmt.Errorf("%s has no executable Contents/MacOS/OwnGitLauncher", iconAppName)
 	}
-	for name := range app {
-		if strings.HasPrefix(name, "Contents/Helpers/") {
-			return fmt.Errorf("%s in the archive holds %s; the archive's program is beside it", iconAppName, name)
-		}
+	helper, ok := app[appHelperPath]
+	if !ok || helper.mode&0o111 == 0 {
+		return fmt.Errorf("%s has no executable %s", iconAppName, appHelperPath)
+	}
+	program := slices.IndexFunc(entries, func(entry archiveEntry) bool { return entry.name == expected.binary })
+	if program < 0 || !bytes.Equal(helper.data, entries[program].data) {
+		return fmt.Errorf("%s helper differs from the archive's program", iconAppName)
 	}
 	signature := built.AppleSignature
 	if signature == nil {

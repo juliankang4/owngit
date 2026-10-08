@@ -748,11 +748,22 @@ enum SignInItem {
     static var place: String { stableApp?.path ?? Bundle.main.bundlePath }
 
     static func register() throws {
-        guard let stableApp else {
-            try SMAppService.mainApp.register()
-            return
+        if let stableApp {
+            try registerLegacyAgentReplacingMainApp(app: stableApp)
+        } else {
+            try registerMainAppRemovingLegacyAgent()
         }
-        let agent = iconAgent(app: stableApp.path, bundleID: Bundle.main.bundleIdentifier ?? "")
+    }
+
+    private static func registerMainAppRemovingLegacyAgent() throws {
+        try SMAppService.mainApp.register()
+        if FileManager.default.fileExists(atPath: agentURL.path) {
+            try FileManager.default.removeItem(at: agentURL)
+        }
+    }
+
+    private static func registerLegacyAgentReplacingMainApp(app: URL) throws {
+        let agent = iconAgent(app: app.path, bundleID: Bundle.main.bundleIdentifier ?? "")
         try writeAgent(agent, to: agentURL)
         // An item an earlier icon registered names a versioned folder and
         // would open the icon twice. Failing to remove it fails the

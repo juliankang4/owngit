@@ -536,6 +536,22 @@ func TestAdHocSigningWithRealCodesign(t *testing.T) {
 		}
 	})
 
+	t.Run("archive app", func(t *testing.T) {
+		darwin, err := targetFor("darwin/arm64")
+		noErr(t, err)
+		release, err := versionFromSource(root)
+		noErr(t, err)
+		out := t.TempDir()
+		built, err := buildTarget("go", root, out, filepath.Join(root, "packaging", "archive", "README.txt.tmpl"), darwin, release, signer)
+		noErr(t, err)
+		entries, err := readArchive(filepath.Join(out, built.Name), darwin.format)
+		noErr(t, err)
+		noErr(t, verifyIconApp(run, "darwin", darwin, entries, built, release))
+		if !assessed["execute"] {
+			t.Fatal("the archive app was not assessed")
+		}
+	})
+
 	t.Run("app and DMG", func(t *testing.T) {
 		inputs, err := loadNativeInputs(root, filepath.Join(dist, "manifest.json"), testNativeBaseline, "go", "xcrun", "hdiutil", map[string]bool{"macos": true})
 		noErr(t, err)

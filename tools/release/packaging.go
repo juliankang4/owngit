@@ -17,23 +17,26 @@ import (
 // files. The formats have independent readiness, because they need different
 // inputs.
 type packagingData struct {
-	Version         string
-	BaseURL         string
-	Homepage        string
-	Tap             string
-	PackageID       string
-	Publisher       string
-	PublisherURL    string
-	HomebrewUnready string
-	WingetUnready   string
-	AURMaintainer   string
-	AURUnready      string
-	DarwinArm64     artifactRef
-	LinuxAMD64      artifactRef
-	LinuxARM64      artifactRef
-	WindowsAMD64    artifactRef
+	Version             string
+	BaseURL             string
+	Homepage            string
+	Tap                 string
+	PackageID           string
+	Publisher           string
+	PublisherURL        string
+	HomebrewUnready     string
+	HomebrewCaskUnready string
+	TapFormula          string
+	WingetUnready       string
+	AURMaintainer       string
+	AURUnready          string
+	DarwinArm64         artifactRef
+	LinuxAMD64          artifactRef
+	LinuxARM64          artifactRef
+	WindowsAMD64        artifactRef
 	// DarwinApp is true when the macOS archive holds OwnGit.app.
-	DarwinApp bool
+	DarwinApp           bool
+	DarwinSelfContained bool
 }
 
 type artifactRef struct {
@@ -128,6 +131,11 @@ func packagingCommand(arguments []string) error {
 	}
 	if err := check("tap", *tap, &data.Tap, validateTap, &homebrewMissing); err != nil {
 		return err
+	}
+	owner, repository, _ := strings.Cut(data.Tap, "/")
+	data.TapFormula = owner + "/" + strings.TrimPrefix(repository, "homebrew-") + "/owngit"
+	if data.Tap == "" {
+		data.TapFormula = "example/tap/owngit"
 	}
 	if err := check("package-id", *packageID, &data.PackageID, validatePackageID, &wingetMissing); err != nil {
 		return err
@@ -229,12 +237,24 @@ func packagingCommand(arguments []string) error {
 		*ref = artifactRef{Name: built.Name, SHA256: built.SHA256, SHA256Upper: strings.ToUpper(built.SHA256), Size: built.Size}
 		if built.Target == "darwin/arm64" {
 			data.DarwinApp = slices.ContainsFunc(built.Files, func(file fileEntry) bool { return file.Path == iconAppName+"/Contents/Info.plist" })
+			data.DarwinSelfContained = data.DarwinApp && slices.ContainsFunc(built.Files, func(file fileEntry) bool {
+				return file.Path == iconAppName+"/"+appHelperPath && file.Mode == "0755"
+			})
 		}
 	}
 	for _, name := range []string{"darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64"} {
 		if refs[name].Name == "" {
 			return fmt.Errorf("manifest has no %s artifact; build every release target before rendering packaging", name)
 		}
+	}
+
+	data.HomebrewCaskUnready = data.HomebrewUnready
+	if selected["homebrew"] && !data.DarwinSelfContained {
+		problem := "darwin/arm64 archive has no self-contained OwnGit.app; build it on macOS"
+		if *strict {
+			return fmt.Errorf("homebrew cask: %s", problem)
+		}
+		data.HomebrewCaskUnready = strings.Trim(data.HomebrewCaskUnready+"; "+problem, "; ")
 	}
 
 	outDir, err := filepath.Abs(*out)
@@ -272,6 +292,7 @@ func packagingCommand(arguments []string) error {
 		outputPath   string
 	}{
 		{"homebrew", filepath.Join(root, "packaging", "homebrew", "owngit.rb.tmpl"), filepath.Join(outDir, "owngit.rb")},
+		{"homebrew", filepath.Join(root, "packaging", "homebrew", "owngit-cask.rb.tmpl"), filepath.Join(outDir, "Casks", "owngit.rb")},
 		{"winget", filepath.Join(root, "packaging", "winget", "version.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".yaml")},
 		{"winget", filepath.Join(root, "packaging", "winget", "installer.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".installer.yaml")},
 		{"winget", filepath.Join(root, "packaging", "winget", "locale.en-US.yaml.tmpl"), filepath.Join(outDir, data.PackageID+".locale.en-US.yaml")},
@@ -307,6 +328,8 @@ func packagingCommand(arguments []string) error {
 		formatMissing := map[string][]string{"homebrew": homebrewMissing, "winget": wingetMissing, "npm": npmMissing, "aur": aurMissing}[format]
 		if len(formatMissing) > 0 {
 			fmt.Printf("UNREADY %s: missing %s\n", format, strings.Join(uniqueSorted(formatMissing), ", "))
+		} else if format == "homebrew" && data.HomebrewCaskUnready != "" {
+			fmt.Printf("ready homebrew formula; UNREADY homebrew cask: %s\n", data.HomebrewCaskUnready)
 		} else if format == "aur" && data.AURUnready != "" {
 			fmt.Printf("UNREADY %s: %s\n", format, data.AURUnready)
 		} else {

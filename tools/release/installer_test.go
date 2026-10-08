@@ -96,6 +96,7 @@ func newSyntheticRelease(t *testing.T, versions ...string) *syntheticRelease {
 				// The macOS archive holds the icon app beside the program.
 				files["OwnGit.app/Contents/Info.plist"] = []byte("OwnGit.app " + version + "\n")
 				files["OwnGit.app/Contents/MacOS/OwnGitLauncher"] = []byte("launcher " + version + "\n")
+				files["OwnGit.app/Contents/Helpers/owngit"] = program
 			}
 			data = tarGzOf(t, files)
 		}
@@ -296,25 +297,16 @@ func readLog(t *testing.T, path string) string {
 	return string(data)
 }
 
-// installedNames is what install.sh puts in the program's folder: the
-// program, and on macOS the icon app beside it.
-func installedNames() []string {
-	if runtime.GOOS == "darwin" {
-		return []string{"OwnGit.app", "owngit"}
-	}
-	return []string{"owngit"}
-}
+func installedNames() []string { return []string{"owngit"} }
 
-// appVersionAt reads the version the synthetic OwnGit.app beside target
-// holds, or "" when there is none.
-func appVersionAt(t *testing.T, target string) string {
+func appVersionAt(t *testing.T, app string) string {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(filepath.Dir(target), "OwnGit.app", "Contents", "Info.plist"))
+	data, err := os.ReadFile(filepath.Join(app, "Contents", "Info.plist"))
 	if os.IsNotExist(err) {
 		return ""
 	}
 	noErr(t, err)
-	if info, err := os.Stat(filepath.Join(filepath.Dir(target), "OwnGit.app", "Contents", "MacOS", "OwnGitLauncher")); err != nil || info.Mode().Perm()&0o111 == 0 {
+	if info, err := os.Stat(filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")); err != nil || info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("the app's launcher is not executable: %v", err)
 	}
 	return strings.TrimSpace(strings.TrimPrefix(string(data), "OwnGit.app "))
@@ -343,6 +335,7 @@ type shInstall struct {
 
 func newShInstall(t *testing.T, release *syntheticRelease) *shInstall {
 	home := t.TempDir()
+	noErr(t, os.Mkdir(filepath.Join(home, "Applications"), 0o755))
 	run := &shInstall{home: home, log: filepath.Join(home, "owngit.log")}
 	run.env = []string{
 		"HOME=" + home, "PATH=/usr/bin:/bin:/usr/sbin:/sbin",
@@ -352,10 +345,16 @@ func newShInstall(t *testing.T, release *syntheticRelease) *shInstall {
 	return run
 }
 
-func (run *shInstall) do(t *testing.T, env []string, arguments ...string) (string, error) {
+func (run *shInstall) syntheticHostScript(t *testing.T) []byte {
 	t.Helper()
 	script, err := os.ReadFile(filepath.Join(repoRoot(t), "packaging", "installer", "install.sh"))
 	noErr(t, err)
+	return []byte(strings.ReplaceAll(string(script), "/Applications", filepath.Join(run.home, "Applications")))
+}
+
+func (run *shInstall) do(t *testing.T, env []string, arguments ...string) (string, error) {
+	t.Helper()
+	script := run.syntheticHostScript(t)
 	// A run that outlasts the longest limit a test sets is a failure, not a hang.
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -438,6 +437,71 @@ func TestInstallSh(t *testing.T) {
 		}
 	})
 
+	t.Run("menu bar app location and target protection", func(t *testing.T) {
+		if runtime.GOOS != "darwin" {
+			t.Skip("the menu bar app is macOS only")
+		}
+		for _, tc := range []struct {
+			name                   string
+			writable, link, helper bool
+		}{
+			{"Applications", true, false, true},
+			{"beside the program", false, false, true},
+			{"linked app", true, true, true},
+			{"legacy archive", true, false, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if root && !tc.writable {
+					t.Skip("root can write every folder")
+				}
+				run := newShInstall(t, release)
+				target := filepath.Join(run.home, "bin", "owngit")
+				apps := filepath.Join(run.home, "Applications")
+				app := filepath.Join(apps, "OwnGit.app")
+				if !tc.helper {
+					name := release.archive["2.0.0"]
+					archive := tarGzOf(t, map[string][]byte{
+						"owngit":                         release.program["2.0.0"],
+						"OwnGit.app/Contents/Info.plist": []byte("OwnGit.app 2.0.0\n"),
+						"OwnGit.app/Contents/MacOS/OwnGitLauncher": []byte("launcher 2.0.0\n"),
+					})
+					release.replace(t, "v2.0.0/"+name, archive)
+					release.replace(t, "v2.0.0/SHA256SUMS", []byte(digestLine(archive, name)+"\n"))
+					app = filepath.Join(filepath.Dir(target), "OwnGit.app")
+				}
+				if tc.link {
+					noErr(t, os.Symlink(run.home, app))
+					run.mustFail(t, nil, app+" is a link", "--to", target)
+					if _, err := os.Stat(target); !os.IsNotExist(err) {
+						t.Fatal("a refused install changed the program")
+					}
+					return
+				}
+				if !tc.writable {
+					noErr(t, os.Chmod(apps, 0o555))
+					t.Cleanup(func() { os.Chmod(apps, 0o755) })
+					app = filepath.Join(filepath.Dir(target), "OwnGit.app")
+				}
+				output := run.must(t, nil, "--no-service", "--to", target)
+				if got := appVersionAt(t, app); got != "2.0.0" {
+					t.Fatalf("app version = %q:\n%s", got, output)
+				}
+				helper, err := os.ReadFile(filepath.Join(app, "Contents", "Helpers", "owngit"))
+				if tc.helper {
+					noErr(t, err)
+					if !bytes.Equal(helper, release.program["2.0.0"]) {
+						t.Fatal("the installed app helper changed")
+					}
+				} else if !os.IsNotExist(err) {
+					t.Fatal("a legacy app acquired an unsigned helper")
+				}
+				if (!tc.writable || !tc.helper) && !strings.Contains(output, "Menu bar managers on macOS 27 may hide its icon") {
+					t.Fatalf("no fallback explanation:\n%s", output)
+				}
+			})
+		}
+	})
+
 	t.Run("rerun keeps the file and installs the service again", func(t *testing.T) {
 		run := newShInstall(t, release)
 		target := filepath.Join(run.home, "bin", "owngit")
@@ -464,8 +528,8 @@ func TestInstallSh(t *testing.T) {
 			t.Fatalf("installed %q, want 1.0.0:\n%s", got, output)
 		}
 		if runtime.GOOS == "darwin" {
-			if got := appVersionAt(t, target); got != "1.0.0" || !strings.Contains(output, "Installed the OwnGit menu bar icon at ") {
-				t.Errorf("the icon app beside the program is %q, want 1.0.0:\n%s", got, output)
+			if got := appVersionAt(t, filepath.Join(run.home, "Applications", "OwnGit.app")); got != "1.0.0" || !strings.Contains(output, "Installed the OwnGit menu bar icon at ") {
+				t.Errorf("the Applications app is %q, want 1.0.0:\n%s", got, output)
 			}
 		}
 		if names := dirNames(t, filepath.Dir(target)); !slices.Equal(names, installedNames()) {

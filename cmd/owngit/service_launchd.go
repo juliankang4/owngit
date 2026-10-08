@@ -28,6 +28,8 @@ import (
 // folder that may hold a job running "owngit serve". Tests replace them.
 var launchdFolders = []string{"/Library/LaunchAgents", "/Library/LaunchDaemons"}
 
+var applicationsFolder = "/Applications"
+
 // launchAgentHome replaces the home folder that holds the LaunchAgents and
 // Logs folders when it is not empty. Tests set it, so that no test touches
 // the real ones.
@@ -173,7 +175,7 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 		host.printf("OwnGit was installed with npm, so the service runs the executable of its platform package directly: %s\n", host.agentExecutable)
 	}
 	plan := host.agentPlan(stateDir, headlessFlag, existing, found)
-	if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable); err != nil {
+	if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable, applicationsFolder); err != nil {
 		return fmt.Errorf("the OwnGit icon app of %s is damaged: %w; install OwnGit again", plan.Executable, err)
 	}
 	agent, err := service.RenderLaunchAgent(plan)
@@ -226,7 +228,7 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 // iconApp returns the OwnGit.app of the service's program, resolved to
 // the place macOS runs it from, when this command may open it.
 func (host *launchAgentHost) iconApp() (string, bool) {
-	app := service.AppPath(host.agentExecutable)
+	app := service.AppPath(host.agentExecutable, applicationsFolder)
 	if app == "" || !host.env.GraphicalSession || host.env.Getenv("OWNGIT_FROM_ICON") != "" {
 		return "", false
 	}
@@ -248,13 +250,17 @@ func (host *launchAgentHost) restartIcon() bool {
 		return false
 	}
 	ctx := context.Background()
-	account, running := strconv.Itoa(host.uid), iconPattern(app)
+	apps := service.AppPaths(host.agentExecutable, applicationsFolder)
+	if len(apps) == 0 {
+		return false
+	}
+	account, running := strconv.Itoa(host.uid), iconPattern(apps...)
 	if output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", running); strings.TrimSpace(string(output)) == "" {
 		return false
 	}
 	_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
 	if !iconExited(ctx, account, running) {
-		host.printf("The OwnGit icon at %s did not quit, so it still runs the earlier app until you quit it or sign in again.\n", app)
+		host.printf("An earlier OwnGit icon did not quit, so it still runs until you quit it or sign in again.\n")
 		return true
 	}
 	if output, err := serviceRunner(ctx, "/usr/bin/open", app, "--args", service.AppAtSignIn); err != nil {
@@ -265,10 +271,15 @@ func (host *launchAgentHost) restartIcon() bool {
 	return true
 }
 
-// iconPattern matches the command line of the icon of app for pgrep and
-// pkill.
-func iconPattern(app string) string {
-	return "^" + regexp.QuoteMeta(service.AppLauncher(app)) + "( |$)"
+func iconPattern(apps ...string) string {
+	launchers := []string{}
+	for _, app := range apps {
+		if resolved, err := filepath.EvalSymlinks(app); err == nil {
+			app = resolved
+		}
+		launchers = append(launchers, regexp.QuoteMeta(service.AppLauncher(app)))
+	}
+	return "^(" + strings.Join(launchers, "|") + ")( |$)"
 }
 
 // closeIcon quits OwnGit.app, the menu bar icon, of the given programs and
@@ -281,40 +292,38 @@ func (host *launchAgentHost) closeIcon(programs ...string) {
 	ctx := context.Background()
 	done := map[string]bool{}
 	for _, program := range programs {
-		app := service.AppPath(program)
-		if app == "" {
-			continue
+		for _, app := range service.AppPaths(program, applicationsFolder) {
+			if resolved, err := filepath.EvalSymlinks(app); err == nil {
+				app = resolved
+			}
+			if done[app] {
+				continue
+			}
+			done[app] = true
+			launcher := service.AppLauncher(app)
+			running := iconPattern(app)
+			// Only this account's icon: another account may run the same app,
+			// and root must not quit every account's icon. pkill exits 1 when
+			// no icon runs; whether one is left is checked after it.
+			account := strconv.Itoa(host.uid)
+			_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
+			if iconExited(ctx, account, running) {
+				host.printf("The OwnGit icon at %s is closed.\n", app)
+			} else {
+				host.printf("The OwnGit icon at %s is still running. Quit it with the gear in its panel, then Quit the icon.\n", app)
+			}
+			if err := requireProtectedPath(launcher); err != nil {
+				host.printf("OwnGit did not turn off opening its icon at %s at sign-in, because %v. Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", app, err)
+				continue
+			}
+			// The launcher exits 0 only when macOS reports the icon's sign-in
+			// item as not enabled any more.
+			if output, err := serviceRunner(ctx, launcher, service.AppSignInOff); err != nil {
+				host.printf("The OwnGit icon at %s could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", app, err, strings.TrimSpace(string(output)))
+				continue
+			}
+			host.printf("The OwnGit icon at %s no longer opens at sign-in.\n", app)
 		}
-		if resolved, err := filepath.EvalSymlinks(app); err == nil {
-			app = resolved
-		}
-		if done[app] {
-			continue
-		}
-		done[app] = true
-		launcher := service.AppLauncher(app)
-		running := iconPattern(app)
-		// Only this account's icon: another account may run the same app,
-		// and root must not quit every account's icon. pkill exits 1 when
-		// no icon runs; whether one is left is checked after it.
-		account := strconv.Itoa(host.uid)
-		_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
-		if iconExited(ctx, account, running) {
-			host.printf("The OwnGit icon is closed.\n")
-		} else {
-			host.printf("The OwnGit icon at %s is still running. Quit it with the gear in its panel, then Quit the icon.\n", app)
-		}
-		if err := requireProtectedPath(launcher); err != nil {
-			host.printf("OwnGit did not turn off opening its icon at sign-in, because %v. Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err)
-			continue
-		}
-		// The launcher exits 0 only when macOS reports the icon's sign-in
-		// item as not enabled any more.
-		if output, err := serviceRunner(ctx, launcher, service.AppSignInOff); err != nil {
-			host.printf("The OwnGit icon could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", err, strings.TrimSpace(string(output)))
-			continue
-		}
-		host.printf("The OwnGit icon no longer opens at sign-in.\n")
 	}
 }
 

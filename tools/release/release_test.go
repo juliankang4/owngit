@@ -957,6 +957,68 @@ func TestHomebrewServicePriority(t *testing.T) {
 	}
 }
 
+func TestHomebrewCaskRendering(t *testing.T) {
+	root := repoRoot(t)
+	release, err := versionFromSource(root)
+	noErr(t, err)
+	for _, tc := range []struct {
+		name        string
+		app, strict bool
+	}{
+		{"self-contained app", true, true},
+		{"missing app", false, false},
+		{"strict missing app", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			document := manifest{Version: release}
+			for _, current := range releaseTargets {
+				built := artifact{Target: current.String(), Name: current.archiveName(release), SHA256: strings.Repeat("a", 64)}
+				if current.goos == "darwin" && tc.app {
+					built.Files = []fileEntry{{Path: iconAppName + "/Contents/Info.plist"}, {Path: iconAppName + "/" + appHelperPath, Mode: "0755"}}
+				}
+				document.Artifacts = append(document.Artifacts, built)
+			}
+			writeManifest(t, dir, document)
+			out := filepath.Join(dir, "rendered")
+			args := []string{"-source", root, "-manifest", filepath.Join(dir, "manifest.json"), "-out", out, "-formats", "homebrew", "-base-url", "https://example.test/download", "-homepage", "https://example.test", "-tap", "example/homebrew-tap"}
+			if tc.strict {
+				args = append(args, "-strict")
+			}
+			err := packagingCommand(args)
+			if tc.strict && !tc.app {
+				if err == nil || !strings.Contains(err.Error(), "no self-contained OwnGit.app") {
+					t.Fatalf("strict render = %v", err)
+				}
+				if _, err := os.Stat(out); !os.IsNotExist(err) {
+					t.Fatal("a refused render wrote output")
+				}
+				return
+			}
+			noErr(t, err)
+			cask := readText(t, filepath.Join(out, "Casks", "owngit.rb"))
+			if strings.Contains(cask, "UNREADY") == tc.app {
+				t.Fatalf("cask readiness:\n%s", cask)
+			}
+			for _, text := range []string{`cask "owngit"`, `depends_on formula: "example/tap/owngit"`, `app "OwnGit.app"`, `args:       ["--sign-in-off"]`, strings.Repeat("a", 64)} {
+				if !strings.Contains(cask, text) {
+					t.Fatalf("cask lacks %q:\n%s", text, cask)
+				}
+			}
+			formula := readText(t, filepath.Join(out, "owngit.rb"))
+			if !strings.Contains(formula, `version "`+release+`"`) {
+				t.Fatal("the formula must not infer its version from arm64 in the URL")
+			}
+			if tc.app && !strings.Contains(formula, `prefix.install "OwnGit.app"`) {
+				t.Fatal("the formula lost its menu bar app")
+			}
+			if !strings.Contains(formula, "brew install --cask example/tap/owngit") {
+				t.Fatal("the formula has no cask guidance")
+			}
+		})
+	}
+}
+
 // TestPackagingRendering builds every target and exercises the ready, unready,
 // per-format, and rejected publication inputs.
 func TestPackagingRendering(t *testing.T) {

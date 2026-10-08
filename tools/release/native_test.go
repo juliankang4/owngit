@@ -1183,9 +1183,6 @@ func TestMacPanelKeepsFocusAndReadsStoredSize(t *testing.T) {
 	}
 }
 
-// The macOS archive may hold OwnGit.app beside the program: with its bundle
-// ID, version and launcher, and without a program of its own. A signed
-// archive must hold it, and other archives never do.
 func TestVerifyIconApp(t *testing.T) {
 	darwin, err := targetFor("darwin/arm64")
 	noErr(t, err)
@@ -1197,7 +1194,8 @@ func TestVerifyIconApp(t *testing.T) {
 	}
 	app := func(extra ...archiveEntry) []archiveEntry {
 		return append([]archiveEntry{
-			{name: "owngit", mode: 0o755},
+			{name: "owngit", mode: 0o755, data: []byte("program")},
+			{name: "OwnGit.app/" + appHelperPath, mode: 0o755, data: []byte("program")},
 			{name: "OwnGit.app/Contents/Info.plist", mode: 0o644, data: plist(appleBundleID, "1.2.3")},
 			{name: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o755},
 		}, extra...)
@@ -1214,10 +1212,12 @@ func TestVerifyIconApp(t *testing.T) {
 	}{
 		{"in the linux archive", linux, app(), artifact{}},
 		{"missing from a signed archive", darwin, app()[:1], signed},
-		{"another version", darwin, append(app()[:1], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist(appleBundleID, "1.2.2")}, app()[2]), artifact{}},
-		{"another bundle", darwin, append(app()[:1], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist("example.other", "1.2.3")}, app()[2]), artifact{}},
-		{"a launcher that is not executable", darwin, append(app()[:2], archiveEntry{name: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o644}), artifact{}},
-		{"a program inside", darwin, app(archiveEntry{name: "OwnGit.app/Contents/Helpers/owngit", mode: 0o755}), artifact{}},
+		{"another version", darwin, append(app()[:2], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist(appleBundleID, "1.2.2")}, app()[3]), artifact{}},
+		{"another bundle", darwin, append(app()[:2], archiveEntry{name: "OwnGit.app/Contents/Info.plist", data: plist("example.other", "1.2.3")}, app()[3]), artifact{}},
+		{"a launcher that is not executable", darwin, append(app()[:3], archiveEntry{name: "OwnGit.app/Contents/MacOS/OwnGitLauncher", mode: 0o644}), artifact{}},
+		{"without a helper", darwin, append(app()[:1], app()[2:]...), artifact{}},
+		{"a different helper", darwin, app(archiveEntry{name: "OwnGit.app/" + appHelperPath, mode: 0o755, data: []byte("other")}), artifact{}},
+		{"a helper that is not executable", darwin, app(archiveEntry{name: "OwnGit.app/" + appHelperPath, mode: 0o644, data: []byte("program")}), artifact{}},
 	} {
 		if err := verifyIconApp(nil, "linux", bad.target, bad.entries, bad.built, "1.2.3"); err == nil {
 			t.Errorf("an app %s was accepted", bad.name)

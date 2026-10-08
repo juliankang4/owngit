@@ -127,6 +127,9 @@ func (signer *appleSigner) signTool(binary, app string) (*appleSignature, error)
 		return nil, err
 	}
 	if app != "" {
+		if err := copyAppHelper(binary, app); err != nil {
+			return nil, err
+		}
 		if err := signer.sign(app, "", true); err != nil {
 			return nil, err
 		}

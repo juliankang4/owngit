@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"owngit/internal/version"
 )
 
 func launchAgentPlan(home string) Plan {
@@ -128,6 +130,7 @@ func TestRenderLaunchAgentNamesTheApp(t *testing.T) {
 
 func TestAppBundleID(t *testing.T) {
 	dir := t.TempDir()
+	applications := t.TempDir()
 	app := filepath.Join(dir, "OwnGit.app", "Contents")
 	if err := os.MkdirAll(filepath.Join(app, "Helpers"), 0o755); err != nil {
 		t.Fatal(err)
@@ -142,7 +145,7 @@ func TestAppBundleID(t *testing.T) {
 		}
 	}
 	write(`<key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string>`)
-	if got, err := AppBundleID(context.Background(), nil, helper); err != nil || got != "app.owngit.OwnGit" {
+	if got, err := AppBundleID(context.Background(), nil, helper, applications); err != nil || got != "app.owngit.OwnGit" {
 		t.Fatalf("AppBundleID = %q, %v", got, err)
 	}
 	for _, outside := range []string{
@@ -150,19 +153,19 @@ func TestAppBundleID(t *testing.T) {
 		filepath.Join(dir, "OwnGit", "Contents", "Helpers", "owngit"),
 		filepath.Join(dir, "OwnGit.app", "Contents", "MacOS", "owngit"),
 	} {
-		if got, err := AppBundleID(context.Background(), nil, outside); err != nil || got != "" {
+		if got, err := AppBundleID(context.Background(), nil, outside, applications); err != nil || got != "" {
 			t.Errorf("AppBundleID(%s) = %q, %v; want no app", outside, got, err)
 		}
 	}
 	// A helper in a damaged app is not installed under no name.
 	write("")
-	if got, err := AppBundleID(context.Background(), nil, helper); err == nil {
+	if got, err := AppBundleID(context.Background(), nil, helper, applications); err == nil {
 		t.Fatalf("an Info.plist without an identifier gave %q", got)
 	}
 	if err := os.Remove(info); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := AppBundleID(context.Background(), nil, helper); err == nil {
+	if got, err := AppBundleID(context.Background(), nil, helper, applications); err == nil {
 		t.Fatalf("a missing Info.plist gave %q", got)
 	}
 }
@@ -171,6 +174,7 @@ func TestAppBundleID(t *testing.T) {
 // it (archive, installer, npm), else beside its bin folder (Homebrew).
 func TestAppPath(t *testing.T) {
 	dir := t.TempDir()
+	applications := t.TempDir()
 	mkdir := func(path string) string {
 		t.Helper()
 		if err := os.MkdirAll(path, 0o755); err != nil {
@@ -194,7 +198,7 @@ func TestAppPath(t *testing.T) {
 		filepath.Join(dir, "plain", "bin", "owngit"):           "",
 		filepath.Join(dir, "nowhere", "owngit"):                "",
 	} {
-		if got := AppPath(executable); got != want {
+		if got := AppPath(executable, applications); got != want {
 			t.Errorf("AppPath(%s) = %q, want %q", executable, got, want)
 		}
 	}
@@ -205,12 +209,53 @@ func TestAppPath(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(beside, "Contents", "Info.plist"), []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>app.owngit.OwnGit</string></dict></plist>`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "local", "bin", "owngit")); err != nil || got != "app.owngit.OwnGit" {
+	if got, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "local", "bin", "owngit"), applications); err != nil || got != "app.owngit.OwnGit" {
 		t.Fatalf("AppBundleID beside = %q, %v", got, err)
 	}
-	if _, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "opt", "owngit", "bin", "owngit")); err == nil {
+	if _, err := AppBundleID(context.Background(), nil, filepath.Join(dir, "opt", "owngit", "bin", "owngit"), applications); err == nil {
 		t.Fatal("an app without Info.plist is named")
 	}
+	t.Run("separately installed app identity", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, identifier, release  string
+			helper, wantOpen, wantStop bool
+		}{
+			{"matching", "app.owngit.OwnGit", version.Version, true, true, true},
+			{"other version", "app.owngit.OwnGit", "0.0.0", true, false, true},
+			{"other bundle", "example.other", version.Version, true, false, false},
+			{"missing helper", "app.owngit.OwnGit", version.Version, false, false, true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				applications := t.TempDir()
+				app := filepath.Join(applications, AppName)
+				mkdir(filepath.Join(app, "Contents", "MacOS"))
+				body := fmt.Sprintf("<plist><dict><key>CFBundleIdentifier</key><string>%s</string><key>CFBundleShortVersionString</key><string>%s</string></dict></plist>", tc.identifier, tc.release)
+				if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(AppLauncher(app), nil, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if tc.helper {
+					mkdir(filepath.Join(app, "Contents", "Helpers"))
+					if err := os.WriteFile(filepath.Join(app, "Contents", "Helpers", "owngit"), nil, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				executable := filepath.Join(dir, "local", "bin", "owngit")
+				want := beside
+				if tc.wantOpen {
+					want = app
+				}
+				if got := AppPath(executable, applications); got != want {
+					t.Fatalf("AppPath = %q, want %q", got, want)
+				}
+				if got := slices.Contains(AppPaths(executable, applications), app); got != tc.wantStop {
+					t.Fatalf("known system app = %t, want %t", got, tc.wantStop)
+				}
+			})
+		}
+	})
 }
 
 func TestRenderLaunchAgentRefuses(t *testing.T) {
