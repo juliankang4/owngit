@@ -17,7 +17,7 @@ This release fixes security problems rated Medium and Low, bounds waits that cou
 - With plain Docker, use `docker run --stop-timeout 70` or `docker stop -t 70`; `compose.yaml` already sets it.
 - Pushes of malformed Git data that earlier versions accepted are now refused, with the reason on `remote: error:` lines.
 - On Linux, programs that a check starts are stopped when the check ends. Start long-lived programs outside OwnGit.
-- On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Use the OwnGit.app from the disk image (DMG) in `/Applications`, at the same version as your installed `owngit`; a fix is planned for 1.1.6.
+- On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Keep the menu bar manager expanded to see the icon; a fix is planned for 1.1.7.
 
 **Changes for scripts:**
 
