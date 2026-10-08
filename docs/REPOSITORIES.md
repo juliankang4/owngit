@@ -191,6 +191,21 @@ git --git-dir /path/to/repositories/.owngit-removed/ID-YYYYMMDDTHHMMSSZ.git push
 
 Only branches and tags come back. Kept history, pull requests and checks do not.
 
+### When the repository's files are missing
+
+If a repository's `ID.git` folder has disappeared from the repository folder, you can still delete the repository with either choice. OwnGit removes only its own records, and the name becomes free. The page says "The repository folder was already missing. Only its OwnGit records were removed." Nothing is moved to `.owngit-removed`. Once OwnGit has recorded that the folder is missing, it never moves or deletes a folder that later appears at that path, even one that appears before the deletion finishes or before a restart finishes it. It does not register that folder as a repository either. While the folder is there, OwnGit cannot create a repository with the original name. To recover its branches and tags, create an empty repository with another name and push from the folder as shown above. To keep the original name, first move the `ID.git` folder out of the repository folder to a safe place, then create the repository and push from the moved folder.
+
+In this case `owngit repo delete` prints `"folder_missing": true` and the same sentence in `message`, with no `kept_path`. These two fields appear only in this case.
+
+Before it removes the records, OwnGit must confirm that the repository folder is on the right storage. When a drive or share is not mounted, the mount point folder can look like the repository folder. One of these must be true:
+
+- Another registered repository's folder is present, and OwnGit has checked in this run that it is the same folder as before. A folder with the right name is not enough.
+- This is the only registered repository, and the repository folder holds only OwnGit's own entries, such as its lock file, deletion markers and kept folders in `.owngit-removed`. Any other file or folder there prevents this.
+
+Otherwise OwnGit refuses the deletion and keeps the records. The page shows this message, and `owngit repo delete` returns error `delete_failed` with the same text: "The storage folder could not be confirmed. Check that the drive or share is mounted. The repository records were not removed." Check that the drive or share is mounted, then try again. A mount point that is not empty does not prove that the storage is mounted, and there is no option to skip this check. These checks look only at the repository folder, so they cannot catch every way storage can be mounted wrongly.
+
+The deletion is also refused when OwnGit started with an empty mount point, or when a different folder now stands where the repository's folder was. Mount the right storage or put the original folder back, then try again.
+
 ### When deletion is refused or stops
 
 - An import, a check or a Git operation is running: try again when it ends.
