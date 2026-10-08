@@ -708,6 +708,12 @@ func TestBusyRefusalDoesNotRecordASecondRun(t *testing.T) {
 	require(t, run.Status == state.ImportRunComplete, "first run=%+v", run)
 }
 
+func startDeadlineAtLockWait(caller *hookDeadline, deadline time.Duration) *time.Timer {
+	return time.AfterFunc(deadline, func() {
+		caller.once.Do(func() { close(caller.done) })
+	})
+}
+
 // Every pre-write wait for a repository held by another writer ends at the
 // caller's own deadline or cancellation: a source change, a credential change,
 // a refresh, an import add and an orphan cleanup report that end instead of
@@ -719,16 +725,10 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 	}
 	const deadline = 500 * time.Millisecond
 
-	// run starts one operation behind the repository writer the caller holds,
-	// waits until the operation is parked in the lock wait, and returns the
-	// error it ended with while the writer is still held. With cancelInstead the
-	// caller's context has no deadline and is cancelled instead.
 	run := func(t *testing.T, lock *gitexec.RepositoryLock, cancelInstead bool, start func(context.Context) error) error {
 		t.Helper()
-		ctx, cancel := context.WithTimeout(context.Background(), deadline)
-		if cancelInstead {
-			ctx, cancel = context.WithCancel(context.Background())
-		}
+		caller := newHookDeadline()
+		ctx, cancel := context.WithCancel(caller)
 		defer cancel()
 		var result error
 		done := make(chan struct{})
@@ -747,6 +747,9 @@ func TestPreWriteRepositoryWaitsEndAtTheCallerDeadline(t *testing.T) {
 		waitUntil(t, "the operation to wait for another repository writer", lock.Waiting)
 		if cancelInstead {
 			cancel()
+		} else {
+			timer := startDeadlineAtLockWait(caller, deadline)
+			defer timer.Stop()
 		}
 		select {
 		case <-done:
