@@ -222,7 +222,7 @@ On this computer, `owngit health` exits 0 and prints `OwnGit answers at http://A
 
 `owngit doctor` and `owngit service status` require the same proof before reporting that OwnGit runs and answers. The icon uses proven status answers and the same checkup when no status connection is available. If the proof is missing or invalid, these checks report why they cannot confirm OwnGit. A server started before version 1.1.5 needs one restart to publish its key. Service status still shows what the service manager reports, separately from the health result.
 
-`owngit health` reads the state directory and writes nothing, so it also works when the state directory is read-only. Run it as the account that runs OwnGit. The file is not part of backups.
+When the running server has published its health file and proves itself, `owngit health` only reads that file, so it also works when the state directory is read-only. Run it as the account that runs OwnGit. The file is not part of backups. When `owngit health` cannot confirm the server, it opens the state like other commands to explain why. That makes the state directory and the state database private ([State directory permissions](#state-directory-permissions)), and it needs a writable state directory.
 
 When `owngit health` cannot confirm the server, it exits non-zero and says why:
 
@@ -236,7 +236,27 @@ When `owngit health` cannot confirm the server, it exits non-zero and says why:
 
 ### State directory permissions
 
-On macOS and Linux, the OwnGit server and commands refuse a state directory that other accounts can write, even if it has the sticky bit. The icon stays visible with the permission problem and a repair command. OwnGit prints the command to fix the permissions or access list and changes nothing itself. For shared group or other write permission, the command is `chmod g-w,o-w 'STATE_DIRECTORY'`. For a macOS access list that allows changes, use the `chmod -N 'STATE_DIRECTORY'` command shown. Then start OwnGit again. The account's private Linux group and groups that already have administrator privileges on macOS remain trusted.
+OwnGit keeps its state directory and its own files there private to the account that runs it. This works the same on Linux, macOS and Windows, and you do not need to run anything.
+
+- When the server starts, it makes the state directory and every file it manages there private. It removes the access that other accounts have, including macOS access lists (ACL) and extra Windows permissions.
+- `owngit health`, `owngit doctor` and `owngit backup --output` refuse a state directory that other accounts can change. Other commands that open the state refuse it on Linux and macOS, and on Windows they make it private instead. When these commands open the state, they make the state directory and the state database private in the same way as the server, for example by removing read access that other accounts still have.
+- The menu bar or panel icon only reads the state directory and changes nothing. If other accounts can change it, the icon shows the problem; starting the server fixes it.
+
+Each change is recorded with the path inside the state directory and the permissions before and after: in the server log for the server, and on standard error for a command.
+
+The protection holds from that change on. It does not close files that another program opened earlier, and it does not undo changes made before.
+
+When OwnGit cannot make the state private, the server or command stops and the message says what to do:
+
+- If other accounts can change the state directory, the message gives the command that fixes it, usually `chmod g-w,o-w 'STATE_DIRECTORY'` on Linux and macOS. Starting the server also fixes it.
+- If a file or folder belongs to another account, the message gives a command that changes its owner, such as `sudo chown ...` on Linux and macOS or a PowerShell command on Windows. Changing the owner needs administrator rights. OwnGit never takes over a file that belongs to another account.
+- If a file that OwnGit manages is a link, has a second name (a hard link), or a database file is not a plain file, the message names the file. Replace it with a plain copy of its contents.
+
+Then start OwnGit again.
+
+On Windows, while OwnGit has the state open (the server, or a command while it runs), the state directory and its parent folders cannot be renamed or moved. Files and folders inside them can still be renamed or deleted. Stop OwnGit before you move the state directory.
+
+Administrator accounts such as root, SYSTEM and Administrators are not counted as other accounts. OwnGit still refuses a state directory that belongs to another account or sits in a folder that another account could replace. On Linux, the account's private group is trusted, and on macOS, groups that already have administrator privileges are trusted. The upgrade backup folder beside the state directory is not changed; OwnGit refuses it when other accounts can change it.
 
 ## Checkup
 
@@ -250,7 +270,7 @@ It checks:
 - on Windows, folders that the Administrators group owns (fix: `owngit service install`);
 - when OwnGit listens for other devices, the firewall of this computer.
 
-OwnGit never runs a fix itself. Anything it could not check, such as ufw or firewalld rules that need root to read, is listed under "Could not check".
+OwnGit never runs a listed fix itself; it only makes the state directory and the state database private, as every command that opens the state does. Anything it could not check, such as ufw or firewalld rules that need root to read, is listed under "Could not check".
 
 ## Update and uninstall
 
