@@ -21,6 +21,7 @@ import (
 )
 
 const runnerLeaseHeader = "X-OwnGit-Runner-Lease"
+const checkSourceReadRefusal = "The exact source contains a file this server cannot read within its size or memory limits."
 
 // handleConfiguredCheckOwnerAPI serves owner-only policy, job and runner-token
 // operations. Every mutation requires the current administrator password.
@@ -535,7 +536,7 @@ func (app *App) runnerSourceBlob(writer http.ResponseWriter, request *http.Reque
 			// retry would repeat the same read, so the runner is told the
 			// source does not satisfy the materialization bounds.
 			writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused",
-				"The exact source contains a file above the size this server can read.", nil)
+				checkSourceReadRefusal, nil)
 			return
 		}
 		writeAPIError(writer, unavailable(request, "configured check source blob read", err), "check_source_unavailable", "The authorized exact source blob is unavailable.", nil)

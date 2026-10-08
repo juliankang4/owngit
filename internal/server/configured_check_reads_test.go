@@ -297,7 +297,10 @@ func TestRunnerSourceBlobAboveTheReadBoundIsRefused(t *testing.T) {
 		return "/api/v1/repositories/project/runner/jobs/" + job.ID + "/files/" + base64.RawURLEncoding.EncodeToString([]byte(path)) + "/" + oid
 	}
 	_, _, err = runner.GetBytes(ctx, blobURL("big.txt", bigOID), map[string]string{runnerLeaseHeader: lease}, bound+1)
-	requireAPIError(t, "source blob above the read bound", err, http.StatusUnprocessableEntity, "check_source_refused")
+	problem := requireAPIError(t, "source blob above the read bound", err, http.StatusUnprocessableEntity, "check_source_refused")
+	if problem.Message != "The exact source contains a file this server cannot read within its size or memory limits." {
+		t.Fatalf("source refusal message = %q", problem.Message)
+	}
 
 	small, headers, err := runner.GetBytes(ctx, blobURL("file.txt", smallOID), map[string]string{runnerLeaseHeader: lease}, 1<<10)
 	if err != nil || string(small) != "base\n" || headers.Get("X-OwnGit-Blob-OID") != smallOID {
