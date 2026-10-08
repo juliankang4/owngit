@@ -151,8 +151,9 @@ func TestRefusedScheduledRefreshIsRecordedAsFailed(t *testing.T) {
 func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 	f := newFixture(t)
 	f.scheduleOtherAndProject()
-	ctx := context.Background()
-	scheduler := &Scheduler{Service: f.service, Batch: 4}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	scheduler := &Scheduler{Service: f.service, Interval: time.Hour, Batch: 1, Concurrency: 1}
 	full := make(chan struct{}, 1)
 	full <- struct{}{}
 	scheduler.pump(ctx, full)
@@ -164,13 +165,32 @@ func TestSchedulerLeavesDueSchedulesUntouchedWhileSlotsAreFull(t *testing.T) {
 		require(t, len(runs) == 0, "%s recorded a run that never started: %+v", id, runs)
 	}
 	require(t, len(full) == 1, "a full pass changed the slots it did not own")
-	f.pump(scheduler, 1)
+	f.transport.gate = make(chan struct{})
+	fetching := make(chan struct{}, 2)
+	f.transport.before = func() { fetching <- struct{}{} }
+	noErr(t, scheduler.Start(ctx))
+	t.Cleanup(func() {
+		stop, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		noErr(t, scheduler.Stop(stop))
+	})
+	select {
+	case <-fetching:
+	case <-ctx.Done():
+		t.Fatal("the first scheduled run never fetched")
+	}
+	project := f.scheduledRuns("project")
+	require(t, len(project) == 0, "the second schedule ran while the slot was occupied: runs=%+v", project)
+	close(f.transport.gate)
+	select {
+	case <-fetching:
+	case <-ctx.Done():
+		t.Fatal("the waiting schedule did not run when the slot freed")
+	}
+	scheduler.wait.Wait()
 	other := f.scheduledRuns("other")
 	require(t, len(other) == 1 && other[0].Status == state.ImportRunComplete,
-		"the first due schedule did not run first: runs=%+v", other)
-	project := f.scheduledRuns("project")
-	require(t, len(project) == 0, "the second schedule ran in the single slot's first pass: runs=%+v", project)
-	f.pump(scheduler, 1)
+		"the first due schedule did not complete: runs=%+v", other)
 	project = f.scheduledRuns("project")
 	require(t, len(project) == 1 && project[0].Status == state.ImportRunComplete,
 		"the waiting schedule starved: runs=%+v", project)

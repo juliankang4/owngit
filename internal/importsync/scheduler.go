@@ -196,7 +196,15 @@ func (s *Scheduler) start(ctx context.Context, repositoryID string, now time.Tim
 	s.wait.Add(1)
 	go func() {
 		defer s.wait.Done()
-		defer func() { <-slots }()
+		defer func() {
+			<-slots
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			select {
+			case s.wake <- struct{}{}:
+			default:
+			}
+		}()
 		run, err := s.Service.RefreshScheduled(ctx, repositoryID, Limits{})
 		if err != nil && problemCode(err) != CodeBusy {
 			s.logf("scheduled import for %s failed: %v", repositoryID, err)
