@@ -103,7 +103,6 @@ Each of these, except `CHANGELOG.md`, has a Korean `.ko.md` version with the sam
 
 These tests read documents:
 
-- `cmd/owngit/check_budget_test.go` reads `docs/CODING_TOOLS.md`. Keep it consistent with `integrations/skills/owngit-checks/SKILL.md`.
 - `cmd/owngit/docs_windows_test.go` runs the PowerShell password-file block in `docs/OPERATIONS*.md` and `docs/CODING_TOOLS*.md` on Windows.
 - `tools/release/release_test.go` checks the links in `docs/CODING_TOOLS*.md`, which ship in release archives.
 - `tools/release/installer_test.go` checks that the example commands in `packaging/installer/*` appear in `docs/OPERATIONS.md`.
