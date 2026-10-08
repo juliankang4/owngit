@@ -5,7 +5,10 @@ package checkexec
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
+
+const terminationGrace = 5 * time.Second
 
 func shellCommand(_ string) *exec.Cmd {
 	cmd := exec.Command("cmd")

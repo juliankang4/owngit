@@ -34,7 +34,6 @@ const (
 const (
 	defaultTimeout     = 10 * time.Minute
 	defaultOutputLimit = 64 << 10
-	terminationGrace   = 2 * time.Second
 )
 
 // KeptOutputBytes is the most output text a result keeps: the largest evidence

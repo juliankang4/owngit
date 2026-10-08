@@ -250,138 +250,202 @@ func TestRunReapsBackgroundDescendantsOnWindows(t *testing.T) {
 }
 
 func TestRunOwnsChildCreatedBeforeAttachmentReturns(t *testing.T) {
-	directory := t.TempDir()
-	marker := filepath.Join(directory, "survived")
-	receiptPath := filepath.Join(directory, "child-receipt.json")
-	launcherReady := filepath.Join(directory, "launcher-ready")
-	launcherRelease := filepath.Join(directory, "launcher-release")
-	cleanupSignal := filepath.Join(directory, "cleanup-returned")
-	identity := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
-	environment := windowsFixtureEnvironment("ownership-launcher", marker)
-	environment = append(environment,
-		windowsFixtureReceipt+"="+receiptPath,
-		windowsFixtureIdentity+"="+identity,
-		windowsFixtureLauncherReady+"="+launcherReady,
-		windowsFixtureLauncherRelease+"="+launcherRelease,
-		windowsFixtureCleanupSignal+"="+cleanupSignal,
-	)
+	for _, testCase := range []struct {
+		name                 string
+		cancel               bool
+		confirmAfter         time.Duration
+		withholdConfirmation bool
+		status               string
+	}{
+		{name: "completed", status: StatusPassed},
+		{name: "cancelled with late confirmation", cancel: true, confirmAfter: 3 * time.Second, status: StatusCancelled},
+		{name: "cancelled without confirmation", cancel: true, withholdConfirmation: true, status: StatusError},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if testing.Short() && testCase.cancel {
+				t.Skip("waits more than two seconds for Windows exit confirmation")
+			}
+			directory := t.TempDir()
+			marker := filepath.Join(directory, "survived")
+			receiptPath := filepath.Join(directory, "child-receipt.json")
+			launcherReady := filepath.Join(directory, "launcher-ready")
+			launcherRelease := filepath.Join(directory, "launcher-release")
+			cleanupSignal := filepath.Join(directory, "cleanup-returned")
+			identity := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
+			environment := windowsFixtureEnvironment("ownership-launcher", marker)
+			environment = append(environment,
+				windowsFixtureReceipt+"="+receiptPath,
+				windowsFixtureIdentity+"="+identity,
+				windowsFixtureLauncherReady+"="+launcherReady,
+				windowsFixtureLauncherRelease+"="+launcherRelease,
+				windowsFixtureCleanupSignal+"="+cleanupSignal,
+			)
 
-	originalObserver := ownedProcessStartedObserver
-	originalAttach := attachOwnedProcess
-	defer func() {
-		ownedProcessStartedObserver = originalObserver
-		attachOwnedProcess = originalAttach
-	}()
-	var childHandle windows.Handle
-	var receipt windowsProcessReceipt
-	ownedProcessStartedObserver = func() error {
-		if !waitForWindowsMarker(launcherReady, 5*time.Second) {
-			return fmt.Errorf("launcher did not report ready")
+			originalObserver := ownedProcessStartedObserver
+			originalAttach := attachOwnedProcess
+			originalTerminate := terminateOwnedProcess
+			defer func() {
+				ownedProcessStartedObserver = originalObserver
+				attachOwnedProcess = originalAttach
+				terminateOwnedProcess = originalTerminate
+			}()
+			var childHandle windows.Handle
+			var receipt windowsProcessReceipt
+			ownedProcessStartedObserver = func() error {
+				if !waitForWindowsMarker(launcherReady, 5*time.Second) {
+					return fmt.Errorf("launcher did not report ready")
+				}
+				observed, err := readWindowsProcessReceipt(receiptPath, 5*time.Second)
+				if err != nil {
+					return err
+				}
+				if observed.PID == 0 || observed.CreationTime == 0 || observed.Identity != identity {
+					return fmt.Errorf("invalid child receipt: %+v", observed)
+				}
+				handle, err := windows.OpenProcess(
+					uint32(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE),
+					false, observed.PID,
+				)
+				if err != nil {
+					return fmt.Errorf("open fixture child %d: %w", observed.PID, err)
+				}
+				var creationTime, exitTime, kernelTime, userTime windows.Filetime
+				if err := windows.GetProcessTimes(handle, &creationTime, &exitTime, &kernelTime, &userTime); err != nil {
+					closeErr := windows.CloseHandle(handle)
+					return fmt.Errorf("read fixture child %d creation time: %v (close: %v)", observed.PID, err, closeErr)
+				}
+				openedCreationTime := windowsFiletimeIdentity(creationTime)
+				if openedCreationTime != observed.CreationTime {
+					closeErr := windows.CloseHandle(handle)
+					return fmt.Errorf("fixture child %d identity mismatch: receipt=%016x handle=%016x (close: %v)", observed.PID, observed.CreationTime, openedCreationTime, closeErr)
+				}
+				receipt = observed
+				childHandle = handle
+				return nil
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var releaseErr error
+			attachOwnedProcess = func(cmd *exec.Cmd) (*gitexec.ProcessOwner, error) {
+				owner, err := originalAttach(cmd)
+				if testCase.cancel {
+					cancel()
+				} else {
+					releaseErr = writeWindowsFixtureFile(launcherRelease, []byte("release\n"))
+				}
+				return owner, err
+			}
+
+			attempts := 0
+			if testCase.confirmAfter > 0 || testCase.withholdConfirmation {
+				terminateOwnedProcess = delayedExitConfirmation(originalTerminate, testCase.confirmAfter, testCase.withholdConfirmation, &attempts)
+			}
+
+			command := windows.EscapeArg(os.Args[0]) + " -test.run=TestWindowsDescendantFixture"
+			results, cancelled := Run(ctx, []Definition{{Name: "startup-child", Command: command}}, Options{
+				Timeout: 20 * time.Second,
+				Env:     environment,
+			})
+
+			var stateErr, signalErr, waitErr, fallbackWaitErr, terminateErr, finalObservationErr, closeErr error
+			aliveAfterCleanup := false
+			postCleanupState := "handle-unavailable"
+			finalExitObservation := "not-observed"
+			fallbackOutcome := "not-needed"
+			if childHandle != 0 {
+				var state uint32
+				state, stateErr = windows.WaitForSingleObject(childHandle, 0)
+				postCleanupState = windowsWaitState(state, stateErr)
+				aliveAfterCleanup = stateErr == nil && state == uint32(windows.WAIT_TIMEOUT)
+			}
+			signalErr = writeWindowsFixtureFile(cleanupSignal, []byte("cleanup returned\n"))
+			if childHandle != 0 {
+				var state uint32
+				state, waitErr = windows.WaitForSingleObject(childHandle, 5_000)
+				finalExitObservation = windowsWaitState(state, waitErr)
+				if waitErr == nil && state == uint32(windows.WAIT_TIMEOUT) {
+					fallbackOutcome = "terminate-requested"
+					terminateErr = windows.TerminateProcess(childHandle, 100)
+					if terminateErr == nil {
+						var fallbackState uint32
+						fallbackState, fallbackWaitErr = windows.WaitForSingleObject(childHandle, 5_000)
+						finalExitObservation = windowsWaitState(fallbackState, fallbackWaitErr)
+						if fallbackWaitErr == nil && fallbackState == uint32(windows.WAIT_OBJECT_0) {
+							fallbackOutcome = "terminated-exit-observed"
+						} else if fallbackWaitErr == nil {
+							fallbackOutcome = fmt.Sprintf("terminate-sent-state=0x%x", fallbackState)
+							finalObservationErr = fmt.Errorf("unexpected wait state after fallback termination: 0x%x", fallbackState)
+						} else {
+							fallbackOutcome = "terminate-sent-wait-error"
+						}
+					} else {
+						fallbackOutcome = "terminate-failed"
+					}
+				} else if waitErr == nil && state != uint32(windows.WAIT_OBJECT_0) {
+					finalObservationErr = fmt.Errorf("unexpected final wait state: 0x%x", state)
+				}
+				closeErr = windows.CloseHandle(childHandle)
+			}
+			markerContent, markerErr := os.ReadFile(marker)
+			markerExists := markerErr == nil
+			if markerErr != nil && !os.IsNotExist(markerErr) {
+				t.Errorf("read survival marker: %v", markerErr)
+			}
+			t.Logf("fixture receipt pid=%d creation=%016x; post-cleanup=%s; final-exit=%s; fallback=%s", receipt.PID, receipt.CreationTime, postCleanupState, finalExitObservation, fallbackOutcome)
+
+			if releaseErr != nil || stateErr != nil || signalErr != nil || waitErr != nil || fallbackWaitErr != nil || terminateErr != nil || finalObservationErr != nil || closeErr != nil {
+				t.Fatalf("fixture errors: release=%v state=%v signal=%v wait=%v fallback-wait=%v terminate=%v final=%v close=%v", releaseErr, stateErr, signalErr, waitErr, fallbackWaitErr, terminateErr, finalObservationErr, closeErr)
+			}
+			if cancelled != testCase.cancel || len(results) != 1 || results[0].Status != testCase.status {
+				t.Fatalf("run result=%+v cancelled=%v", results, cancelled)
+			}
+			if testCase.withholdConfirmation {
+				if !strings.Contains(results[0].CleanupError, "exit was not confirmed before the cleanup deadline") || attempts != 2 {
+					t.Fatalf("unconfirmed exit: result=%+v attempts=%d", results, attempts)
+				}
+			} else if results[0].CleanupError != "" {
+				t.Fatalf("confirmed exit reported a cleanup error: %+v", results)
+			}
+			if receipt.PID == 0 {
+				t.Fatal("fixture child identity was not captured")
+			}
+			if aliveAfterCleanup && markerExists {
+				t.Fatalf("fixture child %d survived Run cleanup and wrote %q", receipt.PID, markerContent)
+			}
+			if aliveAfterCleanup {
+				t.Fatalf("fixture child %d survived Run cleanup without writing its marker", receipt.PID)
+			}
+			if markerExists {
+				t.Fatalf("fixture child %d wrote a survival marker after cleanup", receipt.PID)
+			}
+		})
+	}
+}
+
+func delayedExitConfirmation(terminate func(*gitexec.ProcessOwner, time.Duration) error, confirmAfter time.Duration, withholdConfirmation bool, attempts *int) func(*gitexec.ProcessOwner, time.Duration) error {
+	return func(owner *gitexec.ProcessOwner, grace time.Duration) error {
+		*attempts += 1
+		if *attempts > 1 && !withholdConfirmation {
+			return terminate(owner, grace)
 		}
-		observed, err := readWindowsProcessReceipt(receiptPath, 5*time.Second)
-		if err != nil {
+		deadline := time.Now().Add(grace)
+		var confirmed <-chan time.Time
+		if !withholdConfirmation {
+			timer := time.NewTimer(confirmAfter)
+			defer timer.Stop()
+			confirmed = timer.C
+		}
+		if err := terminate(owner, time.Until(deadline)); err != nil {
 			return err
 		}
-		if observed.PID == 0 || observed.CreationTime == 0 || observed.Identity != identity {
-			return fmt.Errorf("invalid child receipt: %+v", observed)
+		timer := time.NewTimer(time.Until(deadline))
+		defer timer.Stop()
+		select {
+		case <-confirmed:
+			return nil
+		case <-timer.C:
+			return errors.New("owned process exit was not confirmed before the cleanup deadline")
 		}
-		handle, err := windows.OpenProcess(
-			uint32(windows.SYNCHRONIZE|windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_TERMINATE),
-			false, observed.PID,
-		)
-		if err != nil {
-			return fmt.Errorf("open fixture child %d: %w", observed.PID, err)
-		}
-		var creationTime, exitTime, kernelTime, userTime windows.Filetime
-		if err := windows.GetProcessTimes(handle, &creationTime, &exitTime, &kernelTime, &userTime); err != nil {
-			closeErr := windows.CloseHandle(handle)
-			return fmt.Errorf("read fixture child %d creation time: %v (close: %v)", observed.PID, err, closeErr)
-		}
-		openedCreationTime := windowsFiletimeIdentity(creationTime)
-		if openedCreationTime != observed.CreationTime {
-			closeErr := windows.CloseHandle(handle)
-			return fmt.Errorf("fixture child %d identity mismatch: receipt=%016x handle=%016x (close: %v)", observed.PID, observed.CreationTime, openedCreationTime, closeErr)
-		}
-		receipt = observed
-		childHandle = handle
-		return nil
-	}
-	var releaseErr error
-	attachOwnedProcess = func(cmd *exec.Cmd) (*gitexec.ProcessOwner, error) {
-		owner, err := originalAttach(cmd)
-		releaseErr = writeWindowsFixtureFile(launcherRelease, []byte("release\n"))
-		return owner, err
-	}
-
-	command := windows.EscapeArg(os.Args[0]) + " -test.run=TestWindowsDescendantFixture"
-	results, cancelled := Run(context.Background(), []Definition{{Name: "startup-child", Command: command}}, Options{
-		Timeout: 20 * time.Second,
-		Env:     environment,
-	})
-
-	var stateErr, signalErr, waitErr, fallbackWaitErr, terminateErr, finalObservationErr, closeErr error
-	aliveAfterCleanup := false
-	postCleanupState := "handle-unavailable"
-	finalExitObservation := "not-observed"
-	fallbackOutcome := "not-needed"
-	if childHandle != 0 {
-		var state uint32
-		state, stateErr = windows.WaitForSingleObject(childHandle, 0)
-		postCleanupState = windowsWaitState(state, stateErr)
-		aliveAfterCleanup = stateErr == nil && state == uint32(windows.WAIT_TIMEOUT)
-	}
-	signalErr = writeWindowsFixtureFile(cleanupSignal, []byte("cleanup returned\n"))
-	if childHandle != 0 {
-		var state uint32
-		state, waitErr = windows.WaitForSingleObject(childHandle, 5_000)
-		finalExitObservation = windowsWaitState(state, waitErr)
-		if waitErr == nil && state == uint32(windows.WAIT_TIMEOUT) {
-			fallbackOutcome = "terminate-requested"
-			terminateErr = windows.TerminateProcess(childHandle, 100)
-			if terminateErr == nil {
-				var fallbackState uint32
-				fallbackState, fallbackWaitErr = windows.WaitForSingleObject(childHandle, 5_000)
-				finalExitObservation = windowsWaitState(fallbackState, fallbackWaitErr)
-				if fallbackWaitErr == nil && fallbackState == uint32(windows.WAIT_OBJECT_0) {
-					fallbackOutcome = "terminated-exit-observed"
-				} else if fallbackWaitErr == nil {
-					fallbackOutcome = fmt.Sprintf("terminate-sent-state=0x%x", fallbackState)
-					finalObservationErr = fmt.Errorf("unexpected wait state after fallback termination: 0x%x", fallbackState)
-				} else {
-					fallbackOutcome = "terminate-sent-wait-error"
-				}
-			} else {
-				fallbackOutcome = "terminate-failed"
-			}
-		} else if waitErr == nil && state != uint32(windows.WAIT_OBJECT_0) {
-			finalObservationErr = fmt.Errorf("unexpected final wait state: 0x%x", state)
-		}
-		closeErr = windows.CloseHandle(childHandle)
-	}
-	markerContent, markerErr := os.ReadFile(marker)
-	markerExists := markerErr == nil
-	if markerErr != nil && !os.IsNotExist(markerErr) {
-		t.Errorf("read survival marker: %v", markerErr)
-	}
-	t.Logf("fixture receipt pid=%d creation=%016x; post-cleanup=%s; final-exit=%s; fallback=%s", receipt.PID, receipt.CreationTime, postCleanupState, finalExitObservation, fallbackOutcome)
-
-	if releaseErr != nil || stateErr != nil || signalErr != nil || waitErr != nil || fallbackWaitErr != nil || terminateErr != nil || finalObservationErr != nil || closeErr != nil {
-		t.Fatalf("fixture errors: release=%v state=%v signal=%v wait=%v fallback-wait=%v terminate=%v final=%v close=%v", releaseErr, stateErr, signalErr, waitErr, fallbackWaitErr, terminateErr, finalObservationErr, closeErr)
-	}
-	if cancelled || len(results) != 1 || results[0].Status != StatusPassed {
-		t.Fatalf("run result=%+v cancelled=%v", results, cancelled)
-	}
-	if receipt.PID == 0 {
-		t.Fatal("fixture child identity was not captured")
-	}
-	if aliveAfterCleanup && markerExists {
-		t.Fatalf("fixture child %d survived Run cleanup and wrote %q", receipt.PID, markerContent)
-	}
-	if aliveAfterCleanup {
-		t.Fatalf("fixture child %d survived Run cleanup without writing its marker", receipt.PID)
-	}
-	if markerExists {
-		t.Fatalf("fixture child %d wrote a survival marker after cleanup", receipt.PID)
 	}
 }
 
