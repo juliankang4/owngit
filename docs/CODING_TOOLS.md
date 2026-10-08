@@ -253,10 +253,23 @@ What to know:
 
 ## Recording checks
 
-`owngit check` (the helper) runs a project's checks in your own environment
+`owngit check` (the helper) runs a project's checks on your own computer
 and records the result on the server, tied to the exact commit it tested. It needs a
 [helper credential](#helper-credentials). For checks that OwnGit runs by
 itself on each push, see [Automatic checks](AUTOMATIC_CHECKS.md).
+
+The checks run with your account's permissions and can reach your files. They
+are not sandboxed. They get only a few variables from your shell's environment,
+such as `PATH`, `HOME` and the locale settings. They do not get proxy settings,
+tool settings such as `JAVA_HOME`, or credentials. `TMPDIR`, `TEMP` and `TMP`
+point to a new private folder in the system's temporary folder, which is
+removed after the run. If a command needs another variable, set it in the
+command, for example `HTTPS_PROXY=http://proxy.example.test:3128 go test ./...`.
+When a check command fails or cannot start, its log begins with the names of
+the variables it did not get. A temporary-folder error is reported as its own
+error, without that note.
+[Environment variables](AUTOMATIC_CHECKS.md#environment-variables) has the
+full list.
 
 1. Create one task for the unit of work. Keep its ID while the commits change.
 

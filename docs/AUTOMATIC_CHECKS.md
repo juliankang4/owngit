@@ -14,8 +14,8 @@ To turn them on:
 3. Turn checks on for that policy.
 
 Results show on the repository's Checks tab and on each pull request. They are
-advisory and never block a merge. To run checks from a coding tool in your own
-environment instead, see [Coding tools](CODING_TOOLS.md).
+advisory and never block a merge. To run checks from a coding tool on your own
+computer instead, see [Coding tools](CODING_TOOLS.md).
 
 ## Check file
 
@@ -113,7 +113,8 @@ owngit check-policy set --enable \
 
 Host mode is not a sandbox. A check can reach everything the OwnGit account
 can, including OwnGit's own data and secrets. Use it only for repositories
-whose every committer you trust.
+whose every committer you trust. A host check gets only a few environment
+variables from the server; see [Environment variables](#environment-variables).
 
 In host mode and with `owngit runner`, OwnGit stops the programs a check
 started when the check ends. On Linux this includes programs that started a
@@ -239,6 +240,62 @@ WantedBy=multi-user.target
 
 Only the service account may read the token file. After a token is revoked,
 issue a new one before you restart the service.
+
+### Environment variables
+
+Host checks and runner checks get a short, fixed list of environment
+variables, not the whole environment of the OwnGit server or the runner. If a
+command needs anything else, such as a proxy or a tool setting, set it in the
+check command. `owngit check` from a coding tool follows the same rules.
+
+A check gets these variables when the server or runner has them:
+
+- on every system: `PATH`, `HOME`, `LANG`, `TZ`, `LC_ALL`, `LC_COLLATE`,
+  `LC_CTYPE`, `LC_MESSAGES`, `LC_MONETARY`, `LC_NUMERIC` and `LC_TIME`;
+- on Linux and macOS: `USER`, `LOGNAME` and `SHELL`;
+- on Windows: the system, command shell, user profile, program folder and
+  processor variables, such as `SystemRoot`, `ComSpec`, `PATHEXT`,
+  `USERPROFILE`, `APPDATA`, `ProgramFiles` and `NUMBER_OF_PROCESSORS`. Names
+  match in any letter case.
+
+OwnGit also sets `CI=true`, and points `TMPDIR`, `TEMP` and `TMP` to a new
+private temporary folder. On the server or runner, that folder sits in the
+job's own folder, next to the copied files. `owngit check` creates it in the
+system's temporary folder. All checks of one run share the folder, and OwnGit
+removes it after the last check. If OwnGit cannot create the folder, every
+check of the run ends as `error`. If it cannot remove the folder, the last
+check ends as `error`.
+
+Other variables are left out. This includes OwnGit's own settings, proxy
+settings in upper or lower case (such as `HTTPS_PROXY` and `https_proxy`),
+tool settings such as `JAVA_HOME`, and credentials. To give a command a value,
+set it in the command itself:
+
+- Linux and macOS: `HTTPS_PROXY=http://proxy.example.test:3128 go test ./...`
+- Windows: `set "JAVA_HOME=C:\Tools\jdk" && gradlew test`
+
+In `checks.json`, write each backslash as `\\`. The check file is committed with the repository, so do not put secrets in it.
+
+When the command of one of these checks fails or cannot start, its log starts
+with a note. The note lists the names of any variables OwnGit left out and asks
+you to set the ones the command needs. It never shows values. It skips any
+name that contains `TOKEN`, `SECRET`, `PASSWORD`, `KEY` or `CREDENTIAL` in any
+letter case, and the list stops at 8 KiB. A cancelled check gets no note. If
+OwnGit cannot create or remove the temporary folder, it reports that as its own
+error and does not add the note for it.
+
+These rules only choose the variables a check sees. They are not a sandbox: a
+check can still read and change everything its account can.
+
+Container checks do not use this list. A command in the container gets the
+variables its image defines, plus fixed values from OwnGit: `HOME`, `TMPDIR`,
+`TMP`, `TEMP` and `GOTMPDIR` set to `/tmp`, `XDG_CACHE_HOME` set to
+`/tmp/.cache` and `GOCACHE` set to `/tmp/go-build`. OwnGit also sets
+`HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `FTP_PROXY`, `ALL_PROXY` and their
+lower-case forms to empty values, so proxy settings from the image or from the
+server's Docker client configuration do not reach the command. OwnGit's own
+`docker` commands still use the server's environment, which is why the Docker
+variables under [Container](#container) matter.
 
 ## Jobs
 

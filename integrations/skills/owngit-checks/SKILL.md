@@ -136,8 +136,14 @@ not change the status. An empty configured set is `unavailable`, never `passed`.
 
 - Checks are advisory. They do not block a merge, and a passing check is not
   proof that the code is correct.
-- The helper inherits the user's environment and permissions. It is not a
-  sandbox.
+- The helper runs checks with the user's permissions and file access. It is
+  not a sandbox. Checks get only a fixed list of environment variables (such
+  as `PATH`, `HOME` and locale settings), `CI=true`, and a private temporary
+  folder in `TMPDIR`, `TEMP` and `TMP`. Proxy settings, tool settings and
+  credentials are not passed. If a check needs one, set it in the check
+  command. When a check command fails or cannot start, its log begins with
+  the names of the variables it did not get. A temporary-folder error is
+  reported as its own error, without that note.
 - A dirty or unknown worktree is not a tested commit. Report the recorded
   worktree state instead of calling the revision tested. When the state is
   `unknown`, report `worktree_note`, which says why. Each Git reading of the
