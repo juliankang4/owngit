@@ -33,8 +33,9 @@ const (
 var ErrSetupComplete = errors.New("setup is already complete")
 
 type Store struct {
-	db  *sql.DB
-	dir string
+	db         *sql.DB
+	dir        string
+	releaseWay func()
 	// database identifies the database file the store opened, so a later
 	// connection to it by path can prove it reached the same file.
 	database os.FileInfo
@@ -125,6 +126,12 @@ func CreateDirectory(dir string) (*os.File, error) {
 	return openStateDirectory(dir, true)
 }
 
+// CreateDirectoryForStart opens owned state for startup protection.
+// Existing permissions are inspected and narrowed by OpenIn before use.
+func CreateDirectoryForStart(dir string) (*os.File, error) {
+	return createStateDirectoryForStart(dir)
+}
+
 // OpenStateDirectory opens the existing state directory dir like
 // CreateDirectory, creating nothing.
 func OpenStateDirectory(dir string) (*os.File, error) {
@@ -132,9 +139,9 @@ func OpenStateDirectory(dir string) (*os.File, error) {
 }
 
 // Open opens the state in the directory dir, creating it with
-// CreateDirectory. An older schema is upgraded with no backup; see OpenIn.
+// CreateDirectoryForStart. An older schema is upgraded with no backup; see OpenIn.
 func Open(ctx context.Context, dir string) (*Store, error) {
-	held, err := CreateDirectory(dir)
+	held, err := CreateDirectoryForStart(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -142,11 +149,11 @@ func Open(ctx context.Context, dir string) (*Store, error) {
 	return OpenIn(ctx, held, nil)
 }
 
-// OpenIn opens the state in the directory held, which CreateDirectory or
-// OpenStateDirectory returned. The inspection binds the directory by its
+// OpenIn opens the state in the directory held, which CreateDirectory,
+// CreateDirectoryForStart or OpenStateDirectory returned. The inspection binds the directory by its
 // path and refuses one that is not the held directory any more, as a change
 // during inspection (ErrInspectionUnstable). SQLite opens the state by that
-// path, so the way to it is held (holdWay) until it has. When the database
+// path, so the way to it stays held until Store.Close. When the database
 // has an older schema, beforeUpgrade, unless nil, runs after the inspection
 // and before anything in the directory changes.
 func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (result *Store, err error) {
@@ -155,7 +162,11 @@ func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (re
 	if err != nil {
 		return nil, err
 	}
-	defer release()
+	defer func() {
+		if result == nil {
+			release()
+		}
+	}()
 	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
 		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
 	} else if !os.IsNotExist(err) {
@@ -225,6 +236,7 @@ func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (re
 		db.Close()
 		return nil, fmt.Errorf("identify state database file: %w", err)
 	}
+	store.releaseWay = sync.OnceFunc(release)
 	return store, nil
 }
 
@@ -1566,8 +1578,14 @@ func (s *Store) Exec(ctx context.Context, statement string, args ...any) error {
 	return err
 }
 
-func (s *Store) Close() error { return s.db.Close() }
-func (s *Store) Dir() string  { return s.dir }
+func (s *Store) Close() error {
+	err := s.db.Close()
+	if s.releaseWay != nil {
+		s.releaseWay()
+	}
+	return err
+}
+func (s *Store) Dir() string { return s.dir }
 
 // TableRowCount reports the row count of an existing table. It covers narrow
 // checks that have no dedicated accessor, such as confirming an unrelated

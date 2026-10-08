@@ -230,6 +230,34 @@ func TestMacOSPrivateInputACLQueryFailureFailsClosed(t *testing.T) {
 	}
 }
 
+func TestMacOSStateOpenProtectsPermitACL(t *testing.T) {
+	for _, grant := range []string{
+		"everyone allow add_file,delete_child",
+		"everyone allow read,list,file_inherit,directory_inherit",
+	} {
+		t.Run(grant, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state")
+			noErr(t, os.Mkdir(path, 0o700))
+			noErr(t, exec.Command("chmod", "+a", grant, path).Run())
+			store, err := Open(context.Background(), path)
+			noErr(t, err)
+			noErr(t, store.Close())
+			filesec, err := extendedSecurity(path, nil, 0)
+			noErr(t, err)
+			allowed, err := permitEntry(filesec, ^uint32(0))
+			noErr(t, err)
+			if allowed {
+				t.Fatal("state ACL still permits other access")
+			}
+			info, err := os.Stat(path)
+			noErr(t, err)
+			if info.Mode().Perm() != 0o700 {
+				t.Fatalf("mode=%o", info.Mode())
+			}
+		})
+	}
+}
+
 // An access list that a folder passes on survives the owner-only mode, so
 // protecting a private folder or file removes it, and a file made in the
 // folder afterwards inherits nothing.

@@ -3,6 +3,7 @@
 package state
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -134,6 +135,118 @@ func TestWindowsStateTargetResolutionAndOwnerOnlyACL(t *testing.T) {
 	}
 	noErr(t, ProtectPrivatePath(privateFile, false))
 	noErr(t, ValidatePrivateFile(privateFile))
+}
+
+func TestWindowsStateProtectionAtOpen(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	for _, test := range []struct {
+		name              string
+		sid               windows.WELL_KNOWN_SID_TYPE
+		mask              windows.ACCESS_MASK
+		inherited         bool
+		withoutWriteOwner bool
+	}{
+		{"Users modify", windows.WinBuiltinUsersSid, windows.GENERIC_WRITE | windows.DELETE, false, false},
+		{"Everyone modify", windows.WinWorldSid, windows.GENERIC_WRITE | windows.DELETE, false, false},
+		{"Authenticated Users inherited modify", windows.WinAuthenticatedUserSid, windows.GENERIC_WRITE | windows.DELETE, true, false},
+		{"read only", windows.WinWorldSid, windows.GENERIC_READ, false, false},
+		{"null DACL", windows.WinWorldSid, 0, false, false},
+		{"owner without WRITE_OWNER", windows.WinWorldSid, windows.GENERIC_WRITE, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "state")
+			noErr(t, os.Mkdir(path, 0o700))
+			other, err := windows.CreateWellKnownSid(test.sid)
+			noErr(t, err)
+			if test.mask == 0 {
+				noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil))
+			} else {
+				ownMask := windows.ACCESS_MASK(fileAllAccess)
+				if test.withoutWriteOwner {
+					noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, user, nil, nil, nil))
+					ownMask &^= windows.WRITE_OWNER
+				}
+				setRawDACL(t, path, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, ownMask), testEntry(other, windows.GRANT_ACCESS, test.mask)}, test.inherited)
+			}
+			if test.mask != windows.GENERIC_READ {
+				reader, err := OpenStateDirectory(path)
+				if err == nil {
+					reader.Close()
+					t.Fatal("unsafe reader did not refuse")
+				}
+			}
+			store, err := Open(context.Background(), path)
+			noErr(t, err)
+			noErr(t, store.Close())
+			noErr(t, validateOwnerOnly(path, user, true))
+			reader, err := OpenStateDirectory(path)
+			noErr(t, err)
+			reader.Close()
+		})
+	}
+}
+
+func TestWindowsManagedStateProtection(t *testing.T) {
+	user, _, err := processIdentity()
+	noErr(t, err)
+	everyone, err := windows.CreateWellKnownSid(windows.WinWorldSid)
+	noErr(t, err)
+	for _, test := range []struct {
+		name      string
+		file      string
+		foreign   bool
+		directory bool
+	}{
+		{"owned child", TrayHiddenFile, false, false},
+		{"foreign child", TrayHiddenFile, true, false},
+		{"Tailscale change lock", TailscaleChangeLockFile, false, false},
+		{"directory at a file name", TrayAccessFile, false, true},
+		{"file at a directory name", "runtime", false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			foreign := test.foreign
+			root, err := CreateDirectory(filepath.Join(t.TempDir(), "state"))
+			noErr(t, err)
+			defer root.Close()
+			path := filepath.Join(root.Name(), test.file)
+			if test.directory {
+				noErr(t, os.Mkdir(path, 0o700))
+			} else {
+				noErr(t, os.WriteFile(path, []byte("kept"), 0o600))
+			}
+			setRawDACL(t, path, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, fileAllAccess), testEntry(everyone, windows.GRANT_ACCESS, windows.GENERIC_WRITE)}, false)
+			if foreign {
+				withWindowsPrivilege(t, "SeRestorePrivilege", func() {
+					noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, everyone, nil, nil, nil))
+				})
+			}
+			before, err := pathDescriptor(path)
+			noErr(t, err)
+			err = ProtectManagedStateFiles(root)
+			if foreign {
+				var private *NotPrivateError
+				if !errors.As(err, &private) || private.Fix == "" || private.Shell != "PowerShell" {
+					t.Fatalf("foreign child refusal=%v", err)
+				}
+				after, err := pathDescriptor(path)
+				noErr(t, err)
+				if before.String() != after.String() {
+					t.Fatal("foreign child descriptor changed")
+				}
+			} else {
+				noErr(t, err)
+				noErr(t, validateOwnerOnly(path, user, test.directory))
+			}
+			if !test.directory {
+				content, err := os.ReadFile(path)
+				noErr(t, err)
+				if string(content) != "kept" {
+					t.Fatalf("content changed: %q", content)
+				}
+			}
+		})
+	}
 }
 
 // testDescriptor builds a security descriptor with owner and a DACL that grants

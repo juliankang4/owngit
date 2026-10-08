@@ -76,7 +76,7 @@ func requireOwnFile(descriptor int, path string) error {
 	case int(stat.Uid) != os.Geteuid():
 		return fmt.Errorf("%s belongs to another account", path)
 	case stat.Nlink != 1:
-		return fmt.Errorf("%s has another name as well, so it may be another file", path)
+		return fmt.Errorf("%s %w", path, errMultipleFileNames)
 	}
 	if err := unix.SetNonblock(descriptor, false); err != nil {
 		return &os.PathError{Op: "open", Path: path, Err: err}

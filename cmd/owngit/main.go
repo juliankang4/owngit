@@ -422,7 +422,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// The directory is created first because the lock file lives inside it.
 	// The lock and the state are taken in the directory that was checked,
 	// held open, whatever its path names later.
-	stateDirectory, err := state.CreateDirectory(*stateDir)
+	stateDirectory, err := state.CreateDirectoryForStart(*stateDir)
 	if err != nil {
 		return err
 	}
@@ -442,6 +442,9 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 		return err
 	}
 	defer store.Close()
+	if err := state.ProtectManagedStateFiles(stateDirectory); err != nil {
+		return err
+	}
 	releaseRunning, runningLive := claimRunningRecord(ctx, store, logf)
 	defer releaseRunning()
 	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))

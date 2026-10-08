@@ -429,7 +429,25 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	if create {
 		mayCreate = mayCreateOnTheWay(absolute)
 	}
-	dir, _, missing, err := walkWay(absolute, wayCheck(absolute, local, true), mayCreate)
+	return openCheckedDirectory(absolute, wayCheck(absolute, local, true), mayCreate)
+}
+
+func createStateDirectoryForStart(path string) (*os.File, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	check := wayCheck(absolute, true, true)
+	return openCheckedDirectory(absolute, func(entry wayEntry) error {
+		if stat, ok := entry.info.Sys().(*syscall.Stat_t); ok && entry.last && entry.enforced && entry.info.IsDir() && int(stat.Uid) == os.Geteuid() {
+			return nil
+		}
+		return check(entry)
+	}, mayCreateOnTheWay(absolute))
+}
+
+func openCheckedDirectory(absolute string, check, mayCreate func(wayEntry) error) (*os.File, error) {
+	dir, _, missing, err := walkWay(absolute, check, mayCreate)
 	if err != nil {
 		return nil, err
 	}
@@ -442,8 +460,7 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 
 // wayCheck is the check that openDirectory applies on the way to path, with
 // local as there. With own set, the directory must belong to this account.
-// A local state directory also refuses other writers, even with the sticky
-// bit. Without own, it is checked like every folder on the way.
+// Local state refuses other writers, even with the sticky bit.
 func wayCheck(path string, local, own bool) func(wayEntry) error {
 	protected := protectedCheck(true)
 	return func(entry wayEntry) error {
@@ -641,6 +658,10 @@ func requirePrivateFolder(dir *os.File) error {
 		return fmt.Errorf("other accounts can change what is in %s (%s stops that)", dir.Name(), fix)
 	}
 	return nil
+}
+
+func openReadableStateDirectory(held *os.File) (*os.File, error) {
+	return openFolderIn(held, ".")
 }
 
 func openFolderIn(parent *os.File, name string) (*os.File, error) {

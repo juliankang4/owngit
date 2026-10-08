@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -49,6 +51,36 @@ func ProtectPrivateHandle(file *os.File, directory bool) error {
 		return err
 	}
 	return clearAccessList(file)
+}
+
+func requireOwnStateFile(file *os.File) error {
+	return requireOwnFile(int(file.Fd()), file.Name())
+}
+
+func heldProtectionFingerprint(file *os.File) (string, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return "", err
+	}
+	acl, err := privateAccessListFingerprint(file)
+	return fmt.Sprintf("mode %04o%s", info.Mode().Perm(), acl), err
+}
+
+func stateProtectionError(path string, directory bool, cause error) error {
+	mode := "600"
+	if directory {
+		mode = "700"
+	}
+	fix := "chmod " + mode + " " + shellQuote(operandPath(path))
+	if runtime.GOOS == "darwin" {
+		fix = "chmod -N " + shellQuote(operandPath(path)) + " && " + fix
+	}
+	if info, err := os.Lstat(path); err == nil {
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) != os.Geteuid() {
+			fix = "sudo chown " + strconv.Itoa(os.Geteuid()) + " " + shellQuote(operandPath(path)) + " && " + fix
+		}
+	}
+	return fmt.Errorf("%w: %w; to fix it, run: %s", &NotPrivateError{Problem: "could not protect " + path, Fix: fix}, cause, fix)
 }
 
 // OwnedByCurrentUser reports whether the open file or directory belongs to the

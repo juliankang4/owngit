@@ -141,6 +141,31 @@ func accessListIdentityString(identity accessListIdentity) string {
 	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:]
 }
 
+func privateAccessListFingerprint(file *os.File) (string, error) {
+	filesec, err := extendedSecurity(file.Name(), file, 0)
+	if err != nil {
+		return "", err
+	}
+	if _, err := matchingPermitIdentities(filesec, 0, nil); err != nil {
+		return "", err
+	}
+	if len(filesec) == 0 {
+		return "", nil
+	}
+	count := binary.NativeEndian.Uint32(filesec[kauthEntriesOffset-8:])
+	if count == kauthFilesecNoACL || count == 0 {
+		return "", nil
+	}
+	var entries []string
+	for index := range int(count) {
+		entry := filesec[kauthEntriesOffset+index*kauthEntrySize:]
+		var identity accessListIdentity
+		copy(identity[:], entry[:16])
+		entries = append(entries, fmt.Sprintf("%s flags=%#x rights=%#x", accessListIdentityString(identity), binary.NativeEndian.Uint32(entry[16:]), binary.NativeEndian.Uint32(entry[20:])))
+	}
+	return ", ACL [" + strings.Join(entries, "; ") + "]", nil
+}
+
 func clearAccessList(file *os.File) error { return clearAccessListOf(file) }
 
 // clearAccessListOf removes the access list of an open file of this account

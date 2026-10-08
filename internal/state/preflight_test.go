@@ -365,8 +365,9 @@ func TestNonRegularStateEntriesAreRefused(t *testing.T) {
 	target := filepath.Join(root, "target")
 	createMigratedSchemaDatabase(t, target, currentSchemaVersion())
 	for _, test := range []struct {
-		name  string
-		build func(t *testing.T, directory string)
+		name     string
+		build    func(t *testing.T, directory string)
+		fragment string
 	}{
 		{name: "database symlink", build: func(t *testing.T, directory string) {
 			noErr(t, os.Symlink(filepath.Join(target, databaseName), filepath.Join(directory, databaseName)))
@@ -379,13 +380,27 @@ func TestNonRegularStateEntriesAreRefused(t *testing.T) {
 			createMigratedSchemaDatabase(t, directory, currentSchemaVersion())
 			noErr(t, os.Mkdir(filepath.Join(directory, databaseName+shmSuffix), 0o700))
 		}},
+		{name: "database hard link", build: func(t *testing.T, directory string) {
+			noErr(t, os.Link(filepath.Join(target, databaseName), filepath.Join(directory, databaseName)))
+		}, fragment: "another name"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
 			noErr(t, os.MkdirAll(directory, 0o700))
 			test.build(t, directory)
 			targetBefore := captureSchemaDirectory(t, target)
-			openRefused(t, directory, "must be a regular file")
+			fragment := test.fragment
+			if fragment == "" {
+				fragment = "must be a regular file"
+			}
+			err := openRefused(t, directory, fragment)
+			var private *NotPrivateError
+			if errors.As(err, &private) {
+				t.Fatalf("entry repair=%v, want a plain error without a permission command", err)
+			}
+			if !strings.Contains(err.Error(), directory) || !strings.Contains(err.Error(), "replace") || strings.Contains(err.Error(), "chmod") {
+				t.Fatalf("entry repair=%v", err)
+			}
 			assertSchemaDirectoryUnchanged(t, target, targetBefore)
 		})
 	}

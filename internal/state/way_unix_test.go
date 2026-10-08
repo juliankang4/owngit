@@ -4,6 +4,7 @@ package state
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -12,8 +13,7 @@ import (
 	"testing"
 )
 
-// A directory other accounts can write is refused without changing its mode.
-func TestStateDirectoryRefusesOtherWriters(t *testing.T) {
+func TestStateDirectoryProtectsAtOpenAndRefusesUnsafeReaders(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state")
 	held, err := CreateDirectory(path)
 	noErr(t, err)
@@ -35,6 +35,16 @@ func TestStateDirectoryRefusesOtherWriters(t *testing.T) {
 		if !unsafe {
 			noErr(t, err)
 		}
+		created, createErr := CreateDirectory(path)
+		if created != nil {
+			noErr(t, created.Close())
+		}
+		if unsafe && createErr == nil {
+			t.Fatal("ordinary state creation accepted other writers")
+		}
+		if !unsafe {
+			noErr(t, createErr)
+		}
 		// Log directories keep their existing ownership-only rule.
 		log, err := OpenDirectory(path, false)
 		noErr(t, err)
@@ -44,6 +54,111 @@ func TestStateDirectoryRefusesOtherWriters(t *testing.T) {
 		if after.Mode() != info.Mode() {
 			t.Fatalf("checking mode %o changed it to %o", info.Mode(), after.Mode())
 		}
+		store, err := Open(context.Background(), path)
+		noErr(t, err)
+		noErr(t, store.Close())
+		after, err = os.Stat(path)
+		noErr(t, err)
+		if after.Mode().Perm() != 0o700 {
+			t.Fatalf("opened state mode=%o, want 700", after.Mode())
+		}
+	}
+}
+
+func TestManagedStateProtectionUsesOwnedNames(t *testing.T) {
+	suffix := base64.RawURLEncoding.EncodeToString([]byte{0xfb, 0xff, 0, 1, 2, 3, 4, 5})
+	for _, test := range []struct {
+		name      string
+		directory bool
+		unmanaged bool
+		linked    bool
+	}{
+		{name: TrayHiddenFile}, {name: TailscaleChangeLockFile},
+		{name: TrayAccessFile, directory: true}, {name: "runtime"},
+		{name: "runtime/git-home"},
+		{name: "runtime/git-home", directory: true}, {name: "runtime/tmp", directory: true}, {name: "runtime/gitconfig.empty"},
+		{name: databaseName + ".new-0123456789abcdef"},
+		{name: "." + HealthRunFile + "-" + suffix}, {name: "." + TrayAccessFile + "-" + suffix},
+		{name: "." + TrayNotificationsFile + "-" + suffix}, {name: "." + TrayCursorFile + "-" + suffix},
+		{name: "." + HealthRunFile + "-0123456789abcdef", unmanaged: true},
+		{name: "." + TrayAccessFile + "-" + suffix + "=", unmanaged: true},
+		{name: "runtime", directory: true, linked: true},
+		{name: TrayHiddenFile, linked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root, err := CreateDirectory(filepath.Join(t.TempDir(), "state"))
+			noErr(t, err)
+			defer root.Close()
+			path := filepath.Join(root.Name(), test.name)
+			noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
+			if test.directory {
+				noErr(t, os.Mkdir(path, 0o777))
+			} else {
+				noErr(t, os.WriteFile(path, []byte("kept"), 0o666))
+			}
+			noErr(t, os.Chmod(path, 0o777))
+			unmanaged := filepath.Join(root.Name(), "user-file")
+			noErr(t, os.WriteFile(unmanaged, []byte("untouched"), 0o600))
+			noErr(t, os.Chmod(unmanaged, 0o644))
+			if test.linked {
+				outside := filepath.Join(t.TempDir(), "outside")
+				if test.directory {
+					noErr(t, os.Rename(path, outside))
+					noErr(t, os.Symlink(outside, path))
+				} else {
+					noErr(t, os.Link(path, outside))
+				}
+				before := captureProtectionFingerprints(t, outside)
+				err := ProtectManagedStateFiles(root)
+				var private *NotPrivateError
+				if errors.As(err, &private) {
+					t.Fatalf("linked entry repair=%v, want a plain error without a permission command", err)
+				}
+				if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "replace") || strings.Contains(err.Error(), "chmod") {
+					t.Fatalf("linked entry repair=%v", err)
+				}
+				assertProtectionFingerprints(t, before)
+				replacement := path + ".replacement"
+				if test.directory {
+					noErr(t, os.Mkdir(replacement, 0o700))
+				} else {
+					noErr(t, os.WriteFile(replacement, []byte("kept"), 0o600))
+				}
+				if test.directory {
+					noErr(t, os.Rename(path, outside+".link"))
+				}
+				noErr(t, os.Rename(replacement, path))
+				noErr(t, ProtectManagedStateFiles(root))
+				assertProtectionFingerprints(t, before)
+			} else {
+				noErr(t, ProtectManagedStateFiles(root))
+			}
+			info, err := os.Stat(path)
+			noErr(t, err)
+			want := os.FileMode(0o600)
+			if test.directory {
+				want = 0o700
+			}
+			if test.unmanaged {
+				want = 0o777
+			}
+			if info.Mode().Perm() != want {
+				t.Fatalf("mode=%o, want %o", info.Mode(), want)
+			}
+			if !test.directory {
+				content, err := os.ReadFile(path)
+				noErr(t, err)
+				if string(content) != "kept" {
+					t.Fatalf("content changed: %q", content)
+				}
+			}
+			info, err = os.Stat(unmanaged)
+			noErr(t, err)
+			if info.Mode().Perm() != 0o644 {
+				t.Fatal("unmanaged file permissions changed")
+			}
+			noErr(t, ProtectManagedStateFiles(root))
+		})
 	}
 }
 
@@ -240,6 +355,10 @@ func TestDestinationMayBeOnAShareExceptForRootAndTheState(t *testing.T) {
 		noErr(t, err)
 		stage, err := destination.CreateStage(".backup.stage")
 		if err == nil {
+			private, err := os.Open(stage)
+			noErr(t, err)
+			noErr(t, ProtectPrivateHandle(private, true))
+			noErr(t, private.Close())
 			destination.ReleaseStage()
 			err = os.Rename(stage, destination.Path)
 		}

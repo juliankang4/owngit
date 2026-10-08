@@ -75,7 +75,7 @@ func requireOwnFile(file *os.File) error {
 	case !owned:
 		return fmt.Errorf("%s belongs to another account", file.Name())
 	case information.NumberOfLinks != 1:
-		return fmt.Errorf("%s has another name as well, so it may be another file", file.Name())
+		return fmt.Errorf("%s %w", file.Name(), errMultipleFileNames)
 	}
 	return nil
 }

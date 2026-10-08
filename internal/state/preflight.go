@@ -348,12 +348,12 @@ func (in *inspection) accept(ctx context.Context) error {
 	if err := in.at(pointProtect, ""); err != nil {
 		return err
 	}
-	if err := ProtectPrivateHandle(in.dir.handle, true); err != nil {
+	if err := protectStateObject(in.dir.path, in.dir.handle, true); err != nil {
 		return fmt.Errorf("protect state directory: %w", err)
 	}
 	for _, object := range []*sourceObject{in.main, in.wal, in.shm} {
 		if object != nil {
-			if err := ProtectPrivateHandle(object.handle, false); err != nil {
+			if err := protectStateObject(in.dir.path, object.handle, false); err != nil {
 				return changedDuring(in.dir.handle, object, fmt.Errorf("protect state database file: %w", err))
 			}
 		}
@@ -614,7 +614,7 @@ func lstatSourceEntry(dir *os.File, path string) (os.FileInfo, error) {
 		return nil, fmt.Errorf("inspect %s: %w", filepath.Base(path), err)
 	}
 	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("state database entry %s must be a regular file", filepath.Base(path))
+		return nil, stateEntryRepairError(path, fmt.Errorf("state database entry %s must be a regular file", filepath.Base(path)))
 	}
 	return info, nil
 }

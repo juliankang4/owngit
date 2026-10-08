@@ -38,7 +38,7 @@ func sourceAccess(metadataOnly bool) uint32 {
 	if metadataOnly {
 		access = windows.FILE_READ_ATTRIBUTES
 	}
-	return access | windows.READ_CONTROL | windows.WRITE_DAC | windows.WRITE_OWNER
+	return access | windows.READ_CONTROL | windows.WRITE_DAC
 }
 
 // openSourceHandle opens the state directory without following a reparse
@@ -113,7 +113,11 @@ func openAt(dir *os.File, path string, access, share, disposition, options uint3
 // descriptor, instead of the access entries it would inherit from dir when
 // descriptor is nil.
 func createAt(dir *os.File, path string, access, share, disposition, options uint32, descriptor *windows.SECURITY_DESCRIPTOR, op string) (*os.File, error) {
-	objectName, err := windows.NewNTUnicodeString(filepath.Base(path))
+	name := filepath.Base(path)
+	if path == dir.Name() {
+		name = ""
+	}
+	objectName, err := windows.NewNTUnicodeString(name)
 	if err != nil {
 		return nil, &os.PathError{Op: op, Path: path, Err: err}
 	}

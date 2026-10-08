@@ -54,11 +54,32 @@ func TestWindowsStateIsNotSwappedAfterItsCheck(t *testing.T) {
 			if err != nil {
 				return
 			}
+			defer store.Close()
+			for _, phase := range []string{"after open", "after managed protection"} {
+				if phase == "after managed protection" {
+					noErr(t, ProtectManagedStateFiles(held))
+				}
+				for _, folder := range []string{path, filepath.Dir(path)} {
+					handle, err := openToRename(folder)
+					if err == nil {
+						windows.CloseHandle(handle)
+						t.Fatalf("%s: %s may be renamed while the store is open", phase, folder)
+					}
+					if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+						t.Fatalf("%s: rename access failed for another reason: %v", phase, err)
+					}
+				}
+			}
 			values, err := store.metadataValues(context.Background(), "exchange_marker")
-			noErr(t, store.Close())
 			noErr(t, err)
 			if marker := values["exchange_marker"]; marker != "checked" {
 				t.Fatalf("OpenIn opened the %q state after the swap", marker)
+			}
+			noErr(t, store.Close())
+			for _, folder := range []string{path, filepath.Dir(path)} {
+				handle, err := openToRename(folder)
+				noErr(t, err)
+				noErr(t, windows.CloseHandle(handle))
 			}
 		})
 	}

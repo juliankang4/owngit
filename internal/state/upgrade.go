@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 )
 
 // Upgrade is the schema upgrade that OpenIn is about to apply to an existing
@@ -163,8 +162,7 @@ func OpenUpgradeBackupFolder(stateDir string) (folder *os.File, release func(), 
 		// the walk holds it with O_PATH, which cannot change its mode.
 		err = ProtectPrivatePath(held.Name(), true)
 	}
-	if err == nil && runtime.GOOS == "windows" {
-		// Unix CreateDirectory already checks writers; Windows needs the ACL check here.
+	if err == nil {
 		err = requirePrivateFolder(held)
 	}
 	if err != nil {

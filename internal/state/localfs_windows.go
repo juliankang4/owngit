@@ -45,10 +45,26 @@ func OpenDirectory(path string, create bool) (*os.File, error) {
 	return openDirectory(path, create, false)
 }
 
+func createStateDirectoryForStart(path string) (*os.File, error) {
+	return openStateDirectory(path, true)
+}
+
 // openStateDirectory is CreateDirectory, or OpenStateDirectory when create
 // is not set: the state must be on a local volume for every account.
-func openStateDirectory(dir string, create bool) (*os.File, error) {
-	return openDirectory(dir, create, true)
+func openStateDirectory(path string, create bool) (*os.File, error) {
+	dir, err := openDirectory(path, create, true)
+	if err != nil || create {
+		return dir, err
+	}
+	changeable, err := OthersCanChangeFile(dir, nil)
+	if err == nil && changeable {
+		err = errors.New("another account can change the state directory")
+	}
+	if err != nil {
+		dir.Close()
+		return nil, stateProtectionError(path, true, err)
+	}
+	return dir, nil
 }
 
 // openDirectory is OpenDirectory; with local set, the volume must be local
@@ -191,6 +207,10 @@ func requirePrivateFolder(dir *os.File) error {
 		return fmt.Errorf("%s is not private to this account: the folder must belong to this account, with its own access list, not an inherited one, letting only this account in: %w", dir.Name(), err)
 	}
 	return nil
+}
+
+func openReadableStateDirectory(held *os.File) (*os.File, error) {
+	return openAt(held, held.Name(), folderAccess|windows.FILE_LIST_DIRECTORY, folderShare, windows.FILE_OPEN, folderOptions, "list")
 }
 
 func openFolderIn(parent *os.File, name string) (*os.File, error) {
@@ -623,6 +643,28 @@ func validateOwnerOnlyHandle(handle windows.Handle, user *windows.SID, directory
 		return err
 	}
 	return validateOwnerOnlyDescriptor(descriptor, user, directory)
+}
+
+func requireOwnStateFile(file *os.File) error { return requireOwnFile(file) }
+
+func heldProtectionFingerprint(file *os.File) (string, error) {
+	descriptor, err := handleDescriptor(windows.Handle(file.Fd()))
+	if err != nil {
+		return "", err
+	}
+	return descriptor.String(), nil
+}
+
+func stateProtectionError(path string, directory bool, cause error) error {
+	fix, err := PrivateDirectoryFix(path, false)
+	if err != nil {
+		user, _, identityErr := processIdentity()
+		if identityErr != nil {
+			return errors.Join(cause, err, identityErr)
+		}
+		fix = privatePathRepairCommand(path, user, true, false)
+	}
+	return fmt.Errorf("%w: %w; to fix it, run in PowerShell: %s", &NotPrivateError{Problem: "could not protect " + path, Fix: fix, Shell: "PowerShell"}, cause, fix)
 }
 
 func handleDescriptor(handle windows.Handle) (*windows.SECURITY_DESCRIPTOR, error) {
