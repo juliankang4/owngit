@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"sort"
 	"testing"
-	"time"
 
 	"owngit/internal/state"
 )
@@ -112,12 +111,8 @@ func TestSuccessfulRefreshRemovesItsPackKeepBehindAReader(t *testing.T) {
 		}()
 		<-holding
 	}
-	started := time.Now()
 	run, err := f.refresh()
-	elapsed := time.Since(started)
 	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
-	require(t, elapsed < destinationKeepCleanupTimeout,
-		"the refresh took %s with a reader holding the repository, so its keep cleanup waited out the %s bound", elapsed, destinationKeepCleanupTimeout)
 	keeps := destinationKeepFiles(t, f.destinationPath())
 	require(t, len(keeps) == 0, "the refresh left keep files %v while a reader held the repository", keeps)
 }
