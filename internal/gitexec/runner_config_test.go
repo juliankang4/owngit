@@ -171,8 +171,14 @@ func TestArchiveIsTheSameWithTheLargeFileThreshold(t *testing.T) {
 	noErr(t, err)
 	tree, err := runner.Run(ctx, dir, strings.NewReader("100644 blob "+strings.TrimSpace(string(blob.Stdout))+"\tf.txt\n"), "--git-dir", ".", "mktree")
 	noErr(t, err)
+	// A fixed-date commit keeps tar timestamps independent of the clock.
+	commit, err := runner.RunWithEnvironment(ctx, dir, strings.NewReader("archive\n"), []string{
+		"GIT_AUTHOR_NAME=Test", "GIT_AUTHOR_EMAIL=test@example.invalid", "GIT_COMMITTER_NAME=Test", "GIT_COMMITTER_EMAIL=test@example.invalid",
+		"GIT_AUTHOR_DATE=2000-01-01T00:00:00Z", "GIT_COMMITTER_DATE=2000-01-01T00:00:00Z",
+	}, "--git-dir", ".", "commit-tree", strings.TrimSpace(string(tree.Stdout)))
+	noErr(t, err)
 	archive := func(extra ...string) string {
-		result, err := runner.RunWithEnvironment(ctx, dir, nil, extra, "--git-dir", ".", "archive", "--format=tar", strings.TrimSpace(string(tree.Stdout)))
+		result, err := runner.RunWithEnvironment(ctx, dir, nil, extra, "--git-dir", ".", "archive", "--format=tar", strings.TrimSpace(string(commit.Stdout)))
 		noErr(t, err)
 		return string(result.Stdout)
 	}
