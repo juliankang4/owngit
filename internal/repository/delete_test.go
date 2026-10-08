@@ -202,6 +202,16 @@ func TestDeleteChecksRepositoryStorage(t *testing.T) {
 			t.Run(string(mode)+"/"+folder, func(t *testing.T) {
 				ctx := context.Background()
 				manager, remote, _ := newTestRepository(t)
+				if folder == "unmounted" && runtime.GOOS == "windows" {
+					root := manager.RepositoryRoot()
+					noErr(t, os.Rename(root, root+"-mounted"))
+					linkCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+					output, err := exec.CommandContext(linkCtx, "cmd.exe", "/c", "mklink", "/J", root, root+"-mounted").CombinedOutput()
+					cancel()
+					if err != nil {
+						t.Fatalf("create storage junction: %v %s", err, output)
+					}
+				}
 				noErr(t, manager.ClaimStorage())
 				t.Cleanup(manager.ReleaseStorage)
 				before := treeDigest(t, remote)
@@ -227,11 +237,17 @@ func TestDeleteChecksRepositoryStorage(t *testing.T) {
 				switch folder {
 				case "unmounted", "empty mount point at startup", "nonempty mount point at startup", "unknown OwnGit entry at startup", "malformed creation staging at startup":
 					root := manager.RepositoryRoot()
-					noErr(t, os.Rename(root, root+"-mounted"))
+					if folder != "unmounted" {
+						manager.ReleaseStorage()
+					}
+					if folder == "unmounted" && runtime.GOOS == "windows" {
+						noErr(t, os.Remove(root))
+					} else {
+						noErr(t, os.Rename(root, root+"-mounted"))
+					}
 					saved = filepath.Join(root+"-mounted", "sample.git")
 					wantError = ErrStorageUnavailable
 					if folder != "unmounted" {
-						manager.ReleaseStorage()
 						noErr(t, os.Mkdir(root, 0o700))
 						if folder == "malformed creation staging at startup" {
 							otherPath = filepath.Join(root, ".owngit-create-"+strings.Repeat("a", 32))
