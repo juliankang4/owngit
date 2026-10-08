@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-10-08
+
+This release fixes security problems rated Low, lowers memory use, and makes the dashboard and automatic checks faster with many repositories or branches. Upgrading is recommended.
+
+**Upgrading:**
+
+- At every start, OwnGit now makes its state directory private to its own account and logs each change, so access that other accounts had to it is removed.
+- On macOS 27, a menu bar manager such as Hidden Bar can still hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Keep the menu bar manager expanded to see the icon; a fix is planned for 1.1.7.
+
+**Changes for scripts:**
+
+- `owngit restore --json` lists malformed Git objects found in the restored repositories under `object_warnings`, with `id` and `message` for each repository. The field is left out when there are none.
+- When the server could not finish checking the administrator password, the error details include `operation_started: false`. Status, code and message are unchanged.
+
+### Changed
+
+- An idle server uses about half the memory: 12.3 MiB of Go heap instead of 24.7 MiB, measured on macOS with no repositories.
+- An import looks for large-file pointers while it reads the list of fetched objects, instead of holding the whole list in memory first. In a measured repository with many objects and long paths, Go heap growth fell from 75.2 MiB to 5.3 MiB.
+- On Linux, the number of password checks that run at once follows the host's memory: one at a time at 256 MiB or less, two at 512 MiB, three at 768 MiB and four above. Each check uses 64 MiB, and new passwords in Settings, share links and setup now count toward the same limit.
+- The dashboard, its search and the all-repository activity page open faster with many repositories. With 1,000 repositories on Linux, the dashboard went from 122.6 to 63.5 ms, search from 79.2 to 23.2 ms and activity from 114.5 to 57.7 ms.
+- Automatic checks remember up to 10,000 branches per repository instead of 64, so unchanged branches are skipped. With 10,000 branches on a Raspberry Pi 5, a scan with no changes fell from 73 seconds to 0.4 seconds.
+- A scheduled import that waits for a busy import slot starts as soon as a slot is free, instead of at the scheduler's next regular check.
+- Messages about a changed repository folder now give both ways to continue: put the original folder back, or restart OwnGit to use the folder now in its place. Renaming a repository and changing its import settings still work while one repository's folder is missing.
+- `owngit restore` checks the Git objects of each restored repository and prints a warning with the repair steps for each repository that holds malformed objects. The backup is still restored.
+- On small Linux hosts, a file that cannot be compared within the size or memory limits is shown as "Text comparison unavailable" instead of too large.
+- On Windows, the state directory and its parent folders cannot be renamed or moved while the server or a command has the state open. Stop OwnGit before you move them.
+- An external check runner is refused before it downloads anything when the check source holds a file the server cannot read within its limits. The status and code are unchanged, and the message names the limits.
+
+### Fixed
+
+- A language, appearance or list order chosen at the HTTPS address no longer overrides the choice made at a plain HTTP address of the same host, and the same applies to a share link password. Saved choices carry over after the upgrade.
+- `owngit runner-credential issue` and `owngit helper-credential create`, repeated with the same creation ID, no longer revoke the earlier credential when the server could not finish the password check.
+- The dashboard and all-repository activity show a repository whose folder was replaced while OwnGit runs as unreadable, as its own page already did, instead of the last cached listing.
+- On small Linux hosts, files that OwnGit refused before it repacked a repository are checked again afterwards, so files that are now readable are shown.
+- On Linux, a check whose cleanup cannot read the list of running processes ends as `error` with the reason in `cleanup_error`, instead of passing while its programs may keep running.
+- On a busy Windows host, a cancelled check no longer ends as an error because confirming that its programs exited took too long.
+- At start, OwnGit leaves correct Git hooks alone and replaces a changed hook in one step, so Git never runs a hook that is only partly written.
+- On Windows, OwnGit starts with a state directory whose permissions your account may change but whose owner it may not, such as a folder directly under `C:\`. 1.1.5 stopped with "Access is denied".
+
+### Security
+
+- Low: on a computer shared with other local accounts, OwnGit now makes its state directory and the files it manages there private to its own account at every start, on Linux, macOS and Windows. Affects 1.1.5 and earlier; upgrade.
+- Low: on a computer shared with other local accounts, `owngit doctor`, `owngit service status` and the menu bar or panel icon now confirm a running OwnGit by the same proof that `owngit health` checks, and show any other answer as not confirmed, with the reason. Affects 1.1.5 and earlier; upgrade.
+- Low: on a computer shared with other local accounts, OwnGit now checks each repository's own folder before pushes, pull request changes, imports, restores, maintenance, deletion and backups. A folder put in its place while OwnGit runs is refused (HTTP 409 for Git and the API), and a backup fails instead of saving only part of the repositories. Affects 1.1.5 and earlier; upgrade.
+
 ## [1.1.5] - 2026-10-07
 
 This release fixes security problems rated Medium and Low, bounds waits that could last without end, and lowers memory use on small Linux hosts and with large repositories. Upgrading is recommended.

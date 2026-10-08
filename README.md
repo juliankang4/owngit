@@ -5,7 +5,7 @@
 <h1 align="center">OwnGit</h1>
 
 <p align="center">
-  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.5-0A62C9?style=flat&colorA=222222" alt="Version 1.1.5"></a>
+  <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/version-1.1.6-0A62C9?style=flat&colorA=222222" alt="Version 1.1.6"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-58A6FF?style=flat&colorA=222222" alt="GPL-3.0 License"></a>
   <a href="https://github.com/juliankang4/homebrew-tap"><img src="https://img.shields.io/badge/Homebrew-juliankang4%2Ftap-FBB040?style=flat&colorA=222222&logo=homebrew&logoColor=white" alt="Homebrew tap juliankang4/tap"></a>
   <a href="https://www.npmjs.com/package/owngit"><img src="https://img.shields.io/npm/v/owngit?style=flat&colorA=222222&color=CB3837&logo=npm&logoColor=white&label=npm" alt="npm package owngit"></a>
