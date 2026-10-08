@@ -195,6 +195,7 @@ func TestNPMPackages(t *testing.T) {
 			executables[npmPackageName(current)+"/"+npmBinaryPath(current)] = true
 		}
 		executables[npmPackageName(releaseTargets[0])+"/bin/"+iconAppName+"/Contents/MacOS/OwnGitLauncher"] = true
+		executables[npmPackageName(releaseTargets[0])+"/bin/"+iconAppName+"/"+appHelperPath] = true
 		err := filepath.WalkDir(npmDir, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err

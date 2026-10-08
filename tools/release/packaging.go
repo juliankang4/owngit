@@ -132,8 +132,8 @@ func packagingCommand(arguments []string) error {
 	if err := check("tap", *tap, &data.Tap, validateTap, &homebrewMissing); err != nil {
 		return err
 	}
-	owner, repository, _ := strings.Cut(data.Tap, "/")
-	data.TapFormula = owner + "/" + strings.TrimPrefix(repository, "homebrew-") + "/owngit"
+	owner, tapRepository, _ := strings.Cut(data.Tap, "/")
+	data.TapFormula = owner + "/" + strings.TrimPrefix(tapRepository, "homebrew-") + "/owngit"
 	if data.Tap == "" {
 		data.TapFormula = "example/tap/owngit"
 	}
