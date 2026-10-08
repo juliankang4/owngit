@@ -141,50 +141,116 @@ func TestWindowsStateProtectionAtOpen(t *testing.T) {
 	user, _, err := processIdentity()
 	noErr(t, err)
 	for _, test := range []struct {
-		name              string
-		sid               windows.WELL_KNOWN_SID_TYPE
-		mask              windows.ACCESS_MASK
-		inherited         bool
-		withoutWriteOwner bool
+		name                 string
+		sid                  windows.WELL_KNOWN_SID_TYPE
+		mask                 windows.ACCESS_MASK
+		inherited            bool
+		withoutWriteOwner    bool
+		temporaryWithoutList bool
 	}{
-		{"Users modify", windows.WinBuiltinUsersSid, windows.GENERIC_WRITE | windows.DELETE, false, false},
-		{"Everyone modify", windows.WinWorldSid, windows.GENERIC_WRITE | windows.DELETE, false, false},
-		{"Authenticated Users inherited modify", windows.WinAuthenticatedUserSid, windows.GENERIC_WRITE | windows.DELETE, true, false},
-		{"read only", windows.WinWorldSid, windows.GENERIC_READ, false, false},
-		{"null DACL", windows.WinWorldSid, 0, false, false},
-		{"owner without WRITE_OWNER", windows.WinWorldSid, windows.GENERIC_WRITE, false, true},
+		{"Users modify", windows.WinBuiltinUsersSid, windows.GENERIC_WRITE | windows.DELETE, false, false, false},
+		{"Everyone modify", windows.WinWorldSid, windows.GENERIC_WRITE | windows.DELETE, false, false, false},
+		{"Authenticated Users inherited modify", windows.WinAuthenticatedUserSid, windows.GENERIC_WRITE | windows.DELETE, true, false, false},
+		{"read only", windows.WinWorldSid, windows.GENERIC_READ, false, false, false},
+		{"null DACL", windows.WinWorldSid, 0, false, false, false},
+		{"owner without WRITE_OWNER", windows.WinWorldSid, windows.GENERIC_WRITE, false, true, false},
+		{"temporary root without list access", windows.WinWorldSid, windows.GENERIC_READ, false, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "state")
-			noErr(t, os.Mkdir(path, 0o700))
-			other, err := windows.CreateWellKnownSid(test.sid)
-			noErr(t, err)
-			if test.mask == 0 {
-				noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil))
-			} else {
-				ownMask := windows.ACCESS_MASK(fileAllAccess)
-				if test.withoutWriteOwner {
-					noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, user, nil, nil, nil))
-					ownMask &^= windows.WRITE_OWNER
+			open := func() {
+				ctx := context.Background()
+				path := filepath.Join(t.TempDir(), "state")
+				noErr(t, os.Mkdir(path, 0o700))
+				other, err := windows.CreateWellKnownSid(test.sid)
+				noErr(t, err)
+				if test.mask == 0 {
+					noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, nil, nil))
+				} else {
+					ownMask := windows.ACCESS_MASK(fileAllAccess)
+					if test.withoutWriteOwner {
+						noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, user, nil, nil, nil))
+						ownMask &^= windows.WRITE_OWNER
+					}
+					setRawDACL(t, path, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, ownMask), testEntry(other, windows.GRANT_ACCESS, test.mask)}, test.inherited)
 				}
-				setRawDACL(t, path, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, ownMask), testEntry(other, windows.GRANT_ACCESS, test.mask)}, test.inherited)
-			}
-			if test.mask != windows.GENERIC_READ {
+				if test.mask != windows.GENERIC_READ {
+					reader, err := OpenStateDirectory(path)
+					if err == nil {
+						reader.Close()
+						t.Fatal("unsafe reader did not refuse")
+					}
+				}
+				var snapshot string
+				if test.temporaryWithoutList {
+					createCrashedWALFixture(t, path, true, commitBaselineThenChangeVersion(""))
+					root := temporaryRootWithoutListAccess(t, user)
+					useHooks(t)
+					hookAt(t, pointCapture, func(stage string) {
+						if !strings.EqualFold(filepath.Dir(stage), root) {
+							t.Fatalf("snapshot root=%q, want %q", filepath.Dir(stage), root)
+						}
+						snapshot = stage
+					})
+				}
+				store, err := Open(ctx, path)
+				noErr(t, err)
+				defer store.Close()
+				if test.temporaryWithoutList {
+					values, err := store.metadataValues(ctx, "wal_only_marker")
+					noErr(t, err)
+					if values["wal_only_marker"] != "1" {
+						t.Fatalf("startup lost committed WAL data: %v", values)
+					}
+					_, err = os.Stat(snapshot)
+					if snapshot == "" || !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("snapshot=%q, cleanup error=%v", snapshot, err)
+					}
+				}
+				noErr(t, store.Close())
+				noErr(t, validateOwnerOnly(path, user, true))
 				reader, err := OpenStateDirectory(path)
-				if err == nil {
-					reader.Close()
-					t.Fatal("unsafe reader did not refuse")
-				}
+				noErr(t, err)
+				reader.Close()
 			}
-			store, err := Open(context.Background(), path)
-			noErr(t, err)
-			noErr(t, store.Close())
-			noErr(t, validateOwnerOnly(path, user, true))
-			reader, err := OpenStateDirectory(path)
-			noErr(t, err)
-			reader.Close()
+			if test.temporaryWithoutList {
+				withOrdinaryElevatedPrivileges(t, open)
+			} else {
+				open()
+			}
 		})
 	}
+}
+
+func temporaryRootWithoutListAccess(t *testing.T, user *windows.SID) string {
+	t.Helper()
+	root := t.TempDir()
+	setRawDACL(t, root, true, []windows.EXPLICIT_ACCESS{
+		testEntry(user, windows.GRANT_ACCESS, fileAllAccess&^windows.FILE_LIST_DIRECTORY),
+	}, false)
+	t.Cleanup(func() {
+		setRawDACL(t, root, true, []windows.EXPLICIT_ACCESS{testEntry(user, windows.GRANT_ACCESS, fileAllAccess)}, false)
+	})
+	child, err := CreateDirectory(filepath.Join(root, "private-child"))
+	noErr(t, err)
+	noErr(t, child.Close())
+	probe := filepath.Join(child.Name(), "owned-file")
+	noErr(t, os.WriteFile(probe, []byte("kept"), 0o600))
+	data, err := os.ReadFile(probe)
+	noErr(t, err)
+	if string(data) != "kept" {
+		t.Fatal("temporary root cannot support a usable private child")
+	}
+	_, err = os.ReadDir(root)
+	if !errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		t.Fatalf("root listing=%v, want access denied", err)
+	}
+	t.Logf("temporary root listing is denied: %v", err)
+	t.Setenv("TEMP", root)
+	t.Setenv("TMP", root)
+	if os.TempDir() != root {
+		t.Fatalf("temporary root=%q, want %q", os.TempDir(), root)
+	}
+	return root
 }
 
 func TestWindowsManagedStateProtection(t *testing.T) {

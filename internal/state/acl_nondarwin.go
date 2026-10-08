@@ -11,3 +11,5 @@ func validatePrivateInputAccessList(*os.File, os.FileInfo) error { return nil }
 func clearAccessList(*os.File) error { return nil }
 
 func privateAccessListFingerprint(*os.File) (string, error) { return "", nil }
+
+func stateAccessListHasPermit(*os.File) (bool, error) { return false, nil }

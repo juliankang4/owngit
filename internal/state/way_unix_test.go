@@ -45,7 +45,6 @@ func TestStateDirectoryProtectsAtOpenAndRefusesUnsafeReaders(t *testing.T) {
 		if !unsafe {
 			noErr(t, createErr)
 		}
-		// Log directories keep their existing ownership-only rule.
 		log, err := OpenDirectory(path, false)
 		noErr(t, err)
 		noErr(t, log.Close())

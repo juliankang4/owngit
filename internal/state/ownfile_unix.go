@@ -56,30 +56,29 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
-	if err := requireOwnFile(descriptor, path); err != nil {
-		unix.Close(descriptor)
-		return nil, err
-	}
-	return os.NewFile(uintptr(descriptor), path), nil
-}
-
-// requireOwnFile refuses an open file that OpenOwnFile must not use, and
-// makes one that it may use wait on reads and writes again.
-func requireOwnFile(descriptor int, path string) error {
-	var stat unix.Stat_t
-	if err := unix.Fstat(descriptor, &stat); err != nil {
-		return &os.PathError{Op: "stat", Path: path, Err: err}
-	}
-	switch {
-	case stat.Mode&unix.S_IFMT != unix.S_IFREG:
-		return fmt.Errorf("%s is not a regular file", path)
-	case int(stat.Uid) != os.Geteuid():
-		return fmt.Errorf("%s belongs to another account", path)
-	case stat.Nlink != 1:
-		return fmt.Errorf("%s %w", path, errMultipleFileNames)
+	file := os.NewFile(uintptr(descriptor), path)
+	if err := requireOwnFile(file); err != nil {
+		return nil, closeAfter(file, err)
 	}
 	if err := unix.SetNonblock(descriptor, false); err != nil {
-		return &os.PathError{Op: "open", Path: path, Err: err}
+		return nil, closeAfter(file, &os.PathError{Op: "open", Path: path, Err: err})
+	}
+	return file, nil
+}
+
+func requireOwnFile(file *os.File) error {
+	var stat unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
+		return &os.PathError{Op: "stat", Path: file.Name(), Err: err}
+	}
+	runtime.KeepAlive(file)
+	switch {
+	case stat.Mode&unix.S_IFMT != unix.S_IFREG:
+		return fmt.Errorf("%s is not a regular file", file.Name())
+	case int(stat.Uid) != os.Geteuid():
+		return fmt.Errorf("%s belongs to another account", file.Name())
+	case stat.Nlink != 1:
+		return fmt.Errorf("%s %w", file.Name(), errMultipleFileNames)
 	}
 	return nil
 }

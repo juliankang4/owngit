@@ -13,6 +13,78 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const temporaryEnvironment = "TEMP and TMP"
+
+func systemTemporaryRoot() (string, error) {
+	root, err := windows.KnownFolderPath(windows.FOLDERID_LocalAppData, 0)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "Temp"), nil
+}
+
+func openInspectionRoot(root string, purpose inspectionPurpose) (*os.File, func(), error) {
+	var dir *os.File
+	var err error
+	if purpose == inspectForReader {
+		dir, err = walkFolders(root, false, true)
+	} else {
+		dir, err = openInspectionFolder(root)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	dir, err = nameByFinalPath(dir)
+	if err == nil && purpose == inspectForReader {
+		var changeable bool
+		changeable, err = OthersCanChangeFile(dir, nil)
+		if err == nil && changeable {
+			err = errors.New("another account can change the temporary directory")
+		}
+	}
+	var unhold func()
+	if err == nil {
+		unhold, err = holdWay(dir)
+	}
+	if err != nil {
+		return nil, nil, closeAfter(dir, err)
+	}
+	return dir, unhold, nil
+}
+
+func openInspectionFolder(path string) (*os.File, error) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	handle, err := windows.CreateFile(name, folderAccess, folderShare,
+		nil, windows.OPEN_EXISTING, windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, &os.PathError{Op: "open", Path: path, Err: errors.New("create inspection directory handle")}
+	}
+	return file, nil
+}
+
+func protectInspectionStage(stage *os.File) error { return requirePrivateFolder(stage) }
+
+func createPrivateFileIn(parent *os.File, name string) (*os.File, error) {
+	user, _, err := processIdentity()
+	if err != nil {
+		return nil, err
+	}
+	private, err := ownerOnlySecurityDescriptor(user, false)
+	if err != nil {
+		return nil, err
+	}
+	return createAt(parent, filepath.Join(parent.Name(), name), windows.GENERIC_WRITE|windows.READ_CONTROL,
+		0, windows.FILE_CREATE, windows.FILE_NON_DIRECTORY_FILE, private, "create private file")
+}
+
 // protectionFingerprint describes the owner and DACL that a refusal must leave
 // unchanged. It is compared as an opaque SDDL string.
 func protectionFingerprint(path string) (string, error) {
@@ -38,7 +110,7 @@ func sourceAccess(metadataOnly bool) uint32 {
 	if metadataOnly {
 		access = windows.FILE_READ_ATTRIBUTES
 	}
-	return access | windows.READ_CONTROL | windows.WRITE_DAC
+	return access | windows.READ_CONTROL
 }
 
 // openSourceHandle opens the state directory without following a reparse

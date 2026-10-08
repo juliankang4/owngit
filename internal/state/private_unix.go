@@ -53,8 +53,19 @@ func ProtectPrivateHandle(file *os.File, directory bool) error {
 	return clearAccessList(file)
 }
 
-func requireOwnStateFile(file *os.File) error {
-	return requireOwnFile(int(file.Fd()), file.Name())
+func stateProtectionNeeded(file *os.File, directory bool) (bool, error) {
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	mode := os.FileMode(0o600)
+	if directory {
+		mode = 0o700
+	}
+	if info.Mode().Perm() != mode {
+		return true, nil
+	}
+	return stateAccessListHasPermit(file)
 }
 
 func heldProtectionFingerprint(file *os.File) (string, error) {

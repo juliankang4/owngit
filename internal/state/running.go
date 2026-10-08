@@ -5,6 +5,8 @@ import (
 	"errors"
 	"path/filepath"
 	"time"
+
+	"owngit/internal/statepath"
 )
 
 // The running record (RunningNetwork) tells saved from running network
@@ -25,7 +27,7 @@ import (
 
 // RunningNetworkLockFile is the lock a serve process holds while its running
 // record is valid.
-const RunningNetworkLockFile = ".network-running.lock"
+const RunningNetworkLockFile = statepath.RunningLock
 
 // States of the server that uses a state directory, in RunningObservation.
 const (
@@ -98,7 +100,7 @@ func (s *Store) ClaimRunningNetwork(ctx context.Context) (func(), error) {
 // (AcquireLockBriefly) instead of failing.
 func (s *Store) ObserveRunningNetwork(ctx context.Context) (RunningObservation, error) {
 	live, err := lockHeld(func() (func(), error) {
-		return AcquireExclusiveFileLock(filepath.Join(s.dir, RunningNetworkLockFile))
+		return s.runningObservationLock(RunningNetworkLockFile)
 	})
 	if err != nil {
 		return RunningObservation{}, err
@@ -109,7 +111,7 @@ func (s *Store) ObserveRunningNetwork(ctx context.Context) (RunningObservation, 
 	}
 	held := live
 	if !live {
-		if held, err = lockHeld(func() (func(), error) { return AcquireOfflineLock(s.dir) }); err != nil {
+		if held, err = lockHeld(func() (func(), error) { return s.runningObservationLock(offlineLockFile) }); err != nil {
 			return RunningObservation{}, err
 		}
 	}

@@ -29,6 +29,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 var (
@@ -752,7 +753,7 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 	if repositoryStage, err = repositoryDestination.CreateStage(filepath.Base(repositoryTarget) + ".owngit-restore-" + suffix); err != nil {
 		return fmt.Errorf("create staged repository root: %w", err)
 	}
-	runner, err := gitexec.New(gitPath, filepath.Join(stateStage, "runtime"))
+	runner, err := gitexec.New(gitPath, filepath.Join(stateStage, statepath.Runtime))
 	if err != nil {
 		return err
 	}
@@ -803,9 +804,9 @@ func restore(ctx context.Context, input, stateDirectory, repositoryRoot, gitPath
 		return fmt.Errorf("reopen staged state: %w", err)
 	}
 	hookRuntime := *runner
-	hookRuntime.HomeDir = filepath.Join(stateTarget, "runtime", "git-home")
-	hookRuntime.TempDir = filepath.Join(stateTarget, "runtime", "tmp")
-	hookRuntime.GlobalConfigPath = filepath.Join(stateTarget, "runtime", "gitconfig.empty")
+	hookRuntime.HomeDir = filepath.Join(stateTarget, statepath.Runtime, statepath.GitHome)
+	hookRuntime.TempDir = filepath.Join(stateTarget, statepath.Runtime, statepath.Temporary)
+	hookRuntime.GlobalConfigPath = filepath.Join(stateTarget, statepath.Runtime, statepath.GitConfig)
 	manager := &repository.Manager{Store: store, Git: runner, Locks: gitexec.NewLocks(), Root: repositoryStage}
 	prepareErr := operations.prepareExisting(ctx, manager, &hookRuntime)
 	var reconcileErr error

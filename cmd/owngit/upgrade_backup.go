@@ -18,6 +18,7 @@ import (
 	"owngit/internal/repository"
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 	"owngit/internal/version"
 )
 
@@ -75,7 +76,7 @@ func notUpgraded(upgrade *state.Upgrade, cause error, stateDir string) error {
 // its start (serve and backup) backs a state up and upgrades it: a command
 // beside a server that took the lock for a backup would keep a starting
 // server out for as long as the backup takes.
-var errOlderSchema = errors.New("this state has an older schema")
+var errOlderSchema = state.ErrOlderSchema
 
 // refuseUpgrade is the state.BeforeUpgrade of the commands that work beside
 // a running server.
@@ -126,7 +127,7 @@ func createUpgradeBackup(ctx context.Context, stateDir string, upgrade *state.Up
 	if !settings.Initialized {
 		return upgradeBackup{}, nil
 	}
-	runner, err := gitexec.New(gitPath, filepath.Join(copyDir, "runtime"))
+	runner, err := gitexec.New(gitPath, filepath.Join(copyDir, statepath.Runtime))
 	if err != nil {
 		return upgradeBackup{}, err
 	}

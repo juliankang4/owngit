@@ -13,6 +13,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"owngit/internal/statepath"
 )
 
 // The tray icon's files in the state directory. Both belong to this
@@ -20,19 +22,19 @@ import (
 const (
 	// TrayHiddenFile, when present, hides the tray icon on this computer
 	// until it is shown again (see TrayHidden).
-	TrayHiddenFile = "tray-hidden"
+	TrayHiddenFile = statepath.TrayHidden
 	// TrayAccessFile holds the address and the credential with which the
 	// tray icon of this computer reads the server's status (see
 	// PublishTrayAccess). Only this account can read it.
-	TrayAccessFile = "tray-access.json"
+	TrayAccessFile = statepath.TrayAccess
 	// TrayNotificationsFile holds which desktop notifications the icon of
 	// this computer shows (see TrayNotifications). Without it, it shows
 	// every kind.
-	TrayNotificationsFile = "tray-notifications.json"
+	TrayNotificationsFile = statepath.TrayNotifications
 	// TrayCursorFile holds the cursor of the event feed: what the icon of
 	// this computer has shown or dropped. Hiding the icon removes it, so an
 	// icon shown again starts with what happens from then on.
-	TrayCursorFile = "tray-cursor"
+	TrayCursorFile = statepath.TrayCursor
 )
 
 // TrayHidden reports whether the owner hid the tray icon on the computer of
@@ -339,7 +341,7 @@ func replaceOwnFile(held *os.File, name string, content []byte) error {
 	if _, err := rand.Read(random); err != nil {
 		return err
 	}
-	temporary := "." + name + "-" + base64.RawURLEncoding.EncodeToString(random)
+	temporary := statepath.ReplacementTemporary(name, random)
 	file, err := OpenOwnFile(held, temporary, os.O_WRONLY|os.O_CREATE)
 	if err != nil {
 		return err

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"owngit/internal/statepath"
 )
 
 // On Windows "owngit service install" registers one Task Scheduler task and,
@@ -69,7 +71,7 @@ type TaskPlan struct {
 // TaskLogFile is the log file the task passes to "owngit serve --log-file".
 // Task Scheduler keeps no output, so the server writes its log there.
 func TaskLogFile(stateDir string) string {
-	return strings.TrimRight(stateDir, `\`) + `\logs\service.log`
+	return strings.TrimRight(stateDir, `\`) + `\` + statepath.Logs + `\` + statepath.ServiceLog
 }
 
 // ServeArguments are the arguments of "owngit serve" in the task. Like a

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 // The staging runtime root is an exclusively held, private directory that
@@ -140,7 +141,7 @@ func (root runtimeRoot) stillOwned() (bool, error) {
 }
 
 func (s *Service) runtimeRootPath() string {
-	return filepath.Join(s.Store.Dir(), "runtime")
+	return filepath.Join(s.Store.Dir(), statepath.Runtime)
 }
 
 func (s *Service) stagingRootPath() string {

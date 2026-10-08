@@ -285,34 +285,44 @@ func WalkProtected(path string, check func(string, os.FileInfo) error) (resolved
 // whose members are treated as the account itself. Access list entries that
 // let another account write are refused as well.
 func OthersCanChange(path string, info os.FileInfo) (bool, string, error) {
-	return othersCanChange(path, info, false, true)
+	return othersCanChange(path, info, workspaceEntryWriters)
 }
 
 // OthersCanChangeFile reports the same classification for the exact held
 // directory. It never resolves file.Name(), so a replaced path cannot redirect
 // owner, mode or access-list inspection to another object.
 func OthersCanChangeFile(file *os.File, info os.FileInfo) (bool, error) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false, errors.New("owner is unavailable")
-	}
-	if stat.Uid != 0 && int(stat.Uid) != os.Geteuid() {
-		return true, nil
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return false, nil
-	}
-	permissions := info.Mode().Perm()
-	if info.Mode()&os.ModeSticky == 0 && (permissions&0o002 != 0 || permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid)) {
-		return true, nil
-	}
-	return accessListChangeable(file, info)
+	return othersCanChangeHeld(file, info, workspaceEntryWriters)
 }
 
-// othersCanChange is OthersCanChange; with rootGroups it also accepts group
-// write for macOS groups whose members may act as root. allowSticky accepts a
-// writable sticky directory when only its existing entries need protection.
-func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool) (bool, string, error) {
+func stateFileChangeable(file *os.File, info os.FileInfo) (bool, error) {
+	return othersCanChangeHeld(file, info, privateFolderWriters)
+}
+
+func othersCanChangeHeld(file *os.File, info os.FileInfo, policy writerPolicy) (bool, error) {
+	changeable, _, err := classifyOtherChanges(file.Name(), info, policy, func() (bool, string, error) {
+		changeable, err := accessListChangeable(file, info)
+		return changeable, "", err
+	})
+	return changeable, err
+}
+
+type writerPolicy uint8
+
+const (
+	workspaceEntryWriters writerPolicy = iota
+	protectedEntryWriters
+	privateFolderWriters
+)
+
+func othersCanChange(path string, info os.FileInfo, policy writerPolicy) (bool, string, error) {
+	return classifyOtherChanges(path, info, policy, func() (bool, string, error) {
+		fix, err := accessListFix(path, info)
+		return fix != "", fix, err
+	})
+}
+
+func classifyOtherChanges(path string, info os.FileInfo, policy writerPolicy, accessList func() (bool, string, error)) (bool, string, error) {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	if !ok {
 		return false, "", errors.New("owner is unavailable")
@@ -324,12 +334,11 @@ func othersCanChange(path string, info os.FileInfo, rootGroups, allowSticky bool
 		return false, "", nil
 	}
 	permissions := info.Mode().Perm()
-	if (!allowSticky || info.Mode()&os.ModeSticky == 0) && (permissions&0o002 != 0 ||
-		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(rootGroups && rootEquivalentGroup(stat.Gid))) {
+	if (policy == privateFolderWriters || info.Mode()&os.ModeSticky == 0) && (permissions&0o002 != 0 ||
+		permissions&0o020 != 0 && !OwnPrivateGroup(stat.Gid) && !(policy != workspaceEntryWriters && rootEquivalentGroup(stat.Gid))) {
 		return true, "chmod g-w,o-w " + shellQuote(path), nil
 	}
-	fix, err := accessListFix(path, info)
-	return fix != "", fix, err
+	return accessList()
 }
 
 // RequireProtectedPath refuses path when another account could change it or
@@ -341,7 +350,7 @@ func RequireProtectedPath(path string) error {
 	if err != nil {
 		return err
 	}
-	resolved, missing, err := WalkProtected(absolute, protectedCheck(true))
+	resolved, missing, err := WalkProtected(absolute, protectedCheck(protectedEntryWriters))
 	if err == nil && missing != "" {
 		return fmt.Errorf("%s does not exist", path)
 	}
@@ -352,7 +361,7 @@ func RequireProtectedPath(path string) error {
 	if err != nil {
 		return err
 	}
-	return protectedCheck(false)(resolved, info)
+	return protectedCheck(privateFolderWriters)(resolved, info)
 }
 
 // rootEquivalentGroup reports whether gid is a macOS group whose members may
@@ -367,9 +376,9 @@ func rootEquivalentGroup(gid uint32) bool {
 // protectedCheck is the WalkProtected check of RequireProtectedPath: it
 // refuses a path that another account can change, with the command that
 // fixes it when there is one.
-func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
+func protectedCheck(policy writerPolicy) func(string, os.FileInfo) error {
 	return func(name string, info os.FileInfo) error {
-		changeable, fix, err := othersCanChange(name, info, true, allowSticky)
+		changeable, fix, err := othersCanChange(name, info, policy)
 		if err == nil && changeable {
 			err = &NotPrivateError{Problem: fmt.Sprintf("another account can change %s", name), Fix: fix}
 			if fix != "" {
@@ -407,20 +416,45 @@ func protectedCheck(allowSticky bool) func(string, os.FileInfo) error {
 // account other than root may keep its log on a share: whoever serves it
 // could change it, but reaches nothing else through it.
 func OpenDirectory(path string, create bool) (*os.File, error) {
-	return openDirectory(path, create, false)
+	return openDirectory(path, create, logFolderPolicy)
 }
 
 // openStateDirectory is CreateDirectory, or OpenStateDirectory when create
 // is not set.
 func openStateDirectory(dir string, create bool) (*os.File, error) {
-	return openDirectory(dir, create, true)
+	return openDirectory(dir, create, stateFolderPolicy)
 }
 
-// openDirectory is OpenDirectory; with local set, every folder on the way
-// must be on a filesystem that this computer enforces as well, for every
-// account: a share's server could otherwise rename a folder on the way
-// after the check and put another state at the path.
-func openDirectory(path string, create, local bool) (*os.File, error) {
+type folderOwnership uint8
+
+const (
+	currentAccountFolder folderOwnership = iota
+	currentAccountOrRootFolder
+)
+
+type folderWriters uint8
+
+const (
+	ownerChoosesWriters folderWriters = iota
+	refuseOtherWriters
+	protectWritersAtStart
+	protectExistingEntries
+)
+
+type folderPolicy struct {
+	localVolume bool
+	ownership   folderOwnership
+	writers     folderWriters
+}
+
+var (
+	logFolderPolicy       = folderPolicy{ownership: currentAccountFolder, writers: ownerChoosesWriters}
+	stateFolderPolicy     = folderPolicy{localVolume: true, ownership: currentAccountFolder, writers: refuseOtherWriters}
+	startFolderPolicy     = folderPolicy{localVolume: true, ownership: currentAccountFolder, writers: protectWritersAtStart}
+	temporaryFolderPolicy = folderPolicy{localVolume: true, ownership: currentAccountOrRootFolder, writers: protectExistingEntries}
+)
+
+func openDirectory(path string, create bool, policy folderPolicy) (*os.File, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -429,21 +463,11 @@ func openDirectory(path string, create, local bool) (*os.File, error) {
 	if create {
 		mayCreate = mayCreateOnTheWay(absolute)
 	}
-	return openCheckedDirectory(absolute, wayCheck(absolute, local, true), mayCreate)
+	return openCheckedDirectory(absolute, wayCheck(absolute, policy), mayCreate)
 }
 
 func createStateDirectoryForStart(path string) (*os.File, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	check := wayCheck(absolute, true, true)
-	return openCheckedDirectory(absolute, func(entry wayEntry) error {
-		if stat, ok := entry.info.Sys().(*syscall.Stat_t); ok && entry.last && entry.enforced && entry.info.IsDir() && int(stat.Uid) == os.Geteuid() {
-			return nil
-		}
-		return check(entry)
-	}, mayCreateOnTheWay(absolute))
+	return openDirectory(path, true, startFolderPolicy)
 }
 
 func openCheckedDirectory(absolute string, check, mayCreate func(wayEntry) error) (*os.File, error) {
@@ -458,18 +482,15 @@ func openCheckedDirectory(absolute string, check, mayCreate func(wayEntry) error
 	return dir, nil
 }
 
-// wayCheck is the check that openDirectory applies on the way to path, with
-// local as there. With own set, the directory must belong to this account.
-// Local state refuses other writers, even with the sticky bit.
-func wayCheck(path string, local, own bool) func(wayEntry) error {
-	protected := protectedCheck(true)
+func wayCheck(path string, policy folderPolicy) func(wayEntry) error {
+	protected := protectedCheck(protectedEntryWriters)
 	return func(entry wayEntry) error {
 		name, info, last := entry.path, entry.info, entry.last
 		stat, ok := info.Sys().(*syscall.Stat_t)
 		switch {
 		case !entry.enforced && os.Geteuid() == 0:
 			return fmt.Errorf("%s is %s; OwnGit run as root uses nothing there, choose a folder on a local disk", name, notKnownLocal)
-		case !entry.enforced && local:
+		case !entry.enforced && policy.localVolume:
 			return notLocalState(name)
 		case !entry.enforced && info.Mode()&os.ModeSymlink != 0:
 			return fmt.Errorf("%s is a link %s, whose server decides where it leads, so OwnGit does not follow it; use the real path that the link leads to", name, notKnownLocal)
@@ -477,18 +498,18 @@ func wayCheck(path string, local, own bool) func(wayEntry) error {
 			return fmt.Errorf("the owner of %s is unavailable", name)
 		case last && !info.IsDir():
 			return fmt.Errorf("%s is not a directory", name)
-		case last && own && int(stat.Uid) == os.Geteuid():
-			if local {
-				if err := protectedCheck(false)(name, info); err != nil {
+		case last && policy.ownership == currentAccountFolder && int(stat.Uid) == os.Geteuid():
+			if policy.writers == refuseOtherWriters {
+				if err := protectedCheck(privateFolderWriters)(name, info); err != nil {
 					return fmt.Errorf("%s is not protected: %w", path, err)
 				}
 			}
 			return nil
 		case os.Geteuid() == 0 && stat.Uid != 0:
 			return &OtherAccountError{Path: name, Account: accountName(stat.Uid), UID: stat.Uid}
-		case last && own && stat.Uid == 0:
+		case last && policy.ownership == currentAccountFolder && stat.Uid == 0:
 			return fmt.Errorf("%s belongs to root, not to this account; choose a folder of this account", name)
-		case last && own:
+		case last && policy.ownership == currentAccountFolder:
 			return fmt.Errorf("%s belongs to another account; run the command as its owner", name)
 		}
 		return notProtected(path, protected(name, info))
@@ -521,7 +542,7 @@ func mayCreateOnTheWay(path string) func(wayEntry) error {
 // requireNoOtherWriter refuses a folder that another account could create
 // names in, sticky or not.
 func requireNoOtherWriter(name string, info os.FileInfo) error {
-	changeable, _, err := othersCanChange(name, info, true, false)
+	changeable, _, err := othersCanChange(name, info, privateFolderWriters)
 	if err == nil && changeable {
 		err = fmt.Errorf("other accounts can create names in %s, where the missing folders would be created", name)
 	}
@@ -542,7 +563,8 @@ func notProtected(path string, err error) error {
 // way to it or rename or remove what this account puts in it, and the way
 // needs no hold.
 func openDestinationParent(path string, local bool) (*os.File, func(), error) {
-	dir, _, _, err := walkWay(filepath.Dir(path), wayCheck(path, local, false), mayCreateOnTheWay(path))
+	policy := folderPolicy{localVolume: local, ownership: currentAccountOrRootFolder, writers: protectExistingEntries}
+	dir, _, _, err := walkWay(filepath.Dir(path), wayCheck(path, policy), mayCreateOnTheWay(path))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -650,7 +672,7 @@ func requirePrivateFolder(dir *os.File) error {
 	if int(stat.Uid) != os.Geteuid() {
 		return fmt.Errorf("%s belongs to another account", dir.Name())
 	}
-	changeable, fix, err := othersCanChange(dir.Name(), info, true, false)
+	changeable, fix, err := othersCanChange(dir.Name(), info, privateFolderWriters)
 	if err != nil {
 		return err
 	}

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"owngit/internal/hostmem"
+	"owngit/internal/statepath"
 )
 
 const defaultOutputLimit = 8 << 20
@@ -95,15 +96,15 @@ func New(gitPath, runtimeDir string) (*Runner, error) {
 		return nil, fmt.Errorf("Git executable is unavailable at %q", gitPath)
 	}
 
-	home := filepath.Join(runtimeDir, "git-home")
-	temp := filepath.Join(runtimeDir, "tmp")
+	home := filepath.Join(runtimeDir, statepath.GitHome)
+	temp := filepath.Join(runtimeDir, statepath.Temporary)
 	if err := os.MkdirAll(home, 0o700); err != nil {
 		return nil, fmt.Errorf("create isolated Git home: %w", err)
 	}
 	if err := os.MkdirAll(temp, 0o700); err != nil {
 		return nil, fmt.Errorf("create Git temporary directory: %w", err)
 	}
-	configPath := filepath.Join(runtimeDir, "gitconfig.empty")
+	configPath := filepath.Join(runtimeDir, statepath.GitConfig)
 	file, err := os.OpenFile(configPath, os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("create isolated Git config: %w", err)

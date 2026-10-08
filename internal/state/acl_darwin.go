@@ -31,7 +31,7 @@ const (
 	kauthReadRights = 1<<1 | 1<<21 | 1<<24
 	// Rights that let a holder add, remove or rename entries, remove the
 	// directory itself, or change its owner or access list.
-	kauthChangeRights = 1<<2 | 1<<4 | 1<<5 | 1<<6 | 1<<12 | 1<<13 | 1<<21 | 1<<23
+	kauthChangeRights = 1<<2 | 1<<4 | 1<<5 | 1<<6 | 1<<8 | 1<<10 | 1<<12 | 1<<13 | 1<<21 | 1<<23
 	// kauth_filesec: magic, owner and group GUIDs, then the ACL entry count
 	// and flags; each entry is a GUID, flags and rights.
 	kauthEntriesOffset = 4 + 16 + 16 + 4 + 4
@@ -166,20 +166,21 @@ func privateAccessListFingerprint(file *os.File) (string, error) {
 	return ", ACL [" + strings.Join(entries, "; ") + "]", nil
 }
 
+func stateAccessListHasPermit(file *os.File) (bool, error) {
+	filesec, err := extendedSecurity(file.Name(), file, 0)
+	if err != nil {
+		return false, err
+	}
+	return permitEntry(filesec, ^uint32(0))
+}
+
 func clearAccessList(file *os.File) error { return clearAccessListOf(file) }
 
 // clearAccessListOf removes the access list of an open file of this account
 // when an entry allows anything. The explicit owner check keeps this fail closed.
 func clearAccessListOf(file *os.File) error {
 	path := file.Name()
-	allows := func() (bool, error) {
-		filesec, err := extendedSecurity(path, file, 0)
-		if err != nil {
-			return false, err
-		}
-		return permitEntry(filesec, ^uint32(0))
-	}
-	found, err := allows()
+	found, err := stateAccessListHasPermit(file)
 	if err != nil || !found {
 		return err
 	}
@@ -189,7 +190,7 @@ func clearAccessListOf(file *os.File) error {
 	}
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok && int(stat.Uid) == os.Geteuid() {
 		unix.Syscall6(unix.SYS_FCHMOD_EXTENDED, file.Fd(), kauthUIDNone, kauthUIDNone, ^uintptr(0), 1, 0)
-		if found, err = allows(); err != nil {
+		if found, err = stateAccessListHasPermit(file); err != nil {
 			return err
 		}
 	}

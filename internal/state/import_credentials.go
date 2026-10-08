@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"owngit/internal/statepath"
 )
 
 // Machine-local import credentials.
@@ -27,7 +29,7 @@ import (
 // generation, so unrelated authority revisions can never authorize a failed
 // write.
 const (
-	importCredentialDir          = "import-credentials"
+	importCredentialDir          = statepath.ImportCredentials
 	maxImportCredentialBytes     = 16 << 10
 	maxImportCredentialFileBytes = maxImportCredentialBytes + 2*MaxImportCABytes + 8192
 )
@@ -162,7 +164,7 @@ func (s *Store) importCredentialPath(repositoryID string) (string, error) {
 	if !validText(repositoryID, 100) || strings.ContainsAny(repositoryID, `/\`) {
 		return "", errors.New("invalid import credential repository identifier")
 	}
-	return filepath.Join(s.dir, importCredentialDir, repositoryID+".json"), nil
+	return filepath.Join(s.dir, importCredentialDir, repositoryID+statepath.CredentialSuffix), nil
 }
 
 // SaveImportCredentials atomically replaces credentials and advances execution
@@ -280,7 +282,7 @@ func (s *Store) writeImportCredentials(ctx context.Context, credential ImportCre
 	if _, err := rand.Read(suffix); err != nil {
 		return err
 	}
-	temporary := filepath.Join(directory, "."+credential.RepositoryID+".tmp-"+hex.EncodeToString(suffix))
+	temporary := filepath.Join(directory, statepath.CredentialTemporary(credential.RepositoryID, statepath.CredentialWrite, suffix))
 	file, err := CreatePrivateFile(temporary)
 	if err != nil {
 		return fmt.Errorf("create import credential file: %w", err)
@@ -577,7 +579,7 @@ func (s *Store) writeImportCredentialBytes(ctx context.Context, repositoryID str
 	if _, err := rand.Read(suffix); err != nil {
 		return err
 	}
-	temporary := filepath.Join(directory, "."+repositoryID+".restore-"+hex.EncodeToString(suffix))
+	temporary := filepath.Join(directory, statepath.CredentialTemporary(repositoryID, statepath.CredentialRestore, suffix))
 	file, err := CreatePrivateFile(temporary)
 	if err != nil {
 		return err

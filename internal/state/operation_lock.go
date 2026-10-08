@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"owngit/internal/statepath"
 )
 
 var ErrInstanceRunning = errors.New("OwnGit is running for this state directory")
@@ -109,7 +111,7 @@ func acquireExclusiveFileLock(file *os.File) (*os.File, func(), error) {
 }
 
 // offlineLockFile is the lock file of AcquireOfflineLock.
-const offlineLockFile = ".offline-operation.lock"
+const offlineLockFile = statepath.OfflineLock
 
 // AcquireOfflineLock excludes the HTTP server and offline backup or restore
 // commands from one another. Commands that intentionally update live owner

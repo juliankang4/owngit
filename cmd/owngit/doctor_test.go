@@ -289,6 +289,71 @@ func TestDoctorCommandWithoutAServer(t *testing.T) {
 	}
 }
 
+func TestStateReadersKeepPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix modes; state tests cover Windows DACLs")
+	}
+	useFakeHealth(t)
+	for _, command := range []string{"doctor", "health"} {
+		t.Run(command, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "state")
+			store, err := state.Open(context.Background(), dir)
+			noErr(t, err)
+			noErr(t, store.Close())
+			database := filepath.Join(dir, "owngit.sqlite")
+			noErr(t, os.Chmod(dir, 0o755))
+			noErr(t, os.Chmod(database, 0o644))
+			before, err := os.ReadDir(dir)
+			noErr(t, err)
+			data, err := os.ReadFile(database)
+			noErr(t, err)
+			args := []string{command, "--state-dir", dir}
+			if command == "doctor" {
+				args = append(args, "--json")
+			}
+			var output string
+			stderr, _ := captureStderr(func() error {
+				output, err = captureStdout(func() error { return run(args) })
+				return nil
+			})
+			if command == "doctor" {
+				noErr(t, err)
+				var report struct {
+					Changes []stateProtectionChange `json:"state_protection"`
+				}
+				noErr(t, json.Unmarshal([]byte(output), &report))
+				if len(report.Changes) != 2 {
+					t.Fatalf("protection plan=%v", report.Changes)
+				}
+				for _, change := range report.Changes {
+					if change.Repair != "owngit serve --state-dir "+quoteForShell(dir) {
+						t.Fatalf("repair=%q", change.Repair)
+					}
+				}
+			} else if err == nil || !strings.Contains(stderr, "will make") || !strings.Contains(stderr, "private") {
+				t.Fatalf("health error=%v, stderr=%q", err, stderr)
+			}
+			after, err := os.ReadDir(dir)
+			noErr(t, err)
+			if len(after) != len(before) {
+				t.Fatalf("reader changed directory entries: %v to %v", before, after)
+			}
+			for path, mode := range map[string]os.FileMode{dir: 0o755, database: 0o644} {
+				info, err := os.Stat(path)
+				noErr(t, err)
+				if info.Mode().Perm() != mode {
+					t.Fatalf("reader changed %s to mode %o", path, info.Mode().Perm())
+				}
+			}
+			got, err := os.ReadFile(database)
+			noErr(t, err)
+			if string(got) != string(data) {
+				t.Fatal("reader changed the database contents")
+			}
+		})
+	}
+}
+
 // A state whose server does not answer, or that something else holds,
 // is never reported as running.
 func TestDoctorCommandTrustsTheStateOnly(t *testing.T) {

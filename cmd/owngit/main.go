@@ -44,6 +44,7 @@ import (
 	"owngit/internal/server"
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 	"owngit/internal/tailscale"
 	"owngit/internal/version"
 	"owngit/internal/webui"
@@ -447,7 +448,7 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	releaseRunning, runningLive := claimRunningRecord(ctx, store, logf)
 	defer releaseRunning()
-	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
+	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), statepath.Runtime))
 	if err != nil {
 		return err
 	}
@@ -1250,7 +1251,7 @@ func backupState(arguments []string) error {
 	if !settings.Initialized {
 		return fail("setup_incomplete", errors.New("setup is not complete"))
 	}
-	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), "runtime"))
+	runner, err := gitexec.New(*gitPath, filepath.Join(store.Dir(), statepath.Runtime))
 	if err != nil {
 		return fail("git_unavailable", err)
 	}
@@ -1438,6 +1439,10 @@ func openHeldState(ctx context.Context, held *os.File, beforeUpgrade state.Befor
 // wrote at that moment.
 func openLiveState(ctx context.Context, stateDir string) (*state.Store, error) {
 	return retryUnstableOpen(liveStateAttempts, func() (*state.Store, error) { return openLiveStateAttempt(ctx, stateDir) })
+}
+
+func openObservedState(ctx context.Context, stateDir string) (*state.Store, error) {
+	return retryUnstableOpen(liveStateAttempts, func() (*state.Store, error) { return state.OpenObserved(ctx, stateDir) })
 }
 
 // retryUnstableOpen runs open up to attempts times while it fails with

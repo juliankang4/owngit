@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"owngit/internal/statepath"
 )
 
 // HealthRunFile, in the state directory, tells "owngit health" which server
@@ -16,7 +18,7 @@ import (
 // serve makes a new key and removes the file when it stops. Only the account
 // that owns the state directory can read it, and reading it writes nothing,
 // so health still works while the state is read-only.
-const HealthRunFile = "health-run.json"
+const HealthRunFile = statepath.HealthRun
 
 // The health check proves its answer: the checker sends a new random nonce
 // in HealthNonceHeader, and the server answers with HealthProof of it in

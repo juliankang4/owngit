@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"owngit/internal/statepath"
 )
 
 // Upgrade is the schema upgrade that OpenIn is about to apply to an existing
@@ -56,7 +58,7 @@ func (upgrade *Upgrade) OpenCopy(ctx context.Context, dir string) (*Store, error
 		if item.object == nil {
 			continue
 		}
-		hash, err := copyPrivate(ctx, item.object, item.target)
+		hash, err := copyPrivate(ctx, item.object, held, filepath.Base(item.target))
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +74,7 @@ func (upgrade *Upgrade) OpenCopy(ctx context.Context, dir string) (*Store, error
 
 // upgradeBackupOffName is the file in the state directory that turns off
 // the backup before a schema upgrade (see UpgradeBackupEnabled).
-const upgradeBackupOffName = "no-upgrade-backup"
+const upgradeBackupOffName = statepath.UpgradeBackupOff
 
 // UpgradeBackupEnabled reports whether OwnGit backs up the state in the held
 // state directory before it upgrades its schema. The setting belongs to this

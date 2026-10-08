@@ -35,7 +35,7 @@ func OpenOwnFile(dir *os.File, name string, flag int) (*os.File, error) {
 	default:
 		access = windows.GENERIC_READ
 	}
-	access |= windows.FILE_READ_ATTRIBUTES | windows.FILE_WRITE_ATTRIBUTES | windows.READ_CONTROL
+	access |= windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
 	open := func(disposition uint32) (*os.File, error) {
 		return openAt(dir, path, access, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, disposition, windows.FILE_NON_DIRECTORY_FILE, "open")
 	}

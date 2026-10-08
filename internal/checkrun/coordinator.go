@@ -19,6 +19,7 @@ import (
 	"owngit/internal/pullrequest"
 	"owngit/internal/repository"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 const (
@@ -146,7 +147,7 @@ func (coordinator *Coordinator) Start(parent context.Context) error {
 		return errors.New("configured check coordinator is already running")
 	}
 	if coordinator.WorkspaceRoot == "" {
-		coordinator.WorkspaceRoot = filepath.Join(coordinator.Store.Dir(), "runtime", "check-jobs")
+		coordinator.WorkspaceRoot = filepath.Join(coordinator.Store.Dir(), statepath.Runtime, "check-jobs")
 	}
 	if _, err := coordinator.Store.ReconcileCheckJobRestart(parent, time.Now().UTC()); err != nil {
 		if parent.Err() != nil {

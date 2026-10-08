@@ -58,16 +58,17 @@ func doctorCommand(arguments []string) error {
 			Message string `json:"message"`
 		}
 		report := struct {
-			Version      string    `json:"version"`
-			Program      string    `json:"program"`
-			StateDir     string    `json:"state_dir"`
-			Repositories string    `json:"repositories,omitempty"`
-			Listen       string    `json:"listen"`
-			Running      bool      `json:"running"`
-			Service      bool      `json:"service"`
-			Log          string    `json:"log,omitempty"`
-			Findings     []finding `json:"findings"`
-		}{version.Version, subject.program, dir, subject.repositories, subject.listen, running, subject.service.found, subject.service.log, []finding{}}
+			Version         string                  `json:"version"`
+			Program         string                  `json:"program"`
+			StateDir        string                  `json:"state_dir"`
+			Repositories    string                  `json:"repositories,omitempty"`
+			Listen          string                  `json:"listen"`
+			Running         bool                    `json:"running"`
+			Service         bool                    `json:"service"`
+			Log             string                  `json:"log,omitempty"`
+			Findings        []finding               `json:"findings"`
+			StateProtection []stateProtectionChange `json:"state_protection,omitempty"`
+		}{version.Version, subject.program, dir, subject.repositories, subject.listen, running, subject.service.found, subject.service.log, []finding{}, stateProtectionPlan(dir, subject.stateProtection)}
 		for _, item := range findings {
 			report.Findings = append(report.Findings, finding{item, item.Sentence(webui.LangEN)})
 		}
@@ -89,8 +90,11 @@ func doctorCommand(arguments []string) error {
 	} else {
 		fmt.Fprintln(out, "  Service:      not installed")
 	}
+	reportStateProtection(out, dir, subject.stateProtection)
 	if len(findings) == 0 {
-		fmt.Fprintln(out, "No problem found.")
+		if len(subject.stateProtection) == 0 {
+			fmt.Fprintln(out, "No problem found.")
+		}
 		return nil
 	}
 	for _, item := range findings {
@@ -104,6 +108,25 @@ func doctorCommand(arguments []string) error {
 		}
 	}
 	return nil
+}
+
+type stateProtectionChange struct {
+	state.ProtectionChange
+	Repair string `json:"repair"`
+}
+
+func stateProtectionPlan(stateDir string, changes []state.ProtectionChange) []stateProtectionChange {
+	plan := make([]stateProtectionChange, 0, len(changes))
+	for _, change := range changes {
+		plan = append(plan, stateProtectionChange{change, "owngit serve --state-dir " + quoteForShell(stateDir)})
+	}
+	return plan
+}
+
+func reportStateProtection(out io.Writer, stateDir string, changes []state.ProtectionChange) {
+	for _, change := range stateProtectionPlan(stateDir, changes) {
+		fmt.Fprintf(out, "Starting OwnGit will make %q private (%s). To apply this, run: %s\n", printable(change.Path), printable(change.Before), printable(change.Repair))
+	}
 }
 
 // doctorSubject is the installation that the checkup looks at, as the
@@ -120,10 +143,11 @@ type doctorSubject struct {
 	program string
 	// administrator is true on Windows when the account that runs OwnGit
 	// is an administrator.
-	administrator bool
-	stateDir      string
-	repositories  string
-	repositoryIDs []string
+	administrator   bool
+	stateDir        string
+	repositories    string
+	repositoryIDs   []string
+	stateProtection []state.ProtectionChange
 }
 
 // servingService is the service of this account that runs OwnGit for a
@@ -154,11 +178,12 @@ func commandSubject(stateDir string) (doctorSubject, error) {
 		return doctorSubject{}, err
 	default:
 		ctx := context.Background()
-		store, err := openLiveState(ctx, stateDir)
+		store, err := openObservedState(ctx, stateDir)
 		if err != nil {
 			return stateRefusalSubject(subject, err)
 		}
 		defer store.Close()
+		subject.stateProtection = store.StateProtectionChanges()
 		if observed, err = store.ObserveRunningNetwork(ctx); err != nil {
 			return doctorSubject{}, err
 		}

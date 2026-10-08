@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -14,6 +13,7 @@ import (
 	"syscall"
 
 	"owngit/internal/publishdir"
+	"owngit/internal/statepath"
 )
 
 // createDatabase publishes a new, empty database in write-ahead logging mode
@@ -32,7 +32,7 @@ func createDatabase(ctx context.Context, path string) (err error) {
 	if _, err := rand.Read(suffix); err != nil {
 		return fmt.Errorf("create state database: %w", err)
 	}
-	temporary := path + ".new-" + hex.EncodeToString(suffix)
+	temporary := filepath.Join(filepath.Dir(path), statepath.DatabaseTemporary(suffix))
 	file, err := CreatePrivateFile(temporary)
 	if err != nil {
 		return fmt.Errorf("create state database: %w", err)
@@ -78,7 +78,7 @@ func createDatabase(ctx context.Context, path string) (err error) {
 
 // createLockFile serializes publication on a filesystem that supports neither
 // an exclusive rename nor hard links.
-const createLockFile = ".database-create.lock"
+const createLockFile = statepath.DatabaseLock
 
 // publishers are the primitives publishNoReplace tries in order, and the
 // removal of temporary names. Tests replace them to reach the fallbacks.

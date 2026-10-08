@@ -17,6 +17,7 @@ import (
 
 	"owngit/internal/server"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 // healthCommand checks that the OwnGit server of a state directory
@@ -112,11 +113,12 @@ func healthStatus(stateDir string) (string, bool, state.RunningObservation, erro
 		return "", false, state.RunningObservation{}, err
 	}
 	ctx := context.Background()
-	store, err := openLiveState(ctx, stateDir)
+	store, err := openObservedState(ctx, stateDir)
 	if err != nil {
 		return "", false, state.RunningObservation{}, err
 	}
 	defer store.Close()
+	reportStateProtection(os.Stderr, stateDir, store.StateProtectionChanges())
 	observed, err := store.ObserveRunningNetwork(ctx)
 	if err != nil {
 		return "", false, observed, err
@@ -300,7 +302,7 @@ func checkHealthProof(target string, run state.HealthRun) error {
 // last serve that could not start, so "owngit service install" can report it
 // without reading the service log, which the installing account may not be
 // allowed to read. A serve that starts listening removes it.
-const serveErrorFile = "serve-error.txt"
+const serveErrorFile = statepath.ServeError
 
 // recordServeError writes the serve error into the state directory, if
 // there is one that OwnGit may use: it opens the directory with

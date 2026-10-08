@@ -131,7 +131,7 @@ private func accessListAllowsChange(_ path: String) -> Bool {
     }
     defer { acl_free(UnsafeMutableRawPointer(list)) }
     let changes: [acl_perm_t] = [ACL_WRITE_DATA, ACL_APPEND_DATA, ACL_DELETE, ACL_DELETE_CHILD,
-                                 ACL_WRITE_SECURITY, ACL_CHANGE_OWNER]
+                                 ACL_WRITE_ATTRIBUTES, ACL_WRITE_EXTATTRIBUTES, ACL_WRITE_SECURITY, ACL_CHANGE_OWNER]
     var entry: acl_entry_t?
     var which = ACL_FIRST_ENTRY.rawValue
     while acl_get_entry(list, Int32(which), &entry) == 0, let current = entry {

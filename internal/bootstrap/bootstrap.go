@@ -16,12 +16,13 @@ import (
 
 	"owngit/internal/auth"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 const (
-	ownerFileName = "owner-setup.html"
-	lockFileName  = ".owner-setup.lock"
-	journalName   = ".owner-setup.issue.json"
+	ownerFileName = statepath.SetupPage
+	lockFileName  = statepath.SetupLock
+	journalName   = statepath.SetupJournal
 )
 
 type Issuer struct {
@@ -131,7 +132,7 @@ func (issuer *Issuer) issue(ctx context.Context) (string, string, error) {
 	expires := now.Add(15 * time.Minute)
 	content := setupFileContent(target, token)
 	path := filepath.Join(issuer.Store.Dir(), ownerFileName)
-	temporary, err := os.CreateTemp(issuer.Store.Dir(), ".owner-setup-*")
+	temporary, err := os.CreateTemp(issuer.Store.Dir(), statepath.SetupTemporary)
 	if err != nil {
 		return "", "", fmt.Errorf("create private setup file: %w", err)
 	}
@@ -225,7 +226,7 @@ func writeJournal(directory string, journal issueJournal) error {
 	if err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(directory, ".owner-setup-journal-*")
+	temporary, err := os.CreateTemp(directory, statepath.JournalTemporary)
 	if err != nil {
 		return err
 	}

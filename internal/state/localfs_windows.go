@@ -645,7 +645,17 @@ func validateOwnerOnlyHandle(handle windows.Handle, user *windows.SID, directory
 	return validateOwnerOnlyDescriptor(descriptor, user, directory)
 }
 
-func requireOwnStateFile(file *os.File) error { return requireOwnFile(file) }
+func stateProtectionNeeded(file *os.File, directory bool) (bool, error) {
+	user, _, err := processIdentity()
+	if err != nil {
+		return false, err
+	}
+	descriptor, err := handleDescriptor(windows.Handle(file.Fd()))
+	if err != nil {
+		return false, err
+	}
+	return validateOwnerOnlyDescriptor(descriptor, user, directory) != nil, nil
+}
 
 func heldProtectionFingerprint(file *os.File) (string, error) {
 	descriptor, err := handleDescriptor(windows.Handle(file.Fd()))
@@ -837,6 +847,10 @@ func OthersCanChange(path string, _ os.FileInfo) (bool, string, error) {
 	}
 	fix, err := privateDirectoryFix(path, false, descriptor, user)
 	return true, fix, err
+}
+
+func stateFileChangeable(file *os.File, info os.FileInfo) (bool, error) {
+	return OthersCanChangeFile(file, info)
 }
 
 // OthersCanChangeFile classifies the DACL and owner of the exact held folder,

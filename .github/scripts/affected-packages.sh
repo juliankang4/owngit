@@ -76,6 +76,8 @@ done
 # collected from its module graph and from the license files bundled in its
 # packages, so every package ./cmd/owngit is built from counts as part of
 # the tools/release test binary (below).
+# internal/state: TestMacOSChangeChecksAgree compiles
+# packaging/macos/ProtectedPath.swift; Swift changes select every package below.
 # cmd/owngit: its document tests read docs/OPERATIONS.md, docs/CODING_TOOLS.md
 # and their Korean versions.
 gitexec=$module/internal/gitexec

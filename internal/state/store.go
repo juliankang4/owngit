@@ -16,12 +16,14 @@ import (
 	"sync"
 	"time"
 
+	"owngit/internal/statepath"
+
 	_ "modernc.org/sqlite"
 )
 
 const (
-	databaseName                = "owngit.sqlite"
-	IncompleteRestoreMarkerName = ".owngit-restore-pending"
+	databaseName                = statepath.Database
+	IncompleteRestoreMarkerName = statepath.IncompleteRestore
 
 	// The committed baseline wrote no schema version marker; numbered
 	// schemas are defined by schemaSteps. This is the schemaFingerprint of
@@ -33,9 +35,12 @@ const (
 var ErrSetupComplete = errors.New("setup is already complete")
 
 type Store struct {
-	db         *sql.DB
-	dir        string
-	releaseWay func()
+	db                 *sql.DB
+	dir                string
+	releaseWay         func()
+	observationDir     *os.File
+	releaseObservation func() error
+	protectionChanges  []ProtectionChange
 	// database identifies the database file the store opened, so a later
 	// connection to it by path can prove it reached the same file.
 	database os.FileInfo
@@ -167,10 +172,8 @@ func OpenIn(ctx context.Context, held *os.File, beforeUpgrade BeforeUpgrade) (re
 			release()
 		}
 	}()
-	if _, err := os.Lstat(filepath.Join(absolute, IncompleteRestoreMarkerName)); err == nil {
-		return nil, errors.New("state directory belongs to an incomplete offline restore; follow the interrupted-restore procedure before use")
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("inspect incomplete restore marker: %w", err)
+	if err := requireCompleteRestore(absolute); err != nil {
+		return nil, err
 	}
 	// An existing database is classified before any permission change or
 	// read-write SQLite access, so a refused database keeps its bytes, entries
@@ -1755,6 +1758,9 @@ func (s *Store) Exec(ctx context.Context, statement string, args ...any) error {
 }
 
 func (s *Store) Close() error {
+	if s.releaseObservation != nil {
+		return s.releaseObservation()
+	}
 	err := s.db.Close()
 	if s.releaseWay != nil {
 		s.releaseWay()
@@ -1983,7 +1989,7 @@ func (s *Store) TailscaleServe(ctx context.Context) (TailscaleServe, bool, error
 
 // TailscaleChangeLockFile serializes changes of Tailscale sharing between
 // the serve process and "owngit tailscale".
-const TailscaleChangeLockFile = ".tailscale-change.lock"
+const TailscaleChangeLockFile = statepath.TailscaleLock
 
 // LockTailscaleChange waits until no other process is changing Tailscale
 // sharing and holds the lock until the release is called. It gives up when

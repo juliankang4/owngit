@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -11,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"owngit/internal/statepath"
 )
 
 // This file classifies an existing state database before Open changes any
@@ -52,9 +55,9 @@ func schemaReleased(version int) schemaClass {
 var ErrInspectionUnstable = errors.New("state directory changed during inspection; retry the operation")
 
 const (
-	walSuffix     = "-wal"
-	shmSuffix     = "-shm"
-	journalSuffix = "-journal"
+	walSuffix     = statepath.WALSuffix
+	shmSuffix     = statepath.SHMSuffix
+	journalSuffix = statepath.JournalSuffix
 	copyChunkSize = 1 << 20
 )
 
@@ -91,16 +94,26 @@ type sourceObject struct {
 	handle      *os.File
 }
 
-// inspection is the result of classifying one state directory. It keeps the
-// source handles until Open accepts or refuses the database.
+type inspectionPurpose uint8
+
+const (
+	inspectForStart inspectionPurpose = iota
+	inspectForReader
+)
+
 type inspection struct {
-	dir      *sourceObject
-	main     *sourceObject
-	wal      *sourceObject
-	shm      *sourceObject
-	class    schemaClass
-	mainHash []byte
-	walHash  []byte
+	purpose              inspectionPurpose
+	queryDB              *sql.DB
+	privateDir           *sourceObject
+	temporaryRoot        *os.File
+	releaseTemporaryRoot func()
+	dir                  *sourceObject
+	main                 *sourceObject
+	wal                  *sourceObject
+	shm                  *sourceObject
+	class                schemaClass
+	mainHash             []byte
+	walHash              []byte
 }
 
 // release closes every owned source handle and reports every close failure.
@@ -108,6 +121,11 @@ type inspection struct {
 // so the caller must not proceed to a writable open.
 func (in *inspection) release() error {
 	var err error
+	if in.queryDB != nil {
+		err = in.queryDB.Close()
+		in.queryDB = nil
+	}
+	err = errors.Join(err, in.removePrivateStaging())
 	for _, object := range []*sourceObject{in.dir, in.main, in.wal, in.shm} {
 		if object == nil || object.handle == nil {
 			continue
@@ -144,9 +162,13 @@ func (in *inspection) validateHeldObjects() error {
 
 // inspectState classifies the database under dir without protecting the
 // directory or opening the original files through SQLite read-write.
-func inspectState(ctx context.Context, held *os.File) (result *inspection, err error) {
+func inspectState(ctx context.Context, held *os.File) (*inspection, error) {
+	return inspectStateFor(ctx, held, inspectForStart)
+}
+
+func inspectStateFor(ctx context.Context, held *os.File, purpose inspectionPurpose) (result *inspection, err error) {
 	dir := held.Name()
-	in := &inspection{}
+	in := &inspection{purpose: purpose}
 	succeeded := false
 	defer func() {
 		if !succeeded {
@@ -207,7 +229,7 @@ func inspectState(ctx context.Context, held *os.File) (result *inspection, err e
 	if err != nil {
 		return nil, err
 	}
-	if walInfo == nil && shmInfo == nil {
+	if purpose == inspectForStart && walInfo == nil && shmInfo == nil {
 		err = in.inspectImmutable(ctx)
 	} else {
 		err = in.inspectPrivateCopy(ctx, walInfo, shmInfo)
@@ -262,29 +284,29 @@ func (in *inspection) inspectPrivateCopy(ctx context.Context, walInfo, shmInfo o
 			return err
 		}
 	}
-	staging, err := createPrivateStaging()
-	if err != nil {
+	if in.purpose == inspectForReader {
+		for _, object := range []*sourceObject{in.main, in.wal, in.shm} {
+			if object != nil {
+				if _, err := inspectObjectProtection(in.dir.path, object.handle, false); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if err := in.createPrivateStaging(); err != nil {
 		return err
 	}
-	privateDir := staging
-	defer func() {
-		if privateDir == "" {
-			return
-		}
-		if removeErr := os.RemoveAll(privateDir); removeErr != nil {
-			err = errors.Join(err, fmt.Errorf("remove private inspection copy %s: %w", privateDir, removeErr))
-		}
-	}()
+	staging := in.privateDir.path
 	if err := in.at(pointCapture, staging); err != nil {
 		return err
 	}
 	privateMain := filepath.Join(staging, databaseName)
-	in.mainHash, err = copyPrivate(ctx, in.main, privateMain)
+	in.mainHash, err = copyPrivate(ctx, in.main, in.privateDir.handle, databaseName)
 	if err != nil {
 		return err
 	}
 	if in.wal != nil {
-		in.walHash, err = copyPrivate(ctx, in.wal, privateMain+walSuffix)
+		in.walHash, err = copyPrivate(ctx, in.wal, in.privateDir.handle, databaseName+walSuffix)
 		if err != nil {
 			return err
 		}
@@ -301,23 +323,34 @@ func (in *inspection) inspectPrivateCopy(ctx context.Context, walInfo, shmInfo o
 	if err := in.at(pointClassify, staging); err != nil {
 		return err
 	}
-	db, err := sql.Open("sqlite", sqliteFileURI(privateMain))
+	if err := in.requireSamePrivateStaging(); err != nil {
+		return err
+	}
+	query := "_txlock=immediate"
+	if in.purpose == inspectForReader {
+		query += "&_pragma=query_only(1)"
+	}
+	db, err := sql.Open("sqlite", sqliteURI(privateMain, query))
 	if err != nil {
 		return fmt.Errorf("inspect private state copy: %w", err)
 	}
+	if in.purpose == inspectForReader {
+		in.queryDB = db
+	}
 	db.SetMaxOpenConns(1)
 	class, classifyErr := classifySchema(ctx, db)
-	if closeErr := db.Close(); closeErr != nil {
-		classifyErr = errors.Join(classifyErr, fmt.Errorf("close private state copy: %w", closeErr))
+	if in.purpose == inspectForStart {
+		if closeErr := db.Close(); closeErr != nil {
+			classifyErr = errors.Join(classifyErr, fmt.Errorf("close private state copy: %w", closeErr))
+		}
 	}
 	if err := in.at(pointClassified, staging); err != nil {
 		return err
 	}
-	// The private copy is removed before the result is used. A removal
-	// failure joins the outcome and blocks the writable open.
-	privateDir = ""
-	if removeErr := os.RemoveAll(staging); removeErr != nil {
-		return errors.Join(classifyErr, fmt.Errorf("remove private inspection copy %s: %w", staging, removeErr))
+	if in.purpose == inspectForStart {
+		if removeErr := in.removePrivateStaging(); removeErr != nil {
+			return errors.Join(classifyErr, removeErr)
+		}
 	}
 	if err := in.validateSource(true, true); err != nil {
 		return err
@@ -639,36 +672,131 @@ func rollbackJournalPresent(mainPath string) (bool, error) {
 	return false, fmt.Errorf("inspect state rollback journal: %w", err)
 }
 
-// createPrivateStaging creates an empty owner-only directory outside the state
-// directory for the inspection copy.
-func createPrivateStaging() (string, error) {
-	staging, err := os.MkdirTemp(preflightHooks.temporaryRoot, "owngit-inspect-*")
-	if err != nil {
-		return "", fmt.Errorf("create private inspection directory: %w", err)
+func (in *inspection) createPrivateStaging() (err error) {
+	root := preflightHooks.temporaryRoot
+	if root == "" {
+		root = os.TempDir()
 	}
-	fail := func(err error) (string, error) {
-		if removeErr := os.RemoveAll(staging); removeErr != nil {
-			err = errors.Join(err, fmt.Errorf("remove private inspection directory %s: %w", staging, removeErr))
+	if in.purpose == inspectForReader {
+		defer func() {
+			if err != nil {
+				err = fmt.Errorf("%w; set %s to a writable temporary directory outside the state directory", err, temporaryEnvironment)
+			}
+		}()
+		var inside bool
+		root, inside, err = in.resolveTemporaryRoot(root)
+		if err == nil && inside {
+			root, err = systemTemporaryRoot()
+			if err == nil {
+				root, inside, err = in.resolveTemporaryRoot(root)
+			}
+			if err == nil && inside {
+				err = errors.New("system temporary directory is inside the state directory")
+			}
 		}
-		return "", err
+		if err != nil {
+			return fmt.Errorf("create private inspection directory: %w", err)
+		}
 	}
-	if err := ProtectPrivatePath(staging, true); err != nil {
-		return fail(fmt.Errorf("protect private inspection directory: %w", err))
-	}
-	entries, err := os.ReadDir(staging)
+	root, err = filepath.Abs(root)
 	if err != nil {
-		return fail(fmt.Errorf("inspect private inspection directory: %w", err))
+		return err
 	}
-	if len(entries) != 0 {
-		return fail(errors.New("private inspection directory is not empty"))
+	in.temporaryRoot, in.releaseTemporaryRoot, err = openInspectionRoot(root, in.purpose)
+	if err != nil {
+		return fmt.Errorf("create private inspection directory: %w", err)
 	}
-	return staging, nil
+	var stage *os.File
+	for attempt := 0; attempt < createAttempts; attempt++ {
+		stage, err = createStage(in.temporaryRoot, "owngit-inspect-"+rand.Text())
+		if !errors.Is(err, os.ErrExist) {
+			break
+		}
+	}
+	if err != nil {
+		return fmt.Errorf("create private inspection directory: %w", err)
+	}
+	in.privateDir = &sourceObject{path: stage.Name(), handle: stage}
+	in.privateDir.info, err = stage.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect private inspection directory: %w", err)
+	}
+	if err := protectInspectionStage(stage); err != nil {
+		return fmt.Errorf("protect private inspection directory: %w", err)
+	}
+	return nil
+}
+
+func (in *inspection) requireSamePrivateStaging() error {
+	info, err := LstatIdentity(in.privateDir.path)
+	if err != nil {
+		return err
+	}
+	if in.privateDir.info == nil || !os.SameFile(in.privateDir.info, info) {
+		return fmt.Errorf("private inspection directory %s changed; left it in place", in.privateDir.path)
+	}
+	return nil
+}
+
+func (in *inspection) removePrivateStaging() (err error) {
+	defer func() {
+		if in.releaseTemporaryRoot != nil {
+			in.releaseTemporaryRoot()
+			in.releaseTemporaryRoot = nil
+		}
+		if in.temporaryRoot != nil {
+			err = errors.Join(err, in.temporaryRoot.Close())
+			in.temporaryRoot = nil
+		}
+	}()
+	if in.privateDir == nil {
+		return nil
+	}
+	stage := in.privateDir
+	err = in.requireSamePrivateStaging()
+	in.privateDir = nil
+	if stage.handle != nil {
+		err = errors.Join(err, stage.handle.Close())
+	}
+	if err == nil {
+		err = os.RemoveAll(stage.path)
+	}
+	if err != nil {
+		return fmt.Errorf("remove private inspection copy %s: %w", stage.path, err)
+	}
+	return nil
+}
+
+func (in *inspection) resolveTemporaryRoot(root string) (string, bool, error) {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", false, err
+	}
+	root, err = filepath.Abs(root)
+	if err != nil {
+		return "", false, err
+	}
+	for path := root; ; path = filepath.Dir(path) {
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", false, err
+		}
+		if !info.IsDir() {
+			return "", false, fmt.Errorf("temporary root %q is not a directory", root)
+		}
+		if os.SameFile(in.dir.info, info) {
+			return root, true, nil
+		}
+		if filepath.Dir(path) == path {
+			return root, false, nil
+		}
+	}
 }
 
 // copyPrivate writes exactly the recorded length of the source into a new
 // owner-only file and returns the hash of the copied bytes.
-func copyPrivate(ctx context.Context, source *sourceObject, target string) ([]byte, error) {
-	file, err := CreatePrivateFile(target)
+func copyPrivate(ctx context.Context, source *sourceObject, parent *os.File, name string) ([]byte, error) {
+	file, err := createPrivateFileIn(parent, name)
 	if err != nil {
 		return nil, fmt.Errorf("create private copy of %s: %w", filepath.Base(source.path), err)
 	}
