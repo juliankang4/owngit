@@ -1,0 +1,54 @@
+name: CI
+run-name: Check ${{ github.ref_name }}
+on:
+  push:
+    branches: [main, 'release/**', '!release/old/**']
+    paths: ['**.go', go.mod]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      experimental:
+        type: boolean
+        default: false
+      version:
+        type: choice
+        options: ['1.20', '1.21']
+        default: '1.20'
+env:
+  TOKEN: ${{ secrets.TEST_TOKEN }}
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: CI-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    name: Test ${{ matrix.go }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        go: ['1.20', '1.21']
+        os: [ubuntu-latest]
+        include:
+          - go: '1.21'
+            experimental: true
+    continue-on-error: ${{ matrix.experimental || false }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          token: ${{ github.token }}
+      - id: test
+        run: go test ./...
+  report:
+    needs: build
+    if: always()
+    runs-on: linux
+    steps:
+      - run: echo '${{ needs.build.result }}'

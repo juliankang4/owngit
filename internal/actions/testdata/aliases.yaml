@@ -1,0 +1,12 @@
+name: Alias workflow
+on: [push, pull_request]
+env: &environment
+  MODE: yes
+jobs:
+  build:
+    runs-on: linux
+    env: *environment
+    steps:
+      - &test
+        run: echo '${{ env.MODE }}'
+      - *test

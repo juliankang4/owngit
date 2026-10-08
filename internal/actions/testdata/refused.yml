@@ -1,0 +1,12 @@
+name: Mixed jobs
+on: [push, pull_request_target]
+jobs:
+  supported:
+    runs-on: linux
+    steps:
+      - run: echo ok
+  unsupported:
+    runs-on: linux
+    environment: production
+    steps:
+      - run: echo deploy
