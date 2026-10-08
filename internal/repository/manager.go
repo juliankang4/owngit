@@ -973,33 +973,50 @@ func removeInHeldDirectory(directory *os.File, name string) error {
 }
 
 func writeHookFile(hooks *os.File, name, content string) (err error) {
-	file, err := state.OpenOwnFile(hooks, name, os.O_RDWR|os.O_CREATE)
-	if err != nil {
+	file, err := state.OpenOwnFile(hooks, name, os.O_RDONLY)
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return hookEntryError(filepath.Join(hooks.Name(), name), "hooks/"+name, false, err)
 	}
-	defer func() { err = errors.Join(err, file.Close()) }()
-	if err := state.ProtectPrivateHandle(file, false); err != nil {
-		return fmt.Errorf("protect Git hook %s: %w", name, err)
+	if err == nil {
+		existing, readErr := io.ReadAll(io.LimitReader(file, int64(len(content)+1)))
+		info, statErr := file.Stat()
+		matches := readErr == nil && statErr == nil && string(existing) == content &&
+			(runtime.GOOS == "windows" || info.Mode() == 0o700)
+		if matches && runtime.GOOS == "windows" {
+			// Windows exposes only the writable attribute, not execute bits.
+			matches = info.Mode().Perm()&0o200 != 0 && state.ValidatePrivateFileHandle(file) == nil
+		}
+		if err := errors.Join(readErr, statErr, file.Close()); err != nil {
+			return fmt.Errorf("read Git hook %s: %w", name, err)
+		}
+		if matches {
+			return nil
+		}
 	}
-	// Startup refreshes every hook. Read only enough to decide whether this
-	// script is already exact, without trusting an existing file's size.
-	existing, err := io.ReadAll(io.LimitReader(file, int64(len(content)+1)))
+
+	temporary := "." + name + "-" + rand.Text()
+	file, err = state.OpenOwnFile(hooks, temporary, os.O_WRONLY|os.O_CREATE)
 	if err != nil {
-		return fmt.Errorf("read Git hook %s: %w", name, err)
+		return fmt.Errorf("create temporary Git hook %s: %w", name, err)
 	}
-	if string(existing) != content {
-		if err := file.Truncate(0); err != nil {
-			return fmt.Errorf("truncate Git hook %s: %w", name, err)
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, removeInHeldDirectory(hooks, temporary))
 		}
-		if _, err := file.Seek(0, io.SeekStart); err != nil {
-			return fmt.Errorf("rewind Git hook %s: %w", name, err)
-		}
-		if _, err := io.WriteString(file, content); err != nil {
-			return fmt.Errorf("write Git hook %s: %w", name, err)
-		}
+	}()
+	err = state.ProtectPrivateHandle(file, false)
+	if err == nil {
+		err = file.Chmod(0o700)
 	}
-	if err := file.Chmod(0o700); err != nil {
-		return fmt.Errorf("make Git hook %s executable: %w", name, err)
+	if err == nil {
+		_, err = io.WriteString(file, content)
+	}
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return fmt.Errorf("write Git hook %s: %w", name, err)
+	}
+	if err := state.RenameOwnFile(hooks, temporary, name); err != nil {
+		return fmt.Errorf("publish Git hook %s: %w", name, err)
 	}
 	return nil
 }

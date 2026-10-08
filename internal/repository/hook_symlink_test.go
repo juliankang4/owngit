@@ -5,10 +5,56 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestHookRefreshKeepsThePublishedFileIntact(t *testing.T) {
+	const content = "#!/bin/sh\nexit 0\n"
+	for _, test := range []struct {
+		name    string
+		content string
+		mode    os.FileMode
+		replace bool
+	}{
+		{"unchanged", content, 0o700, false},
+		{"stale content", "#!/bin/sh\nexit 1\n", 0o700, true},
+		{"wrong mode", content, 0o600, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && test.name == "wrong mode" {
+				t.Skip("Windows has no executable file mode")
+			}
+			directory := t.TempDir()
+			hooks, err := os.Open(directory)
+			noErr(t, err)
+			defer hooks.Close()
+			path := filepath.Join(directory, "update")
+			noErr(t, writeHookFile(hooks, "update", test.content))
+			if runtime.GOOS != "windows" {
+				noErr(t, os.Chmod(path, test.mode))
+			}
+			// Handle stat captures Windows file IDs before a later rename.
+			file, err := os.Open(path)
+			noErr(t, err)
+			before, err := file.Stat()
+			noErr(t, errors.Join(err, file.Close()))
+			noErr(t, writeHookFile(hooks, "update", content))
+			file, err = os.Open(path)
+			noErr(t, err)
+			after, err := file.Stat()
+			noErr(t, errors.Join(err, file.Close()))
+			if os.SameFile(before, after) == test.replace {
+				t.Fatalf("hook replacement=%v, want %v", !os.SameFile(before, after), test.replace)
+			}
+			if string(readFile(t, path)) != content || (runtime.GOOS != "windows" && after.Mode().Perm() != 0o700) {
+				t.Fatalf("published hook has wrong content or mode: %v", after.Mode())
+			}
+		})
+	}
+}
 
 func TestRetentionHookRefusesHooksDirectorySymlink(t *testing.T) {
 	manager, _, _ := newTestRepository(t)
