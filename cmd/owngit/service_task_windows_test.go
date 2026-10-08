@@ -15,7 +15,89 @@ import (
 	"golang.org/x/sys/windows"
 
 	"owngit/internal/service"
+	"owngit/internal/state"
 )
+
+func TestWindowsOwnersRequest(t *testing.T) {
+	sid, err := platformCurrentAccountSID()
+	noErr(t, err)
+	const token = "owners-request-test-token"
+	content := ownersRequestHeader + "\ntoken " + token + "\nstate-dir " + testStateDir + "\nrepositories \n"
+	for _, row := range []struct {
+		name   string
+		change func(*testing.T, string) string
+		want   string
+	}{
+		{name: "normal"},
+		{name: "hard link", change: func(t *testing.T, path string) string {
+			noErr(t, os.Link(path, path+".link"))
+			return path
+		}, want: "not a plain file"},
+		{name: "reparse point", change: func(t *testing.T, path string) string {
+			noErr(t, os.Symlink(path, path+".link"))
+			return path + ".link"
+		}, want: "not a plain file"},
+		{name: "wrong owner", change: func(t *testing.T, path string) string {
+			replacement := path + ".replacement"
+			noErr(t, os.WriteFile(replacement, []byte(content), 0o600))
+			owner, err := windows.StringToSid(administratorsSID)
+			noErr(t, err)
+			noErr(t, windows.SetNamedSecurityInfo(replacement, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, owner, nil, nil, nil))
+			noErr(t, os.Rename(path, path+".original"))
+			noErr(t, os.Rename(replacement, path))
+			return path
+		}, want: "does not belong"},
+		{name: "too large", change: func(t *testing.T, path string) string {
+			noErr(t, os.WriteFile(path, []byte(strings.Repeat("x", (64<<10)+1)), 0o600))
+			return path
+		}, want: "not a plain file"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if (row.name == "wrong owner" || row.name == "reparse point") && !windows.GetCurrentProcessToken().IsElevated() {
+				t.Skip("changing owners and creating symbolic links needs administrator rights")
+			}
+			path := filepath.Join(t.TempDir(), "owners.request")
+			file, err := state.CreatePrivateFile(path)
+			noErr(t, err)
+			_, err = file.WriteString(content)
+			noErr(t, err)
+			noErr(t, file.Close())
+			if row.change != nil {
+				path = row.change(t, path)
+			}
+			var renameErr error
+			if row.want == "" {
+				originalOwner := ownersRequestOwner
+				ownersRequestOwner = func(file *os.File) (string, error) {
+					owner, err := platformOwnersRequestOwner(file)
+					renameErr = os.Rename(path, path+".moved")
+					return owner, err
+				}
+				defer func() { ownersRequestOwner = originalOwner }()
+			}
+			got, repositories, err := takeOwnersRequest(path, token, sid)
+			if row.want != "" {
+				if err == nil || !strings.Contains(err.Error(), row.want) || got != "" || repositories != "" {
+					t.Fatalf("request returned %q, %q, %v; want %q", got, repositories, err, row.want)
+				}
+				return
+			}
+			noErr(t, err)
+			if got != testStateDir || repositories != "" {
+				t.Fatalf("request returned %q, %q", got, repositories)
+			}
+			if renameErr == nil {
+				t.Fatal("request path moved while its handle was held")
+			}
+			if _, err := os.Lstat(path); !os.IsNotExist(err) {
+				t.Fatalf("consumed request remains: %v", err)
+			}
+			if _, _, err := takeOwnersRequest(path, token, sid); err == nil {
+				t.Fatal("consumed request was accepted twice")
+			}
+		})
+	}
+}
 
 // tokenInformation reads one class of token information.
 func tokenInformation(t *testing.T, token windows.Token, class uint32) unsafe.Pointer {

@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"strconv"
 )
@@ -25,6 +27,39 @@ func platformSystemDirectory() (string, error)               { return "", errNot
 func attachToConsole(int)                                    {}
 func platformOwnerOf(string) (string, error)                 { return "", errNotWindows }
 func platformRepositoryRootWithoutAdminRights(string) string { return "" }
+
+func platformOwnersRequestOwner(file *os.File) (string, error) {
+	return ownerOf(file.Name())
+}
+
+func platformConsumeOwnersRequest(path, sid string) ([]byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > ownersRequestLimit {
+		return nil, errors.New("the request is not a plain file")
+	}
+	if owner, ownerErr := ownersRequestOwner(file); ownerErr != nil || owner != sid {
+		return nil, errors.New("the request does not belong to the account that asked")
+	}
+	content, err := io.ReadAll(io.LimitReader(file, ownersRequestLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > ownersRequestLimit {
+		return nil, errors.New("the request is not a plain file")
+	}
+	if err := os.Remove(path); err != nil {
+		return nil, fmt.Errorf("remove the request: %w", err)
+	}
+	return content, nil
+}
 func platformServiceInstallPaths() (serviceInstallPaths, error) {
 	return serviceInstallPaths{
 		Directory:  `C:\Program Files\OwnGit`,

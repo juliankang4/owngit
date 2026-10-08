@@ -206,7 +206,7 @@ func decodeUTF16ForTest(data []byte) (string, error) {
 func newFakeWindows(t *testing.T) *fakeWindows {
 	fake := &fakeWindows{t: t, git: true, winget: true, owners: map[string]string{}, ownerErrors: map[string]error{}, adminOwned: map[string]int{}, states: map[string]bool{}}
 	previousRunner, previousElevated, previousLook, previousStop := serviceRunner, runElevated, lookPath, signalServiceStop
-	previousOwner, previousGive, previousRoot, previousPoll := ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
+	previousOwner, previousRequestOwner, previousGive, previousRoot, previousPoll := ownerOf, ownersRequestOwner, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval
 	previousInstallStorage, previousPrepare, previousReplace := prepareServiceInstall, prepareServiceStorage, replaceServiceCopy
 	previousWinget := trustedWinget
 	previousEnvironment, previousApply := serviceEnvironment, applyServiceEnvironment
@@ -221,7 +221,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		}
 		gitOnServicePath = previousGit
 		serviceRunner, runElevated, lookPath, signalServiceStop = previousRunner, previousElevated, previousLook, previousStop
-		ownerOf, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousGive, previousRoot, previousPoll
+		ownerOf, ownersRequestOwner, giveOwnership, repositoryRootWithoutAdminRights, taskPollInterval = previousOwner, previousRequestOwner, previousGive, previousRoot, previousPoll
 		prepareServiceInstall, prepareServiceStorage, replaceServiceCopy = previousInstallStorage, previousPrepare, previousReplace
 		trustedWinget = previousWinget
 		serviceEnvironment, applyServiceEnvironment = previousEnvironment, previousApply
@@ -256,6 +256,7 @@ func newFakeWindows(t *testing.T) *fakeWindows {
 		}
 		return testSID, nil
 	}
+	ownersRequestOwner = func(file *os.File) (string, error) { return ownerOf(file.Name()) }
 	giveOwnership = func(root, sid string, check func(string, string) error) (int, int, error) {
 		fake.calls = append(fake.calls, "give "+root)
 		owner, _ := ownerOf(root)
@@ -1363,7 +1364,12 @@ func TestTaskInstallNamesFoldersOfTheAdministrators(t *testing.T) {
 	fake.existing(t, service.ModeLogonTask, testSID, testStateDir)
 	fake.owners[testStateDir] = administratorsSID
 	fake.failRun = true
-	fake.elevate = func([]string) (int, error) { return 0, nil }
+	fake.elevate = func(arguments []string) (int, error) {
+		if err := state.ValidatePrivateFile(arguments[3]); err != nil {
+			t.Fatalf("ownership request is not private: %v", err)
+		}
+		return 0, nil
+	}
 	host, out := testTaskHost(service.Environment{})
 	_ = host.install("", nil)
 	if !strings.Contains(out.String(), "Windows asks once for administrator approval to make your account the owner of "+testStateDir+".\n") ||

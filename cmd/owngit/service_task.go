@@ -20,6 +20,7 @@ import (
 
 	"owngit/internal/server"
 	"owngit/internal/service"
+	"owngit/internal/state"
 	"owngit/internal/version"
 )
 
@@ -59,7 +60,8 @@ var (
 	// windowsSystemDirectory returns the System32 directory.
 	windowsSystemDirectory = platformSystemDirectory
 	// ownerOf returns the owner of a file or folder as a SID string.
-	ownerOf = platformOwnerOf
+	ownerOf            = platformOwnerOf
+	ownersRequestOwner = platformOwnersRequestOwner
 	// giveOwnership makes an account the owner of a folder and of what the
 	// Administrators group owns below it; see platformGiveOwnership.
 	giveOwnership = platformGiveOwnership
@@ -636,8 +638,11 @@ func listSteps(steps []string) string {
 //     group owns below them.
 // A folder outside the profile is left to an administrator.
 
-// ownersRequestHeader starts a request file.
-const ownersRequestHeader = "owngit elevated-owners request"
+const (
+	// ownersRequestHeader starts a request file.
+	ownersRequestHeader = "owngit elevated-owners request"
+	ownersRequestLimit  = 64 << 10
+)
 
 // askForOwnFolders asks for the step when the Administrators group owns the
 // state directory or the saved repository folder, and says what an
@@ -664,22 +669,23 @@ func (host *taskHost) askForOwnFolders(stateDir string) error {
 	if len(steps) == 0 {
 		return nil
 	}
-	token := make([]byte, 32)
-	if _, err := rand.Read(token); err != nil {
+	random := make([]byte, 48)
+	if _, err := rand.Read(random); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp("", "owngit-owners-*.request")
+	token := hex.EncodeToString(random[:32])
+	path := filepath.Join(os.TempDir(), "owngit-owners-"+hex.EncodeToString(random[32:])+".request")
+	file, err := state.CreatePrivateFile(path)
 	if err != nil {
 		return err
 	}
-	path := file.Name()
 	defer os.Remove(path)
-	content := strings.Join([]string{ownersRequestHeader, "token " + hex.EncodeToString(token), "state-dir " + stateDir, "repositories " + savedRepositoryRoot(stateDir)}, "\n") + "\n"
+	content := strings.Join([]string{ownersRequestHeader, "token " + token, "state-dir " + stateDir, "repositories " + savedRepositoryRoot(stateDir)}, "\n") + "\n"
 	_, writeErr := file.WriteString(content)
 	if closeErr := file.Close(); writeErr != nil || closeErr != nil {
 		return errors.Join(writeErr, closeErr)
 	}
-	return host.asAdministrator([]string{"service", "elevated-owners", "--request", path, "--token", hex.EncodeToString(token)}, listSteps(steps))
+	return host.asAdministrator([]string{"service", "elevated-owners", "--request", path, "--token", token}, listSteps(steps))
 }
 
 // elevatedOwners gives the folders named in the request of a waiting
@@ -730,27 +736,10 @@ func (host *taskHost) elevatedOwners(requestPath, token string) error {
 	return nil
 }
 
-// takeOwnersRequest reads the request file at path, which must be a plain
-// file of the account sid holding token, and removes it before it returns
-// the state directory and the repository folder it names.
 func takeOwnersRequest(path, token, sid string) (stateDir, repositories string, err error) {
-	info, err := os.Lstat(path)
+	content, err := platformConsumeOwnersRequest(path, sid)
 	if err != nil {
 		return "", "", err
-	}
-	if !info.Mode().IsRegular() || info.Size() > 64<<10 {
-		return "", "", errors.New("the request is not a plain file")
-	}
-	if owner, err := ownerOf(path); err != nil || owner != sid {
-		return "", "", errors.New("the request does not belong to the account that asked")
-	}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return "", "", err
-	}
-	// Used once: a request that cannot be removed is not used.
-	if err := os.Remove(path); err != nil {
-		return "", "", fmt.Errorf("remove the request: %w", err)
 	}
 	lines := strings.Split(strings.TrimSuffix(string(content), "\n"), "\n")
 	values := map[string]string{}

@@ -53,6 +53,60 @@ func platformCurrentAccountSID() (string, error) {
 	return user.User.Sid.String(), nil
 }
 
+func platformOwnersRequestOwner(file *os.File) (string, error) {
+	owner, err := ownerOfHandle(windows.Handle(file.Fd()))
+	if err != nil {
+		return "", err
+	}
+	return owner.String(), nil
+}
+
+func platformConsumeOwnersRequest(path, sid string) (content []byte, err error) {
+	enablePrivileges("SeBackupPrivilege", "SeRestorePrivilege")
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	handle, err := windows.CreateFile(name, windows.GENERIC_READ|windows.DELETE,
+		windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_BACKUP_SEMANTICS|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return nil, &os.PathError{Op: "open request", Path: path, Err: err}
+	}
+	file := os.NewFile(uintptr(handle), path)
+	if file == nil {
+		_ = windows.CloseHandle(handle)
+		return nil, &os.PathError{Op: "open request", Path: path, Err: errors.New("create request file handle")}
+	}
+	defer func() { err = errors.Join(err, file.Close()) }()
+
+	var information windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(handle, &information); err != nil {
+		return nil, &os.PathError{Op: "stat request", Path: path, Err: err}
+	}
+	size := uint64(information.FileSizeHigh)<<32 | uint64(information.FileSizeLow)
+	if information.FileAttributes&(windows.FILE_ATTRIBUTE_REPARSE_POINT|windows.FILE_ATTRIBUTE_DIRECTORY) != 0 ||
+		information.NumberOfLinks != 1 || size > ownersRequestLimit {
+		return nil, errors.New("the request is not a plain file")
+	}
+	if owner, ownerErr := ownersRequestOwner(file); ownerErr != nil || owner != sid {
+		return nil, errors.New("the request does not belong to the account that asked")
+	}
+	content, err = io.ReadAll(io.LimitReader(file, ownersRequestLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(content) > ownersRequestLimit {
+		return nil, errors.New("the request is not a plain file")
+	}
+	disposition := struct{ DeleteFile bool }{DeleteFile: true}
+	if err := windows.SetFileInformationByHandle(handle, windows.FileDispositionInfo,
+		(*byte)(unsafe.Pointer(&disposition)), uint32(unsafe.Sizeof(disposition))); err != nil {
+		return nil, fmt.Errorf("remove the request: %w", err)
+	}
+	return content, nil
+}
+
 func platformSystemDirectory() (string, error) { return windows.GetSystemDirectory() }
 
 // wtsProcessInfo is WTS_PROCESS_INFO_EXW.
