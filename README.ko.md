@@ -53,6 +53,7 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 | 방법 | 명령 |
 | --- | --- |
 | Homebrew(macOS, Linux) | `brew install juliankang4/tap/owngit` |
+| Homebrew 메뉴 막대 앱(macOS, 선택) | `brew install --cask juliankang4/tap/owngit` 실행 후 `owngit service install` |
 | npm(Node.js 필요) | `npm install -g owngit` |
 | Arch Linux | [최신 릴리스](https://github.com/juliankang4/owngit/releases/latest)의 `PKGBUILD`로 `makepkg -si` |
 | Docker Compose | [`compose.yaml`](packaging/container/compose.yaml)을 두고 `docker compose up -d`, 이어서 `docker compose exec -it owngit owngit setup-link` |
@@ -60,6 +61,8 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 | 소스(Go 1.27 이상) | `go build -o bin/owngit ./cmd/owngit` |
 
 컨테이너와 Proxmox VE를 빼면, 컴퓨터에 `git-http-backend`가 들어 있는 Git이 있어야 합니다. Homebrew와 Arch 패키지는 Git을 함께 설치합니다. Windows에서 npm으로 설치할 때는 명령 프롬프트를 쓰세요. PowerShell의 기본 정책이 npm 스크립트를 막습니다.
+
+macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 OwnGit 아이콘을 가릴 수 있습니다. 한 줄 설치는 가능하면 앱을 `/Applications`에 넣습니다. Homebrew 사용자는 선택 사항인 cask로 같은 효과를 얻습니다. cask는 formula가 없으면 함께 설치합니다.
 
 방법별 자세한 내용은 [운영 안내](docs/OPERATIONS.ko.md)에 있습니다.
 

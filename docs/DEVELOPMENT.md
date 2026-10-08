@@ -149,9 +149,9 @@ go run ./tools/release packaging -manifest dist/portable/manifest.json -out dist
 - `notices -check` compares `THIRD_PARTY_NOTICES/` with the build inputs. Run it after changing dependencies. To regenerate, run `notices -out THIRD_PARTY_NOTICES.new` and compare with `diff -r`. Edit `packaging/notices/README.md.tmpl`, not the generated `README.md`.
 - `build` writes deterministic archives for `darwin/arm64`, `linux/amd64`, `linux/arm64` and `windows/amd64`, plus `SHA256SUMS` and `manifest.json`. It copies `install.sh`, `install.ps1` and `proxmox.sh` beside them; attach all three to the release.
 - `verify` re-checks archives, notices and installers.
-- `packaging` renders the Homebrew formula, WinGet manifests, npm packages and Arch Linux `PKGBUILD`. It marks the output `UNREADY` when an input is missing, or fails with `-strict`.
+- `packaging` renders the Homebrew formula and cask, WinGet manifests, npm packages and Arch Linux `PKGBUILD`. It marks the output `UNREADY` when an input is missing, or fails with `-strict`.
 
-Each archive holds `owngit`, `LICENSE`, `THIRD_PARTY_NOTICES/`, `README.txt`, `docs/CODING_TOOLS.md`, `docs/CODING_TOOLS.ko.md` and `integrations/skills/owngit-checks/SKILL.md`. The macOS archive also holds `OwnGit.app`, which needs an Apple silicon Mac with the Xcode command-line tools. `tools/release/resources.go` declares the shipped documents by path.
+Each archive holds `owngit`, `LICENSE`, `THIRD_PARTY_NOTICES/`, `README.txt`, `docs/CODING_TOOLS.md`, `docs/CODING_TOOLS.ko.md` and `integrations/skills/owngit-checks/SKILL.md`. The macOS archive also holds `OwnGit.app`, which needs an Apple silicon Mac with the Xcode command-line tools. The app holds a copy of the archive's `owngit` at `OwnGit.app/Contents/Helpers/owngit`, so it works on its own. `tools/release/resources.go` declares the shipped documents by path.
 
 The version is `internal/version.Version`. Each release adds a `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md` that matches it.
 

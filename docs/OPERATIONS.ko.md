@@ -31,6 +31,8 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 프로그램은 `~/.local/bin/owngit`(root라면 `/usr/local/bin/owngit`)에 설치됩니다. Windows에서는 `%LOCALAPPDATA%\Programs\OwnGit` 아래에 릴리스마다 폴더를 따로 만듭니다. 설치 스크립트는 PATH를 바꾸지 않습니다. 그 폴더가 PATH에 없으면 실행 방법을 알려 줍니다. Windows에서는 서비스 설치 여부와 상관없이 [Windows 알림](#windows-알림)도 등록합니다.
 
+macOS에서는 내 계정이 `/Applications`에 쓸 수 있으면 메뉴 막대 앱인 OwnGit.app을 그 폴더에 넣습니다. macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 아이콘을 가릴 수 있기 때문입니다. 내 계정이 `/Applications`에 쓸 수 없으면 앱을 프로그램 옆에 두고 아이콘이 가려질 수 있다고 알려 줍니다. `--version`으로 이전 릴리스를 고르면 앱을 프로그램 옆에 둡니다. 그 릴리스의 앱은 프로그램이 바로 옆에 있어야 동작하기 때문입니다. `--no-service`를 붙이면 앱을 설치만 하고 열거나 등록하지는 않습니다.
+
 | Linux와 macOS | Windows | 하는 일 |
 | --- | --- | --- |
 | `--version 1.1.3` | `-Version 1.1.3` | 최신 릴리스 대신 그 릴리스를 설치합니다. |
@@ -50,6 +52,8 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 - 프로그램 경로가 npm의 `owngit` 같은 심볼릭 링크일 때. 그 설치는 원래 방법으로 업데이트하거나 `--to`로 다른 경로를 고르세요.
 - 다른 계정이 프로그램 폴더, 그 위의 폴더, 임시 폴더를 바꿀 수 있을 때. 나만(또는 root나 Windows 관리자만) 바꿀 수 있는 폴더를 고르세요.
 
+macOS에서는 다른 계정이 `/Applications`를 바꿀 수 있거나 `/Applications/OwnGit.app`이 심볼릭 링크일 때도 아무것도 바꾸기 전에 멈춥니다.
+
 ### 실행 전에 스크립트 확인하기
 
 한 줄 명령은 스크립트를 확인하지 않고 바로 실행합니다. `SHA256SUMS`는 압축 파일만 다루고 같은 릴리스에서 나오므로 독립된 서명이 아닙니다. 스크립트를 직접 확인하려면 다음과 같이 합니다.
@@ -63,6 +67,7 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 어느 방법이든 호스트에 `git-http-backend`가 포함된 Git이 있어야 합니다. Homebrew와 Arch Linux 패키지는 Git도 함께 설치합니다.
 
 - Homebrew(Apple silicon macOS, Linux x64와 ARM64): `brew install juliankang4/tap/owngit`
+- Homebrew 메뉴 막대 앱(선택, Apple silicon의 macOS 13 이상): `brew install --cask juliankang4/tap/owngit`를 실행하고 이어서 `owngit service install`을 실행합니다. cask는 OwnGit.app을 `/Applications`에 넣고 위의 formula가 없으면 함께 설치합니다. 프로그램이나 서비스를 하나 더 설치하는 것은 아닙니다. formula만 쓰면 앱은 지금처럼 Homebrew 폴더 안에 있습니다.
 - npm(Apple silicon macOS, Linux x64와 ARM64, Windows x64, Node.js 필요): `npm install -g owngit`
 - Arch Linux와 Omarchy(x64, ARM64): 릴리스마다 첨부된 `PKGBUILD`로 빌드합니다.
 - 위 플랫폼 모두: [GitHub Releases](https://github.com/juliankang4/owngit/releases)에서 압축 파일을 받아 `SHA256SUMS`로 확인합니다.
@@ -180,6 +185,7 @@ root로 설치할 때는 다음을 지켜야 합니다.
 - 로그는 `~/Library/Logs/owngit`에 있습니다([macOS의 로그 파일](#macos의-로그-파일)).
 - 시스템 설정의 일반, 로그인 항목 및 확장 프로그램에서 OwnGit을 끄면 에이전트가 시작되지 않습니다.
 - `npm update -g owngit` 뒤에는 `owngit service install`을 다시 실행하세요.
+- 서비스는 메뉴 막대 아이콘도 엽니다. 어느 OwnGit.app을 쓰는지는 [OwnGit 아이콘과 알림](#owngit-아이콘과-알림)에 있습니다.
 
 ### macOS의 로그 파일
 
@@ -289,7 +295,16 @@ OwnGit은 목록의 고치는 명령을 스스로 실행하지 않습니다. 상
 
 Homebrew에서 `brew upgrade owngit` 뒤에 `owngit service install`을 실행하면, 상태를 먼저 열지 않고 바로 `brew services restart owngit`에 재시작을 맡깁니다. 새 버전은 상태를 백업한 뒤 업그레이드합니다.
 
-`owngit uninstall`은 서비스를 제거하고 프로그램을 지우는 방법을 알려 줍니다. Windows에서는 [Windows 알림](#windows-알림) 등록도 지웁니다. 상태 디렉터리와 저장소는 지우지 않고 위치만 알려 줍니다. 나중에 다시 설치하면 그대로 이어서 씁니다.
+선택 사항인 Homebrew cask도 설치했다면 프로그램과 앱을 함께 업데이트한 뒤 서비스와 아이콘을 다시 시작하세요.
+
+```sh
+brew upgrade --formula owngit && brew upgrade --cask owngit
+owngit service install
+```
+
+두 버전이 같아질 때까지 OwnGit은 `/Applications`의 앱 대신 Homebrew 폴더 안의 앱을 씁니다. `brew uninstall --cask juliankang4/tap/owngit`은 `/Applications`의 앱만 지웁니다. formula, 상태, 저장소는 그대로 남습니다.
+
+`owngit uninstall`은 서비스를 제거하고 메뉴 막대 아이콘을 종료한 뒤 프로그램을 지우는 방법을 알려 줍니다. Windows에서는 [Windows 알림](#windows-알림) 등록도 지웁니다. OwnGit이 `/Applications`의 앱을 쓰고 있었다면 그 앱을 지우는 방법도 알려 줍니다. Homebrew로 설치했다면 `brew uninstall --cask juliankang4/tap/owngit`을 안내합니다. 다른 방법으로 설치했다면 앱을 휴지통으로 옮기라고 안내합니다. 버전이 다른 `/Applications`의 앱은 다른 설치의 것일 수 있어서 안내하지 않습니다. 상태 디렉터리와 저장소는 지우지 않고 위치만 알려 줍니다. 나중에 다시 설치하면 그대로 이어서 씁니다.
 
 ### 백업 버전
 
@@ -451,7 +466,14 @@ owngit settings set --login-attempts 4 --login-window 10m --login-pause 15m
 데스크톱이 있는 컴퓨터에서는 OwnGit 아이콘이 macOS 메뉴 막대, Windows 알림 영역, Linux 데스크톱 패널에 나타납니다. 아이콘 패널에는 실행 여부, 클론 주소, 최근 푸시 세 건이 보입니다. 손볼 일이 있으면 실행할 명령도 보입니다. 아이콘을 숨기거나 종료해도 OwnGit은 멈추지 않습니다.
 
 - `owngit tray off`는 `owngit tray on`을 실행할 때까지 아이콘을 숨깁니다. `owngit tray status`는 아이콘이 보이는지, 안 보인다면 왜인지 알려 줍니다. 설정 화면의 일반 탭에도 같은 스위치가 있습니다.
-- macOS: 아이콘은 프로그램 옆에 설치되는 OwnGit.app입니다. `owngit service install`이 앱을 열고 로그인할 때 열리도록 등록합니다.
+- macOS: 아이콘은 OwnGit.app입니다. `owngit service install`이 앱을 열고 로그인할 때 열리도록 등록합니다. 앱의 위치는 설치 방법에 따라 다릅니다.
+  - 한 줄 설치는 내 계정이 쓸 수 있으면 `/Applications`에, 아니면 프로그램 옆에 둡니다.
+  - Homebrew formula는 Homebrew 폴더 안, formula의 `bin` 폴더 옆에 둡니다.
+  - 선택 사항인 Homebrew cask는 `/Applications`에 둡니다.
+
+  OwnGit은 `/Applications`의 앱이 OwnGit 앱이며 프로그램과 버전이 같고 실행 파일과 내장 프로그램을 모두 갖췄을 때만 그 앱을 씁니다. 그렇지 않으면 프로그램과 함께 설치된 앱을 씁니다. `owngit service install`은 고른 앱을 열기 전에, 내 계정에서 떠 있는 `/Applications`나 프로그램 옆 OwnGit 앱의 아이콘을 버전과 상관없이 종료합니다. 그래서 아이콘은 하나만 보입니다. OwnGit 앱인지는 번들 ID로 확인하며, 다른 앱은 건드리지 않습니다. 이전 아이콘이 종료되지 않으면 새 아이콘을 열지 않고 그 사실을 알려 줍니다. macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 아이콘을 가릴 수 있습니다.
+
+  한 줄 설치가 앱을 `/Applications`로 옮기면, 이전 버전이 프로그램 옆에 둔 OwnGit.app은 그대로 남습니다. `owngit service install`은 그 앱의 아이콘을 종료할 뿐 앱을 지우지는 않습니다. 새 아이콘이 잘 동작하면 이전 앱은 휴지통으로 옮겨도 됩니다. 로그인할 때 이전 아이콘이 계속 열리면 시스템 설정의 일반, 로그인 항목 및 확장 프로그램에 있는 로그인 시 열기 목록에서 그 항목을 끄세요. Homebrew 폴더 안의 앱은 직접 지우지 마세요. Homebrew가 관리합니다.
 - Windows: `OwnGit icon` 작업이 로그인할 때 아이콘을 시작합니다. 클릭하면 대시보드가, 오른쪽 클릭하면 패널이 열립니다.
 - Linux: 데스크톱의 터미널에서 `owngit service install`을 실행하세요. 이 명령이 `~/.config/autostart/owngit-icon.desktop`을 만듭니다. 데스크톱이 StatusNotifierItem 아이콘을 보여 줘야 하고(Omarchy, AppIndicator 확장을 켠 GNOME 48에서 확인), GTK 4가 포함된 `gjs`가 필요합니다. 화면이 작으면 패널의 제목, 상태 줄, 대시보드 열기, 숨기기, 종료 버튼은 그대로 보이고 그 사이 내용만 스크롤됩니다. 데스크톱의 패널 프로그램이 30초 안에 응답하지 않으면 `owngit tray icon`이 이유를 알리고 시작을 포기합니다. 시작하는 도중에 멈춘 아이콘은 정상적으로 끝납니다.
 

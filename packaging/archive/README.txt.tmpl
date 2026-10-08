@@ -37,12 +37,18 @@ Start
     {{.Invocation}} setup-link for a new setup link.
 
 {{if .IconApp}}Menu bar icon
-  OwnGit.app beside the program is the OwnGit icon in the macOS menu bar. It
-  shows whether OwnGit runs, the clone address, the latest pushes and Open
-  dashboard. {{.Invocation}} service install opens it in your desktop
-  login, and it then opens whenever you sign in. Keep OwnGit.app next to
-  {{.Binary}}, which it runs. {{.Invocation}} tray off hides it, and
+  OwnGit.app is the OwnGit icon in the macOS menu bar. It shows whether
+  OwnGit runs, the clone address, the latest pushes and Open dashboard.
+  {{.Invocation}} service install opens it in your desktop login, and it
+  then opens whenever you sign in. {{.Invocation}} tray off hides it, and
   {{.Invocation}} tray on shows it again; OwnGit keeps running either way.
+
+  The app holds its own copy of {{.Binary}}, so you can move it to
+  /Applications. Do this on macOS 27 if you use a menu bar manager such as
+  Hidden Bar, which can hide the icon of an app outside /Applications.
+  Then run {{.Invocation}} service install again. OwnGit uses the app in
+  /Applications only when it has the same version as {{.Binary}};
+  otherwise it uses OwnGit.app beside {{.Binary}}, if one is there.
 
 {{end}}Data
   Host-local state lives in the platform configuration directory under
@@ -56,7 +62,8 @@ Update
 Remove
   {{.Invocation}} uninstall removes the service that "service install"
   registered, then delete this directory. Repositories and state are kept
-  unless you delete them yourself.
+  unless you delete them yourself.{{if .IconApp}} If OwnGit used the app in
+  /Applications, uninstall also says to move that app to the Trash.{{end}}
 
 Version
   {{.Invocation}} version

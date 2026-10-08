@@ -31,6 +31,8 @@ In a terminal, it ends by printing the setup link. Running it again keeps the st
 
 The program goes to `~/.local/bin/owngit` (`/usr/local/bin/owngit` for root) or, on Windows, to a folder per release under `%LOCALAPPDATA%\Programs\OwnGit`. The installer does not change PATH; when the folder is not on PATH, it says how to run the program. On Windows, it also registers OwnGit for [Windows notifications](#windows-notifications), with or without a service.
 
+On macOS, the installer puts the menu bar app, OwnGit.app, in `/Applications` when your account can write that folder. On macOS 27, a menu bar manager such as Hidden Bar can hide the icon of an app outside `/Applications`. When your account cannot write `/Applications`, the app goes beside the program and the installer warns that the icon may be hidden. An older release chosen with `--version` keeps its app beside the program, because that app needs the program next to it. With `--no-service`, the installer still places the app but opens and registers nothing.
+
 | Linux and macOS | Windows | What it does |
 | --- | --- | --- |
 | `--version 1.1.3` | `-Version 1.1.3` | Installs that release instead of the latest. |
@@ -50,6 +52,8 @@ The installer stops before it downloads anything when:
 - the program path is a symbolic link, such as npm's `owngit`. Update that install its own way, or choose another path with `--to`;
 - another account can change the program's folder, any folder above it, or the temporary folder. Choose a folder only you (or root, or the Windows administrators) can change.
 
+On macOS, it also stops before it changes anything when another account can change `/Applications`, or when `/Applications/OwnGit.app` is a symbolic link.
+
 ### Check the script before it runs
 
 The one-line command runs the script before anything checks it. `SHA256SUMS` covers only the archives, and it comes from the same release, so it is not an independent signature. To check the script yourself:
@@ -63,6 +67,7 @@ The one-line command runs the script before anything checks it. `SHA256SUMS` cov
 Every route needs Git with `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
 
 - Homebrew (macOS on Apple silicon, Linux x64 and ARM64): `brew install juliankang4/tap/owngit`
+- Homebrew menu bar app (optional; macOS 13 or later on Apple silicon): `brew install --cask juliankang4/tap/owngit`, then `owngit service install`. The cask puts OwnGit.app in `/Applications` and installs the formula above if it is missing; it is not a second copy of the program or the service. With the formula alone, the app stays in Homebrew's own folder and works as before.
 - npm (macOS on Apple silicon, Linux x64 and ARM64, Windows x64; needs Node.js): `npm install -g owngit`
 - Arch Linux or Omarchy (x64, ARM64): build the `PKGBUILD` attached to each release.
 - Any of these platforms: the archive from [GitHub Releases](https://github.com/juliankang4/owngit/releases), checked against `SHA256SUMS`.
@@ -180,6 +185,7 @@ To update, install the new release outside `%ProgramFiles%\OwnGit` and run its `
 - The log is in `~/Library/Logs/owngit` ([Log files on macOS](#log-files-on-macos)).
 - If you turn OwnGit off under System Settings, General, Login Items & Extensions, the agent does not start.
 - After `npm update -g owngit`, run `owngit service install` again.
+- The service also opens the menu bar icon; [OwnGit icon and notifications](#owngit-icon-and-notifications) says which copy of OwnGit.app it uses.
 
 ### Log files on macOS
 
@@ -289,7 +295,16 @@ When a service under your account runs this program, the printed command also ru
 
 With Homebrew, `owngit service install` after `brew upgrade owngit` hands the restart to `brew services restart owngit` without opening the state first, so the new version backs up the state and then upgrades it.
 
-`owngit uninstall` removes the service and prints how to remove the program. On Windows, it also removes OwnGit's registration for [Windows notifications](#windows-notifications). It never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
+If you also installed the optional Homebrew cask, update the program and the app together, then restart the service and the icon:
+
+```sh
+brew upgrade --formula owngit && brew upgrade --cask owngit
+owngit service install
+```
+
+Until the two have the same version, OwnGit uses the app in Homebrew's own folder instead of the one in `/Applications`. `brew uninstall --cask juliankang4/tap/owngit` removes only the app in `/Applications`; the formula, the state and the repositories stay.
+
+`owngit uninstall` removes the service, quits the menu bar icon and prints how to remove the program. On Windows, it also removes OwnGit's registration for [Windows notifications](#windows-notifications). When OwnGit used the app in `/Applications`, it also prints how to remove that app: `brew uninstall --cask juliankang4/tap/owngit` for a Homebrew install, or moving the app to the Trash otherwise. An app in `/Applications` of another version is not named, because it may belong to another install. `owngit uninstall` never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
 
 ### Backup versions
 
@@ -451,7 +466,14 @@ To end the confirmation of a browser you can no longer access, change the admini
 On a computer with a desktop, the OwnGit icon shows in the macOS menu bar, the Windows notification area or the Linux desktop's panel. Its panel shows whether OwnGit runs, the clone address, the three latest pushes, and the command to run when OwnGit needs attention. Hiding or quitting the icon never stops OwnGit.
 
 - `owngit tray off` hides the icon until `owngit tray on`. `owngit tray status` says whether it is shown and, if not, why. The General tab of Settings has the same switch.
-- macOS: the icon is OwnGit.app, installed beside the program. `owngit service install` opens it and registers it to open at sign-in.
+- macOS: the icon is OwnGit.app. `owngit service install` opens it and registers it to open at sign-in. Where the app is depends on how you installed OwnGit:
+  - The one-line installer puts it in `/Applications` when your account can write that folder, and otherwise beside the program.
+  - The Homebrew formula keeps it in Homebrew's own folder, beside the formula's `bin` folder.
+  - The optional Homebrew cask puts it in `/Applications`.
+
+  OwnGit uses the app in `/Applications` only when it is OwnGit's own app, has the same version as the program, and holds its launcher and built-in program. Otherwise it uses the app that came with the program. Before `owngit service install` opens the chosen app, it quits your account's running OwnGit icon from `/Applications` or from beside the program, whatever its version, so only one icon shows. It knows these apps by OwnGit's bundle identifier and leaves other apps alone. If an earlier icon does not quit, the command does not open another one and says so. On macOS 27, a menu bar manager such as Hidden Bar can hide the icon of an app outside `/Applications`.
+
+  When the one-line installer moves the app to `/Applications`, the OwnGit.app that an earlier version put beside the program stays there. `owngit service install` quits its icon but does not delete the app. Once the new icon works, you can move the old app to the Trash. If an old icon still opens when you sign in, turn off its entry under Open at Login in System Settings, General, Login Items & Extensions. Do not remove the app in Homebrew's folder by hand; Homebrew manages it.
 - Windows: the `OwnGit icon` task starts it at sign-in. Click opens the dashboard; right-click opens the panel.
 - Linux: run `owngit service install` from a terminal on the desktop. It writes `~/.config/autostart/owngit-icon.desktop`. The desktop must show StatusNotifierItem icons (tested on Omarchy, and GNOME 48 with the AppIndicator extension) and needs `gjs` with GTK 4. On a small screen, the panel keeps its title, status line and the Open dashboard, Hide and Quit buttons in view, and the part between them scrolls. If the desktop's panel program does not answer within 30 seconds, `owngit tray icon` gives up and says why. An icon stopped while it is still starting ends normally.
 
