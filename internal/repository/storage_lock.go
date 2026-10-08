@@ -1,11 +1,14 @@
 package repository
 
 import (
+	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"owngit/internal/state"
@@ -20,6 +23,9 @@ const storageLockName = ".owngit-serve.lock"
 // ErrStorageInUse reports that another OwnGit server holds the repository
 // folder.
 var ErrStorageInUse = errors.New("the repository folder is in use by another OwnGit server")
+
+// ErrDeletionStorageUnconfirmed leaves a missing repository's records intact.
+var ErrDeletionStorageUnconfirmed = fmt.Errorf("%w: the storage folder could not be confirmed; check that the drive or share is mounted", ErrStorageUnavailable)
 
 // ErrStorageChanged reports that a repository directory, the storage root or
 // its lock file is no longer the one this server bound or claimed. Writes can
@@ -106,6 +112,86 @@ func (m *Manager) verifyStorageHold() error {
 // that do not take the repository write lock use it right before they touch
 // the repository folder.
 func (m *Manager) VerifyStorageHold() error { return m.verifyStorageHold() }
+
+func (m *Manager) requireDeletionStorageClaim(ctx context.Context, id string) error {
+	s := &m.storageClaim
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := m.claimStorageLocked(false); err != nil {
+		return err
+	}
+	if s.enabled && s.hold == nil {
+		return ErrDeletionStorageUnconfirmed
+	}
+	if s.hold != nil {
+		if err := s.hold.verify(); err != nil {
+			return err
+		}
+	}
+	repositories, err := m.Store.Repositories(ctx)
+	if err != nil {
+		return err
+	}
+	otherRecorded, confirmed := false, false
+	for _, stored := range repositories {
+		if stored.ID == id {
+			continue
+		}
+		otherRecorded = true
+		binding := m.repositoryBinding(stored.ID, m.Locks.For(stored.ID).Incarnation())
+		if binding != nil && m.verifyRepositoryIdentity(stored.ID, binding) == nil {
+			confirmed = true
+			break
+		}
+	}
+	if !confirmed {
+		if otherRecorded {
+			return ErrDeletionStorageUnconfirmed
+		}
+		entries, err := os.ReadDir(m.RepositoryRoot())
+		if err != nil {
+			return fmt.Errorf("%w: %w", ErrDeletionStorageUnconfirmed, err)
+		}
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil {
+				return fmt.Errorf("%w: %w", ErrDeletionStorageUnconfirmed, err)
+			}
+			if !ownGitStorageEntry(entry.Name(), info) {
+				return ErrDeletionStorageUnconfirmed
+			}
+		}
+	}
+	if s.hold != nil {
+		return s.hold.verify()
+	}
+	return nil
+}
+
+func ownGitStorageEntry(name string, info os.FileInfo) bool {
+	if name == storageLockName || (strings.HasPrefix(name, deletionMarkerPrefix) && ValidateID(strings.TrimPrefix(name, deletionMarkerPrefix)) == nil) {
+		return info.Mode().IsRegular()
+	}
+	if !directRepositoryDirectory(info) {
+		return false
+	}
+	if name == removedDirectoryName || name == failedCreateDirectory {
+		return true
+	}
+	for _, staging := range []struct {
+		prefix string
+		bytes  int
+	}{
+		{creatingDirectoryPrefix, creationSuffixBytes},
+		{deletingDirectoryPrefix, randomHexBytes},
+	} {
+		suffix := strings.TrimPrefix(name, staging.prefix)
+		if strings.HasPrefix(name, staging.prefix) && len(suffix) == hex.EncodedLen(staging.bytes) && strings.Trim(suffix, "0123456789abcdef") == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // ClaimStorageForWrite claims the folder if that is still pending, or verifies
 // the claim, before a caller writes a new repository directory into it.

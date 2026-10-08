@@ -33,8 +33,10 @@ const (
 )
 
 const (
-	removedDirectoryName    = ".owngit-removed"
-	deletingDirectoryPrefix = ".owngit-delete-"
+	removedDirectoryName     = ".owngit-removed"
+	deletingDirectoryPrefix  = ".owngit-delete-"
+	randomHexBytes           = 16
+	recordOnlyDeletionTarget = ".owngit-missing"
 	// deletionMarkerPrefix names the file that stays in the repository folder
 	// while a deletion of that ID is unfinished. It proves that the folder a
 	// later start inspects is the storage the deletion began on, so a missing
@@ -75,6 +77,9 @@ type DeleteResult struct {
 	// KeptPath is the absolute path of the moved directory in keep mode and
 	// empty otherwise.
 	KeptPath string
+	// FolderMissing means the folder was already absent; only OwnGit's records
+	// were removed.
+	FolderMissing bool
 }
 
 // Delete removes a repository from OwnGit. The records go first, in one
@@ -127,20 +132,31 @@ func (m *Manager) Delete(ctx context.Context, id string, mode DeleteMode) (Delet
 			return result, err
 		}
 	}
-	// A repository that is still being prepared can be deleted, so this
-	// lookup skips the preparation check.
-	path, _, exists, err := m.existingPath(ctx, id)
-	if err != nil {
+	if _, exists, err := m.Store.Repository(ctx, id); err != nil {
 		return DeleteResult{}, err
 	} else if !exists {
 		return DeleteResult{}, ErrRepositoryNotFound
 	}
-	if err := m.BindRepositoryStorage(id, path, nil); err != nil {
-		return DeleteResult{}, err
-	}
-	moved, err := m.deletionTarget(root, id, mode)
+	path, err := m.Path(id)
 	if err != nil {
 		return DeleteResult{}, err
+	}
+	folderMissing := false
+	if err := m.BindRepositoryStorage(id, path, nil); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return DeleteResult{}, err
+		}
+		if err := m.requireDeletionStorageClaim(ctx, id); err != nil {
+			return DeleteResult{}, err
+		}
+		folderMissing = true
+	}
+	moved := recordOnlyDeletionTarget
+	if !folderMissing {
+		moved, err = m.deletionTarget(root, id, mode)
+		if err != nil {
+			return DeleteResult{}, err
+		}
 	}
 	token, err := randomHex()
 	if err != nil {
@@ -212,9 +228,11 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	if err := m.VerifyStorageHold(); err != nil {
 		return incomplete(err)
 	}
-	if binding := m.repositoryBinding(deletion.RepositoryID, m.Locks.For(deletion.RepositoryID).Incarnation()); binding != nil {
-		if err := m.verifyRepositoryIdentity(deletion.RepositoryID, binding); errors.Is(err, ErrStorageChanged) {
-			return incomplete(err)
+	if deletion.Moved != recordOnlyDeletionTarget {
+		if binding := m.repositoryBinding(deletion.RepositoryID, m.Locks.For(deletion.RepositoryID).Incarnation()); binding != nil {
+			if err := m.verifyRepositoryIdentity(deletion.RepositoryID, binding); errors.Is(err, ErrStorageChanged) {
+				return incomplete(err)
+			}
 		}
 	}
 	_, reused, err := m.Store.Repository(ctx, deletion.RepositoryID)
@@ -230,12 +248,21 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	if deletion.Root != root {
 		return incomplete(fmt.Errorf("%w: the repository folder changed from %s since the deletion began; its directory is left in place", ErrDeletionRecordMismatch, deletion.Root))
 	}
-	movedPath, err := deletionMovedPath(root, deletion)
-	if err != nil {
-		return incomplete(err)
+	movedPath := ""
+	if deletion.Moved != recordOnlyDeletionTarget {
+		movedPath, err = deletionMovedPath(root, deletion)
+		if err != nil {
+			return incomplete(err)
+		}
 	}
 	if err := checkDeletionMarker(root, deletion); err != nil {
 		return incomplete(err)
+	}
+	if deletion.Moved == recordOnlyDeletionTarget {
+		if err := m.completeDeletion(ctx, root, deletion.RepositoryID); err != nil {
+			return incomplete(err)
+		}
+		return DeleteResult{FolderMissing: true}, nil
 	}
 	if deletion.Phase == state.RepositoryDeletionPending {
 		if err := m.moveDeletedRepository(ctx, root, deletion, movedPath); err != nil {
@@ -245,14 +272,16 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 			return incomplete(err)
 		}
 		if deletion.Mode == state.RepositoryDeletionKeepFiles {
+			result := DeleteResult{KeptPath: movedPath}
+			if _, err := state.LstatIdentity(movedPath); errors.Is(err, os.ErrNotExist) {
+				result = DeleteResult{FolderMissing: true}
+			} else if err != nil {
+				return incomplete(err)
+			}
 			if err := m.completeDeletion(ctx, root, deletion.RepositoryID); err != nil {
 				return incomplete(err)
 			}
-			if _, err := state.LstatIdentity(movedPath); err != nil {
-				// The directory was already gone when the deletion resumed.
-				return DeleteResult{}, nil
-			}
-			return DeleteResult{KeptPath: movedPath}, nil
+			return result, nil
 		}
 		if err := m.Store.MarkRepositoryDeletionMoved(ctx, deletion.RepositoryID); err != nil {
 			return incomplete(err)
@@ -263,6 +292,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	}
 	// Only the renamed directory is removed from here on. The repository path
 	// may already belong to a new repository with the same name.
+	result := DeleteResult{}
 	if info, err := state.LstatIdentity(movedPath); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
 			return incomplete(fmt.Errorf("%w: the directory being deleted was replaced by another kind of file; it is left in place", ErrDeletionRecordMismatch))
@@ -270,8 +300,10 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 		if err := os.RemoveAll(movedPath); err != nil {
 			return incomplete(fmt.Errorf("delete repository files: %w", err))
 		}
-	} else if !os.IsNotExist(err) {
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return incomplete(err)
+	} else {
+		result.FolderMissing = true
 	}
 	syncDirectory(root)
 	if err := m.deletionStep("removed"); err != nil {
@@ -280,7 +312,7 @@ func (m *Manager) finishDeletion(ctx context.Context, root string, deletion stat
 	if err := m.completeDeletion(ctx, root, deletion.RepositoryID); err != nil {
 		return incomplete(err)
 	}
-	return DeleteResult{}, nil
+	return result, nil
 }
 
 // completeDeletion removes the intent and then the marker. The marker goes
@@ -498,7 +530,7 @@ func ensureRemovedDirectory(directory string) error {
 
 // randomHex returns 32 lowercase hexadecimal characters.
 func randomHex() (string, error) {
-	value := make([]byte, 16)
+	value := make([]byte, randomHexBytes)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}

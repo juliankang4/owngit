@@ -45,9 +45,9 @@ var (
 )
 
 // RepositoryDeletion is one durable deletion intent. Root is the canonical
-// repository root when the deletion began. Moved is the slash-separated path,
-// relative to Root, that the repository directory is renamed to. Marker is the
-// random token written into the deletion's marker file in Root.
+// repository root when deletion began. Moved is the slash-separated rename
+// target relative to Root, or ".owngit-missing" for record-only deletion.
+// Marker is the random token in the deletion's marker file in Root.
 type RepositoryDeletion struct {
 	RepositoryID string    `json:"-"`
 	Mode         string    `json:"mode"`

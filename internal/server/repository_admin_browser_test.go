@@ -307,33 +307,6 @@ func TestRepositoryDeleteWhileInUseIsRefusedAndKeepsTheChoice(t *testing.T) {
 	assertRepositoryIntact(t, fixture, "delete while in use")
 }
 
-func TestRepositoryDeleteKeepFilesNamesTheKeptFolder(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	server, client, jar := openBrowser(t, fixture)
-	signInAdmin(t, fixture, server.URL, jar)
-	result := browserForm(t, client, server.URL+"/repositories/project/delete", url.Values{
-		"csrf": {adminTestCSRF}, "mode": {"keep_files"}, "confirm_name": {"project"}, "admin_password": {"admin-password"},
-	}, server.URL)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/?notice="+removedNotice {
-		t.Fatalf("keep-files delete status=%d location=%q body=%s", result.status, result.header.Get("Location"), result.body)
-	}
-	if _, exists, err := fixture.store.Repository(t.Context(), "project"); err != nil || exists {
-		t.Fatalf("repository record remains: exists=%v err=%v", exists, err)
-	}
-	dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice)
-	if !strings.Contains(dashboard.body, "push &#39;"+server.URL+"/git/project.git&#39; &#39;refs/heads/*:refs/heads/*&#39;") {
-		t.Fatalf("dashboard lacks the recovery command:\n%s", dashboard.body)
-	}
-	if !strings.Contains(dashboard.body, "Removed from OwnGit, files kept:") || !strings.Contains(dashboard.body, ">project<") ||
-		!strings.Contains(dashboard.body, removedFolderName) {
-		t.Fatalf("dashboard does not name the repository and the kept folder:\n%s", dashboard.body)
-	}
-	again := browserGET(t, client, server.URL+"/?notice="+removedNotice)
-	if strings.Contains(again.body, removedFolderName) {
-		t.Fatal("the removal notice was shown twice")
-	}
-}
-
 func TestRecoveryCommandUsesTheCanonicalCurrentAddress(t *testing.T) {
 	for _, test := range []struct {
 		name         string
@@ -420,22 +393,90 @@ func TestRecoveryCommandUsesTheCanonicalCurrentAddress(t *testing.T) {
 	}
 }
 
-func TestRepositoryDeleteFilesRemovesTheFolder(t *testing.T) {
-	fixture := newAPIFixture(t, false)
-	server, client, jar := openBrowser(t, fixture)
-	signInAdmin(t, fixture, server.URL, jar)
-	result := browserForm(t, client, server.URL+"/repositories/project/delete", url.Values{
-		"csrf": {adminTestCSRF}, "mode": {"delete_files"}, "confirm_name": {"project"}, "admin_password": {"admin-password"},
-	}, server.URL)
-	if result.status != http.StatusSeeOther {
-		t.Fatalf("delete-files status=%d body=%s", result.status, result.body)
-	}
-	if _, err := os.Stat(fixture.remote); !os.IsNotExist(err) {
-		t.Fatalf("Git folder remains after delete_files: %v", err)
-	}
-	dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice)
-	if !strings.Contains(dashboard.body, "Deleted with its files:") {
-		t.Fatal("dashboard does not report the deletion")
+func TestRepositoryDeleteReportsTheFolderOutcome(t *testing.T) {
+	for _, test := range []struct {
+		mode, lang, message  string
+		missing, unconfirmed bool
+	}{
+		{"keep_files", "en", "Removed from OwnGit, files kept:", false, false},
+		{"delete_files", "en", "Deleted with its files:", false, false},
+		{"keep_files", "en", "The repository folder was already missing. Only its OwnGit records were removed.", true, false},
+		{"delete_files", "en", "The repository folder was already missing. Only its OwnGit records were removed.", true, false},
+		{"keep_files", "ko", "저장소 폴더가 이미 없어서 OwnGit의 등록 정보만 제거했습니다.", true, false},
+		{"delete_files", "ko", "저장소 폴더가 이미 없어서 OwnGit의 등록 정보만 제거했습니다.", true, false},
+		{"keep_files", "en", "The storage folder could not be confirmed. Check that the drive or share is mounted. The repository records were not removed.", true, true},
+		{"delete_files", "en", "The storage folder could not be confirmed. Check that the drive or share is mounted. The repository records were not removed.", true, true},
+		{"keep_files", "ko", "저장소 보관 폴더를 확인할 수 없습니다. 드라이브나 공유 폴더가 마운트되어 있는지 확인하세요. 저장소 등록 정보는 제거하지 않았습니다.", true, true},
+		{"delete_files", "ko", "저장소 보관 폴더를 확인할 수 없습니다. 드라이브나 공유 폴더가 마운트되어 있는지 확인하세요. 저장소 등록 정보는 제거하지 않았습니다.", true, true},
+	} {
+		t.Run(fmt.Sprintf("%s/%s/missing=%t/unconfirmed=%t", test.mode, test.lang, test.missing, test.unconfirmed), func(t *testing.T) {
+			fixture := newAPIFixture(t, false)
+			server, client, jar := openBrowser(t, fixture)
+			signInAdmin(t, fixture, server.URL, jar)
+			saved := filepath.Join(t.TempDir(), "absent.git")
+			unrelated := filepath.Join(filepath.Dir(fixture.remote), "unrelated")
+			if test.missing {
+				noErr(t, os.Rename(fixture.remote, saved))
+			}
+			if test.unconfirmed {
+				noErr(t, os.WriteFile(unrelated, []byte("not the mounted share"), 0o600))
+			}
+			result := browserForm(t, client, server.URL+"/repositories/project/delete?lang="+test.lang, url.Values{
+				"csrf": {adminTestCSRF}, "mode": {test.mode}, "confirm_name": {"project"}, "admin_password": {"admin-password"},
+			}, server.URL)
+			if test.missing {
+				if _, err := os.Stat(filepath.Join(saved, "HEAD")); err != nil {
+					t.Fatalf("absent repository changed: %v", err)
+				}
+			}
+			if test.unconfirmed {
+				if result.status != http.StatusServiceUnavailable || !strings.Contains(result.body, test.message) ||
+					!fixtureRepositoryExists(t, fixture, "project") || cookieNamed(result.header, removedCookie) {
+					t.Fatalf("unconfirmed storage deletion status=%d body=%s", result.status, result.body)
+				}
+				if !strings.Contains(result.body, `value="`+test.mode+`" required checked`) || strings.Contains(result.body, "admin-password") {
+					t.Fatal("refusal lost the selected mode or exposed the password")
+				}
+				content, err := os.ReadFile(unrelated)
+				if err != nil || string(content) != "not the mounted share" {
+					t.Fatalf("unrelated file changed: %q err=%v", content, err)
+				}
+				if _, exists, err := fixture.store.RepositoryDeletion(context.Background(), "project"); err != nil || exists {
+					t.Fatalf("refused deletion recorded an intent: exists=%v err=%v", exists, err)
+				}
+				return
+			}
+			if result.status != http.StatusSeeOther || result.header.Get("Location") != "/?notice="+removedNotice {
+				t.Fatalf("delete status=%d location=%q body=%s", result.status, result.header.Get("Location"), result.body)
+			}
+			if _, err := os.Stat(fixture.remote); !os.IsNotExist(err) {
+				t.Fatalf("Git folder remains: %v", err)
+			}
+			if fixtureRepositoryExists(t, fixture, "project") {
+				t.Fatal("repository record remains")
+			}
+			dashboard := browserGET(t, client, server.URL+"/?notice="+removedNotice+"&lang="+test.lang)
+			if !strings.Contains(dashboard.body, test.message) || !strings.Contains(dashboard.body, ">project<") {
+				t.Fatalf("dashboard lacks the removal result %q", test.message)
+			}
+			if test.missing && (strings.Contains(dashboard.body, "git --git-dir") || strings.Contains(dashboard.body, removedFolderName)) {
+				t.Fatal("missing-folder notice claims files were kept")
+			}
+			if test.mode == "keep_files" && !test.missing {
+				if !strings.Contains(dashboard.body, "push &#39;"+server.URL+"/git/project.git&#39; &#39;refs/heads/*:refs/heads/*&#39;") {
+					t.Fatalf("dashboard lacks the recovery command:\n%s", dashboard.body)
+				}
+				kept, err := filepath.Glob(filepath.Join(filepath.Dir(fixture.remote), removedFolderName, "project-*.git", "HEAD"))
+				noErr(t, err)
+				if len(kept) != 1 || !strings.Contains(dashboard.body, html.EscapeString(filepath.Dir(kept[0]))) {
+					t.Fatalf("kept HEAD paths=%v or dashboard lacks the kept folder:\n%s", kept, dashboard.body)
+				}
+				again := browserGET(t, client, server.URL+"/?notice="+removedNotice)
+				if strings.Contains(again.body, removedFolderName) {
+					t.Fatal("the removal notice was shown twice")
+				}
+			}
+		})
 	}
 }
 

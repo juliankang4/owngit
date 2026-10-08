@@ -202,11 +202,11 @@ func (m *Manager) CreateWithOptions(ctx context.Context, name, description strin
 	if err := m.claimStorageForWrite(); err != nil {
 		return state.Repository{}, err
 	}
-	suffix := make([]byte, 8)
+	suffix := make([]byte, creationSuffixBytes)
 	if _, err := rand.Read(suffix); err != nil {
 		return state.Repository{}, err
 	}
-	temporaryPath := filepath.Join(root, ".owngit-create-"+hex.EncodeToString(suffix))
+	temporaryPath := filepath.Join(root, creatingDirectoryPrefix+hex.EncodeToString(suffix))
 	if err := state.MkdirPrivate(temporaryPath); err != nil {
 		if errors.Is(err, state.ErrPrivateDirectoryExists) {
 			return state.Repository{}, fmt.Errorf("create temporary repository directory: generated name already exists: %w", err)
@@ -301,9 +301,11 @@ type creationEntry struct {
 }
 
 const (
-	failedCreateDirectory  = ".owngit-failed-create"
-	maximumFailedCreations = 8
-	creationRecordTimeout  = 5 * time.Second
+	creatingDirectoryPrefix = ".owngit-create-"
+	creationSuffixBytes     = 8
+	failedCreateDirectory   = ".owngit-failed-create"
+	maximumFailedCreations  = 8
+	creationRecordTimeout   = 5 * time.Second
 )
 
 // emptyCreation pins the storage parent and records this attempt's tree.

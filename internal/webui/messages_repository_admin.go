@@ -122,12 +122,14 @@ const (
 	MsgRepoDeleteNameMismatch  MessageCode = "repoadmin.delete.name_mismatch"
 	MsgRepoDeleteGone          MessageCode = "repoadmin.delete.gone"
 	MsgRepoDeleteFailed        MessageCode = "repoadmin.delete.failed"
+	MsgRepoDeleteUnconfirmed   MessageCode = "repoadmin.delete.storage_unconfirmed"
 	MsgRepoRemovedKept         MessageCode = "repoadmin.removed.kept"
 	MsgRepoRemovedKeptAt       MessageCode = "repoadmin.removed.kept_at"
 	MsgRepoRemovedKeptRecovery MessageCode = "repoadmin.removed.kept_recovery"
 	MsgRepoRemovedKeptCommand  MessageCode = "repoadmin.removed.kept_command"
 	MsgRepoRemovedKeptWhere    MessageCode = "repoadmin.removed.kept_where"
 	MsgRepoRemovedDeleted      MessageCode = "repoadmin.removed.deleted"
+	MsgRepoRemovedMissing      MessageCode = "repoadmin.removed.missing"
 	MsgRepoRemovedIncomplete   MessageCode = "repoadmin.removed.incomplete"
 	MsgRepoRemovedCleanupLater MessageCode = "repoadmin.removed.cleanup_later"
 	MsgRepoRemovedGeneric      MessageCode = "repoadmin.removed.generic"
@@ -386,6 +388,10 @@ var repositoryAdminCatalog = map[MessageCode]message{
 		en: "The repository could not be deleted. Check the server log before trying again.",
 		ko: "저장소를 삭제하지 못했습니다. 다시 시도하기 전에 서버 로그를 확인하세요.",
 	},
+	MsgRepoDeleteUnconfirmed: {
+		en: "The storage folder could not be confirmed. Check that the drive or share is mounted. The repository records were not removed.",
+		ko: "저장소 보관 폴더를 확인할 수 없습니다. 드라이브나 공유 폴더가 마운트되어 있는지 확인하세요. 저장소 등록 정보는 제거하지 않았습니다.",
+	},
 	MsgRepoRemovedKept:   {en: "Removed from OwnGit, files kept:", ko: "OwnGit에서 제거하고 파일은 남겼습니다:"},
 	MsgRepoRemovedKeptAt: {en: "The Git folder is now at", ko: "Git 폴더는 지금 이곳에 있습니다:"},
 	MsgRepoRemovedKeptRecovery: {
@@ -401,6 +407,10 @@ var repositoryAdminCatalog = map[MessageCode]message{
 		ko: "이 명령은 OwnGit이 실행 중인 컴퓨터에서 실행하세요. 폴더가 그 컴퓨터에 있습니다.",
 	},
 	MsgRepoRemovedDeleted: {en: "Deleted with its files:", ko: "파일까지 삭제했습니다:"},
+	MsgRepoRemovedMissing: {
+		en: "The repository folder was already missing. Only its OwnGit records were removed.",
+		ko: "저장소 폴더가 이미 없어서 OwnGit의 등록 정보만 제거했습니다.",
+	},
 	MsgRepoRemovedIncomplete: {
 		en: "Removed from OwnGit, but its files are not fully moved or deleted yet:",
 		ko: "OwnGit에서는 제거했지만 파일을 아직 다 옮기거나 지우지 못했습니다:",

@@ -38,9 +38,10 @@ const (
 )
 
 type removedResult struct {
-	Name string `json:"n"`
-	Mode string `json:"m"`
-	Kept string `json:"k,omitempty"`
+	Name          string `json:"n"`
+	Mode          string `json:"m"`
+	Kept          string `json:"k,omitempty"`
+	FolderMissing bool   `json:"f,omitempty"`
 	// Incomplete means the records are gone but the file step is not done;
 	// the next start finishes it.
 	Incomplete bool `json:"i,omitempty"`
@@ -473,7 +474,7 @@ func (app *App) handleRepositoryDelete(writer http.ResponseWriter, request *http
 	if incomplete {
 		logFailure(request, "repository file removal", err)
 	}
-	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, Incomplete: incomplete})
+	app.setRemovedCookie(writer, request, removedResult{Name: stored.Name, ID: stored.ID, Mode: mode, Kept: result.KeptPath, FolderMissing: result.FolderMissing, Incomplete: incomplete})
 	app.noticeRedirect(writer, request, "/?notice="+removedNotice)
 }
 
@@ -521,6 +522,8 @@ func (app *App) deleteFailure(request *http.Request, id string, err error) (webu
 	case errors.Is(err, repository.ErrStorageChanged):
 		logFailure(request, "repository deletion", err)
 		return webui.MsgStorageChanged, http.StatusConflict
+	case errors.Is(err, repository.ErrDeletionStorageUnconfirmed):
+		return webui.MsgRepoDeleteUnconfirmed, unavailable(request, "repository deletion", err)
 	case errors.Is(err, repository.ErrDeletionRecordMismatch):
 		return webui.MsgRepoDeleteFailed, internalError(request, "repository deletion", err)
 	default:
@@ -605,6 +608,9 @@ func (app *App) removedNotices(writer http.ResponseWriter, request *http.Request
 			{Kind: webui.NoticeWarning, Code: webui.MsgRepoRemovedIncomplete, Detail: result.Name},
 			webui.Info(webui.MsgRepoRemovedCleanupLater),
 		}
+	}
+	if result.FolderMissing {
+		return []webui.Notice{webui.Success(webui.MsgRepoRemovedMissing).WithDetail(result.Name)}
 	}
 	switch result.Mode {
 	case webui.DeleteModeKeepFiles:

@@ -86,15 +86,21 @@ func (app *App) handleRepositoryAdminAPI(writer http.ResponseWriter, request *ht
 	if incomplete {
 		logFailure(request, "repository file removal", err)
 	}
+	message := ""
+	if result.FolderMissing {
+		message = webui.Text(webui.LangEN, webui.MsgRepoRemovedMissing)
+	}
 	// Incomplete is true when the repository is gone from OwnGit but its
 	// files are removed or moved at the next start, as the dashboard says.
 	writeAPIJSON(writer, http.StatusOK, struct {
-		OK         bool   `json:"ok"`
-		Repository string `json:"repository"`
-		Mode       string `json:"mode"`
-		KeptPath   string `json:"kept_path,omitempty"`
-		Incomplete bool   `json:"incomplete,omitempty"`
-	}{true, id, input.Mode, result.KeptPath, incomplete})
+		OK            bool   `json:"ok"`
+		Repository    string `json:"repository"`
+		Mode          string `json:"mode"`
+		KeptPath      string `json:"kept_path,omitempty"`
+		Incomplete    bool   `json:"incomplete,omitempty"`
+		FolderMissing bool   `json:"folder_missing,omitempty"`
+		Message       string `json:"message,omitempty"`
+	}{true, id, input.Mode, result.KeptPath, incomplete, result.FolderMissing, message})
 }
 
 // defaultBranchAPI makes {"branch": name}, an existing branch, the default

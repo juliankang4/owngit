@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -124,8 +125,8 @@ func TestDeleteKeepFilesMovesRepositoryUnchangedAndFreesName(t *testing.T) {
 	result, err := manager.Delete(ctx, "sample", DeleteKeepFiles)
 	noErr(t, err)
 	want := filepath.Join(manager.RepositoryRoot(), ".owngit-removed", "sample-20270115T080000Z.git")
-	if result.KeptPath != want {
-		t.Fatalf("kept path=%q want %q", result.KeptPath, want)
+	if result.KeptPath != want || result.FolderMissing {
+		t.Fatalf("kept result=%+v want path %q", result, want)
 	}
 	assertRepositoryGone(t, manager, "sample")
 	assertSameTree(t, before, treeDigest(t, result.KeptPath))
@@ -178,8 +179,8 @@ func TestDeleteFilesRemovesDirectoryAndRetainedHistory(t *testing.T) {
 	manager, _ := newDeletionRepository(t)
 	result, err := manager.Delete(ctx, "sample", DeleteFiles)
 	noErr(t, err)
-	if result.KeptPath != "" {
-		t.Fatalf("delete mode reported a kept path %q", result.KeptPath)
+	if result.KeptPath != "" || result.FolderMissing {
+		t.Fatalf("delete mode result=%+v", result)
 	}
 	assertRepositoryGone(t, manager, "sample")
 	if names := rootEntries(t, manager); len(names) != 0 {
@@ -192,6 +193,144 @@ func TestDeleteFilesRemovesDirectoryAndRetainedHistory(t *testing.T) {
 	noErr(t, err)
 	if output, err := gitCombined("", "--git-dir", remote, "for-each-ref"); err != nil || strings.TrimSpace(output) != "" {
 		t.Fatalf("reused name inherited refs %q err=%v", output, err)
+	}
+}
+
+func TestDeleteChecksRepositoryStorage(t *testing.T) {
+	for _, mode := range []DeleteMode{DeleteKeepFiles, DeleteFiles} {
+		for _, folder := range []string{"missing", "missing at startup", "missing with verified other", "missing with unprepared other", "missing with replaced other", "missing with absent other", "missing with OwnGit entries", "missing with creation staging", "missing with deletion staging", "replaced", "unmounted", "empty mount point at startup", "nonempty mount point at startup", "unknown OwnGit entry at startup", "malformed creation staging at startup"} {
+			t.Run(string(mode)+"/"+folder, func(t *testing.T) {
+				ctx := context.Background()
+				manager, remote, _ := newTestRepository(t)
+				noErr(t, manager.ClaimStorage())
+				t.Cleanup(manager.ReleaseStorage)
+				before := treeDigest(t, remote)
+				saved := filepath.Join(t.TempDir(), "saved.git")
+				var wantError error
+				var otherPath string
+				var otherBefore map[string]string
+				if strings.Contains(folder, "other") {
+					_, err := manager.Create(ctx, "other", "")
+					noErr(t, err)
+					otherPath, err = manager.Path("other")
+					noErr(t, err)
+					otherBefore = treeDigest(t, otherPath)
+					if folder == "missing with replaced other" || folder == "missing with absent other" {
+						original := otherPath
+						otherPath = filepath.Join(t.TempDir(), "other.git")
+						noErr(t, os.Rename(original, otherPath))
+						if folder == "missing with replaced other" {
+							noErr(t, os.Mkdir(original, 0o700))
+						}
+					}
+				}
+				switch folder {
+				case "unmounted", "empty mount point at startup", "nonempty mount point at startup", "unknown OwnGit entry at startup", "malformed creation staging at startup":
+					root := manager.RepositoryRoot()
+					noErr(t, os.Rename(root, root+"-mounted"))
+					saved = filepath.Join(root+"-mounted", "sample.git")
+					wantError = ErrStorageUnavailable
+					if folder != "unmounted" {
+						manager.ReleaseStorage()
+						noErr(t, os.Mkdir(root, 0o700))
+						if folder == "malformed creation staging at startup" {
+							otherPath = filepath.Join(root, ".owngit-create-"+strings.Repeat("a", 32))
+							noErr(t, os.Mkdir(otherPath, 0o700))
+							noErr(t, os.WriteFile(filepath.Join(otherPath, "sentinel"), []byte("unrelated data"), 0o600))
+							otherBefore = treeDigest(t, otherPath)
+						} else if folder != "empty mount point at startup" {
+							name := "unrelated"
+							if folder == "unknown OwnGit entry at startup" {
+								name = ".owngit-unrelated"
+							}
+							noErr(t, os.WriteFile(filepath.Join(root, name), []byte("not the mounted share"), 0o600))
+						}
+						manager = secondServer(manager)
+						noErr(t, manager.ClaimStorage())
+						t.Cleanup(manager.ReleaseStorage)
+						wantError = ErrDeletionStorageUnconfirmed
+					}
+				default:
+					noErr(t, os.Rename(remote, saved))
+					switch folder {
+					case "replaced":
+						noErr(t, os.Mkdir(remote, 0o700))
+						wantError = ErrStorageChanged
+					case "missing at startup", "missing with verified other", "missing with unprepared other":
+						manager.ReleaseStorage()
+						manager = secondServer(manager)
+						noErr(t, manager.ClaimStorage())
+						t.Cleanup(manager.ReleaseStorage)
+						if folder == "missing with verified other" {
+							noErr(t, manager.BindRepositoryStorage("other", otherPath, nil))
+						} else if folder == "missing with unprepared other" {
+							wantError = ErrDeletionStorageUnconfirmed
+						}
+					case "missing with replaced other", "missing with absent other":
+						wantError = ErrDeletionStorageUnconfirmed
+					case "missing with OwnGit entries", "missing with deletion staging":
+						name := removedDirectoryName
+						if folder == "missing with deletion staging" {
+							var err error
+							name, err = manager.deletionTarget(manager.RepositoryRoot(), "sample", DeleteFiles)
+							noErr(t, err)
+						}
+						otherPath = filepath.Join(manager.RepositoryRoot(), name)
+						noErr(t, os.Mkdir(otherPath, 0o700))
+						noErr(t, os.WriteFile(filepath.Join(otherPath, "sentinel"), []byte("kept data"), 0o600))
+						otherBefore = treeDigest(t, otherPath)
+					}
+				}
+				var result DeleteResult
+				var err error
+				if folder == "missing with creation staging" {
+					manager.creationDirectoryHook = func(staging string) {
+						t.Logf("creation staging: %s", filepath.Base(staging))
+						stagingBefore := treeDigest(t, staging)
+						result, err = manager.Delete(ctx, "sample", mode)
+						assertSameTree(t, stagingBefore, treeDigest(t, staging))
+					}
+					_, createErr := manager.Create(ctx, "fresh", "")
+					manager.creationDirectoryHook = nil
+					noErr(t, createErr)
+				} else {
+					result, err = manager.Delete(ctx, "sample", mode)
+				}
+				if wantError != nil {
+					if !errors.Is(err, wantError) || errors.Is(err, ErrDeleteIncomplete) {
+						t.Fatalf("deletion error=%v want %v", err, wantError)
+					}
+					if _, exists, err := manager.Store.Repository(ctx, "sample"); err != nil || !exists {
+						t.Fatalf("refused deletion lost its record: exists=%v err=%v", exists, err)
+					}
+					if _, exists, err := manager.Store.RepositoryDeletion(ctx, "sample"); err != nil || exists {
+						t.Fatalf("refused deletion recorded an intent: exists=%v err=%v", exists, err)
+					}
+				} else {
+					noErr(t, err)
+					if !result.FolderMissing || result.KeptPath != "" {
+						t.Fatalf("missing-directory deletion result=%+v", result)
+					}
+					assertRepositoryGone(t, manager, "sample")
+					_, err = manager.Create(ctx, "sample", "")
+					noErr(t, err)
+				}
+				assertSameTree(t, before, treeDigest(t, saved))
+				if otherPath != "" {
+					assertSameTree(t, otherBefore, treeDigest(t, otherPath))
+				}
+				if strings.HasSuffix(folder, "entry at startup") || folder == "nonempty mount point at startup" {
+					name := "unrelated"
+					if strings.HasPrefix(folder, "unknown") {
+						name = ".owngit-unrelated"
+					}
+					content, err := os.ReadFile(filepath.Join(manager.RepositoryRoot(), name))
+					if err != nil || string(content) != "not the mounted share" {
+						t.Fatalf("underlying mount point changed: %q err=%v", content, err)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -292,27 +431,26 @@ func TestDeleteReportsInUseAfterBoundedLockWait(t *testing.T) {
 	}
 }
 
-// Each case stops a deletion right after one durable step, as a crash would,
-// and then runs startup reconciliation.
 func TestDeleteCompletesAfterInterruptionAtEveryStep(t *testing.T) {
 	for _, test := range []struct {
-		mode DeleteMode
-		step string
+		mode             DeleteMode
+		step             string
+		missing, restart bool
 	}{
-		{DeleteKeepFiles, "recorded"}, {DeleteKeepFiles, "moved"},
-		{DeleteFiles, "recorded"}, {DeleteFiles, "moved"}, {DeleteFiles, "marked"}, {DeleteFiles, "removed"},
+		{DeleteKeepFiles, "recorded", false, false}, {DeleteKeepFiles, "moved", false, false},
+		{DeleteFiles, "recorded", false, false}, {DeleteFiles, "moved", false, false},
+		{DeleteFiles, "marked", false, false}, {DeleteFiles, "removed", false, false},
+		{DeleteKeepFiles, "recorded", true, false}, {DeleteKeepFiles, "recorded", true, true},
+		{DeleteKeepFiles, "moved", true, false}, {DeleteKeepFiles, "moved", true, true},
+		{DeleteFiles, "recorded", true, false}, {DeleteFiles, "recorded", true, true},
+		{DeleteFiles, "moved", true, false}, {DeleteFiles, "moved", true, true},
+		{DeleteFiles, "marked", true, false}, {DeleteFiles, "marked", true, true},
 	} {
-		t.Run(string(test.mode)+"/"+test.step, func(t *testing.T) {
+		t.Run(fmt.Sprintf("%s/%s/missing=%t/restart=%t", test.mode, test.step, test.missing, test.restart), func(t *testing.T) {
 			ctx := context.Background()
 			manager, remote := newDeletionRepository(t)
 			before := treeDigest(t, remote)
-			crash := errors.New("simulated crash")
-			manager.deletionHook = func(step string) error {
-				if step == test.step {
-					return crash
-				}
-				return nil
-			}
+			crashAt(manager, test.step)
 			if _, err := manager.Delete(ctx, "sample", test.mode); !errors.Is(err, ErrDeleteIncomplete) {
 				t.Fatalf("interrupted deletion error=%v", err)
 			}
@@ -324,46 +462,39 @@ func TestDeleteCompletesAfterInterruptionAtEveryStep(t *testing.T) {
 			}
 
 			manager.deletionHook = nil
-			noErr(t, manager.ReconcileDeletions(ctx))
-			assertRepositoryGone(t, manager, "sample")
-			kept := filepath.Join(manager.RepositoryRoot(), ".owngit-removed", "sample-20270115T080000Z.git")
-			if test.mode == DeleteKeepFiles {
-				assertSameTree(t, before, treeDigest(t, kept))
-			} else if names := rootEntries(t, manager); len(names) != 0 {
-				t.Fatalf("repository root keeps %v", names)
+			if test.missing {
+				if test.step != "recorded" {
+					deletion, _, err := manager.Store.RepositoryDeletion(ctx, "sample")
+					noErr(t, err)
+					remote, err = deletionMovedPath(manager.RepositoryRoot(), deletion)
+					noErr(t, err)
+				}
+				noErr(t, os.Rename(remote, filepath.Join(t.TempDir(), "removed-by-hand.git")))
 			}
-			noErr(t, manager.ReconcileDeletions(ctx))
-			if _, err := manager.Create(ctx, "sample", ""); err != nil {
-				t.Fatalf("name was not reusable after reconciliation: %v", err)
-			}
-		})
-	}
-}
-
-func TestRecordedDeletionFinishesAfterDirectoryRemovedByHand(t *testing.T) {
-	for _, restart := range []bool{false, true} {
-		name := "same run"
-		if restart {
-			name = "after restart"
-		}
-		t.Run(name, func(t *testing.T) {
-			ctx := context.Background()
-			manager, remote := newDeletionRepository(t)
-			crashAt(manager, "recorded")
-			if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrDeleteIncomplete) {
-				t.Fatalf("interrupted deletion error=%v", err)
-			}
-			manager.deletionHook = nil
-			noErr(t, os.Rename(remote, filepath.Join(t.TempDir(), "removed-by-hand.git")))
-			if restart {
+			if test.restart {
 				manager = secondServer(manager)
 			}
-			noErr(t, manager.ReconcileDeletions(ctx))
-			if _, exists, err := manager.Store.RepositoryDeletion(ctx, "sample"); err != nil || exists {
-				t.Fatalf("deletion intent remains: exists=%v err=%v", exists, err)
+			if !test.missing || test.restart {
+				noErr(t, manager.ReconcileDeletions(ctx))
+			} else {
+				result, err := manager.Delete(ctx, "sample", test.mode)
+				noErr(t, err)
+				if !result.FolderMissing || result.KeptPath != "" {
+					t.Fatalf("resumed missing-directory result=%+v", result)
+				}
 			}
+			assertRepositoryGone(t, manager, "sample")
+			if test.mode == DeleteKeepFiles && !test.missing {
+				kept := filepath.Join(manager.RepositoryRoot(), ".owngit-removed", "sample-20270115T080000Z.git")
+				assertSameTree(t, before, treeDigest(t, kept))
+			} else if test.mode == DeleteFiles {
+				if names := rootEntries(t, manager); len(names) != 0 {
+					t.Fatalf("repository root keeps %v", names)
+				}
+			}
+			noErr(t, manager.ReconcileDeletions(ctx))
 			if _, err := manager.Create(ctx, "sample", ""); err != nil {
-				t.Fatalf("name not released: %v", err)
+				t.Fatalf("name was not reusable after deletion: %v", err)
 			}
 		})
 	}
@@ -449,25 +580,101 @@ func recordRepositoryLikeOlderBuild(t *testing.T, manager *Manager, id string) s
 // A directory that appears at the repository path meanwhile is not the
 // deleted repository, and finishing the deletion must not move or remove it.
 func TestFinishedRemovalNeverTouchesLaterDirectoryAtRepositoryPath(t *testing.T) {
-	ctx := context.Background()
-	manager, remote := newDeletionRepository(t)
-	manager.deletionHook = func(step string) error {
-		if step == "removed" {
-			return errors.New("simulated crash")
-		}
-		return nil
-	}
-	if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrDeleteIncomplete) {
-		t.Fatalf("interrupted deletion error=%v", err)
-	}
-	manager.deletionHook = nil
-	noErr(t, os.Mkdir(remote, 0o700))
-	noErr(t, manager.InitBareRepository(ctx, remote, CreateOptions{}))
-	later := treeDigest(t, remote)
-	noErr(t, manager.ReconcileDeletions(ctx))
-	assertSameTree(t, later, treeDigest(t, remote))
-	if deletions, err := manager.Store.RepositoryDeletions(ctx); err != nil || len(deletions) != 0 {
-		t.Fatalf("intent remains %+v err=%v", deletions, err)
+	for _, test := range []struct {
+		mode    DeleteMode
+		missing bool
+		resume  string
+	}{
+		{DeleteFiles, false, "same run"},
+		{DeleteKeepFiles, true, "same run"}, {DeleteFiles, true, "same run"},
+		{DeleteKeepFiles, true, "retry"}, {DeleteFiles, true, "retry"},
+		{DeleteKeepFiles, true, "restart"}, {DeleteFiles, true, "restart"},
+	} {
+		t.Run(fmt.Sprintf("%s/missing=%t/%s", test.mode, test.missing, test.resume), func(t *testing.T) {
+			ctx := context.Background()
+			manager, remote := newDeletionRepository(t)
+			original := filepath.Join(t.TempDir(), "original.git")
+			before := treeDigest(t, remote)
+			if test.missing {
+				noErr(t, manager.ClaimStorage())
+				noErr(t, os.Rename(remote, original))
+				manager.ReleaseStorage()
+				manager = secondServer(manager)
+				noErr(t, manager.ClaimStorage())
+				t.Cleanup(manager.ReleaseStorage)
+			}
+			manager.deletionHook = func(step string) error {
+				if test.missing && step == "recorded" {
+					noErr(t, os.Mkdir(remote, 0o700))
+					noErr(t, os.WriteFile(filepath.Join(remote, "sentinel"), []byte("returning data"), 0o600))
+					if test.resume == "same run" {
+						return nil
+					}
+					return errors.New("simulated crash")
+				}
+				if !test.missing && step == "removed" {
+					return errors.New("simulated crash")
+				}
+				return nil
+			}
+			result, err := manager.Delete(ctx, "sample", test.mode)
+			if test.missing && test.resume == "same run" {
+				noErr(t, err)
+				if !result.FolderMissing || result.KeptPath != "" {
+					t.Fatalf("missing-directory deletion result=%+v", result)
+				}
+			} else {
+				if !errors.Is(err, ErrDeleteIncomplete) {
+					t.Fatalf("interrupted deletion error=%v", err)
+				}
+				if test.missing {
+					deletion, exists, err := manager.Store.RepositoryDeletion(ctx, "sample")
+					if err != nil || !exists || deletion.Moved != recordOnlyDeletionTarget {
+						t.Fatalf("intent lost the missing-folder outcome: %+v exists=%v err=%v", deletion, exists, err)
+					}
+				}
+			}
+			manager.deletionHook = nil
+			if !test.missing {
+				noErr(t, os.Mkdir(remote, 0o700))
+				noErr(t, manager.InitBareRepository(ctx, remote, CreateOptions{}))
+			}
+			laterInfo, err := os.Stat(remote)
+			noErr(t, err)
+			later := treeDigest(t, remote)
+			if test.resume == "restart" {
+				manager.ReleaseStorage()
+				manager = secondServer(manager)
+				noErr(t, manager.ClaimStorage())
+				t.Cleanup(manager.ReleaseStorage)
+			}
+			if test.resume == "retry" {
+				result, err := manager.Delete(ctx, "sample", test.mode)
+				noErr(t, err)
+				if !result.FolderMissing || result.KeptPath != "" {
+					t.Fatalf("resumed missing-directory result=%+v", result)
+				}
+			} else {
+				noErr(t, manager.ReconcileDeletions(ctx))
+			}
+			noErr(t, manager.ReconcileDeletions(ctx))
+			assertSameTree(t, later, treeDigest(t, remote))
+			info, err := os.Stat(remote)
+			if err != nil || !os.SameFile(laterInfo, info) {
+				t.Fatalf("returning directory identity changed: %v", err)
+			}
+			if _, err := manager.Delete(ctx, "sample", test.mode); !errors.Is(err, ErrRepositoryNotFound) {
+				t.Fatalf("returning directory was registered: %v", err)
+			}
+			if test.missing {
+				assertSameTree(t, before, treeDigest(t, original))
+			}
+			assertSameTree(t, later, treeDigest(t, remote))
+			noErr(t, os.Rename(remote, filepath.Join(t.TempDir(), "returning.git")))
+			assertRepositoryGone(t, manager, "sample")
+			_, err = manager.Create(ctx, "sample", "")
+			noErr(t, err)
+		})
 	}
 }
 

@@ -258,4 +258,48 @@ func TestOwnerDeleteAPIAsksForTheNameAsSettingsSay(t *testing.T) {
 	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, target, map[string]string{"mode": "keep_files"}, "admin-password")); status != http.StatusNotFound || code != "repository_not_found" {
 		t.Fatalf("a second deletion: status=%d code=%q", status, code)
 	}
+	for _, mode := range []string{"keep_files", "delete_files"} {
+		for _, folder := range []string{"missing folder", "unconfirmed storage"} {
+			t.Run(folder+"/"+mode, func(t *testing.T) {
+				fixture := newAPIFixture(t, false)
+				server := serve(t, fixture.app.Handler())
+				saved := filepath.Join(t.TempDir(), "absent.git")
+				noErr(t, os.Rename(fixture.remote, saved))
+				unrelated := filepath.Join(filepath.Dir(fixture.remote), "unrelated")
+				if folder == "unconfirmed storage" {
+					noErr(t, os.WriteFile(unrelated, []byte("not the mounted share"), 0o600))
+				}
+				response := adminAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/project/delete",
+					map[string]string{"mode": mode, "confirm_name": "project"}, "admin-password")
+				answer := decodeAPIObject(t, response)
+				if _, err := os.Stat(filepath.Join(saved, "HEAD")); err != nil {
+					t.Fatalf("absent repository changed: %v", err)
+				}
+				if folder == "unconfirmed storage" {
+					problem, _ := answer["error"].(map[string]any)
+					if response.StatusCode != http.StatusServiceUnavailable || problem["code"] != "delete_failed" ||
+						problem["message"] != "The storage folder could not be confirmed. Check that the drive or share is mounted. The repository records were not removed." ||
+						!fixtureRepositoryExists(t, fixture, "project") {
+						t.Fatalf("unconfirmed storage deletion status=%d answer=%v", response.StatusCode, answer)
+					}
+					content, err := os.ReadFile(unrelated)
+					if err != nil || string(content) != "not the mounted share" {
+						t.Fatalf("unrelated file changed: %q err=%v", content, err)
+					}
+					if _, exists, err := fixture.store.RepositoryDeletion(context.Background(), "project"); err != nil || exists {
+						t.Fatalf("refused deletion recorded an intent: exists=%v err=%v", exists, err)
+					}
+					return
+				}
+				if response.StatusCode != http.StatusOK || answer["ok"] != true || answer["mode"] != mode || answer["folder_missing"] != true ||
+					answer["message"] != "The repository folder was already missing. Only its OwnGit records were removed." ||
+					answer["kept_path"] != nil || answer["incomplete"] != nil {
+					t.Fatalf("missing-folder deletion answered %v", answer)
+				}
+				if fixtureRepositoryExists(t, fixture, "project") {
+					t.Fatal("missing-folder deletion left its record")
+				}
+			})
+		}
+	}
 }

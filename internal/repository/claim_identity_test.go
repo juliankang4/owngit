@@ -110,25 +110,22 @@ func TestCatalogueRenameAndDeleteWithoutStorageBinding(t *testing.T) {
 	manager = secondServer(manager)
 	noErr(t, manager.ClaimStorage())
 	t.Cleanup(manager.ReleaseStorage)
-	noErr(t, os.Rename(path, path+"-away"))
+	absent := filepath.Join(t.TempDir(), "absent.git")
+	noErr(t, os.Rename(path, absent))
 	_, err := manager.Rename(ctx, "sample", "renamed", time.Now())
 	noErr(t, err)
-	if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrStorageUnavailable) || errors.Is(err, ErrDeleteIncomplete) {
-		t.Fatalf("missing-directory deletion error=%v", err)
-	}
-	_, exists, err := manager.Store.RepositoryDeletion(ctx, "sample")
+	result, err := manager.Delete(ctx, "sample", DeleteFiles)
 	noErr(t, err)
-	if exists {
-		t.Fatal("missing-directory deletion recorded an intent")
+	if !result.FolderMissing || result.KeptPath != "" {
+		t.Fatalf("missing-directory deletion result=%+v", result)
 	}
-	if _, exists, err := manager.Store.Repository(ctx, "sample"); err != nil || !exists {
-		t.Fatalf("refused deletion lost the repository: exists=%v err=%v", exists, err)
+	assertRepositoryGone(t, manager, "sample")
+	noErr(t, os.Rename(absent, path))
+	if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrRepositoryNotFound) {
+		t.Fatalf("returned directory deletion error=%v", err)
 	}
-	noErr(t, os.Rename(path+"-away", path))
-	_, err = manager.Delete(ctx, "sample", DeleteFiles)
-	noErr(t, err)
-	if _, err := os.Lstat(path); !os.IsNotExist(err) {
-		t.Fatalf("returned directory was not deleted: %v", err)
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatalf("returned unregistered directory was changed: %v", err)
 	}
 }
 
