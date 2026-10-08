@@ -25,7 +25,7 @@ var ErrStorageInUse = errors.New("the repository folder is in use by another Own
 // its lock file is no longer the one this server bound or claimed. Writes can
 // resume when the original storage returns. Restart OwnGit to adopt changed
 // storage.
-var ErrStorageChanged = errors.New("the repository folder changed after this OwnGit server claimed it; restart OwnGit to use it again")
+var ErrStorageChanged = errors.New("the repository folder is not the one this OwnGit server claimed; put the original folder back to continue, or restart OwnGit to use the folder now in place")
 
 // storageHold is a taken claim: the lock, and the identities of the folder
 // and lock file it was taken on.
@@ -80,8 +80,9 @@ func (m *Manager) ClaimStorage() error {
 	return m.claimStorageLocked(false)
 }
 
-// installWriteGate makes every repository write lock verify root and repository identity,
-// so no writer needs its own call.
+// installWriteGate makes write locks taken through LockContext or TryLockGated
+// verify root and repository identity. Writers using ungated locks or writing
+// outside the write lock call VerifyRepositoryStorage themselves.
 func (m *Manager) installWriteGate() {
 	if m.Locks != nil {
 		m.Locks.SetWriteGate(m.VerifyRepositoryStorage)

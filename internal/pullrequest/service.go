@@ -1179,7 +1179,7 @@ func (service *Service) requirePullRequest(ctx context.Context, repositoryID str
 func lockForRequest(ctx context.Context, take func(context.Context) error) error {
 	if err := take(ctx); err != nil {
 		if errors.Is(err, repository.ErrStorageChanged) {
-			return &Problem{Code: "storage_changed", Message: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Check the folder, then restart OwnGit.", Cause: err}
+			return &Problem{Code: "storage_changed", Message: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Put the original folder back to continue, or restart OwnGit to use the folder now in its place.", Cause: err}
 		}
 		if errors.Is(err, repository.ErrStorageUnavailable) {
 			return &Problem{Code: "repository_unavailable", Message: "The repository storage is unavailable.", Cause: err}

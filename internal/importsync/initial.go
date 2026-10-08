@@ -210,7 +210,7 @@ func (s *Service) prepareInitialDestination(ctx context.Context, run *runState) 
 		if errors.Is(err, repository.ErrStorageInUse) {
 			return "", newProblem(CodeUnresolved, "the repository folder is in use by another OwnGit server, so the import did not start writing", err)
 		}
-		return "", newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import did not start writing; restart OwnGit", err)
+		return "", newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import did not start writing; put the original folder back to continue, or restart OwnGit to use the folder now in its place", err)
 	}
 	mkdirPrivate := state.MkdirPrivate
 	if s.mkdirInitialDirectory != nil {

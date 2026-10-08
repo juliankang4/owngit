@@ -697,8 +697,8 @@ var catalog = map[MessageCode]message{
 		ko: "다른 OwnGit 서버가 이 폴더를 사용 중입니다. 다른 폴더를 선택하거나, 해당 서버를 종료한 뒤 다시 시도하세요.",
 	},
 	MsgStorageChanged: {
-		en: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Check that the folder is the intended one, then restart OwnGit.",
-		ko: "OwnGit을 시작한 뒤 저장소 폴더가 바뀌어서 쓰기를 멈췄습니다. 올바른 폴더인지 확인한 다음 OwnGit을 다시 시작하세요.",
+		en: "The repository folder changed after OwnGit started, so OwnGit stopped writing to it. Put the original folder back to continue, or restart OwnGit to use the folder now in its place.",
+		ko: "OwnGit을 시작한 뒤 저장소 폴더가 바뀌어서 쓰기를 멈췄습니다. 계속 쓰려면 원래 폴더를 제자리에 돌려놓으세요. 지금 그 자리에 있는 폴더를 쓰려면 OwnGit을 다시 시작하세요.",
 	},
 	MsgSetupStorageOverlap: {
 		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",

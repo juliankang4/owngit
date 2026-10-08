@@ -944,7 +944,7 @@ const busyMessage = "Git service is busy with other transfers; try again shortly
 
 // storageChangedMessage is the answer of a push refused because the repository
 // folder changed after OwnGit claimed it.
-const storageChangedMessage = "The repository folder changed after OwnGit started, so OwnGit stopped accepting pushes. Check the folder, then restart OwnGit."
+const storageChangedMessage = "The repository folder changed after OwnGit started, so OwnGit stopped accepting pushes. Put the original folder back to continue, or restart OwnGit to use the folder now in its place."
 
 // answerBusyLocked answers a request that could not take its repository lock
 // within its own bound, or whose client left while it waited, with the same

@@ -499,7 +499,7 @@ func (s *Service) ensureObjects(ctx context.Context, run *runState, repositoryPa
 			if errors.Is(err, repository.ErrStorageUnavailable) {
 				return newProblem(CodeRepositoryMissing, "repository storage is unavailable", err)
 			}
-			return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped before indexing its objects; restart OwnGit", err)
+			return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped before indexing its objects; put the original folder back to continue, or restart OwnGit to use the folder now in its place", err)
 		}
 		file, err := os.Open(packPath)
 		if err != nil {

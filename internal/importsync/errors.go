@@ -136,7 +136,7 @@ func joinDistinct(cause, reason error) error {
 // run deadline is a limit. stage names what the run was doing.
 func stoppedProblem(ctx context.Context, stage string, cause error) *Problem {
 	if errors.Is(cause, repository.ErrStorageChanged) {
-		return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped "+stage+"; restart OwnGit", cause)
+		return newProblem(CodeUnresolved, "the repository folder changed after OwnGit started, so the import stopped "+stage+"; put the original folder back to continue, or restart OwnGit to use the folder now in its place", cause)
 	}
 	if errors.Is(cause, repository.ErrStorageUnavailable) {
 		return newProblem(CodeRepositoryMissing, "repository storage is unavailable", cause)
