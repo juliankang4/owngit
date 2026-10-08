@@ -2,7 +2,7 @@ name: npm smoke test
 
 # Installs a published OwnGit npm version on every platform it ships for and
 # checks that the launcher runs the executable. Run it by hand after
-# publishing, before moving the "latest" dist-tag.
+# publishing the version to the "latest" dist-tag.
 
 on:
   workflow_dispatch:
