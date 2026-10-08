@@ -546,12 +546,28 @@ func (m *Manager) Path(id string) (string, error) {
 	if err := ValidateID(id); err != nil {
 		return "", err
 	}
-	root, err := canonicalRoot(m.RepositoryRoot())
+	root, err := checkRepositoryRoot(m.RepositoryRoot())
 	if err != nil {
 		return "", err
 	}
-	path := filepath.Join(root, id+".git")
-	relative, err := filepath.Rel(root, path)
+	return repositoryPath(root, id)
+}
+
+type checkedRepositoryRoot struct {
+	path string
+}
+
+func checkRepositoryRoot(root string) (checkedRepositoryRoot, error) {
+	path, err := canonicalRoot(root)
+	if err != nil {
+		return checkedRepositoryRoot{}, err
+	}
+	return checkedRepositoryRoot{path: path}, nil
+}
+
+func repositoryPath(root checkedRepositoryRoot, id string) (string, error) {
+	path := filepath.Join(root.path, id+".git")
+	relative, err := filepath.Rel(root.path, path)
 	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) {
 		return "", errors.New("repository path escapes the storage root")
 	}
@@ -590,17 +606,24 @@ func (m *Manager) StoragePath(id string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
 	}
-	info, err := os.Lstat(path)
-	if err != nil {
-		return "", fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("%w: repository path must not be a symbolic link", ErrStorageUnavailable)
-	}
-	if !info.IsDir() {
-		return "", fmt.Errorf("%w: repository path is not a directory", ErrStorageUnavailable)
+	if _, err := repositoryStorageInfo(path); err != nil {
+		return "", err
 	}
 	return path, nil
+}
+
+func repositoryStorageInfo(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%w: repository path must not be a symbolic link", ErrStorageUnavailable)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("%w: repository path is not a directory", ErrStorageUnavailable)
+	}
+	return info, nil
 }
 
 func canonicalRoot(root string) (string, error) {

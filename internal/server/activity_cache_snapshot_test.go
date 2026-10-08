@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"os"
@@ -9,8 +10,11 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/pullrequest"
+	"owngit/internal/repository"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
@@ -87,5 +91,95 @@ func TestWarmDashboardStartsNoGitProcess(t *testing.T) {
 	}
 	if body := settledGET(t, client, server.URL+"/"); !strings.Contains(body, merged) {
 		t.Fatal("the dashboard after a merge does not show the merged tip")
+	}
+}
+
+func TestListedRefSnapshotsKeepCatalogueAndStorageFailures(t *testing.T) {
+	if testing.Short() {
+		t.Skip("creates several synthetic repository and catalogue fixtures")
+	}
+	for _, test := range []struct {
+		name   string
+		change func(*testing.T, *App, string)
+		want   error
+	}{
+		{name: "unchanged"},
+		{name: "deleted after listing", want: repository.ErrRepositoryNotFound, change: func(t *testing.T, app *App, path string) {
+			lock := app.Repositories.Locks.For("listed")
+			lock.Lock()
+			defer lock.UnlockWithoutRefChanges()
+			noErr(t, app.Store.BeginRepositoryDeletion(context.Background(), state.RepositoryDeletion{
+				RepositoryID: "listed", Mode: state.RepositoryDeletionKeepFiles, Root: filepath.Dir(path),
+				Moved: ".owngit-removed/listed-20270115T080000Z.git", Marker: strings.Repeat("d", 32), CreatedAt: time.Now(),
+			}))
+			if _, err := os.Stat(path); err != nil {
+				t.Fatalf("the deleted row must leave its cached storage present: %v", err)
+			}
+		}},
+		{name: "missing storage", want: repository.ErrStorageUnavailable, change: func(t *testing.T, _ *App, path string) {
+			noErr(t, os.Rename(path, path+".kept"))
+		}},
+		{name: "not a directory", want: repository.ErrStorageUnavailable, change: func(t *testing.T, _ *App, path string) {
+			noErr(t, os.Rename(path, path+".kept"))
+			noErr(t, os.WriteFile(path, nil, 0o600))
+		}},
+		{name: "replacement root", want: repository.ErrStorageChanged, change: func(t *testing.T, app *App, path string) {
+			if runtime.GOOS == "windows" {
+				t.Skip("the root replacement fixture requires Unix")
+			}
+			noErr(t, app.Repositories.ClaimStorage())
+			root := filepath.Dir(path)
+			noErr(t, os.Rename(root, root+".kept"))
+			noErr(t, os.Mkdir(root, 0o700))
+		}},
+		{name: "incomplete restore", want: repository.ErrStorageUnavailable, change: func(t *testing.T, _ *App, path string) {
+			noErr(t, os.WriteFile(filepath.Join(filepath.Dir(path), state.IncompleteRestoreMarkerName), nil, 0o600))
+		}},
+		{name: "replacement directory", want: repository.ErrStorageChanged, change: func(t *testing.T, _ *App, path string) {
+			noErr(t, os.Rename(path, path+".kept"))
+			noErr(t, os.Mkdir(path, 0o700))
+		}},
+		{name: "symlink", want: repository.ErrStorageUnavailable, change: func(t *testing.T, _ *App, path string) {
+			if runtime.GOOS == "windows" {
+				t.Skip("the symlink fixture requires Unix")
+			}
+			noErr(t, os.Rename(path, path+".kept"))
+			noErr(t, os.Symlink(path+".kept", path))
+		}},
+		{name: "cancelled", want: context.Canceled},
+		{name: "catalogue unavailable", change: func(t *testing.T, app *App, _ string) {
+			noErr(t, app.Store.Exec(context.Background(), `ALTER TABLE repositories RENAME TO unavailable_repositories`))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := newConfiguredApp(t)
+			_, err := app.Repositories.Create(context.Background(), "listed", "")
+			noErr(t, err)
+			listed, err := app.Store.Repositories(context.Background())
+			noErr(t, err)
+			cached, err := app.Repositories.RefSnapshot(context.Background(), "listed")
+			noErr(t, err)
+			path, err := app.Repositories.Path("listed")
+			noErr(t, err)
+			if test.change != nil {
+				test.change(t, app, path)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if test.want == context.Canceled {
+				cancel()
+			}
+			snapshots, errs := app.Repositories.RefSnapshotsWithin(ctx, listed, repositoryListWait)
+			if len(snapshots) != 1 || len(errs) != 1 {
+				t.Fatalf("snapshots=%d errors=%d, want one result per listed row", len(snapshots), len(errs))
+			}
+			if test.name == "unchanged" {
+				if errs[0] != nil || snapshots[0].ActivityKey != cached.ActivityKey || snapshots[0].Stale {
+					t.Fatalf("unchanged snapshot=%+v error=%v", snapshots[0], errs[0])
+				}
+			} else if errs[0] == nil || (test.want != nil && !errors.Is(errs[0], test.want)) || snapshots[0].ActivityKey != "" {
+				t.Fatalf("failed snapshot=%+v error=%v, want %v and no cached success", snapshots[0], errs[0], test.want)
+			}
+		})
 	}
 }

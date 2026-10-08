@@ -3,12 +3,15 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"sync"
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/state"
 )
 
 // snapshotCache keeps the latest ref snapshot of each repository with the
@@ -25,8 +28,9 @@ import (
 // them in order each time, so a smaller cache evicts each entry before the
 // next visit and every view starts one Git process per repository.
 const (
-	snapshotCapacity   = 8192
-	snapshotByteBudget = 32 << 20
+	snapshotConcurrency = 8
+	snapshotCapacity    = 8192
+	snapshotByteBudget  = 32 << 20
 )
 
 type snapshotCache struct {
@@ -68,6 +72,78 @@ func (m *Manager) RefSnapshotWithin(ctx context.Context, id string, wait time.Du
 	return m.refSnapshot(ctx, id, wait, false)
 }
 
+// Results and errors have the same indexes as repositories.
+func (m *Manager) RefSnapshotsWithin(ctx context.Context, repositories []state.Repository, wait time.Duration) ([]RefSnapshot, []error) {
+	snapshots := make([]RefSnapshot, len(repositories))
+	errs := make([]error, len(repositories))
+	if len(repositories) == 0 {
+		return snapshots, errs
+	}
+	present, listErr := m.Store.RepositoryIDs(ctx)
+	var root checkedRepositoryRoot
+	var storageErr error
+	if listErr == nil {
+		root, storageErr = checkRepositoryRoot(m.RepositoryRoot())
+		if storageErr != nil {
+			storageErr = fmt.Errorf("%w: %w", ErrStorageUnavailable, storageErr)
+		} else {
+			storageErr = m.VerifyStorageHold()
+		}
+	}
+	slots := make(chan struct{}, snapshotConcurrency)
+	var group sync.WaitGroup
+	for index, stored := range repositories {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			select {
+			case slots <- struct{}{}:
+			case <-ctx.Done():
+				errs[index] = ctx.Err()
+				return
+			}
+			defer func() { <-slots }()
+			switch {
+			case m.Preparing(stored.ID):
+				errs[index] = ErrRepositoryPreparing
+			case listErr != nil:
+				errs[index] = listErr
+			case !present[stored.ID]:
+				errs[index] = ErrRepositoryNotFound
+			case storageErr != nil:
+				errs[index] = storageErr
+			default:
+				snapshots[index], errs[index] = m.listedRefSnapshot(ctx, root, stored, wait)
+			}
+		}()
+	}
+	group.Wait()
+	return snapshots, errs
+}
+
+func (m *Manager) listedRefSnapshot(ctx context.Context, root checkedRepositoryRoot, stored state.Repository, wait time.Duration) (RefSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return RefSnapshot{}, err
+	}
+	if err := ValidateID(stored.ID); err != nil {
+		return RefSnapshot{}, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	path, err := repositoryPath(root, stored.ID)
+	if err != nil {
+		return RefSnapshot{}, fmt.Errorf("%w: %w", ErrStorageUnavailable, err)
+	}
+	info, err := repositoryStorageInfo(path)
+	if err != nil {
+		return RefSnapshot{}, err
+	}
+	if binding := m.repositoryBinding(stored.ID, m.Locks.For(stored.ID).Incarnation()); binding != nil {
+		if path != binding.path || !directRepositoryDirectory(info) || !os.SameFile(info, binding.info) {
+			return RefSnapshot{}, fmt.Errorf("%w: %s", ErrStorageChanged, path)
+		}
+	}
+	return m.refSnapshotPath(ctx, stored.ID, path, wait, false)
+}
+
 // RefSnapshotAfterWrites waits for an active writer before checking the
 // generation. Background callbacks can arrive before that writer unlocks.
 func (m *Manager) RefSnapshotAfterWrites(ctx context.Context, id string) (RefSnapshot, error) {
@@ -82,6 +158,10 @@ func (m *Manager) refSnapshot(ctx context.Context, id string, wait time.Duration
 	if !exists {
 		return RefSnapshot{}, ErrRepositoryNotFound
 	}
+	return m.refSnapshotPath(ctx, id, repositoryPath, wait, afterWrites)
+}
+
+func (m *Manager) refSnapshotPath(ctx context.Context, id, repositoryPath string, wait time.Duration, afterWrites bool) (RefSnapshot, error) {
 	lock := m.Locks.For(id)
 	// Without the lock, a writer may be in progress. The cached snapshot then
 	// shows the refs before that write, which is the state the write has not

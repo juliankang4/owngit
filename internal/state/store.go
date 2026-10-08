@@ -2576,6 +2576,22 @@ func (s *Store) Repositories(ctx context.Context) ([]Repository, error) {
 	return repositories, rows.Err()
 }
 
+func (s *Store) RepositoryIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM repositories`)
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, errors.Join(err, closeRows(rows))
+		}
+		present[id] = true
+	}
+	return present, closeRows(rows)
+}
+
 func (s *Store) AddTrustedHost(ctx context.Context, host string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO trusted_hosts(host,created_at) VALUES(?,?)`, host, time.Now().Unix())
 	return err

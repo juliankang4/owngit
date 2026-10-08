@@ -53,7 +53,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	ctx := request.Context()
-	snapshots, snapshotErrs := app.refSnapshots(ctx, repositories)
+	snapshots, snapshotErrs := app.Repositories.RefSnapshotsWithin(ctx, repositories, repositoryListWait)
 	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
 	var summaries []webui.RepositorySummary
 	// updated holds the time each listed row shows, for the sidebar below.

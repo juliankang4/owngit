@@ -418,7 +418,7 @@ func TestDashboardDuringDeletionStartsNoPreparation(t *testing.T) {
 	}
 	app := newConfiguredApp(t)
 	var blockers []string
-	for index := 0; index < 5*snapshotConcurrency; index++ {
+	for index := 0; index < 40; index++ {
 		// Blockers sort before and after the deleted repository, so its read
 		// queues behind theirs.
 		name := fmt.Sprintf("a-blocker-%d", index)

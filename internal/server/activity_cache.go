@@ -15,12 +15,8 @@ import (
 const (
 	// activityWait is how long a page waits for activity that is still being
 	// counted before it renders with an explicit "still counting" state.
-	activityWait = 2 * time.Second
-	// activityConcurrency bounds background activity computations, and
-	// snapshotConcurrency bounds the ref listings a page reads at once. Both
-	// keep a network share from receiving a burst of Git processes.
+	activityWait        = 2 * time.Second
 	activityConcurrency = 4
-	snapshotConcurrency = 8
 	// repositoryListWait is how long a page that lists repositories waits for
 	// one that a Git operation holds before it uses the last listing.
 	repositoryListWait = time.Second
@@ -476,36 +472,10 @@ func (app *App) StopBackground() {
 	failures.flush()
 }
 
-// refSnapshots reads every repository's ref snapshot with bounded
-// concurrency. A repository unchanged since its previous snapshot starts no
-// Git process. errs[i] reports a failure for repositories[i].
-func (app *App) refSnapshots(ctx context.Context, repositories []state.Repository) ([]repository.RefSnapshot, []error) {
-	snapshots := make([]repository.RefSnapshot, len(repositories))
-	errs := make([]error, len(repositories))
-	slots := make(chan struct{}, snapshotConcurrency)
-	var group sync.WaitGroup
-	for index := range repositories {
-		group.Add(1)
-		go func() {
-			defer group.Done()
-			select {
-			case slots <- struct{}{}:
-			case <-ctx.Done():
-				errs[index] = ctx.Err()
-				return
-			}
-			defer func() { <-slots }()
-			snapshots[index], errs[index] = app.Repositories.RefSnapshotWithin(ctx, repositories[index].ID, repositoryListWait)
-		}()
-	}
-	group.Wait()
-	return snapshots, errs
-}
-
 // activityKeys returns each repository's activity key. A repository whose
 // refs cannot be listed gets an empty key, which no observation has.
 func (app *App) activityKeys(ctx context.Context, repositories []state.Repository) []string {
-	return activityKeysFrom(app.refSnapshots(ctx, repositories))
+	return activityKeysFrom(app.Repositories.RefSnapshotsWithin(ctx, repositories, repositoryListWait))
 }
 
 func activityKeysFrom(snapshots []repository.RefSnapshot, errs []error) []string {
