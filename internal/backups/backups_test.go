@@ -495,11 +495,15 @@ func noErr(t *testing.T, err error) {
 // The scheduler of a started service makes the first backup as soon as a
 // folder is set, and a stop ends it.
 func TestSchedulerStartsTheFirstBackupWhenAFolderIsSet(t *testing.T) {
+	if testing.Short() {
+		t.Skip("creates and verifies a real scheduled backup")
+	}
 	f := newFixture(t)
-	ended := make(chan string, 4)
-	running := &Service{Store: f.store, Repositories: f.manager, Now: f.clock.Now, Logf: func(format string, arguments ...any) {
-		if line := fmt.Sprintf(format, arguments...); strings.HasPrefix(line, "backup ") {
-			ended <- line
+	ended := make(chan struct{}, 1)
+	running := &Service{Store: f.store, Repositories: f.manager, Now: f.clock.Now, Logf: func(string, ...any) {
+		select {
+		case ended <- struct{}{}:
+		default:
 		}
 	}}
 	noErr(t, running.Start(context.Background()))
@@ -507,16 +511,13 @@ func TestSchedulerStartsTheFirstBackupWhenAFolderIsSet(t *testing.T) {
 	_, _, _, err := running.ChangeSchedule(context.Background(), ScheduleChange{Destination: &f.destination})
 	noErr(t, err)
 	select {
-	case line := <-ended:
-		if !strings.Contains(line, " succeeded") {
-			t.Fatalf("scheduled backup: %s", line)
-		}
+	case <-ended:
 	case <-time.After(2 * time.Minute):
 		t.Fatal("no scheduled backup ended")
 	}
 	runs, err := f.store.BackupRuns(context.Background())
 	noErr(t, err)
-	if len(runs) != 1 || runs[0].Kind != state.BackupRunScheduled || runs[0].Verification != state.BackupVerifyPassed {
+	if len(runs) != 1 || runs[0].Kind != state.BackupRunScheduled || runs[0].Status != state.BackupSucceeded || runs[0].Verification != state.BackupVerifyPassed {
 		t.Fatalf("runs: %+v", runs)
 	}
 }
