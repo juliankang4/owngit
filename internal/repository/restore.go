@@ -521,7 +521,7 @@ func (m *Manager) restorePatches(ctx context.Context, repositoryPath, oldTree, n
 			truncated = true
 			continue
 		}
-		if change.Binary || change.BinaryBySize {
+		if change.Binary || change.TextDiffUnavailable {
 			// A file this computer did not compare as text has no patch: reading
 			// it would cost the memory the mark says it cannot have.
 			continue

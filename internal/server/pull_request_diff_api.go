@@ -90,9 +90,9 @@ func diffFromComparison(revisions pullrequest.DiffRevisions, comparison reposito
 	diff.MergeBase = comparison.Base
 	tooLarge := false
 	for _, file := range comparison.Files {
-		tooLarge = tooLarge || file.BinaryBySize
+		tooLarge = tooLarge || file.TextDiffUnavailable
 		diff.Files = append(diff.Files, pullrequest.DiffFile{
-			Path: file.Path, Status: file.Status, Binary: file.Binary && !file.BinaryBySize, TooLarge: file.BinaryBySize,
+			Path: file.Path, Status: file.Status, Binary: file.Binary && !file.TextDiffUnavailable, TooLarge: file.TextDiffUnavailable,
 			Additions: lineCount(file.Additions, countsUnknown(file)), Deletions: lineCount(file.Deletions, countsUnknown(file)),
 		})
 	}

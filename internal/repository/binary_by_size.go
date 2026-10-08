@@ -23,7 +23,7 @@ var memoryBudget = func() int64 { return int64(hostmem.GitBudget(hostmem.Ceiling
 // read that could not be bounded.
 func pathExclusions(files []ChangedFile) (excluded []string, ok bool) {
 	for _, file := range files {
-		if file.BinaryBySize {
+		if file.TextDiffUnavailable {
 			excluded = append(excluded, file.Path)
 		}
 	}
@@ -98,7 +98,7 @@ func (m *Manager) markBinaryBySize(ctx context.Context, id string, files []Chang
 	}
 	for index := range files {
 		if _, over := marked[files[index].Path]; over {
-			files[index].BinaryBySize = true
+			files[index].TextDiffUnavailable = true
 		}
 	}
 	return nil
@@ -124,7 +124,7 @@ func (m *Manager) markBinaryBySizeWithin(ctx context.Context, repositoryPath str
 	for index := range files {
 		for _, path := range marked {
 			if files[index].Path == path {
-				files[index].BinaryBySize = true
+				files[index].TextDiffUnavailable = true
 			}
 		}
 	}

@@ -404,18 +404,15 @@ const (
 	MsgCodeSubmodule     MessageCode = "code.submodule"
 	MsgCodeSymlink       MessageCode = "code.symlink"
 
-	MsgCommitsEmpty     MessageCode = "commits.empty"
-	MsgCommitNotFound   MessageCode = "commits.not_found"
-	MsgCommitUnreadable MessageCode = "commits.unreadable"
-	MsgCommitDiffBig    MessageCode = "commits.diff_truncated"
-	MsgCommitDiffNone   MessageCode = "commits.diff_unavailable"
-	MsgCommitDiffMerge  MessageCode = "commits.diff_merge"
-	MsgCommitBinaryFile MessageCode = "commits.binary_file"
-	// MsgDiffBinaryBySize and MsgDiffBinaryBySizeNote explain a file that no
-	// text diff was made for because it is larger than this computer compares
-	// as text, so a reader does not take it for a binary file.
-	MsgDiffBinaryBySize     MessageCode = "diff.binary_by_size"
-	MsgDiffBinaryBySizeNote MessageCode = "diff.binary_by_size_note"
+	MsgCommitsEmpty            MessageCode = "commits.empty"
+	MsgCommitNotFound          MessageCode = "commits.not_found"
+	MsgCommitUnreadable        MessageCode = "commits.unreadable"
+	MsgCommitDiffBig           MessageCode = "commits.diff_truncated"
+	MsgCommitDiffNone          MessageCode = "commits.diff_unavailable"
+	MsgCommitDiffMerge         MessageCode = "commits.diff_merge"
+	MsgCommitBinaryFile        MessageCode = "commits.binary_file"
+	MsgDiffTextUnavailable     MessageCode = "diff.text_unavailable"
+	MsgDiffTextUnavailableNote MessageCode = "diff.text_unavailable_note"
 	// MsgDiffCountsUnread names a file whose line counts were never read,
 	// because it or its neighbours were left out of the count read, so the
 	// reader does not take a zero for a count of zero lines.
@@ -1652,10 +1649,10 @@ var catalog = map[MessageCode]message{
 		en: "Binary file, no line changes shown.",
 		ko: "바이너리 파일이라 줄 단위 변경을 표시하지 않습니다.",
 	},
-	MsgDiffBinaryBySize: {en: "Too large to compare", ko: "너무 커서 비교 못 함"},
-	MsgDiffBinaryBySizeNote: {
-		en: "This file is larger than this computer compares as text, so its change is not shown line by line and its line counts are unknown.",
-		ko: "이 파일은 이 컴퓨터가 텍스트로 비교하는 크기보다 커서, 변경 내용을 줄 단위로 표시하지 않고 줄 수는 알 수 없습니다.",
+	MsgDiffTextUnavailable: {en: "Text comparison unavailable", ko: "텍스트로 비교할 수 없음"},
+	MsgDiffTextUnavailableNote: {
+		en: "This computer does not compare this file as text within its size or memory limits. Line changes are not shown, and line counts are unknown.",
+		ko: "이 컴퓨터의 파일 크기 또는 메모리 한도 때문에 이 파일을 텍스트로 비교할 수 없습니다. 줄 단위 변경을 표시하지 않으며 줄 수는 알 수 없습니다.",
 	},
 	MsgDiffCountsUnread: {en: "Line counts not read", ko: "줄 수를 읽지 않음"},
 	// A label, not a conclusion. Git's author and committer fields are

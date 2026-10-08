@@ -244,7 +244,7 @@ func (m *Manager) CompareFile(ctx context.Context, id, baseOID, sourceOID, path 
 		if err := m.markBinaryBySize(ctx, id, files); err != nil {
 			return ChangedFile{}, "", false, false, err
 		}
-		if files[index].BinaryBySize {
+		if files[index].TextDiffUnavailable {
 			// Git reads such a file whole while it writes its patch, however
 			// large the memory this computer gives one Git process is.
 			return files[index], "", false, true, nil

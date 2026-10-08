@@ -79,24 +79,19 @@ type ChangedFile struct {
 	// OldMode and NewMode are the Git file modes before and after the
 	// change, such as 100644, 100755, 120000 (a symbolic link) or 160000 (a
 	// submodule), and 000000 where the path did not exist.
-	OldMode   string
-	NewMode   string
-	Additions int
-	Deletions int
-	Binary    bool
-	// BinaryBySize is true when no text diff was shown because the file is
-	// larger than this computer compares as text, not because its content is
-	// binary (see the package hostmem).
-	BinaryBySize bool
+	OldMode             string
+	NewMode             string
+	Additions           int
+	Deletions           int
+	Binary              bool
+	TextDiffUnavailable bool
 	// CountsRead is true when the added and deleted line counts were read. A
 	// change left out of that read, because it is above the memory line or
 	// because more changes are than one command line can leave out, keeps a
 	// zero count that no read established, and callers show it as unknown.
 	CountsRead bool
-	// oldOID and newOID are the objects of the change, kept for the size
-	// lookup that decides BinaryBySize. They are not part of the public view.
-	oldOID string
-	newOID string
+	oldOID     string
+	newOID     string
 }
 
 // readLockedPath resolves a repository and takes its read lock. The caller

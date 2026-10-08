@@ -134,17 +134,17 @@ func TestMarkBinaryBySizeFollowsBothSidesOfTheChange(t *testing.T) {
 		{Path: "small.txt", Status: "M", oldOID: small, newOID: small},
 	}
 	noErr(t, manager.markBinaryBySizeWithin(ctx, remote, changed, bound))
-	if !changed[0].BinaryBySize || !changed[1].BinaryBySize || !changed[3].BinaryBySize {
+	if !changed[0].TextDiffUnavailable || !changed[1].TextDiffUnavailable || !changed[3].TextDiffUnavailable {
 		t.Errorf("a file above the bound on one side is not marked: %+v", changed)
 	}
-	if changed[2].BinaryBySize || changed[4].BinaryBySize {
+	if changed[2].TextDiffUnavailable || changed[4].TextDiffUnavailable {
 		t.Errorf("a file below the bound was marked: %+v", changed[2:])
 	}
 	// An unknown memory ceiling compares every file as loudly as Git does, so
 	// the flag stays off.
 	unchanged := []ChangedFile{{Path: "added.bin", Status: "A", Binary: true, newOID: older}}
 	noErr(t, manager.markBinaryBySizeWithin(ctx, remote, unchanged, 0))
-	if unchanged[0].BinaryBySize {
+	if unchanged[0].TextDiffUnavailable {
 		t.Errorf("a computer with an unknown ceiling marked a file: %+v", unchanged[0])
 	}
 }
@@ -188,7 +188,7 @@ func TestCompareLeavesAFileAboveTheBoundOutOfThePatch(t *testing.T) {
 		t.Errorf("a comparison whose files fit one command line says its patch was too large to read")
 	}
 	for _, file := range comparison.Files {
-		if !file.BinaryBySize {
+		if !file.TextDiffUnavailable {
 			t.Errorf("the file above the bound is not marked: %+v", file)
 		}
 		if strings.Contains(comparison.Patch, file.Path) {
@@ -203,7 +203,7 @@ func TestCompareLeavesAFileAboveTheBoundOutOfThePatch(t *testing.T) {
 
 	comparison, err = manager.Compare(ctx, "sample", changed, removed, 1<<20, 30*time.Second)
 	noErr(t, err)
-	if len(comparison.Files) != 1 || !comparison.Files[0].BinaryBySize {
+	if len(comparison.Files) != 1 || !comparison.Files[0].TextDiffUnavailable {
 		t.Fatalf("the deleted file above the bound is not marked: %+v", comparison.Files)
 	}
 	if strings.Contains(comparison.Patch, "file.txt") {
@@ -218,7 +218,7 @@ func TestCompareLeavesAFileAboveTheBoundOutOfThePatch(t *testing.T) {
 		t.Fatalf("the comparison lists %d files, want two", len(comparison.Files))
 	}
 	for _, file := range comparison.Files {
-		if file.BinaryBySize {
+		if file.TextDiffUnavailable {
 			t.Errorf("a file below the bound was left out: %+v", file)
 		}
 		if !strings.Contains(comparison.Patch, file.Path) {
@@ -427,7 +427,7 @@ func TestRepackRefreshesCachedBlobCostsAndComparisonMarks(t *testing.T) {
 			noErr(t, err)
 			files := []ChangedFile{{Path: "file.txt", Status: "D", oldOID: older}}
 			noErr(t, manager.markBinaryBySize(ctx, "sample", files))
-			if !blob.TooLargeMemory || !files[0].BinaryBySize {
+			if !blob.TooLargeMemory || !files[0].TextDiffUnavailable {
 				t.Fatal("the delta did not prime both refusal caches")
 			}
 
@@ -454,10 +454,10 @@ func TestRepackRefreshesCachedBlobCostsAndComparisonMarks(t *testing.T) {
 			}
 			blob, err = manager.BlobAt(ctx, "sample", entry, 1<<20)
 			noErr(t, err)
-			files[0].BinaryBySize = false
+			files[0].TextDiffUnavailable = false
 			noErr(t, manager.markBinaryBySize(ctx, "sample", files))
-			if blob.TooLarge || int64(len(blob.Content)) != size || files[0].BinaryBySize {
-				t.Fatalf("repacked file is still refused: tooLarge=%t bytes=%d mark=%t", blob.TooLarge, len(blob.Content), files[0].BinaryBySize)
+			if blob.TooLarge || int64(len(blob.Content)) != size || files[0].TextDiffUnavailable {
+				t.Fatalf("repacked file is still refused: tooLarge=%t bytes=%d mark=%t", blob.TooLarge, len(blob.Content), files[0].TextDiffUnavailable)
 			}
 		})
 	}
@@ -634,11 +634,11 @@ func TestCompareLeavesUnreadCountsUnknown(t *testing.T) {
 	read := 0
 	for _, file := range comparison.Files {
 		switch {
-		case file.BinaryBySize && file.CountsRead:
+		case file.TextDiffUnavailable && file.CountsRead:
 			t.Errorf("%s is above the line and yet carries line counts", file.Path)
 		case file.CountsRead:
 			read++
-		case !file.BinaryBySize:
+		case !file.TextDiffUnavailable:
 			t.Errorf("%s is below the line but its counts were not read", file.Path)
 		}
 	}

@@ -982,7 +982,7 @@ func (app *App) comparePullRequestRevisions(ctx context.Context, repositoryID, s
 		// its patch, and the page says why it has no lines.
 		paths := make([]string, 0, len(window))
 		for _, file := range window {
-			if !file.BinaryBySize {
+			if !file.TextDiffUnavailable {
 				paths = append(paths, file.Path)
 			}
 		}

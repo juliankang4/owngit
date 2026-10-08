@@ -1249,10 +1249,8 @@ type DiffFile struct {
 	Additions int
 	Deletions int
 	// Binary is true when no text diff exists.
-	Binary bool
-	// BinaryBySize is true when Binary is true because the file is larger
-	// than this computer compares as text, not because its content is binary.
-	BinaryBySize bool
+	Binary              bool
+	TextDiffUnavailable bool
 	// CountsUnknown is true when the line counts were never read, because the
 	// file was left out of the read (see repository.ChangedFile.CountsRead),
 	// so a zero count must not be shown as no changes.

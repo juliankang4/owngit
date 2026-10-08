@@ -17,7 +17,7 @@ func TestChangedFileJSONReportsAnUnknownCountAsUnknown(t *testing.T) {
 		Source: pullrequest.Revision{Branch: "feature", OID: "1111111111111111111111111111111111111111"},
 		Target: pullrequest.Revision{Branch: "main", OID: "2222222222222222222222222222222222222222"}}
 	diff := diffFromComparison(revisions, repository.Comparison{Bases: 1, Base: revisions.Target.OID, Files: []repository.ChangedFile{
-		{Path: "big.txt", Status: "added", Binary: true, BinaryBySize: true},
+		{Path: "big.txt", Status: "added", Binary: true, TextDiffUnavailable: true},
 		{Path: "logo.png", Status: "added", Binary: true, CountsRead: true},
 		{Path: "text.txt", Status: "modified", Additions: 1, CountsRead: true},
 		{Path: "unread.txt", Status: "modified"},
@@ -66,14 +66,14 @@ func TestChangedFileJSONReportsAnUnknownCountAsUnknown(t *testing.T) {
 	// A patch that was not read because too many files are above the memory
 	// line says so, instead of naming a limit that was never reached.
 	crowded := repository.Comparison{Bases: 1, Base: revisions.Target.OID, PatchTruncated: true, PatchTooLarge: true,
-		Files: []repository.ChangedFile{{Path: "big.bin", Status: "A", BinaryBySize: true}}}
+		Files: []repository.ChangedFile{{Path: "big.bin", Status: "A", TextDiffUnavailable: true}}}
 	if other := diffFromComparison(revisions, crowded); other.Reason != "too_large" || !other.Truncated {
 		t.Errorf("a patch left out for its files reports reason=%q truncated=%v", other.Reason, other.Truncated)
 	}
 
 	// The restore preview reports the same file the same way.
 	preview := restorePreviewView(restorePreviewInput{Mode: "merge"}, repository.RestorePreview{Changes: []repository.ChangedFile{
-		{Path: "big.txt", Status: "added", Binary: true, BinaryBySize: true},
+		{Path: "big.txt", Status: "added", Binary: true, TextDiffUnavailable: true},
 		{Path: "logo.png", Status: "added", Binary: true, Additions: 0, Deletions: 0, CountsRead: true},
 		{Path: "unread.txt", Status: "modified"},
 	}})
@@ -104,9 +104,9 @@ func TestChangedFileJSONReportsAnUnknownCountAsUnknown(t *testing.T) {
 // carries, the page reads no patch at all and offers each file on its own.
 func TestCommitDiffLeavesFilesAboveTheMemoryLineOut(t *testing.T) {
 	files := []repository.ChangedFile{
-		{Path: "added.bin", Status: "A", Binary: true, BinaryBySize: true},
-		{Path: "modified.bin", Status: "M", Binary: true, BinaryBySize: true},
-		{Path: "deleted.bin", Status: "D", Binary: true, BinaryBySize: true},
+		{Path: "added.bin", Status: "A", Binary: true, TextDiffUnavailable: true},
+		{Path: "modified.bin", Status: "M", Binary: true, TextDiffUnavailable: true},
+		{Path: "deleted.bin", Status: "D", Binary: true, TextDiffUnavailable: true},
 		{Path: "text.txt", Status: "M", Additions: 1, Deletions: 1, CountsRead: true},
 	}
 	excluded, deferred, readPatch := excludedFromDiff(files)
@@ -140,7 +140,7 @@ func TestCommitDiffLeavesFilesAboveTheMemoryLineOut(t *testing.T) {
 
 	many := make([]repository.ChangedFile, 0, maximumExcludedFiles+1)
 	for index := 0; index <= maximumExcludedFiles; index++ {
-		many = append(many, repository.ChangedFile{Path: "big.bin", Status: "A", Binary: true, BinaryBySize: true})
+		many = append(many, repository.ChangedFile{Path: "big.bin", Status: "A", Binary: true, TextDiffUnavailable: true})
 	}
 	if excluded, _, readPatch := excludedFromDiff(many); readPatch || excluded != nil {
 		t.Errorf("past the pathspec bound the page still reads a patch: %v", excluded)

@@ -205,24 +205,20 @@ func manyDiffFiles(n int) []DiffFile {
 	return files
 }
 
-// A file that Git shows as binary only because this computer compares large
-// files that way must say so: otherwise a text file reads as a binary file,
-// and its missing line counts could read as none. A file whose content is
-// binary keeps its own wording.
-func TestASizeBasedBinaryFileSaysWhyItHasNoDiff(t *testing.T) {
+func TestUnavailableTextComparisonKeepsItsOwnNotice(t *testing.T) {
 	r := newRenderer(t)
 	for _, lang := range Langs() {
 		page := repoPage(fullChrome(lang), RepoTabCommits)
 		page.Commits.Detail.Files = []DiffFile{
-			{Path: "logs/service.txt", Status: "modified", Binary: true, BinaryBySize: true},
+			{Path: "logs/service.txt", Status: "modified", Binary: true, TextDiffUnavailable: true},
 			{Path: "docs/logo.png", Status: "modified", Binary: true},
 		}
 		out := render(t, r, page)
-		if !strings.Contains(out, wantText(lang, MsgDiffBinaryBySizeNote)) {
-			t.Errorf("%s: a file too large to compare does not say why it has no diff", lang)
+		if !strings.Contains(out, wantText(lang, MsgDiffTextUnavailableNote)) {
+			t.Errorf("%s: an unavailable text comparison has no explanation", lang)
 		}
-		if !strings.Contains(out, wantText(lang, MsgDiffBinaryBySize)) {
-			t.Errorf("%s: the file list does not mark the file as too large to compare", lang)
+		if !strings.Contains(out, wantText(lang, MsgDiffTextUnavailable)) {
+			t.Errorf("%s: the file list does not mark the text comparison as unavailable", lang)
 		}
 		if !strings.Contains(out, wantText(lang, MsgCommitBinaryFile)) {
 			t.Errorf("%s: a binary file lost its own note", lang)

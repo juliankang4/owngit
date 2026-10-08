@@ -53,7 +53,7 @@
 {{/* The status is a word inside an outline, so it reads without colour. */}}
 {{define "diffStatus"}}{{with .F}}{{with prChangeStatus .Status}}<span class="dstat dstat--{{$.F.Status}}">{{bi $.Lang .}}</span>{{end}}{{end}}{{end}}
 
-{{define "diffCounts"}}{{with .F}}{{if .BinaryBySize}}<span class="dfile__bin">{{bi $.Lang "diff.binary_by_size"}}</span>{{else if .Binary}}<span class="dfile__bin">{{bi $.Lang "pr.changes.binary_file"}}</span>{{else if .CountsUnknown}}<span class="dfile__bin">{{bi $.Lang "diff.counts_unread"}}</span>{{else}}<span class="add">+{{.Additions}}</span> <span class="del">-{{.Deletions}}</span>{{end}}{{end}}{{end}}
+{{define "diffCounts"}}{{with .F}}{{if .TextDiffUnavailable}}<span class="dfile__bin">{{bi $.Lang "diff.text_unavailable"}}</span>{{else if .Binary}}<span class="dfile__bin">{{bi $.Lang "pr.changes.binary_file"}}</span>{{else if .CountsUnknown}}<span class="dfile__bin">{{bi $.Lang "diff.counts_unread"}}</span>{{else}}<span class="add">+{{.Additions}}</span> <span class="del">-{{.Deletions}}</span>{{end}}{{end}}{{end}}
 
 {{/* One changed file: a header that stays at the top of the window while its
      diff scrolls past, and the diff itself. The fold button starts hidden and
@@ -95,8 +95,8 @@
     </div>
     {{else if .NotLoaded}}
     <p class="dfile__note">{{icon "info"}}<span>{{bi $lang "diff.not_loaded"}}{{with .URL}} <a href="{{.}}">{{bi $lang "diff.open_one"}}</a>{{end}}</span></p>
-    {{else if .BinaryBySize}}
-    <p class="dfile__note">{{bi $lang "diff.binary_by_size_note"}}</p>
+    {{else if .TextDiffUnavailable}}
+    <p class="dfile__note">{{bi $lang "diff.text_unavailable_note"}}</p>
     {{else if .Binary}}
     <p class="dfile__note">{{bi $lang "commits.binary_file"}}</p>
     {{else}}

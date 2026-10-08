@@ -1482,13 +1482,11 @@ func (app *App) fillCommits(request *http.Request, page *webui.RepositoryPage, s
 		return err
 	}
 	if requestedPath != "" {
-		// A file larger than this computer compares as text is not diffed:
-		// Git would rebuild it in memory (measured on Git 2.47.3: a 220 MiB
-		// delta used 665 MiB, and the large-file threshold does not stop an
-		// added file's patch). The page says why instead.
+		// Git can rebuild the whole object to write a patch even with a
+		// large-file threshold.
 		patch, truncated := "", false
 		var err error
-		if !selectedFile.BinaryBySize {
+		if !selectedFile.TextDiffUnavailable {
 			patch, truncated, err = app.Repositories.CommitPatch(request.Context(), page.Repo.ID, openedOID, requestedPath, nil, limits.FilePatchBytes)
 		}
 		if err != nil {
@@ -1640,9 +1638,8 @@ func addFileLinks(request *http.Request, page *webui.PageContinuation) {
 // patch read, the files whose diff is deferred for the page, and whether the
 // read may run at all.
 //
-// A file larger than this computer compares as text is left out because Git
-// reads such a file whole while it writes its patch, whatever the large-file
-// threshold says, and the page says why it has no lines. A file with more
+// Git can rebuild the whole object while writing its patch despite the
+// large-file threshold. A file with more
 // changed lines than the page shows is left out so that it cannot use up the
 // size limit of the files after it. Every left out file is one more pathspec
 // on the Git command line, so past the cap the patch is not read at all: the
@@ -1652,7 +1649,7 @@ func excludedFromDiff(files []repository.ChangedFile) (excluded []string, deferr
 	deferred = map[string]bool{}
 	largeFiles := 0
 	for _, file := range files {
-		if file.BinaryBySize {
+		if file.TextDiffUnavailable {
 			largeFiles++
 		}
 	}
@@ -1660,7 +1657,7 @@ func excludedFromDiff(files []repository.ChangedFile) (excluded []string, deferr
 		return nil, deferred, false
 	}
 	for _, file := range files {
-		if file.BinaryBySize {
+		if file.TextDiffUnavailable {
 			excluded = append(excluded, file.Path)
 			continue
 		}
@@ -1676,7 +1673,7 @@ func excludedFromDiff(files []repository.ChangedFile) (excluded []string, deferr
 func diffFileItem(file repository.ChangedFile, fileURL func(string) string) webui.DiffFile {
 	item := webui.DiffFile{
 		Path: file.Path, OldPath: file.OldPath, Status: file.Status, Additions: file.Additions, Deletions: file.Deletions,
-		Binary: file.Binary, BinaryBySize: file.BinaryBySize, CountsUnknown: !file.CountsRead,
+		Binary: file.Binary, TextDiffUnavailable: file.TextDiffUnavailable, CountsUnknown: !file.CountsRead,
 	}
 	if fileURL != nil {
 		item.URL = fileURL(file.Path)

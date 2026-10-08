@@ -189,7 +189,7 @@ func restorePreviewView(input restorePreviewInput, preview repository.RestorePre
 		view.Changes = append(view.Changes, restoreChange{
 			Path: change.Path, Status: change.Status, OldMode: change.OldMode, NewMode: change.NewMode,
 			Additions: lineCount(change.Additions, countsUnknown(change)), Deletions: lineCount(change.Deletions, countsUnknown(change)),
-			Binary: change.Binary && !change.BinaryBySize, TooLarge: change.BinaryBySize,
+			Binary: change.Binary && !change.TextDiffUnavailable, TooLarge: change.TextDiffUnavailable,
 		})
 	}
 	return view
@@ -211,7 +211,7 @@ func lineCount(count int, unknown bool) *int {
 // change whose files above the line are more than one command line can leave
 // out. A zero count of such a file is not a count of zero lines.
 func countsUnknown(file repository.ChangedFile) bool {
-	return file.BinaryBySize || !file.CountsRead
+	return file.TextDiffUnavailable || !file.CountsRead
 }
 
 // keptHistoryAPI lists the repository's kept history as the Overview does,
