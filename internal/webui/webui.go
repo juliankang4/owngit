@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"net/http"
 	"strconv"
+	"text/template/parse"
 	"time"
 
 	"owngit/internal/bidi"
@@ -19,42 +20,36 @@ var templateFS embed.FS
 //go:embed assets
 var assetFS embed.FS
 
-// pageNames are the screens this package can render. Each has one file under
-// templates/pages/ that defines "body"; the shared shell lives in
-// templates/*.html.
-var pageNames = []string{
-	"setup",
-	"auth",
-	"settings",
-	"overview",
-	"activity",
-	"coding-tools",
-	"repository",
-	"new-repository",
-	"new-import",
-	"import",
-	"restore",
-	"pull-requests",
-	"new-pull-request",
-	"pull-request",
-	"tasks",
-	"helper-credentials",
-	"configured-checks",
-	"runner-credentials",
-	"repository-settings",
-	"repository-delete",
-	"share-links",
-	"share-password",
-	"error",
+var pageHelpers = map[string][]string{
+	"setup":               nil,
+	"auth":                nil,
+	"settings":            {"backups"},
+	"overview":            {"activity"},
+	"activity":            {"activity"},
+	"coding-tools":        {"evidence"},
+	"repository":          {"activity", "diff", "evidence", "repository"},
+	"new-repository":      nil,
+	"new-import":          {"import"},
+	"import":              {"import"},
+	"restore":             {"diff"},
+	"pull-requests":       {"evidence"},
+	"new-pull-request":    {"diff", "evidence"},
+	"pull-request":        {"diff", "evidence"},
+	"tasks":               {"evidence"},
+	"helper-credentials":  nil,
+	"configured-checks":   {"configured-checks", "evidence"},
+	"runner-credentials":  nil,
+	"repository-settings": nil,
+	"repository-delete":   nil,
+	"share-links":         nil,
+	"share-password":      nil,
+	"error":               nil,
 }
 
 // Renderer holds the parsed templates and the static asset handler. It is
 // immutable after New and safe for concurrent use.
 type Renderer struct {
-	// templates maps a page name to its own set. Each set combines the shared
-	// shell with exactly one page file, because every page file defines the
-	// same "body" template name.
-	templates map[string]*template.Template
+	pageSets map[string]*template.Template
 	// standalone holds pages that do not use the shared shell.
 	standalone *template.Template
 	assets     http.Handler
@@ -65,20 +60,13 @@ type Renderer struct {
 // only on a programming error in this package, so the caller can treat an
 // error as fatal at startup.
 func New() (*Renderer, error) {
-	sets := make(map[string]*template.Template, len(pageNames))
-	for _, name := range pageNames {
-		set, err := template.New(name).Funcs(templateFuncs()).ParseFS(
-			templateFS,
-			"templates/*.html",
-			"templates/pages/"+name+".html",
-		)
+	pageSets := make(map[string]*template.Template, len(pageHelpers))
+	for name, helpers := range pageHelpers {
+		set, err := parsePageSet(name, helpers)
 		if err != nil {
 			return nil, fmt.Errorf("parse webui page %q: %w", name, err)
 		}
-		if set.Lookup("body") == nil {
-			return nil, fmt.Errorf("parse webui page %q: no body template", name)
-		}
-		sets[name] = set
+		pageSets[name] = set
 	}
 	standalone, err := template.New("standalone").Funcs(templateFuncs()).ParseFS(templateFS, "templates/standalone/*.html")
 	if err != nil {
@@ -93,11 +81,62 @@ func New() (*Renderer, error) {
 		return nil, err
 	}
 	return &Renderer{
-		templates:  sets,
+		pageSets:   pageSets,
 		standalone: standalone,
 		assets:     assetHandler(sub, prints),
 		prints:     prints,
 	}, nil
+}
+
+func parsePageSet(name string, helpers []string) (*template.Template, error) {
+	files := []string{"templates/layout.html"}
+	for _, helper := range helpers {
+		files = append(files, "templates/"+helper+".html")
+	}
+	files = append(files, "templates/pages/"+name+".html")
+	set, err := template.New(name).Funcs(templateFuncs()).ParseFS(templateFS, files...)
+	if err != nil {
+		return nil, err
+	}
+	if set.Lookup("body") == nil {
+		return nil, fmt.Errorf("no body template")
+	}
+	if err := checkReachableTemplates(set, "layout"); err != nil {
+		return nil, err
+	}
+	return set, nil
+}
+
+func checkReachableTemplates(set *template.Template, entry string) error {
+	nodes := []parse.Node{&parse.TemplateNode{Name: entry}}
+	seen := make(map[string]bool)
+	for len(nodes) > 0 {
+		node := nodes[len(nodes)-1]
+		nodes = nodes[:len(nodes)-1]
+		switch node := node.(type) {
+		case *parse.ListNode:
+			if node != nil {
+				nodes = append(nodes, node.Nodes...)
+			}
+		case *parse.IfNode:
+			nodes = append(nodes, node.List, node.ElseList)
+		case *parse.RangeNode:
+			nodes = append(nodes, node.List, node.ElseList)
+		case *parse.WithNode:
+			nodes = append(nodes, node.List, node.ElseList)
+		case *parse.TemplateNode:
+			if seen[node.Name] {
+				continue
+			}
+			called := set.Lookup(node.Name)
+			if called == nil || called.Tree == nil || called.Tree.Root == nil {
+				return fmt.Errorf("template %q not defined", node.Name)
+			}
+			seen[node.Name] = true
+			nodes = append(nodes, called.Tree.Root)
+		}
+	}
+	return nil
 }
 
 // Render writes the complete HTML document for page. The caller sets the
@@ -108,7 +147,7 @@ func (r *Renderer) Render(w io.Writer, page Page) error {
 		return fmt.Errorf("render webui page: nil page")
 	}
 	name := page.page()
-	set, ok := r.templates[name]
+	set, ok := r.pageSets[name]
 	if !ok {
 		return fmt.Errorf("render webui page %q: unknown page", name)
 	}

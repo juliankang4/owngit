@@ -340,5 +340,9 @@
 </div>
 {{end}}{{end}}
 
+{{/* The leading space keeps the link's spoken name from running the two words
+     together. */}}
+{{define "adminLock"}}{{if .Locked}}<span class="adminlock" {{biAttr .Lang "title" "repoadmin.admin_needed_hint"}}>{{icon "lock"}}<span class="visually-hidden"> {{bi .Lang "repoadmin.admin_needed"}}</span></span>{{end}}{{end}}
+
 {{/* aria-invalid and aria-describedby for a field that carries an error. */}}
 {{define "fieldInvalid"}}{{$field := .Field}}{{$id := noteID .Scope .Field}}{{range .Notices}}{{if and (eq .Field $field) (eq .Kind "error")}} aria-invalid="true" aria-describedby="{{$id}}"{{end}}{{end}}{{end}}

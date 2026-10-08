@@ -17,7 +17,7 @@ func renderBackups(t *testing.T, lang Lang, info BackupsInfo) string {
 		Lang   Lang
 		Chrome Chrome
 	}{Page: SettingsPage{Backups: info}, Lang: lang}
-	noErr(t, newRenderer(t).templates["settings"].ExecuteTemplate(&out, "setBackups", data))
+	noErr(t, newRenderer(t).pageSets["settings"].ExecuteTemplate(&out, "setBackups", data))
 	return out.String()
 }
 
@@ -83,7 +83,7 @@ func TestUncheckedRestoreDoesNotInviteFolderMoves(t *testing.T) {
 			ID   string
 			Open bool
 		}{lang, &guide, "restore", true}
-		noErr(t, r.templates["settings"].ExecuteTemplate(&out, "backupRestore", data))
+		noErr(t, r.pageSets["settings"].ExecuteTemplate(&out, "backupRestore", data))
 		return out.String()
 	}
 	for _, lang := range []Lang{LangEN, LangKO} {

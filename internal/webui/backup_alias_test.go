@@ -16,7 +16,7 @@ func TestBackupResultMessagesKeepPlainHTMLUnlessLocalized(t *testing.T) {
 			Lang   Lang
 			Chrome Chrome
 		}{Page: SettingsPage{Backups: BackupsInfo{Visible: true, Configured: true, Runs: []BackupRunInfo{run}}}, Lang: lang}
-		noErr(t, r.templates["settings"].ExecuteTemplate(&out, "setBackups", data))
+		noErr(t, r.pageSets["settings"].ExecuteTemplate(&out, "setBackups", data))
 		return out.String()
 	}
 	plain := BackupRunInfo{Status: "succeeded", Message: "original result <safe>"}

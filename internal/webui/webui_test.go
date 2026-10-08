@@ -682,25 +682,65 @@ func repoPage(c Chrome, tab RepoTab) RepositoryPage {
 
 func TestAllScreensRenderInBothLanguages(t *testing.T) {
 	r := newRenderer(t)
+	seen := make(map[string]bool)
 	for _, lang := range Langs() {
-		for name, page := range allPages(lang) {
-			out := render(t, r, page)
-			if !strings.HasPrefix(out, "<!doctype html>") {
-				t.Errorf("%s/%s: missing doctype", lang, name)
-			}
-			if !strings.Contains(out, `<html lang="`+string(lang)+`"`) {
-				t.Errorf("%s/%s: html lang attribute not set", lang, name)
-			}
-			if !strings.Contains(out, "</html>") {
-				t.Errorf("%s/%s: document not closed", lang, name)
-			}
-			// A raw message key reaching the page means a missing catalog entry.
-			for _, key := range []string{"setup.", "login.", "repo.new.", "error.", "activity.", "restore."} {
-				if strings.Contains(out, ">"+key) {
-					t.Errorf("%s/%s: raw message key %q rendered", lang, name, key)
+		pages := allPages(lang)
+		c := fullChrome(lang)
+		pages["coding-tools"] = CodingToolsPage{Chrome: c, Tasks: []RecentTask{{RepositoryName: "forge-cli", Task: tasksPage(c, false).Tasks[1]}}}
+		pages["share-links"] = ShareLinksPage{Chrome: c, Repo: evidenceRepo(), Tabs: evidenceTabs(RepoTab("share-links")),
+			SubmitURL: "/repositories/r1/share-links", Form: ShareLinkForm{Scope: "browse", Expiry: ShareExpiryDefault},
+			Links: []ShareLinkRow{{ID: "link1", ShortID: "link1", Label: "Review", Scope: "browse", State: "active", CreatedAt: testNow}}}
+		pages["share-password"] = SharePasswordPage{Chrome: Chrome{Lang: lang, Now: testNow, CurrentURL: "/setup", CSRF: "csrf-token-value"}, SubmitURL: "/share/link1/"}
+		for name, page := range pages {
+			seen[page.page()] = true
+			t.Run(string(lang)+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				out := render(t, r, page)
+				if !strings.HasPrefix(out, "<!doctype html>") {
+					t.Errorf("%s/%s: missing doctype", lang, name)
 				}
+				if !strings.Contains(out, `<html lang="`+string(lang)+`"`) {
+					t.Errorf("%s/%s: html lang attribute not set", lang, name)
+				}
+				if !strings.Contains(out, "</html>") {
+					t.Errorf("%s/%s: document not closed", lang, name)
+				}
+				for _, key := range []string{"setup.", "login.", "repo.new.", "error.", "activity.", "restore."} {
+					if strings.Contains(out, ">"+key) {
+						t.Errorf("%s/%s: raw message key %q rendered", lang, name, key)
+					}
+				}
+			})
+		}
+	}
+	if len(seen) != len(r.pageSets) {
+		t.Errorf("rendered %d page types, want %d", len(seen), len(r.pageSets))
+	}
+}
+
+func TestSimplePagesKeepOnlyTheSharedShell(t *testing.T) {
+	r := newRenderer(t)
+	for _, name := range []string{"setup", "auth", "new-repository", "helper-credentials", "runner-credentials", "repository-settings", "repository-delete", "share-links", "share-password", "error"} {
+		for _, helper := range []string{"graph", "setBackups", "policyLimit", "diffFiles", "checkEvidence", "importSourceFields", "repoHead"} {
+			if r.pageSets[name].Lookup(helper) != nil {
+				t.Errorf("%s retains unused helper %s", name, helper)
 			}
 		}
+	}
+}
+
+func TestNewRejectsMissingPageHelpers(t *testing.T) {
+	for _, tc := range []struct{ page, missing string }{{"restore", "diffFile"}} {
+		t.Run(tc.page, func(t *testing.T) {
+			helpers := pageHelpers[tc.page]
+			pageHelpers[tc.page] = nil
+			defer func() { pageHelpers[tc.page] = helpers }()
+			_, err := New()
+			want := fmt.Sprintf("parse webui page %q: template %q not defined", tc.page, tc.missing)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("New() error = %v, want %q", err, want)
+			}
+		})
 	}
 }
 
