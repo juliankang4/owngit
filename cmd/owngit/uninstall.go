@@ -10,6 +10,7 @@ import (
 
 	"owngit/internal/service"
 	"owngit/internal/state"
+	"owngit/internal/tray"
 )
 
 // "owngit uninstall" removes what OwnGit put on this computer: the service
@@ -41,7 +42,14 @@ func uninstallCommand(arguments []string) error {
 			return err
 		}
 	}
+	err = tray.RemoveNotifications()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: %v\nCheck these keys and run \"owngit uninstall\" again.\n", err)
+	}
 	fmt.Fprintln(os.Stdout, programStaysLine(install, runtime.GOOS, sudo))
+	if err != nil {
+		return loggedError{err}
+	}
 	return nil
 }
 

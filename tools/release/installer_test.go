@@ -1000,7 +1000,7 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		if _, err := os.Stat(filepath.Join(folder(dir, "2.0.0"), "README.txt")); err != nil {
 			t.Errorf("the release folder lacks the rest of the archive: %v", err)
 		}
-		if log := readLog(t, run.log); log != "2.0.0 service install\n" {
+		if log := readLog(t, run.log); log != "2.0.0 tray icon --register-notifications\n2.0.0 service install\n" {
 			t.Errorf("owngit ran as %q:\n%s", log, output)
 		}
 		if names := dirNames(t, dir); len(names) != 1 {
@@ -1011,7 +1011,7 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		if !strings.Contains(output, "OwnGit 2.0.0 is already in "+folder(dir, "2.0.0")) {
 			t.Errorf("the rerun did not recognise the release:\n%s", output)
 		}
-		if log := readLog(t, run.log); log != "2.0.0 service install\n2.0.0 service install\n" {
+		if log := readLog(t, run.log); log != "2.0.0 tray icon --register-notifications\n2.0.0 service install\n2.0.0 tray icon --register-notifications\n2.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
 		}
 	})
@@ -1024,7 +1024,7 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		if release.versionOf(t, filepath.Join(folder(dir, "1.0.0"), "owngit.exe")) != "1.0.0" || release.versionOf(t, filepath.Join(folder(dir, "2.0.0"), "owngit.exe")) != "2.0.0" {
 			t.Fatalf("%s holds %v", dir, dirNames(t, dir))
 		}
-		if log := readLog(t, run.log); log != "2.0.0 service install\n1.0.0 service install\n" {
+		if log := readLog(t, run.log); log != "2.0.0 tray icon --register-notifications\n2.0.0 service install\n1.0.0 tray icon --register-notifications\n1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
 		}
 	})
@@ -1041,7 +1041,7 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		if names := dirNames(t, dir); strings.Join(names, ",") != "owngit_1.0.0_windows_amd64" {
 			t.Fatalf("%s holds %v, want only the 1.0.0 folder", dir, names)
 		}
-		if log := readLog(t, run.log); log != "1.0.0 service install\n" {
+		if log := readLog(t, run.log); log != "1.0.0 tray icon --register-notifications\n1.0.0 service install\n" {
 			t.Errorf("owngit ran as %q", log)
 		}
 	})
@@ -1111,21 +1111,49 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		}
 	})
 
-	t.Run("no service installs the program only", func(t *testing.T) {
-		run := newPsInstall(t, release, shell)
-		dir := filepath.Join(run.home, "og")
-		output := run.must(t, nil, "-NoService", "-Dir", psQuote(dir))
-		program := filepath.Join(folder(dir, "2.0.0"), "owngit.exe")
-		if release.versionOf(t, program) != "2.0.0" {
-			t.Fatalf("not installed:\n%s", output)
-		}
-		if log := readLog(t, run.log); log != "" {
-			t.Errorf("owngit ran as %q with -NoService", log)
-		}
-		for _, want := range []string{"& " + psQuote(program) + " serve", "& " + psQuote(program) + " service install"} {
-			if !strings.Contains(output, want) {
-				t.Errorf("output lacks %q:\n%s", want, output)
-			}
+	t.Run("notification registration keeps the program usable without a service", func(t *testing.T) {
+		for _, test := range []struct {
+			name                      string
+			failRegistration, service bool
+		}{
+			{"no service", false, false},
+			{"no service and unavailable toasts", true, false},
+			{"service and unavailable toasts", true, true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				run := newPsInstall(t, release, shell)
+				dir := filepath.Join(run.home, "og")
+				arguments := []string{"-Dir", psQuote(dir)}
+				if !test.service {
+					arguments = append(arguments, "-NoService")
+				}
+				var env []string
+				if test.failRegistration {
+					env = []string{"OWNGIT_FAKE_FAIL=tray icon --register-notifications"}
+				}
+				output := run.must(t, env, arguments...)
+				program := filepath.Join(folder(dir, "2.0.0"), "owngit.exe")
+				if release.versionOf(t, program) != "2.0.0" {
+					t.Fatalf("not installed:\n%s", output)
+				}
+				wantLog := "2.0.0 tray icon --register-notifications\n"
+				if test.service {
+					wantLog += "2.0.0 service install\n"
+				}
+				if log := readLog(t, run.log); log != wantLog {
+					t.Errorf("owngit ran as %q, want %q", log, wantLog)
+				}
+				if strings.Contains(output, "Windows toasts could not be registered") != test.failRegistration {
+					t.Errorf("notification warning differs from registration result:\n%s", output)
+				}
+				if !test.service {
+					for _, want := range []string{"& " + psQuote(program) + " serve", "& " + psQuote(program) + " service install"} {
+						if !strings.Contains(output, want) {
+							t.Errorf("output lacks %q:\n%s", want, output)
+						}
+					}
+				}
+			})
 		}
 	})
 
@@ -1137,6 +1165,7 @@ func installPs1Cases(t *testing.T, release *syntheticRelease, shell string) {
 		want := func(dir string) string {
 			release := folder(dir, "2.0.0")
 			return "Installed OwnGit 2.0.0 in " + release + ".\n" +
+				"fake owngit 2.0.0: tray icon --register-notifications\n" +
 				"fake owngit 2.0.0: service install\n" +
 				"owngit install: \"owngit service install\" did not finish. OwnGit 2.0.0 stays in " + release +
 				"; after fixing what it reported, run: & " + psQuote(filepath.Join(release, "owngit.exe")) + " service install\n"

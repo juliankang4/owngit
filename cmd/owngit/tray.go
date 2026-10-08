@@ -50,6 +50,9 @@ func trayCommand(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	asJSON := flags.Bool("json", false, "print JSON")
 	lang := flags.String("lang", string(tray.DesktopLanguage()), "language of \"read\": en or ko")
+	register := flags.Bool("register-notifications", false, "register Windows desktop notifications without starting the icon")
+	activate := flags.Bool("toast-activation", false, "receive a Windows toast click")
+	embedding := flags.Bool("Embedding", false, "Windows COM server launch")
 	operands, err := parseFlagsAndOperands(flags, arguments)
 	if err != nil {
 		if errors.Is(err, errUsageShown) {
@@ -67,6 +70,15 @@ func trayCommand(arguments []string) error {
 	case operation != "notifications" && len(operands) > 1,
 		!slices.Contains([]string{"on", "off", "status", "icon", "read", "open", "notifications"}, operation):
 		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open, notifications or nothing"))
+	}
+	if *embedding && !*activate || *register && (*activate || operation != "icon" || *asJSON) || *activate && operation != "open" {
+		return jsonFailure(*asJSON, "invalid_arguments", errors.New("Windows notification flags need tray icon for registration or tray open for activation"))
+	}
+	if *register {
+		return tray.RegisterNotifications()
+	}
+	if *activate {
+		return openToastNotification(*asJSON)
 	}
 	switch operation {
 	case "icon":

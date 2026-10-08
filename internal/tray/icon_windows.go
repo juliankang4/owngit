@@ -236,6 +236,7 @@ type app struct {
 	opening    bool
 	openTarget string
 	balloon    balloonState
+	toasts     *toastDelivery
 }
 
 type panelControls struct {
@@ -283,6 +284,12 @@ func Run(options Options) error {
 	current = a
 	if err := a.createWindow(); err != nil {
 		return err
+	}
+	if toasts, err := newToastDelivery(); err != nil {
+		log.Printf("Windows toasts are unavailable; using notification area balloons: %v", err)
+	} else {
+		a.toasts = toasts
+		defer toasts.close()
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -755,22 +762,15 @@ func (a *app) notificationMenu() {
 	}
 }
 
-// showNotifications shows the notifications of one read, which Windows shows
-// as notification area balloons: a balloon replaces or queues behind the one
-// on screen, so the icon hands over one balloon and the next reads show the
-// rest. A read of more than summaryLimit notifications becomes one balloon
-// that counts them, so a backlog is not trickled out balloon by balloon.
 func (a *app) showNotifications(notifications []server.TrayNotification) (int, error) {
 	balloon, taken := balloonFor(notifications, a.lang)
-	if err := a.showBalloon(balloon); err != nil {
+	if err := a.sendNotificationToWindow(balloon); err != nil {
 		return 0, err
 	}
 	return taken, nil
 }
 
-// showBalloon shows a notification from the icon's window thread, which owns
-// the icon, and waits until Windows took it.
-func (a *app) showBalloon(notification server.TrayNotification) error {
+func (a *app) sendNotificationToWindow(notification server.TrayNotification) error {
 	taken := call(procSendMessage, a.hwnd, wmNotify, 0, uintptr(unsafe.Pointer(&notification)))
 	runtime.KeepAlive(&notification)
 	if taken == 0 {
@@ -845,12 +845,17 @@ func (a *app) setTimer(d time.Duration) bool {
 	return ok
 }
 
-// notify queues notification as the icon's balloon (see balloonState). It
-// replaces the notification queued before it. It says false when the balloon
-// timer cannot run, so the feed offers the notification again.
 func (a *app) notify(notification *server.TrayNotification) bool {
 	if !a.iconAdded {
 		return false
+	}
+	if a.toasts != nil {
+		target := ToastTarget{StateDir: a.stateDir, Page: notification.Path, Lang: string(a.lang)}
+		if err := a.toasts.show(*notification, target); err != nil {
+			log.Printf("Windows did not take the toast notification: %v", err)
+			return false
+		}
+		return true
 	}
 	a.balloon.queue(*notification)
 	a.settle(time.Now(), false)
@@ -861,9 +866,7 @@ func (a *app) notify(notification *server.TrayNotification) bool {
 // cut to the lengths Windows takes.
 func (a *app) handOver(notification *server.TrayNotification) bool {
 	data := a.iconData()
-	// Windows applies its own notification settings: with Do not disturb
-	// on it shows nothing, and it does not keep the notification in the
-	// notification center.
+	// The shell controls balloon presentation and lifetime.
 	data.flags = nifInfo
 	title, body := balloonText(*notification)
 	title16, _ := windows.UTF16FromString(title)

@@ -216,14 +216,17 @@ function Install-OwnGit([string]$Version, [bool]$NoService, [string]$Dir) {
     $held = [IO.File]::Open($program, 'Open', 'Read', 'Read')
     try {
         if ((HashOf $held) -ne $expected) { throw "$program changed after it was checked; run the installer again." }
+        # Messages on standard error do not replace the program's exit code.
+        $ErrorActionPreference = 'Continue'
+        & $program tray icon --register-notifications
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Windows toasts could not be registered. OwnGit can use notification area balloons instead. To retry registration, run: $run tray icon --register-notifications"
+        }
         if ($NoService) {
             "Run it now with: $run serve"
             "Or run it as a service that starts by itself: $run service install"
             return
         }
-        # Messages that owngit writes to standard error are not failures;
-        # its exit code is.
-        $ErrorActionPreference = 'Continue'
         & $program service install
         if ($LASTEXITCODE -ne 0) {
             throw """owngit service install"" did not finish. OwnGit $Version stays in $folder; after fixing what it reported, run: $run service install"
