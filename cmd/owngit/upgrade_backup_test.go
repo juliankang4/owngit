@@ -186,7 +186,7 @@ func TestUpgradeBackupWithReleasedAbandonedMergePlans(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(lines) == 0 || !strings.Contains(lines[0], "before upgrading it from schema 15 to 16") {
+			if len(lines) == 0 || !strings.Contains(lines[0], "before upgrading it from schema 15 to 17") {
 				t.Fatalf("actual pre-upgrade backup did not run: %q", lines)
 			}
 			backups := upgradeBackups(t, stateDir)
