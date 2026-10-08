@@ -1,0 +1,29 @@
+version: "2"
+
+run:
+  tests: true
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      analyze-types: true
+      exclude-godoc-examples: false
+      forbid:
+        - pattern: '^time\.Sleep$'
+          msg: Wait for an observed signal (channel or callback), or use the code's own clock or option.
+        - pattern: '^time\.Since$'
+          msg: Assert an observed signal or use the code's own clock or option; guard hangs with a generous context deadline, not an elapsed-time assertion.
+  exclusions:
+    rules:
+      - path-except: '_test\.go$'
+        linters:
+          - forbidigo
+
+issues:
+  new-from-merge-base: origin/main
+  max-issues-per-linter: 0
+  max-same-issues: 0
