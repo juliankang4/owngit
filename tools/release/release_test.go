@@ -59,6 +59,9 @@ func requireGoToolchain(t *testing.T) {
 // sharedDist builds every target once and reuses it across tests.
 func sharedDist(t *testing.T) string {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("builds the shared release dist of every target")
+	}
 	requireGoToolchain(t)
 	sharedOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "owngit-release-dist-")
@@ -105,6 +108,9 @@ func TestTargetTable(t *testing.T) {
 // what the archive carries, and then proves that verification rejects a
 // mutated output directory.
 func TestBuildVerifyAndCounterexamples(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and verifies a native release with archive counterexamples")
+	}
 	requireGoToolchain(t)
 	root := repoRoot(t)
 	native := nativeTarget(t)

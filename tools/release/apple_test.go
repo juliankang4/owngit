@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -687,7 +689,7 @@ func TestSignedDiskImageFailuresLeaveNoOutput(t *testing.T) {
 // fakeAppleTools writes shell stand-ins for codesign, spctl and xcrun into a
 // new folder for PATH. codesign and spctl succeed. xcrun answers notarytool
 // submit with testSubmit, and notarytool wait as $FAKE_WAIT says: "accept"
-// prints an Accepted verdict, "hang" records $FAKE_WAIT_MARK and sleeps.
+// prints an Accepted verdict, "hang" signals $FAKE_WAIT_READY and sleeps.
 // stapler succeeds, and every other xcrun call, such as swiftc, runs the real
 // xcrun.
 func fakeAppleTools(t *testing.T) string {
@@ -698,7 +700,7 @@ if [ "$1" = notarytool ]; then
   case "$2" in
   submit) echo '{"id":"` + testSubmit + `","message":"Successfully uploaded file"}' ;;
   wait)
-    if [ "$FAKE_WAIT" = hang ]; then echo waiting > "$FAKE_WAIT_MARK"; exec sleep 120; fi
+    if [ "$FAKE_WAIT" = hang ]; then printf w > "$FAKE_WAIT_READY"; exec sleep 120; fi
     echo '{"id":"` + testSubmit + `","message":"Processing complete","status":"Accepted"}' ;;
   esac
   exit 0
@@ -717,6 +719,9 @@ exec /usr/bin/xcrun "$@"
 // temporary folders are removed, nothing reaches the output folder, and the
 // error names the submission and how to follow it.
 func TestInterruptWhileWaitingForNotarization(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds Go and Swift release artifacts and a native disk image")
+	}
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("signing runs only on a macOS host; the macOS format needs Apple silicon")
 	}
@@ -733,28 +738,52 @@ func TestInterruptWhileWaitingForNotarization(t *testing.T) {
 	// the fake is waiting, and returns the exit status and combined output.
 	release := func(t *testing.T, tmp, wait string, signal os.Signal, arguments ...string) (int, string) {
 		t.Helper()
-		mark := filepath.Join(t.TempDir(), "waiting")
+		readyPath := filepath.Join(t.TempDir(), "waiting")
+		var readyPipe *os.File
+		if signal != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			output, err := exec.CommandContext(ctx, "mkfifo", readyPath).CombinedOutput()
+			cancel()
+			noErrf(t, err, "create readiness pipe: %s", output)
+			readyPipe, err = os.OpenFile(readyPath, os.O_RDWR, 0)
+			noErr(t, err)
+			defer readyPipe.Close()
+		}
 		command := exec.Command(tool, arguments...)
 		command.WaitDelay = 5 * time.Second
-		command.Env = append(os.Environ(), "PATH="+fakes+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+tmp, "FAKE_WAIT="+wait, "FAKE_WAIT_MARK="+mark)
+		command.Env = append(os.Environ(), "PATH="+fakes+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+tmp, "FAKE_WAIT="+wait, "FAKE_WAIT_READY="+readyPath)
 		var combined strings.Builder
 		command.Stdout, command.Stderr = &combined, &combined
 		noErr(t, command.Start())
-		if signal != nil {
-			for start := time.Now(); ; time.Sleep(100 * time.Millisecond) {
-				if _, err := os.Stat(mark); err == nil {
-					break
-				}
-				if time.Since(start) > 5*time.Minute {
-					command.Process.Kill()
-					_ = command.Wait()
-					t.Fatalf("the fake never started waiting:\n%s", combined.String())
-				}
-			}
-			noErr(t, command.Process.Signal(signal))
-		}
 		done := make(chan error, 1)
 		go func() { done <- command.Wait() }()
+		if signal != nil {
+			ready := make(chan error, 1)
+			go func() {
+				var message [1]byte
+				_, err := io.ReadFull(readyPipe, message[:])
+				ready <- err
+			}()
+			select {
+			case err := <-ready:
+				if err != nil {
+					command.Process.Kill()
+					<-done
+					t.Fatalf("read readiness pipe: %v\n%s", err, combined.String())
+				}
+			case err := <-done:
+				t.Fatalf("the release tool exited before the fake waited: %v\n%s", err, combined.String())
+			case <-time.After(5 * time.Minute):
+				command.Process.Kill()
+				<-done
+				t.Fatalf("the fake never started waiting:\n%s", combined.String())
+			}
+			if err := command.Process.Signal(signal); err != nil {
+				command.Process.Kill()
+				<-done
+				t.Fatalf("signal the release tool: %v\n%s", err, combined.String())
+			}
+		}
 		select {
 		case <-done:
 		case <-time.After(5 * time.Minute):

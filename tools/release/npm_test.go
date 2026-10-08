@@ -241,11 +241,12 @@ func TestNPMPackages(t *testing.T) {
 
 func TestNPMReadiness(t *testing.T) {
 	root := repoRoot(t)
-	manifestPath := filepath.Join(sharedDist(t), "manifest.json")
+	manifestPath, _ := syntheticManifest(t, version.Version, nil)
 
 	t.Run("missing inputs make every package private", func(t *testing.T) {
+		builtManifest := filepath.Join(sharedDist(t), "manifest.json")
 		out := t.TempDir()
-		noErrf(t, packagingCommand([]string{"-source", root, "-manifest", manifestPath, "-out", out, "-formats", "npm"}), "render")
+		noErrf(t, packagingCommand([]string{"-source", root, "-manifest", builtManifest, "-out", out, "-formats", "npm"}), "render")
 		for _, name := range []string{"owngit", "owngit-darwin-arm64", "owngit-linux-x64", "owngit-linux-arm64", "owngit-win32-x64"} {
 			document := readNPMPackage(t, filepath.Join(out, "npm", name))
 			if !document.Private || !strings.HasPrefix(document.Note, "UNREADY: missing input(s): homepage, repository-url") {
@@ -301,8 +302,9 @@ func TestNPMRefusesTamperedArchive(t *testing.T) {
 
 func TestNPMRefusesMissingTarget(t *testing.T) {
 	root := repoRoot(t)
-	dir := copyDist(t, sharedDist(t))
-	document, err := readManifest(filepath.Join(dir, "manifest.json"))
+	manifestPath, _ := syntheticManifest(t, version.Version, nil)
+	dir := filepath.Dir(manifestPath)
+	document, err := readManifest(manifestPath)
 	noErr(t, err)
 	kept := document.Artifacts[:0]
 	for _, built := range document.Artifacts {

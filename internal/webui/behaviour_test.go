@@ -176,9 +176,6 @@ func TestSettingsGroupSaveSendsOnlyWhatItMay(t *testing.T) {
 	}
 	// Beyond what no part of the script may use, the block uses no browser
 	// storage at all, no cookie, log, address fragment or other site.
-	if found := forbiddenSinksIn(block); len(found) > 0 {
-		t.Errorf("the group save touches %q", found)
-	}
 	for _, leak := range []string{
 		"Storage", "console.", "location.hash", "document.cookie", "http:", "https:", "://",
 		"Observer", "import", "require(", "<script", "innerHTML", "eval(",
@@ -206,9 +203,6 @@ func TestLeavingSettingsSendsNothingItself(t *testing.T) {
 		if strings.Contains(block, banned) {
 			t.Errorf("the leave block uses %q", banned)
 		}
-	}
-	if found := forbiddenSinksIn(block); len(found) > 0 {
-		t.Errorf("the leave block uses %q", found)
 	}
 	// One caller of saveGroup, which never lets it send the page.
 	if strings.Count(block, "saveGroup(") != 1 || !strings.Contains(block, "saveGroup(groupNamed(name), true)") {
@@ -254,9 +248,6 @@ func TestLeavingSettingsSendsNothingItself(t *testing.T) {
 func TestScriptUsesNoOtherStorageOrTransport(t *testing.T) {
 	if found := forbiddenSinksIn(scriptSource(t)); len(found) > 0 {
 		t.Errorf("the script uses %q", found)
-	}
-	if found := forbiddenSinksIn(scriptOutsideRequests(t)); len(found) > 0 {
-		t.Errorf("the script outside the request blocks uses %q", found)
 	}
 }
 

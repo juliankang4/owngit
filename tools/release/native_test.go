@@ -177,12 +177,14 @@ func TestNativeDebPrototypes(t *testing.T) {
 
 func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 	root := repoRoot(t)
-	portable := sharedDist(t)
 
 	t.Run("missing baseline", func(t *testing.T) {
+		version, err := versionFromSource(root)
+		noErr(t, err)
+		manifestPath, _ := syntheticManifest(t, version, nil)
 		out := filepath.Join(t.TempDir(), "native")
-		err := nativeCommand([]string{
-			"-source", root, "-manifest", filepath.Join(portable, "manifest.json"),
+		err = nativeCommand([]string{
+			"-source", root, "-manifest", manifestPath,
 			"-out", out, "-formats", "deb",
 		})
 		if err == nil || !strings.Contains(err.Error(), "-baseline") {
@@ -194,6 +196,7 @@ func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 	})
 
 	t.Run("existing destination", func(t *testing.T) {
+		portable := sharedDist(t)
 		out := t.TempDir()
 		sentinel := filepath.Join(out, "keep.txt")
 		noErr(t, os.WriteFile(sentinel, []byte("keep\n"), 0o644))
@@ -212,7 +215,7 @@ func TestNativeRefusesInvalidInputBeforeOutput(t *testing.T) {
 	})
 
 	t.Run("corrupt portable archive", func(t *testing.T) {
-		corrupt := copyDist(t, portable)
+		corrupt := copyDist(t, sharedDist(t))
 		document, err := readManifest(filepath.Join(corrupt, "manifest.json"))
 		noErr(t, err)
 		path := filepath.Join(corrupt, document.Artifacts[0].Name)
