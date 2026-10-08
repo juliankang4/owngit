@@ -83,11 +83,11 @@ func TestUnsupportedSchemaInCommittedWALPreservesSource(t *testing.T) {
 	assertSchemaDirectoryUnchanged(t, directory, before)
 }
 
-// currentSchemaFingerprint pins the catalog of schema 16. A changed migration
+// currentSchemaFingerprint pins the catalog of schema 17. A changed migration
 // statement changes it, so the current schema cannot drift unnoticed.
 const (
-	currentSchemaFingerprint = "72f77c3c3464fbf7b5333f50f878531fc32c4e44d80463f6324d829eb7e25769"
-	currentSchemaObjects     = 120
+	currentSchemaFingerprint = "b76e55d83107e943c4b2b040d5225f4be3886c49fc324733d4b709966ca3b965"
+	currentSchemaObjects     = 136
 )
 
 func TestFreshSchemaOpen(t *testing.T) {
@@ -220,7 +220,7 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 		t.Fatalf("open committed baseline: %v", err)
 	}
 	defer store.Close()
-	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from the committed baseline (no schema version) to schema 16" {
+	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from the committed baseline (no schema version) to schema 17" {
 		t.Fatalf("baseline upgrade reported %q", upgrade)
 	}
 	if version, _, err := readSchemaVersion(ctx, store.db); err != nil || version != currentSchemaVersion() {
@@ -270,9 +270,6 @@ func TestCommittedBaselineSchemaUpgradesInPlace(t *testing.T) {
 	}
 }
 
-// Every numbered schema below the current one, except the released schemas
-// 14 and 15, came from an unreleased development build. Schemas 6 through 13
-// are built with their real catalogs.
 func TestUnsupportedNumberedSchemasAreRefusedWithoutWrites(t *testing.T) {
 	ctx := context.Background()
 	for _, version := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 99} {
@@ -288,9 +285,9 @@ func TestUnsupportedNumberedSchemasAreRefusedWithoutWrites(t *testing.T) {
 			if store != nil {
 				_ = store.Close()
 			}
-			want := "state database uses the unreleased development schema " + strconv.Itoa(version) + "; this build upgrades only the committed baseline (no schema version) and released schemas 14 and 15, and opens schema 16"
+			want := "state database uses the unreleased development schema " + strconv.Itoa(version) + "; this build upgrades only the committed baseline (no schema version) and released schemas 14, 15 and 16, and opens schema 17"
 			if version > currentSchemaVersion() {
-				want = "state database schema version 99 is newer than this OwnGit build supports (16)"
+				want = "state database schema version 99 is newer than this OwnGit build supports (17)"
 			}
 			if err == nil || err.Error() != want {
 				t.Fatalf("schema %d error=%v", version, err)

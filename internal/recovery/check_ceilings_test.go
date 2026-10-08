@@ -23,7 +23,7 @@ func TestCheckPolicyAboveTheDefaultCeilingsRestoresAndWaits(t *testing.T) {
 	raised.TimeoutMS, raised.QueueLimit = 2*24*60*60*1000, 5000
 	noErr(t, store.SavePolicies(ctx, state.PolicyChange{CheckCeilings: &raised}))
 	policy, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"}, RunWorkflows: new(false),
 		MaxTimeoutMS: raised.TimeoutMS, MaxOutputLimitBytes: 65536, QueueLimit: 5000, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 	}, now)
 	noErr(t, err)
@@ -46,8 +46,8 @@ func TestCheckPolicyAboveTheDefaultCeilingsRestoresAndWaits(t *testing.T) {
 	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
-	if manifest.Version != backupVersion {
-		t.Fatalf("backup version %d, want %d", manifest.Version, backupVersion)
+	if manifest.Version != recordsBackupVersion {
+		t.Fatalf("backup version %d, want %d", manifest.Version, recordsBackupVersion)
 	}
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))

@@ -686,9 +686,9 @@ func TestUnreleasedBackupVersionsAreRefused(t *testing.T) {
 	for _, version := range []int{3, 4, 5, 6, 7, 8, backupVersion + 1} {
 		manifest.Version = version
 		writeManifestFile(t, manifestPath, manifest)
-		want := fmt.Sprintf("backup uses the unreleased development format %d; this build supports versions 1, 2, 9, 10, and 11", version)
+		want := fmt.Sprintf("backup uses the unreleased development format %d; this build supports versions 1, 2, 9, 10, 11, and 12", version)
 		if version > backupVersion {
-			want = "unsupported backup version 12: this build supports versions 1, 2, 9, 10, and 11"
+			want = "unsupported backup version 13: this build supports versions 1, 2, 9, 10, 11, and 12"
 		}
 		before, err := os.ReadFile(manifestPath)
 		noErr(t, err)

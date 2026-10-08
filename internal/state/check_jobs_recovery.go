@@ -42,7 +42,10 @@ func readCheckJobRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoverySta
 		}
 		snapshot.CheckJobs = append(snapshot.CheckJobs, job)
 	}
-	return closeRows(rows)
+	if err := closeRows(rows); err != nil {
+		return err
+	}
+	return readActionsRecovery(ctx, tx, snapshot)
 }
 
 // restoreCheckJobRecovery writes policies and jobs. Consent and every lease are
@@ -62,14 +65,17 @@ func restoreCheckJobRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryS
 		if _, err := tx.ExecContext(ctx, `INSERT INTO check_policies(
 			repository_id,policy_version,policy_digest,executor,allowed_events,max_timeout_ms,max_output_limit_bytes,
 			queue_limit,max_active_jobs,max_lease_ms,execution_json,consent_version,consent_digest,consent_active,runner_generation,
-			authority_epoch,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			authority_epoch,created_at,updated_at,run_workflows
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			policy.RepositoryID, policy.Version, policy.Digest, policy.Executor, marshalCheckEvents(policy.AllowedEvents),
 			policy.MaxTimeoutMS, policy.MaxOutputLimitBytes, policy.QueueLimit, policy.MaxActiveJobs, policy.MaxLeaseMS, executionJSON,
 			policy.ConsentVersion, policy.ConsentDigest, consentActive, policy.RunnerGeneration,
-			authorityEpoch, policy.CreatedAt.Unix(), policy.UpdatedAt.Unix()); err != nil {
+			authorityEpoch, policy.CreatedAt.Unix(), policy.UpdatedAt.Unix(), boolInt(policy.RunWorkflows)); err != nil {
 			return fmt.Errorf("restore check policy for %q: %w", policy.RepositoryID, err)
 		}
+	}
+	if err := restoreActionsRecovery(ctx, tx, snapshot); err != nil {
+		return err
 	}
 	for _, job := range snapshot.CheckJobs {
 		if !terminalCheckJob(job.Status) {
@@ -95,8 +101,9 @@ func restoreCheckJobRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryS
 			id,repository_id,task_id,trigger_kind,event_key,source_oid,base_oid,pull_request_number,trigger_ref,workflow_path,
 			workflow_oid,workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,
 			dedup_digest,rerun_root,rerun_generation,status,attempt_id,lease_id,lease_expires_at,credential_id,credential_generation,credential_role,
-			protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary,
+			run_id,job_key,matrix_index,plan_digest,tolerated,concurrency_group,max_parallel
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 			job.ID, job.RepositoryID, job.TaskID, job.Trigger, job.EventKey, job.SourceOID, job.BaseOID, job.PullRequestNumber,
 			job.TriggerRef, job.WorkflowPath, job.WorkflowOID, job.WorkflowDigest, job.ConfigurationVersion,
 			job.Executor, job.PolicyVersion, job.ConsentVersion, limitsJSON, executionJSON, job.DedupDigest, job.RerunRoot,
@@ -104,7 +111,7 @@ func restoreCheckJobRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryS
 			job.CredentialID, job.CredentialGeneration, job.CredentialRole, job.Protection, job.AdmittedAt.UnixNano(),
 			nullableNano(job.ClaimedAt), nullableNano(job.StartedAt), nullableNano(job.FinishedAt),
 			nullableNano(job.LeaseLostAt), nullableNano(job.CancelRequestedAt), nullableNano(job.InterruptedAt),
-			job.Summary); err != nil {
+			job.Summary, job.RunID, job.JobKey, job.MatrixIndex, job.PlanDigest, boolInt(job.Tolerated), job.ConcurrencyGroup, job.MaxParallel); err != nil {
 			return fmt.Errorf("restore check job %q: %w", job.ID, err)
 		}
 	}
@@ -142,11 +149,32 @@ func validatePortableCheckJobs(snapshot RecoveryState, repositories map[string]b
 		}
 		policies[policy.RepositoryID] = policy
 	}
+	runs, err := validatePortableActionsRuns(snapshot, repositories, policies)
+	if err != nil {
+		return nil, err
+	}
+	jobCounts := make(map[string]int, len(runs))
+	jobKeys := make(map[string]bool)
 	jobs := make(map[string]CheckJob, len(snapshot.CheckJobs))
 	digests := make(map[string]bool, len(snapshot.CheckJobs))
 	for _, job := range snapshot.CheckJobs {
 		if err := validatePortableCheckJob(job, repositories, tasks, policies, configurations); err != nil {
 			return nil, err
+		}
+		if job.RunID != "" {
+			run, exists := runs[job.RunID]
+			if !exists {
+				return nil, errors.New("workflow job refers to an unknown run")
+			}
+			if err := validateActionsJobRun(job, run); err != nil {
+				return nil, err
+			}
+			key := fmt.Sprintf("%s/%s/%d", job.RunID, job.JobKey, job.MatrixIndex)
+			jobCounts[job.RunID]++
+			if jobKeys[key] || jobCounts[job.RunID] > MaximumActionsRunJobs {
+				return nil, errors.New("duplicate or excessive workflow jobs")
+			}
+			jobKeys[key] = true
 		}
 		if jobs[job.ID].ID != "" {
 			return nil, errors.New("duplicate check job record")
@@ -157,16 +185,20 @@ func validatePortableCheckJobs(snapshot RecoveryState, repositories map[string]b
 		}
 		digests[job.RepositoryID+"\x00"+job.DedupDigest] = true
 	}
-	// A rerun names the root of its chain, and the root is never its own child.
+	for _, run := range runs {
+		if run.Outcome == "" && jobCounts[run.ID] == 0 {
+			return nil, errors.New("workflow run has neither jobs nor an outcome")
+		}
+	}
 	for _, job := range jobs {
-		if job.RerunRoot == "" {
+		if job.RerunRoot == "" || job.RunID != "" {
 			continue
 		}
 		if job.RerunRoot == job.ID {
 			return nil, errors.New("check job rerun root refers to itself")
 		}
 		root, exists := jobs[job.RerunRoot]
-		if !exists || root.RepositoryID != job.RepositoryID || root.RerunRoot != "" {
+		if !exists || root.RepositoryID != job.RepositoryID || root.RerunRoot != "" || root.RunID != "" {
 			return nil, errors.New("check job rerun root is unknown or is not the chain root")
 		}
 	}
@@ -230,6 +262,9 @@ func validatePortableCheckJob(job CheckJob, repositories map[string]bool, tasks 
 	if !exists || job.PolicyVersion <= 0 || job.PolicyVersion > policy.Version || job.ConsentVersion <= 0 || job.ConsentVersion > policy.ConsentVersion {
 		return errors.New("check job policy generation is invalid")
 	}
+	if err := validateActionsJobFacts(job); err != nil {
+		return err
+	}
 	switch job.Trigger {
 	case checkworkflow.EventPush:
 		if job.PullRequestNumber != 0 || job.BaseOID != "" {
@@ -239,6 +274,10 @@ func validatePortableCheckJob(job CheckJob, repositories map[string]bool, tasks 
 		if job.PullRequestNumber <= 0 || !validObjectID(job.BaseOID) {
 			return errors.New("pull request check job is missing its facts")
 		}
+	case ActionsEventDispatch, ActionsEventSchedule:
+		if job.RunID == "" || job.PullRequestNumber != 0 || job.BaseOID != "" {
+			return errors.New("workflow check job has invalid event facts")
+		}
 	default:
 		return errors.New("invalid check job trigger")
 	}
@@ -246,7 +285,7 @@ func validatePortableCheckJob(job CheckJob, repositories map[string]bool, tasks 
 		return errors.New("invalid check job trigger context")
 	}
 	expectedTaskID := automaticCheckTaskID(CheckJobRequest{
-		RepositoryID: job.RepositoryID, Trigger: job.Trigger, TriggerRef: job.TriggerRef, PullRequestNumber: job.PullRequestNumber,
+		RepositoryID: job.RepositoryID, Trigger: job.Trigger, TriggerRef: job.TriggerRef, PullRequestNumber: job.PullRequestNumber, RunID: job.RunID,
 	})
 	if job.TaskID != expectedTaskID {
 		return errors.New("check job task does not match its trigger identity")
@@ -254,7 +293,7 @@ func validatePortableCheckJob(job CheckJob, repositories map[string]bool, tasks 
 	if len(job.EventKey) == 0 || len(job.EventKey) > MaximumCheckEventKeyBytes {
 		return errors.New("invalid check job event key")
 	}
-	if job.WorkflowPath != checkworkflow.Path || !validDigest(job.WorkflowDigest) || (job.WorkflowOID != "" && !validObjectID(job.WorkflowOID)) {
+	if !(job.WorkflowPath == checkworkflow.Path && job.RunID == "" || job.RunID != "" && validActionsWorkflowPath(job.WorkflowPath)) || !validDigest(job.WorkflowDigest) || (job.WorkflowOID != "" && !validObjectID(job.WorkflowOID)) {
 		return errors.New("invalid check job workflow identity")
 	}
 	configuration, exists := configurations[configurationKey(job.RepositoryID, job.ConfigurationVersion)]
@@ -335,7 +374,7 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 	preStartFailure := hasClaim && hasLease && hasFinish && !hasStart && !hasAttempt && job.CredentialGeneration > 0 &&
 		job.LeaseLostAt == nil && job.InterruptedAt == nil && job.CancelRequestedAt == nil
 	switch job.Status {
-	case CheckJobPending:
+	case CheckJobPending, CheckJobWaiting:
 		if hasClaim || hasStart || hasFinish || hasLease || job.LeaseLostAt != nil || hasAttempt || job.CancelRequestedAt != nil {
 			return errors.New("pending check job already has lease or execution facts")
 		}
@@ -360,6 +399,10 @@ func validateCheckJobTimelineAndLease(job CheckJob) error {
 			(hasClaim && (!hasLease || hasStart != hasAttempt || (!hasStart && job.LeaseLostAt != nil))) ||
 			(!hasClaim && (hasStart || hasLease || hasAttempt)) {
 			return errors.New("cancelled check job has inconsistent facts")
+		}
+	case CheckJobSkipped:
+		if !hasFinish || hasClaim && (!hasStart || !hasLease || !hasAttempt) || !hasClaim && (hasStart || hasLease || hasAttempt) || job.LeaseLostAt != nil || job.CancelRequestedAt != nil {
+			return errors.New("skipped workflow job has inconsistent facts")
 		}
 	case CheckJobError, CheckJobUnavailable:
 		if preStartFailure {

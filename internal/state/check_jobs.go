@@ -23,11 +23,13 @@ const (
 	CheckExecutorExternalRunner = "external_runner"
 )
 
-// Job states. Pending, claimed, and started are unfinished. The remaining
+// Job states. Pending, waiting, claimed, and started are unfinished. The remaining
 // states are terminal and are never silently requeued: ambiguous and
 // interrupted work needs an explicit rerun.
 const (
 	CheckJobPending     = "pending"
+	CheckJobWaiting     = "waiting"
+	CheckJobSkipped     = "skipped"
 	CheckJobClaimed     = "claimed"
 	CheckJobStarted     = "started"
 	CheckJobPassed      = "passed"
@@ -126,8 +128,9 @@ type CheckPolicy struct {
 	Version  int64
 	Digest   string
 	Executor string
-	// AllowedEvents is the canonical sorted subset of push and pull_request.
+	// AllowedEvents is the canonical sorted set of check and workflow events.
 	AllowedEvents       []string
+	RunWorkflows        bool
 	MaxTimeoutMS        int64
 	MaxOutputLimitBytes int64
 	QueueLimit          int
@@ -151,6 +154,8 @@ type CheckPolicy struct {
 // CheckPolicyInput is the operator-supplied policy. Version, digest, consent,
 // generation, and epoch are server-owned.
 type CheckPolicyInput struct {
+	// Nil enables workflows on a first save and preserves an existing setting.
+	RunWorkflows        *bool
 	RepositoryID        string
 	Executor            string
 	AllowedEvents       []string
@@ -237,6 +242,14 @@ type CheckJobRequest struct {
 	// operator policy.
 	TimeoutMS        int64
 	OutputLimitBytes int64
+	RunID            string
+	JobKey           string
+	MatrixIndex      int
+	PlanDigest       string
+	Tolerated        bool
+	ConcurrencyGroup string
+	MaxParallel      int
+	Waiting          bool
 	RerunRoot        string
 	RerunGeneration  int64
 }
@@ -304,10 +317,17 @@ func (s *Store) SaveCheckPolicyAndGrantConsent(ctx context.Context, input CheckP
 	return s.writeCheckPolicy(ctx, input, base, true, now)
 }
 
-// CandidateCheckPolicy validates input and returns the policy that saving it
-// would store, without writing anything. Its digest is what a later save of
-// the same input stores.
-func CandidateCheckPolicy(input CheckPolicyInput) (CheckPolicy, error) {
+// CandidateCheckPolicy validates input against the stored policy without writing.
+// Saving the same input stores its digest while the stored policy is unchanged.
+func (s *Store) CandidateCheckPolicy(ctx context.Context, input CheckPolicyInput) (CheckPolicy, error) {
+	existing, exists, err := readCheckPolicyTx(ctx, s.db, input.RepositoryID)
+	if err != nil {
+		return CheckPolicy{}, err
+	}
+	return candidateCheckPolicy(input, existing, exists)
+}
+
+func candidateCheckPolicy(input CheckPolicyInput, existing CheckPolicy, exists bool) (CheckPolicy, error) {
 	allowed, err := normalizeCheckEvents(input.AllowedEvents)
 	if err != nil {
 		return CheckPolicy{}, err
@@ -326,11 +346,18 @@ func CandidateCheckPolicy(input CheckPolicyInput) (CheckPolicy, error) {
 	if err := validateCheckPolicyInput(input, allowed); err != nil {
 		return CheckPolicy{}, err
 	}
+	runWorkflows := true
+	if exists {
+		runWorkflows = existing.RunWorkflows
+	}
+	if input.RunWorkflows != nil {
+		runWorkflows = *input.RunWorkflows
+	}
 	candidate := CheckPolicy{
 		RepositoryID: input.RepositoryID, Executor: input.Executor, AllowedEvents: allowed,
 		MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
 		QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
-		Execution: input.Execution,
+		Execution: input.Execution, RunWorkflows: runWorkflows,
 	}
 	candidate.Digest = checkPolicyDigest(candidate)
 	return candidate, nil
@@ -340,16 +367,16 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 	if now.IsZero() {
 		return CheckPolicy{}, fmt.Errorf("%w: missing time", ErrInvalidCheckPolicy)
 	}
-	candidate, err := CandidateCheckPolicy(input)
-	if err != nil {
-		return CheckPolicy{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return CheckPolicy{}, err
 	}
 	defer tx.Rollback()
 	existing, exists, err := readCheckPolicyTx(ctx, tx, input.RepositoryID)
+	if err != nil {
+		return CheckPolicy{}, err
+	}
+	candidate, err := candidateCheckPolicy(input, existing, exists)
 	if err != nil {
 		return CheckPolicy{}, err
 	}
@@ -385,11 +412,11 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 		if _, err := tx.ExecContext(ctx, `INSERT INTO check_policies(
 			repository_id,policy_version,policy_digest,executor,allowed_events,max_timeout_ms,max_output_limit_bytes,
 			queue_limit,max_active_jobs,max_lease_ms,execution_json,consent_version,consent_digest,consent_active,runner_generation,
-			authority_epoch,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'',0,0,?,?,?)`,
+			authority_epoch,created_at,updated_at,run_workflows
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,0,'',0,0,?,?,?,?)`,
 			candidate.RepositoryID, candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(candidate.AllowedEvents),
 			candidate.MaxTimeoutMS, candidate.MaxOutputLimitBytes, candidate.QueueLimit, candidate.MaxActiveJobs, candidate.MaxLeaseMS,
-			executionJSON, candidate.AuthorityEpoch, candidate.CreatedAt.Unix(), candidate.UpdatedAt.Unix()); err != nil {
+			executionJSON, candidate.AuthorityEpoch, candidate.CreatedAt.Unix(), candidate.UpdatedAt.Unix(), boolInt(candidate.RunWorkflows)); err != nil {
 			return CheckPolicy{}, err
 		}
 		stored = candidate
@@ -407,11 +434,11 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE check_policies SET
 			policy_version=?,policy_digest=?,executor=?,allowed_events=?,max_timeout_ms=?,max_output_limit_bytes=?,
-			queue_limit=?,max_active_jobs=?,max_lease_ms=?,execution_json=?,consent_active=0,updated_at=?
+			queue_limit=?,max_active_jobs=?,max_lease_ms=?,execution_json=?,consent_active=0,updated_at=?,run_workflows=?
 			WHERE repository_id=?`,
 			candidate.Version, candidate.Digest, candidate.Executor, marshalCheckEvents(candidate.AllowedEvents),
 			candidate.MaxTimeoutMS, candidate.MaxOutputLimitBytes, candidate.QueueLimit, candidate.MaxActiveJobs, candidate.MaxLeaseMS,
-			executionJSON, candidate.UpdatedAt.Unix(), candidate.RepositoryID); err != nil {
+			executionJSON, candidate.UpdatedAt.Unix(), boolInt(candidate.RunWorkflows), candidate.RepositoryID); err != nil {
 			return CheckPolicy{}, err
 		}
 		if err := interruptStalePendingCheckJobsTx(ctx, tx, candidate, now); err != nil {
@@ -476,17 +503,17 @@ func readCheckPolicyTx(ctx context.Context, queryer querier, repositoryID string
 
 const checkPolicySelect = `SELECT repository_id,policy_version,policy_digest,executor,allowed_events,max_timeout_ms,
 	max_output_limit_bytes,queue_limit,max_active_jobs,max_lease_ms,execution_json,consent_version,consent_digest,consent_active,
-	runner_generation,authority_epoch,created_at,updated_at FROM check_policies`
+	runner_generation,authority_epoch,created_at,updated_at,run_workflows FROM check_policies`
 
 func scanCheckPolicy(scanner rowScanner) (CheckPolicy, error) {
 	var policy CheckPolicy
 	var allowedEvents, executionJSON string
-	var consentActive int
+	var consentActive, runWorkflows int
 	var createdAt, updatedAt int64
 	if err := scanner.Scan(&policy.RepositoryID, &policy.Version, &policy.Digest, &policy.Executor, &allowedEvents,
 		&policy.MaxTimeoutMS, &policy.MaxOutputLimitBytes, &policy.QueueLimit, &policy.MaxActiveJobs, &policy.MaxLeaseMS, &executionJSON,
 		&policy.ConsentVersion, &policy.ConsentDigest, &consentActive, &policy.RunnerGeneration, &policy.AuthorityEpoch,
-		&createdAt, &updatedAt); err != nil {
+		&createdAt, &updatedAt, &runWorkflows); err != nil {
 		return CheckPolicy{}, err
 	}
 	if err := json.Unmarshal([]byte(allowedEvents), &policy.AllowedEvents); err != nil {
@@ -496,6 +523,7 @@ func scanCheckPolicy(scanner rowScanner) (CheckPolicy, error) {
 		return CheckPolicy{}, err
 	}
 	policy.ConsentActive = consentActive != 0
+	policy.RunWorkflows = runWorkflows != 0
 	policy.CreatedAt = unixTime(createdAt)
 	policy.UpdatedAt = unixTime(updatedAt)
 	return policy, nil
@@ -671,6 +699,9 @@ func checkPolicyDigest(policy CheckPolicy) string {
 		fmt.Sprint(policy.MaxTimeoutMS), fmt.Sprint(policy.MaxOutputLimitBytes),
 		fmt.Sprint(policy.QueueLimit), fmt.Sprint(policy.MaxActiveJobs), fmt.Sprint(policy.MaxLeaseMS),
 	}
+	if policy.RunWorkflows {
+		fields = append(fields, "run_workflows", "true")
+	}
 	if policy.Execution.Legacy {
 		return digestFields(fields...)
 	}
@@ -697,7 +728,7 @@ func normalizeCheckEvents(events []string) ([]string, error) {
 	}
 	seen := make(map[string]bool, len(events))
 	for _, event := range events {
-		if event != checkworkflow.EventPush && event != checkworkflow.EventPullRequest {
+		if event != checkworkflow.EventPush && event != checkworkflow.EventPullRequest && event != ActionsEventDispatch && event != ActionsEventSchedule {
 			return nil, unknownValueError(FieldAllowedEvents, event)
 		}
 		if seen[event] {
@@ -1145,7 +1176,9 @@ func (s *Store) CheckEventsWithJobs(ctx context.Context, repositoryID, trigger s
 		arguments = append(arguments, key)
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(eventKeys)), ",")
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT event_key FROM check_jobs WHERE repository_id=? AND trigger_kind=? AND event_key IN (`+placeholders+`)`, arguments...)
+	arguments = append(arguments, arguments...)
+	rows, err := s.db.QueryContext(ctx, `SELECT event_key FROM check_jobs WHERE repository_id=? AND trigger_kind=? AND event_key IN (`+placeholders+`)
+		UNION SELECT event_key FROM actions_runs WHERE repository_id=? AND event=? AND event_key IN (`+placeholders+`)`, arguments...)
 	if err != nil {
 		return nil, err
 	}
@@ -1205,6 +1238,9 @@ func validObservationRef(value string) bool {
 // AdmitCheckJob admits one bounded job. Identical effective conditions dedup
 // to the existing job, and the queue bound is enforced in the same transaction.
 func (s *Store) AdmitCheckJob(ctx context.Context, request CheckJobRequest, now time.Time) (CheckJob, bool, error) {
+	if request.RunID != "" {
+		return CheckJob{}, false, fmt.Errorf("%w: admit the workflow run with its plans", ErrInvalidCheckJob)
+	}
 	if now.IsZero() {
 		return CheckJob{}, false, fmt.Errorf("%w: missing time", ErrInvalidCheckJob)
 	}
@@ -1249,6 +1285,9 @@ func (s *Store) RerunCheckJob(ctx context.Context, repositoryID, jobID string, r
 	}
 	if !exists {
 		return CheckJob{}, false, ErrCheckJobNotFound
+	}
+	if original.RunID != "" {
+		return CheckJob{}, false, fmt.Errorf("%w: rerun the workflow run instead", ErrCheckJobState)
 	}
 	if !terminalCheckJob(original.Status) {
 		return CheckJob{}, false, ErrCheckJobState
@@ -1320,8 +1359,15 @@ func admitCheckJobTx(ctx context.Context, tx *sql.Tx, request CheckJobRequest, n
 	if err := admissionError(ceilings.Exceeded(policy.CeilingValues())); err != nil {
 		return CheckJob{}, false, err
 	}
+	if request.RunID != "" && !policy.RunWorkflows {
+		return CheckJob{}, false, ErrActionsWorkflowsOff
+	}
 	taskID := automaticCheckTaskID(request)
-	if err := ensureAutomaticCheckTaskTx(ctx, tx, request.RepositoryID, taskID, now); err != nil {
+	title := "Automatic checks"
+	if request.RunID != "" {
+		title = "Workflows"
+	}
+	if err := ensureAutomaticCheckTaskTx(ctx, tx, request.RepositoryID, taskID, title, now); err != nil {
 		return CheckJob{}, false, err
 	}
 	limits := effectiveCheckJobLimits(request, policy)
@@ -1341,6 +1387,14 @@ func admitCheckJobTx(ctx context.Context, tx *sql.Tx, request CheckJobRequest, n
 		Executor: policy.Executor, PolicyVersion: policy.Version, ConsentVersion: policy.ConsentVersion,
 		Limits: limits, Execution: policy.Execution, RerunRoot: request.RerunRoot, RerunGeneration: request.RerunGeneration,
 		Status: CheckJobPending, Protection: ProtectionUnknown, AdmittedAt: now.UTC(),
+	}
+	job.RunID, job.JobKey, job.MatrixIndex, job.PlanDigest = request.RunID, request.JobKey, request.MatrixIndex, request.PlanDigest
+	job.Tolerated, job.ConcurrencyGroup, job.MaxParallel = request.Tolerated, request.ConcurrencyGroup, request.MaxParallel
+	if request.Waiting {
+		if request.RunID == "" {
+			return CheckJob{}, false, fmt.Errorf("%w: only a workflow job can wait", ErrInvalidCheckJob)
+		}
+		job.Status = CheckJobWaiting
 	}
 	job.DedupDigest = checkJobDedupDigest(job, configHash)
 	existing, found, err := readCheckJobByDedupTx(ctx, tx, request.RepositoryID, job.DedupDigest)
@@ -1373,12 +1427,14 @@ func admitCheckJobTx(ctx context.Context, tx *sql.Tx, request CheckJobRequest, n
 	if _, err := tx.ExecContext(ctx, `INSERT INTO check_jobs(
 		id,repository_id,task_id,trigger_kind,event_key,source_oid,base_oid,pull_request_number,trigger_ref,workflow_path,
 		workflow_oid,workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,
-		dedup_digest,rerun_root,rerun_generation,status,protection,admitted_at
-	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		dedup_digest,rerun_root,rerun_generation,status,protection,admitted_at,
+		run_id,job_key,matrix_index,plan_digest,tolerated,concurrency_group,max_parallel
+	) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		job.ID, job.RepositoryID, job.TaskID, job.Trigger, job.EventKey, job.SourceOID, job.BaseOID, job.PullRequestNumber,
 		job.TriggerRef, job.WorkflowPath, job.WorkflowOID, job.WorkflowDigest, job.ConfigurationVersion,
 		job.Executor, job.PolicyVersion, job.ConsentVersion, string(limitsJSON), executionJSON, job.DedupDigest,
-		job.RerunRoot, job.RerunGeneration, job.Status, job.Protection, job.AdmittedAt.UnixNano()); err != nil {
+		job.RerunRoot, job.RerunGeneration, job.Status, job.Protection, job.AdmittedAt.UnixNano(),
+		job.RunID, job.JobKey, job.MatrixIndex, job.PlanDigest, boolInt(job.Tolerated), job.ConcurrencyGroup, job.MaxParallel); err != nil {
 		// A concurrent admission may have won the dedup index. Returning that
 		// job keeps the observation exactly-once without a second queue slot.
 		existing, found, readErr := readCheckJobByDedupTx(ctx, tx, request.RepositoryID, job.DedupDigest)
@@ -1395,12 +1451,16 @@ func automaticCheckTaskID(request CheckJobRequest) string {
 	if request.Trigger == checkworkflow.EventPullRequest {
 		identity = strconv.FormatInt(request.PullRequestNumber, 10)
 	}
-	return digestFields("automatic-check-task-v1", request.RepositoryID, request.Trigger, identity)[:32]
+	lane := "automatic-check-task-v1"
+	if request.RunID != "" {
+		lane = "automatic-workflow-task-v1"
+	}
+	return digestFields(lane, request.RepositoryID, request.Trigger, identity)[:32]
 }
 
-func ensureAutomaticCheckTaskTx(ctx context.Context, tx *sql.Tx, repositoryID, taskID string, now time.Time) error {
+func ensureAutomaticCheckTaskTx(ctx context.Context, tx *sql.Tx, repositoryID, taskID, title string, now time.Time) error {
 	if _, err := tx.ExecContext(ctx, `INSERT INTO tasks(id,repository_id,title,created_at,updated_at) VALUES(?,?,?,?,?)
-		ON CONFLICT(id) DO NOTHING`, taskID, repositoryID, "Automatic checks", now.UTC().Unix(), now.UTC().Unix()); err != nil {
+		ON CONFLICT(id) DO NOTHING`, taskID, repositoryID, title, now.UTC().Unix(), now.UTC().Unix()); err != nil {
 		return err
 	}
 	var storedRepository string
@@ -1471,6 +1531,10 @@ func validateCheckJobRequest(request CheckJobRequest) error {
 		if request.PullRequestNumber <= 0 || !validObjectID(request.BaseOID) {
 			return fmt.Errorf("%w: a pull request job needs a number and a base object", ErrInvalidCheckJob)
 		}
+	case ActionsEventDispatch, ActionsEventSchedule:
+		if request.RunID == "" || request.PullRequestNumber != 0 || request.BaseOID != "" {
+			return fmt.Errorf("%w: invalid workflow trigger facts", ErrInvalidCheckJob)
+		}
 	default:
 		return fmt.Errorf("%w: unknown trigger %q", ErrInvalidCheckJob, request.Trigger)
 	}
@@ -1483,7 +1547,7 @@ func validateCheckJobRequest(request CheckJobRequest) error {
 	if request.TriggerRef == "" || request.TriggerRef == "@" || len(request.TriggerRef) > MaximumCheckTriggerRefBytes || !validBranchText(request.TriggerRef) {
 		return fmt.Errorf("%w: invalid trigger ref", ErrInvalidCheckJob)
 	}
-	if request.WorkflowPath != "" && request.WorkflowPath != checkworkflow.Path {
+	if request.WorkflowPath != "" && request.WorkflowPath != checkworkflow.Path && !(request.RunID != "" && validActionsWorkflowPath(request.WorkflowPath)) {
 		return fmt.Errorf("%w: unsupported workflow path %q", ErrInvalidCheckJob, request.WorkflowPath)
 	}
 	if !validDigest(request.WorkflowDigest) {
@@ -1509,7 +1573,10 @@ func validateCheckJobRequest(request CheckJobRequest) error {
 	if request.RerunGeneration < 0 {
 		return fmt.Errorf("%w: invalid rerun generation", ErrInvalidCheckJob)
 	}
-	return nil
+	return validateActionsJobFacts(CheckJob{
+		RunID: request.RunID, JobKey: request.JobKey, MatrixIndex: request.MatrixIndex, PlanDigest: request.PlanDigest,
+		Tolerated: request.Tolerated, ConcurrencyGroup: request.ConcurrencyGroup, MaxParallel: request.MaxParallel,
+	})
 }
 
 // ClaimCheckJob leases an external-runner job under a live repository-scoped
@@ -2110,7 +2177,7 @@ func oldestPendingCheckJobTx(ctx context.Context, queryer querier, repositoryID 
 }
 
 func interruptStalePendingCheckJobsTx(ctx context.Context, tx *sql.Tx, policy CheckPolicy, now time.Time) error {
-	rows, err := tx.QueryContext(ctx, checkJobSelect+` WHERE repository_id=? AND status IN ('pending','claimed') ORDER BY admitted_at,id`, policy.RepositoryID)
+	rows, err := tx.QueryContext(ctx, checkJobSelect+` WHERE repository_id=? AND status IN ('pending','waiting','claimed') ORDER BY admitted_at,id`, policy.RepositoryID)
 	if err != nil {
 		return err
 	}
@@ -2171,26 +2238,29 @@ func countActiveCheckJobsTx(ctx context.Context, queryer querier, repositoryID s
 
 func countUnfinishedCheckJobsTx(ctx context.Context, queryer querier, repositoryID string) (int, error) {
 	var count int
-	err := queryer.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_jobs WHERE repository_id=? AND status IN ('pending','claimed','started')`, repositoryID).Scan(&count)
+	err := queryer.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_jobs WHERE repository_id=? AND status IN ('pending','waiting','claimed','started')`, repositoryID).Scan(&count)
 	return count, err
 }
 
 const checkJobSelect = `SELECT id,repository_id,task_id,trigger_kind,event_key,source_oid,base_oid,pull_request_number,trigger_ref,
 	workflow_path,workflow_oid,workflow_digest,configuration_version,executor,policy_version,consent_version,limits_json,execution_json,
 	dedup_digest,rerun_root,rerun_generation,status,attempt_id,lease_id,lease_expires_at,credential_id,credential_generation,credential_role,
-	protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary FROM check_jobs`
+	protection,admitted_at,claimed_at,started_at,finished_at,lease_lost_at,cancel_requested_at,interrupted_at,summary,
+	run_id,job_key,matrix_index,plan_digest,tolerated,concurrency_group,max_parallel FROM check_jobs`
 
 func scanCheckJob(scanner rowScanner) (CheckJob, error) {
 	var job CheckJob
 	var limitsJSON, executionJSON string
 	var admittedAt int64
+	var tolerated int
 	var leaseExpiresAt, claimedAt, startedAt, finishedAt, leaseLostAt, cancelRequestedAt, interruptedAt sql.NullInt64
 	if err := scanner.Scan(&job.ID, &job.RepositoryID, &job.TaskID, &job.Trigger, &job.EventKey, &job.SourceOID, &job.BaseOID,
 		&job.PullRequestNumber, &job.TriggerRef, &job.WorkflowPath, &job.WorkflowOID, &job.WorkflowDigest,
 		&job.ConfigurationVersion, &job.Executor, &job.PolicyVersion, &job.ConsentVersion, &limitsJSON, &executionJSON,
 		&job.DedupDigest, &job.RerunRoot, &job.RerunGeneration, &job.Status, &job.AttemptID, &job.LeaseID,
 		&leaseExpiresAt, &job.CredentialID, &job.CredentialGeneration, &job.CredentialRole, &job.Protection, &admittedAt,
-		&claimedAt, &startedAt, &finishedAt, &leaseLostAt, &cancelRequestedAt, &interruptedAt, &job.Summary); err != nil {
+		&claimedAt, &startedAt, &finishedAt, &leaseLostAt, &cancelRequestedAt, &interruptedAt, &job.Summary,
+		&job.RunID, &job.JobKey, &job.MatrixIndex, &job.PlanDigest, &tolerated, &job.ConcurrencyGroup, &job.MaxParallel); err != nil {
 		return CheckJob{}, err
 	}
 	if err := json.Unmarshal([]byte(limitsJSON), &job.Limits); err != nil {
@@ -2199,6 +2269,7 @@ func scanCheckJob(scanner rowScanner) (CheckJob, error) {
 	if err := json.Unmarshal([]byte(executionJSON), &job.Execution); err != nil {
 		return CheckJob{}, err
 	}
+	job.Tolerated = tolerated != 0
 	job.AdmittedAt = unixNanoTime(admittedAt)
 	job.LeaseExpiresAt = nullableNanoTime(leaseExpiresAt)
 	job.ClaimedAt = nullableNanoTime(claimedAt)
@@ -2220,7 +2291,7 @@ func nullableNanoTime(value sql.NullInt64) *time.Time {
 
 func terminalCheckJob(status string) bool {
 	switch status {
-	case CheckJobPending, CheckJobClaimed, CheckJobStarted:
+	case CheckJobPending, CheckJobWaiting, CheckJobClaimed, CheckJobStarted:
 		return false
 	default:
 		return true
@@ -2230,7 +2301,7 @@ func terminalCheckJob(status string) bool {
 func validCheckJobStatus(status string) bool {
 	switch status {
 	case CheckJobPending, CheckJobClaimed, CheckJobStarted, CheckJobPassed, CheckJobFailed,
-		CheckJobError, CheckJobCancelled, CheckJobIncomplete, CheckJobUnavailable, CheckJobAmbiguous, CheckJobInterrupted:
+		CheckJobError, CheckJobCancelled, CheckJobIncomplete, CheckJobUnavailable, CheckJobAmbiguous, CheckJobInterrupted, CheckJobWaiting, CheckJobSkipped:
 		return true
 	default:
 		return false
@@ -2351,8 +2422,13 @@ func finalizeCheckJobTx(ctx context.Context, tx *sql.Tx, attempt CheckAttempt, s
 		value := finished.UTC()
 		cancelRequestedAt = &value
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE check_jobs SET status=?,finished_at=?,summary=?,cancel_requested_at=? WHERE id=?`,
-		status, finished.UTC().UnixNano(), summary, nullableNano(cancelRequestedAt), job.ID)
+	if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status=?,finished_at=?,summary=?,cancel_requested_at=? WHERE id=?`,
+		status, finished.UTC().UnixNano(), summary, nullableNano(cancelRequestedAt), job.ID); err != nil {
+		return err
+	}
+	if job.RunID != "" {
+		_, err = tx.ExecContext(ctx, `DELETE FROM actions_job_plans WHERE job_id=?`, job.ID)
+	}
 	return err
 }
 

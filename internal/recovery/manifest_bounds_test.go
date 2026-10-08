@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/state"
 )
 
 // A manifest is written in version 10 while its records fit that version
@@ -30,7 +31,7 @@ func TestManifestFormatFollowsWhatItsReadersAccept(t *testing.T) {
 		want          int
 	}{
 		{format10Limit: 1 << 20, want: closedPullRequestBackupVersion},
-		{format10Limit: 200, want: backupVersion},
+		{format10Limit: 200, want: recordsBackupVersion},
 	} {
 		version, err := backupManifestVersion(manifest, test.format10Limit, manifestLimit)
 		if err != nil || version != test.want {
@@ -190,6 +191,17 @@ func TestManifestReadingIsBounded(t *testing.T) {
 			name: "many check definitions in one configuration",
 			input: func() input {
 				return input{records(prefix+`,"check_configurations":[{"checks":[`, `{"name":"","command":""},`), int64(len(prefix)), budget}
+			},
+			want:     "backup manifest holds more than the 16 MiB of records a backup holds",
+			maxAlloc: 4 * budget,
+		},
+		{
+			name: "workflow input text is charged before retention",
+			input: func() input {
+				head := strings.Replace(prefix, `"version":11`, `"version":12`, 1) + `,"actions_runs":[`
+				row, err := json.Marshal(state.ActionsRun{InputsJSON: `{"target":"` + strings.Repeat("x", 1024) + `"}`})
+				noErr(t, err)
+				return input{records(head, string(row)+","), int64(len(head)), budget}
 			},
 			want:     "backup manifest holds more than the 16 MiB of records a backup holds",
 			maxAlloc: 4 * budget,

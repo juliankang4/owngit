@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// Every released schema opens at the current schema, and a rebuilt table keeps
-// every row that refers to it. Schema 14 (1.0.0 to 1.0.2) and schema 15
-// (1.0.3 to 1.1.2) are upgraded in place.
 func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 	var released []int
 	for _, step := range schemaSteps {
@@ -21,7 +18,7 @@ func TestReleasedSchemasUpgradeAndKeepPullRequestHistory(t *testing.T) {
 			released = append(released, step.version)
 		}
 	}
-	if !slices.Equal(released, []int{14, 15}) {
+	if !slices.Equal(released, []int{14, 15, 16}) {
 		t.Fatalf("released schemas=%v", released)
 	}
 	for _, version := range released {
@@ -58,25 +55,22 @@ func TestReleasedImportSourceUpgradesWithoutASignInRevision(t *testing.T) {
 	}
 }
 
-// The chain is table-driven: a test-only step 17 after the unreleased step
-// 16 upgrades schema 14 through three steps and schema 15 through two in one
-// Open, and the refusal messages follow the table.
 func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 	original := schemaSteps
-	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 18, statements: []string{
 		`CREATE TABLE synthetic_step(title TEXT NOT NULL)`,
 		`INSERT INTO synthetic_step(title) SELECT title FROM pull_requests`,
 	}})
 	t.Cleanup(func() { schemaSteps = original })
 	ctx := context.Background()
 
-	for _, version := range []int{14, 15} {
+	for _, version := range []int{14, 15, 16} {
 		t.Run("upgrade from "+strconv.Itoa(version), func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
 			createReleasedSchemaWithPullRequest(t, directory, version)
-			store := openUpgradedSchema(t, directory, 17)
+			store := openUpgradedSchema(t, directory, 18)
 			defer store.Close()
-			if upgrade, want := store.SchemaUpgrade(), "state database upgraded from schema "+strconv.Itoa(version)+" to 17"; upgrade != want {
+			if upgrade, want := store.SchemaUpgrade(), "state database upgraded from schema "+strconv.Itoa(version)+" to 18"; upgrade != want {
 				t.Fatalf("upgrade reported %q, want %q", upgrade, want)
 			}
 			var copied int
@@ -91,8 +85,8 @@ func TestSchemaChainRunsEveryLaterStep(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		for version, want := range map[int]string{
-			16: "state database uses the unreleased development schema 16; this build upgrades only the committed baseline (no schema version) and released schemas 14 and 15, and opens schema 17",
-			18: "state database schema version 18 is newer than this OwnGit build supports (17)",
+			17: "state database uses the unreleased development schema 17; this build upgrades only the committed baseline (no schema version) and released schemas 14, 15 and 16, and opens schema 18",
+			19: "state database schema version 19 is newer than this OwnGit build supports (18)",
 		} {
 			directory := filepath.Join(t.TempDir(), "state")
 			createNumberedSchemaDatabase(t, directory, version)
@@ -237,7 +231,7 @@ func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
 	createMigratedSchemaDatabase(t, directory, 14)
 	store, err := Open(ctx, directory)
 	noErr(t, err)
-	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from schema 14 to 16" {
+	if upgrade := store.SchemaUpgrade(); upgrade != "state database upgraded from schema 14 to 17" {
 		t.Fatalf("released schema upgrade reported %q", upgrade)
 	}
 	noErr(t, store.Close())
@@ -261,12 +255,12 @@ func TestSchemaUpgradeIsReportedOnce(t *testing.T) {
 // database at its schema with every row.
 func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 	original := schemaSteps
-	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 18, statements: []string{
 		// Fails only on a database that holds a pull request, so the
 		// steps' own catalog (built on an empty database) succeeds and the
 		// migration itself fails.
-		`CREATE TABLE step_17(value TEXT CHECK(value IS NULL))`,
-		`INSERT INTO step_17(value) SELECT title FROM pull_requests`,
+		`CREATE TABLE step_18(value TEXT CHECK(value IS NULL))`,
+		`INSERT INTO step_18(value) SELECT title FROM pull_requests`,
 	}})
 	t.Cleanup(func() { schemaSteps = original })
 	ctx := context.Background()
@@ -276,7 +270,7 @@ func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 	if store != nil {
 		_ = store.Close()
 	}
-	if err == nil || !strings.Contains(err.Error(), "apply state schema migration 17") {
+	if err == nil || !strings.Contains(err.Error(), "apply state schema migration 18") {
 		t.Fatalf("failing step error=%v", err)
 	}
 	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
@@ -285,7 +279,7 @@ func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 		t.Fatalf("failed migration left schema %d err=%v", version, err)
 	}
 	var added, requests int
-	noErr(t, db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_17')),(SELECT COUNT(*) FROM pull_requests)`).Scan(&added, &requests))
+	noErr(t, db.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_18')),(SELECT COUNT(*) FROM pull_requests)`).Scan(&added, &requests))
 	if added != 0 || requests != 1 {
 		t.Fatalf("failed migration left %d new tables and %d pull requests", added, requests)
 	}
@@ -297,9 +291,9 @@ func TestFailingStepLeavesTheReleasedSchema(t *testing.T) {
 // migration is rolled back.
 func TestMigrationEndingAtAnotherCatalogIsRolledBack(t *testing.T) {
 	original := schemaSteps
-	schemaSteps = append(slices.Clone(original), schemaStep{version: 17, statements: []string{
+	schemaSteps = append(slices.Clone(original), schemaStep{version: 18, statements: []string{
 		`PRAGMA writable_schema=ON`,
-		`INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) SELECT 'view','step_17','repositories',0,'CREATE VIEW step_17 AS SELECT id FROM repositories' FROM repositories LIMIT 1`,
+		`INSERT INTO sqlite_master(type,name,tbl_name,rootpage,sql) SELECT 'view','step_18','repositories',0,'CREATE VIEW step_18 AS SELECT id FROM repositories' FROM repositories LIMIT 1`,
 		`PRAGMA writable_schema=OFF`,
 	}})
 	t.Cleanup(func() { schemaSteps = original })
@@ -310,7 +304,7 @@ func TestMigrationEndingAtAnotherCatalogIsRolledBack(t *testing.T) {
 	if store != nil {
 		_ = store.Close()
 	}
-	if err == nil || err.Error() != "state schema migration to 17 produced a schema other than schema 17; nothing was changed" {
+	if err == nil || err.Error() != "state schema migration to 18 produced a schema other than schema 18; nothing was changed" {
 		t.Fatalf("migration error=%v", err)
 	}
 	db := openSchemaDatabase(t, filepath.Join(directory, databaseName))
@@ -319,7 +313,7 @@ func TestMigrationEndingAtAnotherCatalogIsRolledBack(t *testing.T) {
 		t.Fatalf("rolled-back migration left schema %d err=%v", version, err)
 	}
 	var added int
-	noErr(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_17')`).Scan(&added))
+	noErr(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE name IN ('share_links','step_18')`).Scan(&added))
 	if added != 0 {
 		t.Fatalf("rolled-back migration left %d new objects", added)
 	}

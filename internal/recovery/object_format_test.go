@@ -39,8 +39,8 @@ func TestSHA256RepositoriesRestoreAndVerify(t *testing.T) {
 	noErr(t, err)
 	manifest, err := readManifest(filepath.Join(backup, manifestName))
 	noErr(t, err)
-	if manifest.Version != backupVersion {
-		t.Fatalf("version=%d, want %d for an empty SHA-256 repository", manifest.Version, backupVersion)
+	if manifest.Version != recordsBackupVersion {
+		t.Fatalf("version=%d, want %d for an empty SHA-256 repository", manifest.Version, recordsBackupVersion)
 	}
 	for _, item := range manifest.Repositories {
 		want := map[string]string{"modern-empty": "sha256"}[item.ID]

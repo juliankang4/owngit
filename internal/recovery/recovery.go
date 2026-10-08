@@ -55,10 +55,8 @@ const (
 	// recorded as already up to date. Releases 1.0.3 to 1.1.2 wrote it and
 	// restore it, so a backup without newer records is still written in it.
 	closedPullRequestBackupVersion = 10
-	// backupVersion is the current format. It adds pull request
-	// descriptions, edits and review notes, actors, repository names and
-	// policies, and import refresh behaviour (format11Content).
-	backupVersion = 11
+	recordsBackupVersion           = 11
+	backupVersion                  = 12
 	// manifestLimit is the most a backup holds: 1 GiB of OwnGit records in
 	// its manifest, repositories not counted. Backup refuses a larger state
 	// rather than cutting it short, and restore refuses a larger file, so
@@ -94,6 +92,7 @@ type Manifest struct {
 	CheckResults               []CheckResultManifest         `json:"check_results,omitempty"`
 	CheckPolicies              []CheckPolicyManifest         `json:"check_policies,omitempty"`
 	CheckJobs                  []CheckJobManifest            `json:"check_jobs,omitempty"`
+	ActionsRuns                []state.ActionsRun            `json:"actions_runs,omitempty"`
 	ImportSources              []ImportSourceManifest        `json:"import_sources,omitempty"`
 	ImportRuns                 []ImportRunManifest           `json:"import_runs,omitempty"`
 	ImportRunOrderKnown        bool                          `json:"import_run_order_known,omitempty"`
@@ -184,9 +183,11 @@ type CheckResultManifest struct {
 	OutputExcerpt string `json:"output_excerpt,omitempty"`
 	Truncated     bool   `json:"truncated,omitempty"`
 	CleanupError  string `json:"cleanup_error,omitempty"`
+	Role          string `json:"role,omitempty"`
 }
 
 type CheckPolicyManifest struct {
+	RunWorkflows        bool                         `json:"run_workflows,omitempty"`
 	RepositoryID        string                       `json:"repository_id"`
 	PolicyVersion       int64                        `json:"policy_version"`
 	PolicyDigest        string                       `json:"policy_digest"`
@@ -211,6 +212,13 @@ type CheckJobLimitsManifest struct {
 }
 
 type CheckJobManifest struct {
+	RunID                string                       `json:"run_id,omitempty"`
+	JobKey               string                       `json:"job_key,omitempty"`
+	MatrixIndex          int                          `json:"matrix_index,omitempty"`
+	PlanDigest           string                       `json:"plan_digest,omitempty"`
+	Tolerated            bool                         `json:"tolerated,omitempty"`
+	ConcurrencyGroup     string                       `json:"concurrency_group,omitempty"`
+	MaxParallel          int                          `json:"max_parallel,omitempty"`
 	ID                   string                       `json:"id"`
 	RepositoryID         string                       `json:"repository_id"`
 	TaskID               string                       `json:"task_id"`
@@ -1479,14 +1487,6 @@ func syncDirectory(directory string) error {
 	return closeErr
 }
 
-// backupManifestVersion chooses the oldest format whose readers accept
-// manifest: version 10, which releases 1.0.3 to 1.1.2 restore, when it holds
-// no record that only version 11 holds and fits format10Limit; version 11
-// otherwise. So every backup made before an upgrade that the earlier release
-// could have made itself stays restorable by that release. Both version
-// numbers have two digits, so the size does not depend on the choice. A
-// manifest whose cost (manifestBudget) passes limit is refused, never cut
-// short, so every backup written can be restored.
 func backupManifestVersion(manifest Manifest, format10Limit, limit int64) (int, error) {
 	manifest.Version = backupVersion
 	var counter manifestCounter
@@ -1496,10 +1496,13 @@ func backupManifestVersion(manifest Manifest, format10Limit, limit int64) (int, 
 	if cost := counter.charged + recordsCost(reflect.ValueOf(manifest)); cost > limit {
 		return 0, fmt.Errorf("cannot back up this state: its OwnGit records take %d MiB, and a backup holds at most %d MiB of them (repositories are not counted)", (cost+1<<20-1)>>20, limit>>20)
 	}
+	if format12Content(manifest) != "" {
+		return backupVersion, nil
+	}
 	if format11Content(manifest) == "" && counter.written <= format10Limit {
 		return closedPullRequestBackupVersion, nil
 	}
-	return backupVersion, nil
+	return recordsBackupVersion, nil
 }
 
 // manifestCounter counts the bytes of a written manifest and the bytes that
@@ -1654,7 +1657,7 @@ func decodeManifest(input io.Reader, size, limit int64) (Manifest, error) {
 		if err := validateBackupVersion(manifest.Version); err != nil {
 			return Manifest{}, err
 		}
-		if manifest.Version < backupVersion {
+		if manifest.Version < recordsBackupVersion {
 			reader.limit, reader.tooLarge = format10ManifestLimit, errManifestTooLarge
 			if size > reader.limit {
 				return Manifest{}, errManifestTooLarge
@@ -2133,6 +2136,38 @@ func format11Content(manifest Manifest) string {
 	return ""
 }
 
+func format12Content(manifest Manifest) string {
+	if len(manifest.ActionsRuns) != 0 {
+		return "workflow runs"
+	}
+	for _, policy := range manifest.CheckPolicies {
+		if policy.RunWorkflows {
+			return "a workflow-enabled check policy"
+		}
+		for _, event := range policy.AllowedEvents {
+			if event == state.ActionsEventDispatch || event == state.ActionsEventSchedule {
+				return "a workflow event in a check policy"
+			}
+		}
+	}
+	for _, job := range manifest.CheckJobs {
+		if job.RunID != "" || job.JobKey != "" || job.MatrixIndex != 0 || job.PlanDigest != "" || job.Tolerated || job.ConcurrencyGroup != "" || job.MaxParallel != 0 || job.Status == state.CheckJobWaiting || job.Status == state.CheckJobSkipped || job.Trigger == state.ActionsEventDispatch || job.Trigger == state.ActionsEventSchedule {
+			return "workflow job facts"
+		}
+	}
+	for _, attempt := range manifest.CheckAttempts {
+		if attempt.Status == state.AttemptSkipped {
+			return "a skipped workflow attempt"
+		}
+	}
+	for _, result := range manifest.CheckResults {
+		if result.Role != "" || result.Status == "skipped" || result.Status == "not_run" {
+			return "workflow step facts"
+		}
+	}
+	return ""
+}
+
 // format10ImportRef reports whether a format 10 reader accepts name in an
 // import record: HEAD, a branch or a tag.
 func format10ImportRef(name string) bool {
@@ -2142,6 +2177,7 @@ func format10ImportRef(name string) bool {
 }
 
 func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
+	manifest.ActionsRuns = snapshot.ActionsRuns
 	for _, task := range snapshot.Tasks {
 		manifest.Tasks = append(manifest.Tasks, TaskManifest{
 			ID: task.ID, RepositoryID: task.RepositoryID, Title: task.Title,
@@ -2184,12 +2220,12 @@ func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
 		manifest.CheckResults = append(manifest.CheckResults, CheckResultManifest{
 			AttemptID: result.AttemptID, Position: result.Position, Name: result.Name, Command: result.Command,
 			Status: result.Status, ExitCode: result.ExitCode, DurationMS: result.DurationMS,
-			OutputExcerpt: result.OutputExcerpt, Truncated: result.Truncated, CleanupError: result.CleanupError,
+			OutputExcerpt: result.OutputExcerpt, Truncated: result.Truncated, CleanupError: result.CleanupError, Role: result.Role,
 		})
 	}
 	for _, policy := range snapshot.CheckPolicies {
 		manifest.CheckPolicies = append(manifest.CheckPolicies, CheckPolicyManifest{
-			RepositoryID: policy.RepositoryID, PolicyVersion: policy.Version, PolicyDigest: policy.Digest,
+			RepositoryID: policy.RepositoryID, PolicyVersion: policy.Version, PolicyDigest: policy.Digest, RunWorkflows: policy.RunWorkflows,
 			Executor: policy.Executor, AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
 			MaxOutputLimitBytes: policy.MaxOutputLimitBytes, QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs,
 			MaxLeaseMS: policy.MaxLeaseMS, Execution: policy.Execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
@@ -2210,6 +2246,8 @@ func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
 			CredentialGeneration: job.CredentialGeneration, CredentialRole: job.CredentialRole, Protection: job.Protection, AdmittedAt: job.AdmittedAt,
 			ClaimedAt: job.ClaimedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, LeaseLostAt: job.LeaseLostAt,
 			CancelRequestedAt: job.CancelRequestedAt, InterruptedAt: job.InterruptedAt, Summary: job.Summary,
+			RunID: job.RunID, JobKey: job.JobKey, MatrixIndex: job.MatrixIndex, PlanDigest: job.PlanDigest,
+			Tolerated: job.Tolerated, ConcurrencyGroup: job.ConcurrencyGroup, MaxParallel: job.MaxParallel,
 		})
 	}
 }
@@ -2217,6 +2255,7 @@ func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
 func recoveryState(manifest Manifest) state.RecoveryState {
 	snapshot := state.RecoveryState{
 		AccessMode: manifest.AccessMode, AccessPasswordHash: manifest.AccessHash, AdminPasswordHash: manifest.AdminHash,
+		ActionsRuns: manifest.ActionsRuns,
 	}
 	for _, item := range manifest.Repositories {
 		snapshot.Repositories = append(snapshot.Repositories, state.Repository{
@@ -2320,13 +2359,13 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			CheckResult: state.CheckResult{
 				Position: result.Position, Name: result.Name, Command: result.Command, Status: result.Status,
 				ExitCode: result.ExitCode, DurationMS: result.DurationMS, OutputExcerpt: result.OutputExcerpt,
-				Truncated: result.Truncated, CleanupError: result.CleanupError,
+				Truncated: result.Truncated, CleanupError: result.CleanupError, Role: result.Role,
 			},
 		})
 	}
 	for _, policy := range manifest.CheckPolicies {
 		snapshot.CheckPolicies = append(snapshot.CheckPolicies, state.CheckPolicy{
-			RepositoryID: policy.RepositoryID, Version: policy.PolicyVersion, Digest: policy.PolicyDigest,
+			RepositoryID: policy.RepositoryID, Version: policy.PolicyVersion, Digest: policy.PolicyDigest, RunWorkflows: policy.RunWorkflows,
 			Executor: policy.Executor, AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
 			MaxOutputLimitBytes: policy.MaxOutputLimitBytes, QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs,
 			MaxLeaseMS: policy.MaxLeaseMS, Execution: policy.Execution, ConsentVersion: policy.ConsentVersion, ConsentDigest: policy.ConsentDigest,
@@ -2347,6 +2386,8 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 			CredentialGeneration: job.CredentialGeneration, CredentialRole: job.CredentialRole, Protection: job.Protection, AdmittedAt: job.AdmittedAt,
 			ClaimedAt: job.ClaimedAt, StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, LeaseLostAt: job.LeaseLostAt,
 			CancelRequestedAt: job.CancelRequestedAt, InterruptedAt: job.InterruptedAt, Summary: job.Summary,
+			RunID: job.RunID, JobKey: job.JobKey, MatrixIndex: job.MatrixIndex, PlanDigest: job.PlanDigest,
+			Tolerated: job.Tolerated, ConcurrencyGroup: job.ConcurrencyGroup, MaxParallel: job.MaxParallel,
 		})
 	}
 	return snapshot
@@ -2358,12 +2399,12 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 func validateBackupVersion(version int) error {
 	switch {
 	case version == legacyBackupVersion || version == pullRequestBackupVersion || version == checkBackupVersion ||
-		version == closedPullRequestBackupVersion || version == backupVersion:
+		version == closedPullRequestBackupVersion || version == recordsBackupVersion || version == backupVersion:
 		return nil
 	case version > backupVersion:
-		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, backupVersion)
+		return fmt.Errorf("unsupported backup version %d: this build supports versions 1, 2, %d, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, recordsBackupVersion, backupVersion)
 	default:
-		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, backupVersion)
+		return fmt.Errorf("backup uses the unreleased development format %d; this build supports versions 1, 2, %d, %d, %d, and %d", version, checkBackupVersion, closedPullRequestBackupVersion, recordsBackupVersion, backupVersion)
 	}
 }
 
@@ -2444,8 +2485,13 @@ func validateManifest(manifest Manifest) error {
 		}
 	}
 	if manifest.Version < backupVersion {
-		if content := format11Content(manifest); content != "" {
+		if content := format12Content(manifest); content != "" {
 			return fmt.Errorf("version %d backup contains %s, which only version %d holds", manifest.Version, content, backupVersion)
+		}
+	}
+	if manifest.Version < recordsBackupVersion {
+		if content := format11Content(manifest); content != "" {
+			return fmt.Errorf("version %d backup contains %s, which only version %d holds", manifest.Version, content, recordsBackupVersion)
 		}
 	}
 	if manifest.Version < closedPullRequestBackupVersion {

@@ -43,7 +43,7 @@ func TestSaveAndEnableBindsConsentToTheSubmittedPolicy(t *testing.T) {
 	base = &ExpectedCheckPolicy{Version: replaced.Version, Digest: replaced.Digest}
 	saved, err := fixture.store.SaveCheckPolicyAndGrantConsent(ctx, mine, base, fixture.now)
 	noErr(t, err)
-	candidate, err := CandidateCheckPolicy(mine)
+	candidate, err := fixture.store.CandidateCheckPolicy(ctx, mine)
 	noErr(t, err)
 	if saved.Digest != candidate.Digest || !saved.ConsentActive || saved.ConsentDigest != candidate.Digest || saved.Version != replaced.Version+1 {
 		t.Fatalf("save and enable stored %+v, want the submitted policy %s enabled", saved, candidate.Digest)
@@ -59,5 +59,56 @@ func TestSaveAndEnableBindsConsentToTheSubmittedPolicy(t *testing.T) {
 	noErr(t, err)
 	if after.Digest != saved.Digest || !after.ConsentActive {
 		t.Fatalf("an invalid save and enable changed the stored policy: %+v", after)
+	}
+
+	off, on := false, true
+	for _, test := range []struct {
+		name     string
+		existing *bool
+		input    *bool
+		want     bool
+	}{
+		{"first save defaults on", nil, nil, true},
+		{"existing off stays off", &off, nil, false},
+		{"existing on stays on", &on, nil, true},
+		{"first save explicitly off", nil, &off, false},
+		{"first save explicitly on", nil, &on, true},
+		{"existing off explicitly on", &off, &on, true},
+		{"existing on explicitly off", &on, &off, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newCheckJobFixture(t)
+			base := &ExpectedCheckPolicy{}
+			if test.existing != nil {
+				input := defaultPolicyInput()
+				input.RunWorkflows = test.existing
+				policy, err := fixture.store.SetCheckPolicy(ctx, input, fixture.now)
+				noErr(t, err)
+				base = &ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}
+			}
+			input := defaultPolicyInput()
+			input.QueueLimit = 9
+			input.RunWorkflows = test.input
+			candidate, err := fixture.store.CandidateCheckPolicy(ctx, input)
+			noErr(t, err)
+			if candidate.RunWorkflows != test.want {
+				t.Fatalf("preview workflows=%v, want %v", candidate.RunWorkflows, test.want)
+			}
+			before, _, err := fixture.store.CheckPolicy(ctx, input.RepositoryID)
+			noErr(t, err)
+			if before.Version != base.Version || before.Digest != base.Digest {
+				t.Fatalf("preview changed the stored policy: %+v", before)
+			}
+			saved, err := fixture.store.SaveCheckPolicyAndGrantConsent(ctx, input, base, fixture.now)
+			noErr(t, err)
+			stored, exists, err := fixture.store.CheckPolicy(ctx, input.RepositoryID)
+			noErr(t, err)
+			for _, policy := range []CheckPolicy{saved, stored} {
+				if !exists || policy.RunWorkflows != test.want || policy.Digest != candidate.Digest ||
+					!policy.ConsentActive || policy.ConsentDigest != candidate.Digest {
+					t.Fatalf("save and enable stored %+v, want workflows=%v digest=%s enabled", policy, test.want, candidate.Digest)
+				}
+			}
+		})
 	}
 }

@@ -96,6 +96,7 @@ while read -r file; do
 		;;
 	esac
 	case /$file in
+	/internal/state/testdata/released/*) affected[$module/internal/recovery]=1 ;;
 	*/testdata/* | */.*/*) ;;
 	*.go) affected[$gitexec]=1 ;;
 	*/node_modules/*) ;;

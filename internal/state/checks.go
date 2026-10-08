@@ -32,6 +32,7 @@ const (
 	AttemptCancelled   = "cancelled"
 	AttemptIncomplete  = "incomplete"
 	AttemptUnavailable = "unavailable"
+	AttemptSkipped     = "skipped"
 )
 
 // Worktree states recorded with an attempt. A dirty or unknown worktree means
@@ -827,6 +828,7 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	if !exists || registered.RepositoryID != completion.RepositoryID || registered.TaskID != completion.TaskID {
 		return Task{}, CheckAttempt{}, ErrAttemptNotFound
 	}
+	workflow := false
 	if registered.JobID != "" {
 		if authority == nil {
 			return Task{}, CheckAttempt{}, ErrCheckJobCompletionRequired
@@ -834,6 +836,14 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		if err := authorizeCheckJobCompletionTx(ctx, tx, registered, *authority); err != nil {
 			return Task{}, CheckAttempt{}, err
 		}
+		job, exists, err := readCheckJobTx(ctx, tx, registered.RepositoryID, registered.JobID)
+		if err != nil {
+			return Task{}, CheckAttempt{}, err
+		}
+		if !exists {
+			return Task{}, CheckAttempt{}, ErrCheckJobNotFound
+		}
+		workflow = job.RunID != ""
 	} else if authority != nil {
 		return Task{}, CheckAttempt{}, ErrCheckJobNotFound
 	}
@@ -843,6 +853,11 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	}
 	if !hasConfiguration {
 		return Task{}, CheckAttempt{}, ErrCheckConfigurationMissing
+	}
+	for _, result := range completion.Results {
+		if !validCheckResultStatus(result, workflow) {
+			return Task{}, CheckAttempt{}, errors.New("check result role or status does not match its execution lane")
+		}
 	}
 	registered.Checks = configuration.Checks
 	if err := matchResults(registered.Checks, completion.Results); err != nil {
@@ -910,8 +925,8 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		logError = ""
 	}
 
-	status := AggregateAttemptStatus(completion.Results, completion.Cancelled)
 	worktree := worseWorktree(registered.WorktreeState, completion.WorktreeState)
+	status, summary := checkAttemptOutcome(completion.Results, completion.Cancelled, worktree, workflow)
 	finished := completion.FinishedAt.UTC()
 	// An automatic attempt starts when OwnGit records its start, so its
 	// duration ends when OwnGit receives its completion: both times come
@@ -925,7 +940,6 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	if duration < 0 {
 		duration = 0
 	}
-	summary := AttemptSummary(completion.Results, worktree, status)
 	if _, err := tx.ExecContext(ctx, `UPDATE check_attempts SET status=?,exit_code=?,finished_at=?,duration_ms=?,summary=?,submitted_worktree_state=?,log_id=?,log_expires_at=?,log_truncated=?,log_error=?,completion_digest=?,submitted_log_digest=?,submitted_truncated=?,submitted_cancelled=?,log_digest=? WHERE id=?`,
 		status, nullableInt(aggregateExitCode(completion.Results)), finished.UnixNano(), duration, summary, completion.WorktreeState,
 		logID, nullableTime(logExpiresAt), boolInt(logTruncated), logError, digest, submitted.SubmittedLogDigest,
@@ -942,8 +956,8 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		return Task{}, CheckAttempt{}, err
 	}
 	for position, result := range completion.Results {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error) VALUES(?,?,?,?,?,?,?,?,?,?)`,
-			registered.ID, position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode), result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			registered.ID, position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode), result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role); err != nil {
 			if rawStored {
 				return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 			}
@@ -1282,7 +1296,7 @@ func scanCheckAttempt(scanner rowScanner) (CheckAttempt, error) {
 }
 
 func loadCheckResults(ctx context.Context, queryer querier, attempt *CheckAttempt) error {
-	rows, err := queryer.QueryContext(ctx, `SELECT position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error FROM check_results WHERE attempt_id=? ORDER BY position`, attempt.ID)
+	rows, err := queryer.QueryContext(ctx, `SELECT position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role FROM check_results WHERE attempt_id=? ORDER BY position`, attempt.ID)
 	if err != nil {
 		return err
 	}
@@ -1291,7 +1305,7 @@ func loadCheckResults(ctx context.Context, queryer querier, attempt *CheckAttemp
 		var result CheckResult
 		var exitCode sql.NullInt64
 		var truncated int
-		if err := rows.Scan(&result.Position, &result.Name, &result.Command, &result.Status, &exitCode, &result.DurationMS, &result.OutputExcerpt, &truncated, &result.CleanupError); err != nil {
+		if err := rows.Scan(&result.Position, &result.Name, &result.Command, &result.Status, &exitCode, &result.DurationMS, &result.OutputExcerpt, &truncated, &result.CleanupError, &result.Role); err != nil {
 			return err
 		}
 		if exitCode.Valid {
@@ -1365,7 +1379,7 @@ func validateCompletion(completion CheckCompletion) error {
 		return errors.New("invalid check result count")
 	}
 	for _, result := range completion.Results {
-		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validAttemptStatus(result.Status) || result.DurationMS < 0 {
+		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result, result.Role != "") || result.DurationMS < 0 {
 			return errors.New("invalid check result")
 		}
 		if len(result.OutputExcerpt) > MaximumCheckExcerptBytes {
@@ -1532,6 +1546,9 @@ func completionDigest(attempt CheckAttempt, results []CheckResult) string {
 	for _, result := range results {
 		fields = append(fields, result.Name, result.Command, result.Status, exitCodeField(result.ExitCode),
 			strconv.FormatInt(result.DurationMS, 10), result.OutputExcerpt, strconv.FormatBool(result.Truncated), result.CleanupError)
+		if result.Role != "" {
+			fields = append(fields, "role", result.Role)
+		}
 	}
 	return digestFields(fields...)
 }
@@ -1900,7 +1917,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 			// An automatic attempt starts on the server's clock and keeps the
 			// finish time its runner reported, so only an attempt whose times
 			// both come from its helper must end after it started.
-			if !validAttemptStatus(attempt.Status) || attempt.FinishedAt.IsZero() || attempt.JobID == "" && attempt.FinishedAt.Before(attempt.StartedAt) {
+			if !(validAttemptStatus(attempt.Status) || attempt.Status == AttemptSkipped && jobs[attempt.JobID].RunID != "") || attempt.FinishedAt.IsZero() || attempt.JobID == "" && attempt.FinishedAt.Before(attempt.StartedAt) {
 				return errors.New("invalid check attempt contents")
 			}
 			switch attempt.SubmittedWorktreeState {
@@ -1976,7 +1993,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 			return errors.New("check results are not a dense ordered sequence")
 		}
 		results[result.AttemptID] = append(results[result.AttemptID], result.CheckResult)
-		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validAttemptStatus(result.Status) {
+		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result.CheckResult, jobs[attempt.JobID].RunID != "") {
 			return errors.New("invalid check result record")
 		}
 		if result.DurationMS < 0 || len(result.OutputExcerpt) > MaximumCheckExcerptBytes || len(result.CleanupError) > MaximumCleanupErrorBytes {
@@ -2011,10 +2028,11 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 		if len(attemptResults) != len(configuration.Checks) {
 			return errors.New("check attempt does not have one result per configured check")
 		}
-		if AggregateAttemptStatus(attemptResults, attempt.SubmittedCancelled) != attempt.Status {
+		status, summary := checkAttemptOutcome(attemptResults, attempt.SubmittedCancelled, attempt.EffectiveWorktreeState(), jobs[attempt.JobID].RunID != "")
+		if status != attempt.Status {
 			return errors.New("check attempt status does not describe its results")
 		}
-		if AttemptSummary(attemptResults, attempt.EffectiveWorktreeState(), attempt.Status) != attempt.Summary {
+		if summary != attempt.Summary {
 			return errors.New("check attempt summary does not describe its results")
 		}
 		// The completion digest must be recomputable from the submitted facts.
@@ -2134,7 +2152,7 @@ func readCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState)
 		return err
 	}
 
-	rows, err = tx.QueryContext(ctx, `SELECT attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error FROM check_results ORDER BY attempt_id,position`)
+	rows, err = tx.QueryContext(ctx, `SELECT attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role FROM check_results ORDER BY attempt_id,position`)
 	if err != nil {
 		return err
 	}
@@ -2142,7 +2160,7 @@ func readCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState)
 		var record CheckResultRecord
 		var exitCode sql.NullInt64
 		var truncated int
-		if err := rows.Scan(&record.AttemptID, &record.Position, &record.Name, &record.Command, &record.Status, &exitCode, &record.DurationMS, &record.OutputExcerpt, &truncated, &record.CleanupError); err != nil {
+		if err := rows.Scan(&record.AttemptID, &record.Position, &record.Name, &record.Command, &record.Status, &exitCode, &record.DurationMS, &record.OutputExcerpt, &truncated, &record.CleanupError, &record.Role); err != nil {
 			rows.Close()
 			return err
 		}
@@ -2200,9 +2218,9 @@ func restoreCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryStat
 		}
 	}
 	for _, result := range snapshot.CheckResults {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error) VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 			result.AttemptID, result.Position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode),
-			result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError); err != nil {
+			result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role); err != nil {
 			return fmt.Errorf("restore check result %s/%d: %w", result.AttemptID, result.Position, err)
 		}
 	}

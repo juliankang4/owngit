@@ -2,7 +2,6 @@ package state
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -29,6 +28,7 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 		{file: "schema15-baseline-upgraded-by-1.0.3.sql", version: 15},
 		{file: "schema15-1.1.2.sql", version: 15},
 		{file: "schema15-1.1.2-upgraded-from-1.0.2.sql", version: 15},
+		{file: "schema16-1.1.6-populated.sql", version: 16},
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
@@ -123,12 +123,12 @@ func TestAlteredDatabaseIsRefusedUnchanged(t *testing.T) {
 		{"released: trigger", released15, []string{`CREATE TRIGGER u07_trigger AFTER UPDATE ON metadata ` + hostile}, altered(15)},
 		{"released: trigger under a name SQLite reserves", released15, hidden("sqlite_u07_trigger"), altered(15)},
 		{"released: changed column", released15, changedColumn, altered(15)},
-		{"released catalog marked current", released15, []string{`CREATE TRIGGER u07_trigger AFTER INSERT ON sessions ` + hostile, `UPDATE metadata SET value='16' WHERE key='schema_version'`}, altered(16)},
-		{"current: trigger under a name SQLite reserves", current, hidden("sqlite_u07_trigger"), altered(16)},
-		{"current: added view", current, []string{`CREATE VIEW titles AS SELECT title FROM pull_requests`}, altered(16)},
-		{"current: added table", current, []string{`CREATE TABLE notes_by_hand(text TEXT)`}, altered(16)},
-		{"current: changed column", current, changedColumn, altered(16)},
-		{"current: step 16 without sign_in_revision", current, []string{`ALTER TABLE import_sources DROP COLUMN sign_in_revision`}, altered(16)},
+		{"released catalog marked current", released15, []string{`CREATE TRIGGER u07_trigger AFTER INSERT ON sessions ` + hostile, `UPDATE metadata SET value='17' WHERE key='schema_version'`}, altered(17)},
+		{"current: trigger under a name SQLite reserves", current, hidden("sqlite_u07_trigger"), altered(17)},
+		{"current: added view", current, []string{`CREATE VIEW titles AS SELECT title FROM pull_requests`}, altered(17)},
+		{"current: added table", current, []string{`CREATE TABLE notes_by_hand(text TEXT)`}, altered(17)},
+		{"current: changed column", current, changedColumn, altered(17)},
+		{"current: step 16 without sign_in_revision", current, []string{`ALTER TABLE import_sources DROP COLUMN sign_in_revision`}, altered(17)},
 		{"baseline: trigger under a name SQLite reserves", baseline, hidden("sqlite_u07_trigger"), "state database has no schema version and does not match the committed baseline"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -155,13 +155,7 @@ func TestAlteredDatabaseIsRefusedUnchanged(t *testing.T) {
 
 func loadReleasedDump(t *testing.T, directory, name string) {
 	t.Helper()
-	dump, err := os.ReadFile(filepath.Join("testdata", "released", name))
-	noErr(t, err)
-	db := createSchemaDatabase(t, directory)
-	defer db.Close()
-	if _, err := db.Exec(string(dump)); err != nil {
-		t.Fatalf("load %s: %v", name, err)
-	}
+	testfixture.LoadReleasedState(t, directory, name)
 }
 
 func tableRowCounts(t *testing.T, db queryRower) map[string]int {

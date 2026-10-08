@@ -181,7 +181,7 @@ func (app *App) saveCheckPolicy(writer http.ResponseWriter, request *http.Reques
 // checks on would change. Nothing is saved. A policy the store would refuse
 // is shown with its refusals instead, like an ordinary save.
 func (app *App) reviewSaveAndEnable(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, form webui.CheckPolicyForm, notices []webui.Notice, status int) {
-	candidate, refusals, refusalStatus := candidateFromForm(request, stored.ID, form)
+	candidate, refusals, refusalStatus := app.candidateFromForm(request, stored.ID, form)
 	if refusals != nil {
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: webui.ActionSaveCheckPolicy, form: &form, notices: refusals,
@@ -195,12 +195,12 @@ func (app *App) reviewSaveAndEnable(writer http.ResponseWriter, request *http.Re
 
 // candidateFromForm validates the submitted form as the store would and
 // returns the policy saving it would store, or the refusals to show.
-func candidateFromForm(request *http.Request, repositoryID string, form webui.CheckPolicyForm) (state.CheckPolicy, []webui.Notice, int) {
+func (app *App) candidateFromForm(request *http.Request, repositoryID string, form webui.CheckPolicyForm) (state.CheckPolicy, []webui.Notice, int) {
 	input, notices := policyInputFrom(repositoryID, form)
 	if len(notices) != 0 {
 		return state.CheckPolicy{}, notices, http.StatusUnprocessableEntity
 	}
-	candidate, err := state.CandidateCheckPolicy(input)
+	candidate, err := app.Store.CandidateCheckPolicy(request.Context(), input)
 	if err != nil {
 		return state.CheckPolicy{}, policySaveNotices(err), policySaveStatus(request, err)
 	}
@@ -212,7 +212,7 @@ func candidateFromForm(request *http.Request, repositoryID string, form webui.Ch
 // stored policy must still be the one the review compared against; either
 // change shows the review again instead of saving.
 func (app *App) saveAndEnableCheckPolicy(writer http.ResponseWriter, request *http.Request, stored state.Repository, summary repository.Summary, chrome webui.Chrome, form webui.CheckPolicyForm) {
-	candidate, refusals, refusalStatus := candidateFromForm(request, stored.ID, form)
+	candidate, refusals, refusalStatus := app.candidateFromForm(request, stored.ID, form)
 	if refusals != nil {
 		app.renderConfiguredChecks(writer, request, stored, summary, chrome, configuredChecksState{
 			action: webui.ActionSaveCheckPolicy, form: &form, notices: refusals,

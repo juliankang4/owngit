@@ -136,7 +136,7 @@ func clockBackupStore(t *testing.T, ctx context.Context, root string) (*state.St
 func clockBackupTransition(t *testing.T, ctx context.Context, store *state.Store, transition string, admitted, corrected time.Time) state.CheckJob {
 	t.Helper()
 	_, err := store.SaveCheckPolicyAndGrantConsent(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorHost, AllowedEvents: []string{"push"},
+		RepositoryID: "project", Executor: state.CheckExecutorHost, AllowedEvents: []string{"push"}, RunWorkflows: new(false),
 		MaxTimeoutMS: 600000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 	}, nil, admitted)
 	clockBackupRequire(t, err)

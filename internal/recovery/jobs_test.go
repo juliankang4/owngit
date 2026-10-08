@@ -27,7 +27,7 @@ func TestBackupRoundTripsJobsAndInvalidatesAuthority(t *testing.T) {
 	sourceOID := strings.TrimSpace(gitOutput(t, repositoryPath, "--git-dir", ".", "rev-parse", "refs/heads/main"))
 
 	policy, err := store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", "pull_request"},
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", "pull_request"}, RunWorkflows: new(false),
 		MaxTimeoutMS: 120000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 	}, now)
 	noErr(t, err)
@@ -178,7 +178,7 @@ func TestBackupKeepsJobsFinishedByARunnerWithAnEarlierClock(t *testing.T) {
 	}
 	sourceOID := strings.TrimSpace(gitOutput(t, repositoryPath, "--git-dir", ".", "rev-parse", "refs/heads/main"))
 	_, err = store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"},
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push"}, RunWorkflows: new(false),
 		MaxTimeoutMS: 120000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000,
 	}, now)
 	noErr(t, err)

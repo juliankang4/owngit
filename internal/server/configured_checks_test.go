@@ -614,6 +614,28 @@ func TestConfiguredChecksConsentJourney(t *testing.T) {
 	if enabled, _ := storedPolicy(t, fixture); !enabled.ConsentActive || enabled.ConsentDigest != confirm.Get("review_digest") || enabled.MaxTimeoutMS != 300000 || enabled.QueueLimit != 20 {
 		t.Fatalf("save and enable stored %+v", enabled)
 	}
+	for _, workflows := range []bool{false, true} {
+		t.Run("workflows_"+strconv.FormatBool(workflows), func(t *testing.T) {
+			policy, _ := storedPolicy(t, fixture)
+			input, notices := policyInputFrom("project", policyFormFrom(browserCheckPolicy(policy, true)))
+			if len(notices) != 0 {
+				t.Fatalf("stored policy form refused: %+v", notices)
+			}
+			input.RunWorkflows = &workflows
+			if _, err := fixture.app.Store.SetCheckPolicy(context.Background(), input, fixture.app.now()); err != nil {
+				t.Fatal(err)
+			}
+			carryReview(post(changed).body)
+			if result := post(confirm); result.status != http.StatusSeeOther {
+				t.Fatalf("confirmation status=%d", result.status)
+			}
+			enabled, _ := storedPolicy(t, fixture)
+			if enabled.RunWorkflows != workflows || enabled.Digest != confirm.Get("review_digest") ||
+				!enabled.ConsentActive || enabled.ConsentDigest != enabled.Digest {
+				t.Fatalf("save and enable stored %+v, want workflows=%v digest=%s enabled", enabled, workflows, confirm.Get("review_digest"))
+			}
+		})
+	}
 
 	// Changing the policy clears the confirmation, and enabling the new
 	// generation records it again.
