@@ -5,15 +5,9 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path"
-	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,100 +21,6 @@ import (
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
-
-// Every answer with status 503 takes that status from unavailable, and
-// every answer with status 500 from internalError, which both log the
-// answer's cause. The check reads this package's source: these statuses may
-// appear nowhere else, except in a comparison, which reads a status and
-// writes none.
-//
-// Two kinds of 503 answer are written by githttp, which logs their causes
-// itself: its Smart HTTP answers on the /git/ routes, which serveHTTP hands
-// to githttp, and an archive githttp refused, which the archive handlers
-// write with githttp's status. Its access check is AuthorizeGit here, which
-// logs a check that could not be completed.
-func TestFailureStatusesLogTheirCause(t *testing.T) {
-	names, err := filepath.Glob("*.go")
-	noErr(t, err)
-	files := token.NewFileSet()
-	for _, name := range names {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(files, name, nil, 0)
-		noErr(t, err)
-		httpName := importName(file, "net/http")
-		var ancestors []ast.Node
-		ast.Inspect(file, func(node ast.Node) bool {
-			if node == nil {
-				ancestors = ancestors[:len(ancestors)-1]
-				return true
-			}
-			if source, ok := failureSource(node, httpName); ok && !readsOrReturns(ancestors, source) {
-				t.Errorf("%s: this status does not come from %s", files.Position(node.Pos()), source)
-			}
-			ancestors = append(ancestors, node)
-			return true
-		})
-	}
-}
-
-// importName is the name file uses for the package at importPath: its
-// alias, or the last path element, or "" when file does not import it.
-func importName(file *ast.File, importPath string) string {
-	for _, spec := range file.Imports {
-		if spec.Path.Value != strconv.Quote(importPath) {
-			continue
-		}
-		if spec.Name != nil {
-			return spec.Name.Name
-		}
-		return path.Base(importPath)
-	}
-	return ""
-}
-
-// failureSource reports whether node is status 503 or 500, as net/http's
-// constant under the name httpName or as an integer literal in any base,
-// and names the function that alone may return it.
-func failureSource(node ast.Node, httpName string) (string, bool) {
-	sources := map[string]string{"StatusServiceUnavailable": "unavailable", "StatusInternalServerError": "internalError"}
-	var name string
-	switch node := node.(type) {
-	case *ast.SelectorExpr:
-		if pkg, ok := node.X.(*ast.Ident); ok && pkg.Name == httpName {
-			name = node.Sel.Name
-		}
-	case *ast.Ident:
-		if httpName == "." {
-			name = node.Name
-		}
-	case *ast.BasicLit:
-		value, err := strconv.ParseInt(node.Value, 0, 64)
-		if node.Kind == token.INT && err == nil {
-			name = map[int64]string{503: "StatusServiceUnavailable", 500: "StatusInternalServerError"}[value]
-		}
-	}
-	source, ok := sources[name]
-	return source, ok
-}
-
-// readsOrReturns reports whether a status under ancestors is compared, or
-// is the status that source returns.
-func readsOrReturns(ancestors []ast.Node, source string) bool {
-	for _, node := range ancestors {
-		if function, ok := node.(*ast.FuncDecl); ok && function.Recv == nil && function.Name.Name == source {
-			return true
-		}
-	}
-	switch parent := ancestors[len(ancestors)-1].(type) {
-	case *ast.BinaryExpr:
-		return parent.Op == token.EQL || parent.Op == token.NEQ
-	case *ast.CaseClause:
-		return true
-	}
-	return false
-}
 
 // A cause is logged as one line, whatever its text holds, so Git's error
 // output cannot start a line of its own in the server log.

@@ -60,18 +60,18 @@ func TestCheckRerunWaitsForTheRepositoryAndNeedsItsCommit(t *testing.T) {
 
 	lock := fixture.app.Repositories.Locks.For("project")
 	lock.Lock()
-	answered := make(chan int, 1)
-	go func() {
-		status, _ := checkStatus(t, adminAPIRequest(t, http.MethodPost, base+present.ID+"/rerun", map[string]any{}, "admin-password"))
-		answered <- status
+	func() {
+		defer lock.UnlockWithoutRefChanges()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		if _, _, err := fixture.app.rerunCheckJob(ctx, "project", present.ID); !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("rerun while the repository write lock was held: %v", err)
+		}
+		if waiting := unfinishedCheckJobs(t, fixture); waiting != 0 {
+			t.Fatalf("a rerun was recorded while the repository write lock was held: %d unfinished", waiting)
+		}
 	}()
-	time.Sleep(300 * time.Millisecond)
-	waiting := unfinishedCheckJobs(t, fixture)
-	lock.UnlockWithoutRefChanges()
-	if waiting != 0 {
-		t.Fatalf("a rerun was recorded while the repository write lock was held: %d unfinished", waiting)
-	}
-	if status := <-answered; status != http.StatusOK || unfinishedCheckJobs(t, fixture) != 1 {
+	if status, _ := checkStatus(t, adminAPIRequest(t, http.MethodPost, base+present.ID+"/rerun", map[string]any{}, "admin-password")); status != http.StatusOK || unfinishedCheckJobs(t, fixture) != 1 {
 		t.Fatalf("rerun after the lock: status=%d unfinished=%d", status, unfinishedCheckJobs(t, fixture))
 	}
 	finishCheckJob(t, fixture)

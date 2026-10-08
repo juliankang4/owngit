@@ -125,6 +125,9 @@ func TestWithheldBodyIsAnsweredAtThePageDeadline(t *testing.T) {
 // import body is still read under the page deadline, and an archive request
 // whose body is left unread closes the connection instead of reading it.
 func TestAuthorizedOperationReadsItsBodyUnderThePageDeadline(t *testing.T) {
+	if testing.Short() {
+		t.Skip("the withheld import body reaches the three-second page deadline")
+	}
 	_, address := longOperationServer(t, verifiedPage)
 	t.Run("import API", func(t *testing.T) {
 		t.Parallel()

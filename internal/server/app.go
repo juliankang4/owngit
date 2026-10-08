@@ -534,13 +534,8 @@ func (app *App) renderError(writer http.ResponseWriter, request *http.Request, s
 	app.render(writer, request, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
 }
 
-// unavailable logs why step of request could not be completed and returns
-// 503 Service Unavailable, the status that answers it: the work could not be
-// done now, and the same request can succeed later. It is the only source of
-// that status in this package (TestFailureStatusesLogTheirCause), so the
-// cause of every unavailable answer is in the server log, once. A state that
-// is working as intended, such as a repository being prepared, is passed as
-// its error and not logged (see intendedCause).
+// unavailable returns 503 and logs the cause unless it is an intended state
+// such as a repository being prepared (see intendedCause).
 func unavailable(request *http.Request, step string, err error) int {
 	logFailure(request, step, err)
 	return http.StatusServiceUnavailable
@@ -563,8 +558,7 @@ func (app *App) answerUnavailable(writer http.ResponseWriter, request *http.Requ
 // internalError logs why step of request failed and returns 500 Internal
 // Server Error, the status that answers it: OwnGit found a fault in itself
 // or its data, such as a page it cannot render or a pull request whose
-// records disagree, which retrying does not fix. It is the only source of
-// that status in this package, as unavailable is of 503.
+// records disagree, which retrying does not fix.
 func internalError(request *http.Request, step string, err error) int {
 	logFailure(request, step, err)
 	return http.StatusInternalServerError

@@ -577,27 +577,60 @@ func TestACancelledRequestStillFinishesTheChange(t *testing.T) {
 // the other, so turning off still takes back the proxy and name that
 // turning on added. (After a case from the security review.)
 func TestOverlappingChangesKeepWhatOwnGitAdded(t *testing.T) {
-	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), WriteDelay: 300})
-	ctx := context.Background()
-	var wait sync.WaitGroup
-	errs := make([]error, 2)
-	for i := range errs {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			time.Sleep(time.Duration(i) * 100 * time.Millisecond)
-			_, errs[i] = app.Tailscale.On(ctx, nil, 0)
-		}()
+	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running(), HoldReads: true})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	done := make(chan error, 2)
+	finished := make(chan struct{}, 2)
+	changes := 1
+	go func() {
+		defer func() { finished <- struct{}{} }()
+		_, err := app.Tailscale.On(ctx, nil, 0)
+		done <- err
+	}()
+	t.Cleanup(func() {
+		fake.Update(func(s *tailscaletest.State) { s.HoldReads = false })
+		for range changes {
+			select {
+			case <-finished:
+			case <-time.After(10 * time.Second):
+				t.Error("an overlapping sharing change did not finish")
+			}
+		}
+	})
+	fake.AwaitHeldReads(1)
+	started := make(chan struct{})
+	changes++
+	go func() {
+		defer func() { finished <- struct{}{} }()
+		close(started)
+		_, err := app.Tailscale.On(ctx, nil, 0)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("the waiting sharing change did not start")
 	}
-	wait.Wait()
-	for _, err := range errs {
-		noErr(t, err)
+	waiting, stopWaiting := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, err := app.Tailscale.On(waiting, nil, 0)
+	stopWaiting()
+	if !errors.Is(err, errTailscaleChangeBusy) {
+		t.Fatalf("overlapping change while the first read was held: %v", err)
+	}
+	fake.Update(func(s *tailscaletest.State) { s.HoldReads = false })
+	for range changes {
+		select {
+		case err := <-done:
+			noErr(t, err)
+		case <-ctx.Done():
+			t.Fatal("an overlapping sharing change did not finish after the read was released")
+		}
 	}
 	if _, _, _, record := savedSharing(t, app.Store); record == nil || record.AddedProxy != loopbackProxy || record.AddedHost != tailscaletest.Name {
 		t.Fatalf("record after overlapping turning on: %+v", record)
 	}
-	fake.Update(func(s *tailscaletest.State) { s.WriteDelay = 0 })
-	_, err := app.Tailscale.Off(ctx)
+	_, err = app.Tailscale.Off(ctx)
 	noErr(t, err)
 	_, hosts, proxies, record := savedSharing(t, app.Store)
 	if record != nil || len(hosts) != 0 || len(proxies) != 0 {
@@ -614,22 +647,49 @@ func TestAChangeWaitsForAnotherProcess(t *testing.T) {
 	app, fake := tailscaleApp(t, tailscaletest.State{Status: tailscaletest.Running()})
 	release, err := app.Store.LockTailscaleChange(context.Background())
 	noErr(t, err)
+	unlock := sync.OnceFunc(release)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	done := make(chan error, 1)
+	started := make(chan struct{})
+	t.Cleanup(func() {
+		unlock()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("the waiting sharing change did not finish")
+		}
+	})
 	go func() {
-		_, err := app.Tailscale.On(context.Background(), nil, 0)
+		defer close(done)
+		close(started)
+		_, err := app.Tailscale.On(ctx, nil, 0)
 		done <- err
 	}()
-	time.Sleep(300 * time.Millisecond)
-	if calls := fake.Calls(); len(calls) != 0 {
-		release()
-		t.Fatalf("the change ran while another process held the lock: %q", calls)
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("the waiting sharing change did not start")
 	}
-	release()
+	func() {
+		defer unlock()
+		waiting, stopWaiting := context.WithTimeout(ctx, 200*time.Millisecond)
+		defer stopWaiting()
+		if _, err := app.Tailscale.On(waiting, nil, 0); !errors.Is(err, errTailscaleChangeBusy) {
+			t.Fatalf("sharing change while another process held the lock: %v", err)
+		}
+		if calls := fake.Calls(); len(calls) != 0 {
+			t.Fatalf("the change ran while another process held the lock: %q", calls)
+		}
+	}()
 	select {
 	case err := <-done:
 		noErr(t, err)
-	case <-time.After(20 * time.Second):
-		t.Fatal("the change did not continue after the lock was released")
+	case <-ctx.Done():
+		t.Fatal("the waiting sharing change did not continue after the lock was released")
+	}
+	if _, _, _, record := savedSharing(t, app.Store); record == nil || record.AddedProxy != loopbackProxy || record.AddedHost != tailscaletest.Name {
+		t.Fatalf("record after the waiting sharing change: %+v", record)
 	}
 }
 

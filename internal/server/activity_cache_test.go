@@ -164,9 +164,18 @@ func TestStopBackgroundCancelsSlowCounting(t *testing.T) {
 		t.Skip("the delaying wrapper is a Unix test fixture")
 	}
 	app, _, _ := newActivityFixture(t, "slow", 1)
-	useGitWrapper(t, app, `for a in "$@"; do if test "$a" = --source; then exec /bin/sleep 20; fi; done`)
-	app.StartBackground(context.Background())
-	time.Sleep(700 * time.Millisecond)
+	entered := filepath.Join(t.TempDir(), "counting")
+	useGitWrapper(t, app, `for a in "$@"; do if test "$a" = --source; then touch `+serverShellQuote(entered)+`; exec /bin/sleep 20; fi; done`)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		app.StopBackground()
+	})
+	app.StartBackground(ctx)
+	waitUntil(t, func() bool {
+		_, err := os.Stat(entered)
+		return err == nil
+	})
 	started := time.Now()
 	app.StopBackground()
 	if elapsed := time.Since(started); elapsed > 3*time.Second {
