@@ -735,6 +735,7 @@ func TestInterruptWhileWaitingForNotarization(t *testing.T) {
 		t.Helper()
 		mark := filepath.Join(t.TempDir(), "waiting")
 		command := exec.Command(tool, arguments...)
+		command.WaitDelay = 5 * time.Second
 		command.Env = append(os.Environ(), "PATH="+fakes+string(os.PathListSeparator)+os.Getenv("PATH"), "TMPDIR="+tmp, "FAKE_WAIT="+wait, "FAKE_WAIT_MARK="+mark)
 		var combined strings.Builder
 		command.Stdout, command.Stderr = &combined, &combined
@@ -746,6 +747,7 @@ func TestInterruptWhileWaitingForNotarization(t *testing.T) {
 				}
 				if time.Since(start) > 5*time.Minute {
 					command.Process.Kill()
+					_ = command.Wait()
 					t.Fatalf("the fake never started waiting:\n%s", combined.String())
 				}
 			}
@@ -757,6 +759,7 @@ func TestInterruptWhileWaitingForNotarization(t *testing.T) {
 		case <-done:
 		case <-time.After(5 * time.Minute):
 			command.Process.Kill()
+			<-done
 			t.Fatalf("the release tool did not stop:\n%s", combined.String())
 		}
 		return command.ProcessState.ExitCode(), combined.String()
