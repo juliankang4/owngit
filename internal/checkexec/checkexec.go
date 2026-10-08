@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,10 @@ type Definition struct {
 	// workflow fields directly.
 	Executable string
 	Arguments  []string
+	// CommandLine is a Windows command line for trusted adapters whose argv
+	// parsing differs from CommandLineToArgvW. It requires Executable and must
+	// quote every generated path. Other operating systems reject it.
+	CommandLine string
 }
 
 type Result struct {
@@ -92,6 +97,11 @@ type Options struct {
 	OutputLimit int64
 	// Redact replaces each literal value in captured output.
 	Redact []string
+	// OutputTap receives output before retention or clipping. When set, only the
+	// tap retains output; Result.Output contains execution diagnostics, not raw
+	// process output. A tap error stops the owned process and makes it an error.
+	// The raw byte limit still applies, including bytes consumed by the tap.
+	OutputTap io.Writer
 	// Env supplies the complete environment when non-nil, for trusted adapters.
 	Env []string
 	// TempRoot holds the private temporary folder for a host run. Empty uses
@@ -187,11 +197,20 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	cmd.Dir = options.Dir
 	cmd.Env = options.Env
 	output := newBoundedBuffer(limit, options.Redact)
+	output.tap = options.OutputTap
 	cmd.Stdout = output
 	cmd.Stderr = output
 	gitexec.ConfigureOwnedProcess(cmd)
 	if shell {
 		configureShellCommand(cmd, definition.Command)
+	}
+	if definition.CommandLine != "" && shell {
+		result.Status, result.Output = StatusError, "CommandLine requires an explicit executable"
+		return result, false
+	}
+	if err := configureCommandLine(cmd, definition.CommandLine); err != nil {
+		result.Status, result.Output = StatusError, err.Error()
+		return result, false
 	}
 
 	started := time.Now()
@@ -262,6 +281,10 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 		}
 	default:
 		result.Status = StatusPassed
+	}
+	if tapErr := output.tapError(); tapErr != nil {
+		result.Output += redact("capture check output: "+tapErr.Error(), options.Redact)
+		result.Status = StatusError
 	}
 	if cleanupErr != nil {
 		setCleanupError(&result, cleanupErr, options.Redact)
@@ -433,6 +456,9 @@ type boundedBuffer struct {
 	limit       int64
 	written     int64
 	overflow    chan struct{}
+	stopOnce    sync.Once
+	tap         io.Writer
+	tapErr      error
 	secrets     []string
 	pending     []byte // bytes that may start a secret or an unfinished character
 	covered     int    // bytes ahead that belong to a secret already replaced
@@ -456,13 +482,32 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	before := b.written
 	b.written += int64(len(p))
 	if before <= b.limit && b.written > b.limit {
-		close(b.overflow)
+		b.stopOnce.Do(func() { close(b.overflow) })
+	}
+	if b.tap != nil {
+		if b.tapErr == nil {
+			written, err := b.tap.Write(p)
+			if err == nil && written != len(p) {
+				err = io.ErrShortWrite
+			}
+			if err != nil {
+				b.tapErr = err
+				b.stopOnce.Do(func() { close(b.overflow) })
+			}
+		}
+		return len(p), nil
 	}
 	if within := b.limit - before; within > 0 {
 		b.pending = append(b.pending, p[:min(int64(len(p)), within)]...)
 		b.convert(false)
 	}
 	return len(p), nil
+}
+
+func (b *boundedBuffer) tapError() error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tapErr
 }
 
 // convert moves pending bytes into kept text. Every byte of every secret

@@ -23,6 +23,12 @@ var windowsEnvironmentNames = []string{
 	"NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "PROCESSOR_ARCHITEW6432", "OS",
 }
 
+// HostEnvironment returns the defined host payload environment and failure guidance.
+// The caller owns the writable temporary directory and its cleanup.
+func HostEnvironment(temporary string) ([]string, string) {
+	return hostEnvironment(temporary)
+}
+
 func hostEnvironment(temporary string) ([]string, string) {
 	names := append([]string(nil), hostEnvironmentNames...)
 	if runtime.GOOS == "windows" {

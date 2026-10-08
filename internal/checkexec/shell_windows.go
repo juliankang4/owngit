@@ -19,6 +19,13 @@ func shellCommand(_ string) *exec.Cmd {
 	return cmd
 }
 
+func configureCommandLine(cmd *exec.Cmd, line string) error {
+	if line != "" {
+		cmd.SysProcAttr.CmdLine = line
+	}
+	return nil
+}
+
 func configureShellCommand(cmd *exec.Cmd, command string) {
 	// /s strips this outer pair and leaves the command's own quotes intact.
 	cmd.SysProcAttr.CmdLine = syscall.EscapeArg(cmd.Path) + ` /s /c "` + command + `"`

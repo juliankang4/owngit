@@ -3,6 +3,7 @@
 package checkexec
 
 import (
+	"fmt"
 	"os/exec"
 	"time"
 )
@@ -14,3 +15,10 @@ func shellCommand(command string) *exec.Cmd {
 }
 
 func configureShellCommand(_ *exec.Cmd, _ string) {}
+
+func configureCommandLine(_ *exec.Cmd, line string) error {
+	if line != "" {
+		return fmt.Errorf("CommandLine requires Windows")
+	}
+	return nil
+}
