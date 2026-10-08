@@ -9,11 +9,23 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"owngit/internal/state"
 )
+
+type admissionWaitContext struct {
+	context.Context
+	waiting chan struct{}
+	once    sync.Once
+}
+
+func (ctx *admissionWaitContext) Done() <-chan struct{} {
+	ctx.once.Do(func() { close(ctx.waiting) })
+	return ctx.Context.Done()
+}
 
 // One repository keeps all its slots, a repository with no transfer running
 // always finds the extra slot, and a request that finds no slot waits only for
@@ -44,14 +56,21 @@ func TestAdmissionKeepsASlotForIdleRepositoriesAndBoundsTheWait(t *testing.T) {
 		t.Fatalf("request beyond the total: %v, want busy", err)
 	}
 	got := make(chan error, 1)
+	waiting := &admissionWaitContext{Context: ctx, waiting: make(chan struct{})}
 	go func() {
-		release, err := slots.acquire(ctx, "third", limits(5*time.Second))
+		release, err := slots.acquire(waiting, "third", limits(5*time.Second))
 		if err == nil {
 			release()
 		}
 		got <- err
 	}()
-	time.Sleep(20 * time.Millisecond)
+	select {
+	case <-waiting.waiting:
+	case err := <-got:
+		t.Fatalf("request returned before waiting for a slot: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("request never waited for a slot")
+	}
 	releases[len(releases)-1]() // "small" leaves
 	releases = releases[:len(releases)-1]
 	select {

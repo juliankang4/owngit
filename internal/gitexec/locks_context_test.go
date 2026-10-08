@@ -70,11 +70,18 @@ func TestRLockContextStopsBehindAQueuedWriter(t *testing.T) {
 func TestLockContextWaitsForTheHolderAndThenOwnsTheLock(t *testing.T) {
 	lock := NewLocks().For("project")
 	lock.RLock()
-	go func() {
-		time.Sleep(30 * time.Millisecond)
-		lock.RUnlock()
-	}()
-	if err := lock.LockContext(context.Background()); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	acquired := make(chan error, 1)
+	go func() { acquired <- lock.LockContext(ctx) }()
+	waitForWaiters(t, lock, 1)
+	select {
+	case err := <-acquired:
+		t.Fatalf("writer returned before the reader released: %v", err)
+	default:
+	}
+	lock.RUnlock()
+	if err := <-acquired; err != nil {
 		t.Fatal(err)
 	}
 	if lock.TryRLock() {

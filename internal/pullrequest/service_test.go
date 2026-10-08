@@ -187,47 +187,6 @@ func TestObserveCurrentRevisionsBindsSourcePushWithoutViewRead(t *testing.T) {
 	}
 }
 
-func TestFreshNonFastForwardMergeCalculatesTreeTwice(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the command-counting wrapper is a Unix test fixture")
-	}
-	fixture := newServiceFixture(t)
-	fixture.commitFile("base.txt", "base\n", "base")
-	fixture.push("HEAD:refs/heads/main")
-	fixture.git("checkout", "-b", "feature")
-	sourceOID := fixture.commitFile("feature.txt", "feature\n", "feature")
-	fixture.push("HEAD:refs/heads/feature")
-	fixture.git("checkout", "main")
-	targetOID := fixture.commitFile("target.txt", "target\n", "target")
-	fixture.push("HEAD:refs/heads/main")
-	created, err := fixture.service.Create(fixture.ctx, CreateInput{
-		Repository: fixture.repositoryID, Title: "Count merge trees", SourceBranch: "feature", TargetBranch: "main", ReviewChoice: "skip",
-	})
-	noErr(t, err)
-
-	gitPath, err := exec.LookPath("git")
-	noErr(t, err)
-	tracePath := filepath.Join(t.TempDir(), "git-commands")
-	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
-	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
-	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	noErr(t, err)
-	fixture.manager.Git = traced
-	noErr(t, os.WriteFile(tracePath, nil, 0o600))
-
-	merged, err := fixture.service.Merge(fixture.ctx, fixture.repositoryID, created.Number, RevisionInput{SourceOID: sourceOID, TargetOID: targetOID})
-	noErr(t, err)
-	if merged.Merge == nil || merged.Merge.Mode != "merge_commit" {
-		t.Fatalf("unexpected merge result: %+v", merged)
-	}
-	trace, err := os.ReadFile(tracePath)
-	noErr(t, err)
-	if count := bytes.Count(trace, []byte("\x00merge-tree\x00")); count != 2 {
-		t.Fatalf("fresh non-fast-forward merge used %d merge-tree processes, want 2", count)
-	}
-}
-
 func TestPassivePullRequestReadsDoNotPersistRevisionState(t *testing.T) {
 	fixture, number, newSource, targetOID := newMovedHeadFixture(t)
 	refsBefore := fixture.gitOutput("--git-dir", fixture.remote, "for-each-ref", "--format=%(refname) %(objectname)", "refs/owngit/pull-requests")

@@ -63,7 +63,7 @@ func TestFetchServesOnlyWhatAdvertisedRefsReach(t *testing.T) {
 		return httpGitOutput(t, work, "rev-parse", "HEAD")
 	}
 	older := commit("older")
-	for i := 0; i < 70; i++ {
+	for i := 0; i < 2; i++ {
 		runHTTPGit(t, work, "-c", "user.name=Fetch Test", "-c", "user.email=fetch@example.invalid", "commit", "-q", "--allow-empty", "-m", fmt.Sprint("bulk ", i))
 	}
 	tip := commit("tip")

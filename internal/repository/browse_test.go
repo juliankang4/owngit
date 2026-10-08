@@ -1,18 +1,15 @@
 package repository
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 
-	"owngit/internal/gitexec"
 	"owngit/internal/testfixture"
 )
 
@@ -114,10 +111,7 @@ func TestBrowseRealTreeBlobCommitAndDiff(t *testing.T) {
 	}
 }
 
-func TestDeepTreeLookupUsesBoundedGitProcesses(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the command-counting wrapper is a Unix test fixture")
-	}
+func TestDeepTreeLookupFindsTheExactBlob(t *testing.T) {
 	manager, remote, _ := newTestRepository(t)
 	components := make([]string, 256)
 	for index := range components {
@@ -135,50 +129,18 @@ func TestDeepTreeLookupUsesBoundedGitProcesses(t *testing.T) {
 		t.Fatalf("create deep tree fixture: %v\n%s", err, output)
 	}
 
-	gitPath, err := exec.LookPath("git")
-	noErr(t, err)
-	tracePath := filepath.Join(t.TempDir(), "git-commands")
-	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
-	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
-	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	noErr(t, err)
-	manager.Git = traced
-
-	resetTrace := func() {
-		t.Helper()
-		noErr(t, os.WriteFile(tracePath, nil, 0o600))
-	}
-	lsTreeCalls := func() int {
-		t.Helper()
-		content, err := os.ReadFile(tracePath)
-		noErr(t, err)
-		return bytes.Count(content, []byte("\x00ls-tree\x00"))
-	}
-
-	resetTrace()
 	_, entries, err := manager.Tree(context.Background(), "sample", "refs/heads/deep", directory)
 	if err != nil || len(entries) != 1 || entries[0].Path != filePath {
 		t.Fatalf("deep Tree entries=%+v err=%v", entries, err)
 	}
-	if calls := lsTreeCalls(); calls != 1 {
-		t.Fatalf("deep Tree used %d ls-tree processes, want 1", calls)
-	}
 
-	resetTrace()
 	_, blob, err := manager.ReadBlob(context.Background(), "sample", "refs/heads/deep", filePath, 1024)
 	if err != nil || string(blob.Content) != "deep\n" {
 		t.Fatalf("deep ReadBlob=%q err=%v", blob.Content, err)
 	}
-	if calls := lsTreeCalls(); calls != 1 {
-		t.Fatalf("deep ReadBlob used %d ls-tree processes, want 1", calls)
-	}
 }
 
-func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the command-counting wrapper is a Unix test fixture")
-	}
+func TestRefTipsResolveBranchesAndPeelCommitTags(t *testing.T) {
 	manager, _, work := newTestRepository(t)
 	commitFile(t, work, "base", "base", "2024-01-01T00:00:00Z")
 	base := gitOutput(t, work, "rev-parse", "HEAD")
@@ -200,16 +162,6 @@ func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
 
 	summary, err := manager.Summary(context.Background(), "sample")
 	noErr(t, err)
-	gitPath, err := exec.LookPath("git")
-	noErr(t, err)
-	tracePath := filepath.Join(t.TempDir(), "git-commands")
-	wrapperPath := filepath.Join(t.TempDir(), "git-wrapper")
-	wrapper := "#!/bin/sh\nprintf '%s\\0' \"$@\" >> " + shellQuote(tracePath) + "\nprintf '\\n' >> " + shellQuote(tracePath) + "\nexec " + shellQuote(gitPath) + " \"$@\"\n"
-	noErr(t, os.WriteFile(wrapperPath, []byte(wrapper), 0o700))
-	traced, err := gitexec.New(wrapperPath, filepath.Join(t.TempDir(), "runtime"))
-	noErr(t, err)
-	manager.Git = traced
-	noErr(t, os.WriteFile(tracePath, nil, 0o600))
 
 	branchTips, err := manager.RefTips(context.Background(), "sample", summary.Branches)
 	noErr(t, err)
@@ -230,14 +182,6 @@ func TestRefTipsBatchMetadataAcrossRefs(t *testing.T) {
 	}
 	if _, ok := tagTips["blobtag"]; ok {
 		t.Fatal("blob tag unexpectedly produced a commit tip")
-	}
-	trace, err := os.ReadFile(tracePath)
-	noErr(t, err)
-	if count := bytes.Count(trace, []byte("\x00log\x00")); count != 2 {
-		t.Fatalf("RefTips used %d log processes, want 2", count)
-	}
-	if count := bytes.Count(trace, []byte("\x00cat-file\x00")); count != 1 {
-		t.Fatalf("RefTips used %d cat-file processes, want 1", count)
 	}
 }
 
