@@ -149,9 +149,7 @@ func fullTableRead(table string) func(string) bool {
 	}
 }
 
-// A storage error in the middle of a backup read must fail the snapshot. It
-// must never produce a snapshot that silently lacks the unread rows.
-func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
+func TestRowReadsFailOnIterationError(t *testing.T) {
 	store, fault := openFaultStore(t)
 	ctx := context.Background()
 	// Two repositories make the repositories case fail after one delivered row.
@@ -161,8 +159,24 @@ func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
 	if snapshot, err := store.RecoverySnapshot(ctx); err != nil || len(snapshot.Repositories) != 2 {
 		t.Fatalf("baseline snapshot repositories=%d err=%v", len(snapshot.Repositories), err)
 	}
-	cases := map[string]func(string) bool{
-		"metadata": func(query string) bool { return strings.Contains(query, "FROM metadata WHERE key IN") },
+	type rowRead struct {
+		match func(string) bool
+		read  func() error
+	}
+	cases := map[string]rowRead{
+		"metadata": {match: func(query string) bool { return strings.Contains(query, "FROM metadata WHERE key IN") }},
+		"page": {match: fullTableRead("repositories"), read: func() error {
+			rows, err := store.db.QueryContext(ctx, `SELECT id FROM repositories ORDER BY id`)
+			if err != nil {
+				return err
+			}
+			_, err = collectRows(rows, func(scanner rowScanner) (string, error) {
+				var id string
+				err := scanner.Scan(&id)
+				return id, err
+			})
+			return err
+		}},
 	}
 	for _, table := range []string{
 		"passwords", "repositories",
@@ -171,18 +185,23 @@ func TestRecoverySnapshotFailsOnIterationError(t *testing.T) {
 		"check_policies", "check_jobs",
 		"import_sources", "import_runs", "import_ref_observations", "import_publication_intents",
 	} {
-		cases[table] = fullTableRead(table)
+		cases[table] = rowRead{match: fullTableRead(table)}
 	}
-	for name, match := range cases {
+	for name, test := range cases {
 		t.Run(name, func(t *testing.T) {
-			fault.set(match)
-			_, err := store.RecoverySnapshot(ctx)
+			fault.set(test.match)
+			var err error
+			if test.read != nil {
+				err = test.read()
+			} else {
+				_, err = store.RecoverySnapshot(ctx)
+			}
 			if fault.pending() {
 				fault.set(nil)
 				t.Fatal("the fault matched no query; the test no longer reaches this read")
 			}
 			if !errors.Is(err, errInjectedStep) {
-				t.Fatalf("snapshot with a failing %s read returned err=%v", name, err)
+				t.Fatalf("failing %s read returned err=%v", name, err)
 			}
 		})
 	}

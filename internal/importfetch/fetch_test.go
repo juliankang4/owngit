@@ -466,6 +466,7 @@ func TestUploadPackFramingFailures(t *testing.T) {
 		response string
 	}{
 		{name: "ACK", response: testPacket("ACK "+testSHA1A+"\n") + "PACKbody"},
+		{name: "wrong content at NAK length", response: "0008ACK\nPACKbody"},
 		{name: "ERR", response: testPacket("ERR remote detail must not escape\n")},
 		{name: "sideband", response: "0008NAK\n" + testPacket("\x01PACKbody")},
 		{name: "truncated", response: "0008NAK\nPA"},
