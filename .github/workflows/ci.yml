@@ -40,6 +40,11 @@ name: CI
 #
 # Every pull request runs these checks; which packages they test is chosen
 # as described above.
+#
+# The "CI passed" job waits for every other job and fails unless each one
+# passed (govulncheck may be skipped). From this workflow, branch protection
+# requires only that job, so the test matrix can change without changing the
+# protection.
 
 on:
   pull_request:
@@ -145,8 +150,8 @@ jobs:
   test:
     name: test (${{ matrix.os }}, ${{ matrix.shard }}/4)
     needs: select
-    # Run even when the selection failed, so that this required check fails
-    # instead of being skipped.
+    # Run even when the selection failed, so that the test jobs report a
+    # failure instead of being skipped.
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
@@ -238,3 +243,21 @@ jobs:
             echo "== GOOS=$goos"
             GOOS=$goos "$(go env GOPATH)/bin/govulncheck" ./...
           done
+
+  passed:
+    name: CI passed
+    needs: [lint, select, test, vulnerabilities]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          LINT: ${{ needs.lint.result }}
+          SELECT: ${{ needs.select.result }}
+          TEST: ${{ needs.test.result }}
+          VULNERABILITIES: ${{ needs.vulnerabilities.result }}
+        run: |
+          echo "lint=$LINT select=$SELECT test=$TEST vulnerabilities=$VULNERABILITIES"
+          [ "$LINT" = success ] && [ "$SELECT" = success ] && [ "$TEST" = success ] &&
+            { [ "$VULNERABILITIES" = success ] || [ "$VULNERABILITIES" = skipped ]; }
