@@ -7,6 +7,7 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"reflect"
 	"strconv"
 	"text/template/parse"
 	"time"
@@ -143,9 +144,11 @@ func checkReachableTemplates(set *template.Template, entry string) error {
 // status code and content type before calling; Render never touches the
 // response header and never performs an authorization decision.
 func (r *Renderer) Render(w io.Writer, page Page) error {
-	if page == nil {
+	value := reflect.Indirect(reflect.ValueOf(page))
+	if !value.IsValid() {
 		return fmt.Errorf("render webui page: nil page")
 	}
+	page = value.Interface().(Page)
 	name := page.page()
 	set, ok := r.pageSets[name]
 	if !ok {
@@ -284,44 +287,26 @@ func documentTitle(page Page, lang Lang) string {
 	switch p := page.(type) {
 	case SetupPage:
 		section = Text(lang, MsgSetupWizardTitle)
-	case *SetupPage:
-		section = Text(lang, MsgSetupWizardTitle)
 	case AuthPage:
-		section = authTitle(lang, p.Scope)
-	case *AuthPage:
 		section = authTitle(lang, p.Scope)
 	case SettingsPage:
 		section = Text(lang, MsgSettingsTitle)
-	case *SettingsPage:
-		section = Text(lang, MsgSettingsTitle)
 	case ActivityPage:
 		section = Text(lang, MsgActivityTitle)
-	case *ActivityPage:
-		section = Text(lang, MsgActivityTitle)
-	case CodingToolsPage, *CodingToolsPage:
+	case CodingToolsPage:
 		section = Text(lang, MsgCodingTitle)
 	case RepositoryPage:
 		section = p.Repo.Name
-	case *RepositoryPage:
-		section = p.Repo.Name
 	case NewRepositoryPage:
-		section = Text(lang, MsgRepoNewTitle)
-	case *NewRepositoryPage:
 		section = Text(lang, MsgRepoNewTitle)
 	case NewImportPage:
 		section = Text(lang, MsgImportNewTitle)
-	case *NewImportPage:
-		section = Text(lang, MsgImportNewTitle)
 	case ImportPage:
-		section = scopedTitle(lang, MsgImportTitle, p.Repo.Name)
-	case *ImportPage:
 		section = scopedTitle(lang, MsgImportTitle, p.Repo.Name)
 	// The restore title names the repository as well as the action, because
 	// this page writes to that repository and a tab strip full of "Restore"
 	// would not say which one.
 	case RestorePage:
-		section = restoreTitle(lang, p.Repo.Name)
-	case *RestorePage:
 		section = restoreTitle(lang, p.Repo.Name)
 	// The pull request and evidence screens name their repository for the same
 	// reason restore does: several of them can be open at once, and a tab strip
@@ -329,47 +314,27 @@ func documentTitle(page Page, lang Lang) string {
 	// belongs to.
 	case PullRequestsPage:
 		section = scopedTitle(lang, MsgPRTitle, p.Repo.Name)
-	case *PullRequestsPage:
-		section = scopedTitle(lang, MsgPRTitle, p.Repo.Name)
 	case NewPullRequestPage:
-		section = scopedTitle(lang, MsgPRNewTitle, p.Repo.Name)
-	case *NewPullRequestPage:
 		section = scopedTitle(lang, MsgPRNewTitle, p.Repo.Name)
 	case PullRequestPage:
 		section = pullRequestTitle(p)
-	case *PullRequestPage:
-		section = pullRequestTitle(*p)
 	case TasksPage:
-		section = scopedTitle(lang, MsgTasksTitle, p.Repo.Name)
-	case *TasksPage:
 		section = scopedTitle(lang, MsgTasksTitle, p.Repo.Name)
 	case HelperCredentialsPage:
 		section = scopedTitle(lang, MsgHelperTitle, p.Repo.Name)
-	case *HelperCredentialsPage:
-		section = scopedTitle(lang, MsgHelperTitle, p.Repo.Name)
 	case ConfiguredChecksPage:
-		section = scopedTitle(lang, MsgCCTitle, p.Repo.Name)
-	case *ConfiguredChecksPage:
 		section = scopedTitle(lang, MsgCCTitle, p.Repo.Name)
 	case RunnerCredentialsPage:
 		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
-	case *RunnerCredentialsPage:
-		section = scopedTitle(lang, MsgRTTitle, p.Repo.Name)
 	case RepositorySettingsPage:
 		section = scopedTitle(lang, MsgRepoSettingsTitle, p.Repo.Name)
-	case *RepositorySettingsPage:
-		section = scopedTitle(lang, MsgRepoSettingsTitle, p.Repo.Name)
 	case RepositoryDeletePage:
-		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
-	case *RepositoryDeletePage:
 		section = scopedTitle(lang, MsgRepoDeleteTitle, p.Repo.Name)
 	case ShareLinksPage:
 		section = scopedTitle(lang, MsgShareTitle, p.Repo.Name)
 	case SharePasswordPage:
 		section = Text(lang, MsgSharePasswordTitle)
 	case ErrorPage:
-		section = Text(lang, p.Code)
-	case *ErrorPage:
 		section = Text(lang, p.Code)
 	}
 	if section == "" {
@@ -408,51 +373,31 @@ func canonicalURL(page Page, chrome Chrome) string {
 	switch p := page.(type) {
 	case RestorePage:
 		return restoreSelectionURL(p)
-	case *RestorePage:
-		return restoreSelectionURL(*p)
 	// The create screen is rendered both from its own GET and from a refused
 	// POST. Its selection URL is the GET that reaches the same branch pair.
 	case NewPullRequestPage:
 		return pullRequestSelectionURL(p)
-	case *NewPullRequestPage:
-		return pullRequestSelectionURL(*p)
 	// A refused review or merge answers on the POST route, which no browser
 	// can follow with a GET. SelfURL is where this pull request lives.
 	case PullRequestPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *PullRequestPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case HelperCredentialsPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *HelperCredentialsPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
 	// The configured-check and runner-token screens answer their forms on the
 	// POST route for the same reason, and the runner response that shows a new
 	// token must never hand that value to a followable link.
 	case ConfiguredChecksPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *ConfiguredChecksPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case RunnerCredentialsPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *RunnerCredentialsPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case ImportPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *ImportPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case NewImportPage:
-		return firstURL(p.SubmitURL, chrome.CurrentURL)
-	case *NewImportPage:
 		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	// Both administrator screens answer their forms on the POST route.
 	case RepositorySettingsPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *RepositorySettingsPage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case RepositoryDeletePage:
-		return firstURL(p.SelfURL, chrome.CurrentURL)
-	case *RepositoryDeletePage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case ShareLinksPage:
 		return firstURL(p.SubmitURL, chrome.CurrentURL)

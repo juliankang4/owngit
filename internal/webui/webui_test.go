@@ -696,6 +696,15 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 			t.Run(string(lang)+"/"+name, func(t *testing.T) {
 				t.Parallel()
 				out := render(t, r, page)
+				ptr := reflect.New(reflect.TypeOf(page))
+				ptr.Elem().Set(reflect.ValueOf(page))
+				byPointer := render(t, r, ptr.Interface().(Page))
+				if out != byPointer {
+					t.Error("rendering by pointer differs from rendering by value")
+				}
+				if version := page.chrome().Version; version != "" && !strings.Contains(byPointer, version) {
+					t.Error("the shared chrome did not reach the pointer rendering")
+				}
 				if !strings.HasPrefix(out, "<!doctype html>") {
 					t.Errorf("%s/%s: missing doctype", lang, name)
 				}
@@ -1265,36 +1274,25 @@ func (p strayPage) chrome() Chrome { return p.Chrome }
 
 func TestRenderRejectsAnUnknownPage(t *testing.T) {
 	r := newRenderer(t)
-	var buf bytes.Buffer
-	if err := r.Render(&buf, nil); err == nil {
-		t.Error("rendering a nil page succeeded")
-	}
-	err := r.Render(&buf, strayPage{Chrome: fullChrome(LangEN)})
-	if err == nil || !strings.Contains(err.Error(), `"stray": unknown page`) {
-		t.Errorf("rendering a page without a template gave %v", err)
-	}
-	if buf.Len() != 0 {
-		t.Error("a refused page still wrote output")
-	}
-}
-
-// TestEveryPageRendersTheSameByValueAndByPointer covers the Page contract:
-// the backend passes some pages by pointer, and the shared chrome (language,
-// version, navigation, notices) must come out identical either way.
-func TestEveryPageRendersTheSameByValueAndByPointer(t *testing.T) {
-	r := newRenderer(t)
-	for _, lang := range Langs() {
-		for name, page := range allPages(lang) {
-			ptr := reflect.New(reflect.TypeOf(page))
-			ptr.Elem().Set(reflect.ValueOf(page))
-			byValue, byPointer := render(t, r, page), render(t, r, ptr.Interface().(Page))
-			if byValue != byPointer {
-				t.Errorf("%s/%s: rendering by pointer differs from rendering by value", lang, name)
+	for _, tc := range []struct {
+		name string
+		page Page
+		want string
+	}{
+		{"nil", nil, "nil page"},
+		{"nil-pointer", (*ShareLinksPage)(nil), "nil page"},
+		{"unknown-value", strayPage{Chrome: fullChrome(LangEN)}, `"stray": unknown page`},
+		{"unknown-pointer", &strayPage{Chrome: fullChrome(LangEN)}, `"stray": unknown page`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := r.Render(&buf, tc.page); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("rendering a refused page gave %v, want %q", err, tc.want)
 			}
-			if version := page.chrome().Version; version != "" && !strings.Contains(byPointer, version) {
-				t.Errorf("%s/%s: the shared chrome did not reach the pointer rendering", lang, name)
+			if buf.Len() != 0 {
+				t.Error("a refused page still wrote output")
 			}
-		}
+		})
 	}
 }
 

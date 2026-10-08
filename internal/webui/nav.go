@@ -67,69 +67,43 @@ func sidebarOf(page Page) Sidebar {
 		return Sidebar{InRepo: true, RepoName: repo.Name, Tabs: tabs}
 	}
 	switch p := page.(type) {
-	case OverviewPage, *OverviewPage:
+	case OverviewPage:
 		return Sidebar{Place: "home"}
-	case ActivityPage, *ActivityPage:
+	case ActivityPage:
 		return Sidebar{Place: "activity"}
-	case CodingToolsPage, *CodingToolsPage:
+	case CodingToolsPage:
 		return Sidebar{Place: "coding-tools"}
-	case SettingsPage, *SettingsPage:
+	case SettingsPage:
 		return Sidebar{Place: "settings"}
-	case NewRepositoryPage, *NewRepositoryPage:
+	case NewRepositoryPage:
 		return Sidebar{Place: "new"}
-	case NewImportPage, *NewImportPage:
+	case NewImportPage:
 		return Sidebar{Place: "import"}
 	case RepositoryPage:
 		return inRepo(p.Repo, repoTabsOf(p))
-	case *RepositoryPage:
-		return inRepo(p.Repo, repoTabsOf(*p))
 	case RestorePage:
-		return inRepo(p.Repo, p.Tabs)
-	case *RestorePage:
 		return inRepo(p.Repo, p.Tabs)
 	case ImportPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *ImportPage:
-		return inRepo(p.Repo, p.Tabs)
 	case PullRequestsPage:
-		return inRepo(p.Repo, p.Tabs)
-	case *PullRequestsPage:
 		return inRepo(p.Repo, p.Tabs)
 	case NewPullRequestPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *NewPullRequestPage:
-		return inRepo(p.Repo, p.Tabs)
 	case PullRequestPage:
-		return inRepo(p.Repo, p.Tabs)
-	case *PullRequestPage:
 		return inRepo(p.Repo, p.Tabs)
 	case TasksPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *TasksPage:
-		return inRepo(p.Repo, p.Tabs)
 	case HelperCredentialsPage:
-		return inRepo(p.Repo, p.Tabs)
-	case *HelperCredentialsPage:
 		return inRepo(p.Repo, p.Tabs)
 	case ConfiguredChecksPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *ConfiguredChecksPage:
-		return inRepo(p.Repo, p.Tabs)
 	case RunnerCredentialsPage:
-		return inRepo(p.Repo, p.Tabs)
-	case *RunnerCredentialsPage:
 		return inRepo(p.Repo, p.Tabs)
 	case RepositorySettingsPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *RepositorySettingsPage:
-		return inRepo(p.Repo, p.Tabs)
 	case AuthPage:
 		return inRepo(p.Repo, p.Tabs)
-	case *AuthPage:
-		return inRepo(p.Repo, p.Tabs)
 	case RepositoryDeletePage:
-		return inRepo(p.Repo, p.Tabs)
-	case *RepositoryDeletePage:
 		return inRepo(p.Repo, p.Tabs)
 	case ShareLinksPage:
 		return inRepo(p.Repo, p.Tabs)
@@ -143,9 +117,7 @@ func wideOf(page Page) bool {
 	switch p := page.(type) {
 	case RepositoryPage:
 		return p.Tab == RepoTabCode || p.Tab == RepoTabCommits
-	case *RepositoryPage:
-		return p.Tab == RepoTabCode || p.Tab == RepoTabCommits
-	case PullRequestPage, *PullRequestPage:
+	case PullRequestPage:
 		return true
 	}
 	return false

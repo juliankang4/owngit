@@ -10,8 +10,7 @@ import (
 // page reports the template name the renderer executes, which keeps the set
 // of pages closed: the backend cannot invent a page the renderer does not
 // know. chrome returns the page's shared Chrome field, so a page cannot be
-// added without the data the shell needs. Both are value methods, so a page
-// renders the same whether the backend passes it by value or by pointer.
+// added without the data the shell needs.
 type Page interface {
 	page() string
 	chrome() Chrome
