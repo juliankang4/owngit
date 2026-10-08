@@ -173,6 +173,8 @@ type CheckResult struct {
 	// CleanupError reports that the owned process group could not be confirmed
 	// released. It makes the result an error while ExitCode stays visible.
 	CleanupError string
+	// Role is empty for JSON checks, or run, tolerated or builtin for Actions.
+	Role string `json:"role,omitempty"`
 }
 
 // CheckCycle is one reserved automatic correction round. It is reserved before

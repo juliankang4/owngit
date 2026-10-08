@@ -209,6 +209,14 @@ type CheckJob struct {
 	CancelRequestedAt    *time.Time
 	InterruptedAt        *time.Time
 	Summary              string
+	// RunID is empty for JSON jobs. These facts survive Actions plan deletion.
+	RunID            string `json:"run_id,omitempty"`
+	JobKey           string `json:"job_key,omitempty"`
+	MatrixIndex      int    `json:"matrix_index,omitempty"`
+	PlanDigest       string `json:"plan_digest,omitempty"`
+	Tolerated        bool   `json:"tolerated,omitempty"`
+	ConcurrencyGroup string `json:"concurrency_group,omitempty"`
+	MaxParallel      int    `json:"max_parallel,omitempty"`
 }
 
 // CheckJobRequest is one admission request. Policy facts and the executor are
@@ -1434,7 +1442,7 @@ func checkJobDedupDigest(job CheckJob, configHash string) string {
 		fmt.Sprint(job.Limits.TimeoutMS), fmt.Sprint(job.Limits.OutputLimitBytes),
 		job.RerunRoot, fmt.Sprint(job.RerunGeneration),
 	}
-	if job.Execution.Legacy {
+	if job.Execution.Legacy && job.RunID == "" {
 		return digestFields(fields...)
 	}
 	executionJSON, err := checkExecutionSettingsJSON(job.Execution)
@@ -1443,6 +1451,10 @@ func checkJobDedupDigest(job CheckJob, configHash string) string {
 	}
 	fields[0] = "check-job-v2"
 	fields = append(fields, executionJSON)
+	if job.RunID != "" {
+		fields[0] = "check-job-v3"
+		fields = append(fields, job.JobKey, strconv.Itoa(job.MatrixIndex), job.PlanDigest)
+	}
 	return digestFields(fields...)
 }
 
