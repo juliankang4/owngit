@@ -51,7 +51,7 @@ func (app *App) setAccessPassword(ctx context.Context, address, typedAdmin, pass
 	if same {
 		return errSharedSameAsAdmin
 	}
-	encoded, err := auth.HashPassword(password)
+	encoded, err := app.Auth.HashPassword(ctx, password)
 	if err != nil {
 		return err
 	}
@@ -96,10 +96,16 @@ func (app *App) changeAdminPassword(ctx context.Context, proof adminPasswordProo
 	if err != nil {
 		return fmt.Errorf("shared password read: %w", err)
 	}
-	if accessHash != "" && auth.CheckPassword(accessHash, newPassword) {
-		return errAdminSameAsShared
+	if accessHash != "" {
+		same, err := app.Auth.CheckPassword(ctx, accessHash, newPassword)
+		if err != nil {
+			return err
+		}
+		if same {
+			return errAdminSameAsShared
+		}
 	}
-	encoded, err := auth.HashPassword(newPassword)
+	encoded, err := app.Auth.HashPassword(ctx, newPassword)
 	if err != nil {
 		return err
 	}

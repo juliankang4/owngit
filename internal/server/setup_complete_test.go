@@ -66,40 +66,54 @@ func TestCommittedSetupStartsWorkWhenSetupFileCleanupFails(t *testing.T) {
 	}
 }
 
-// Settings that cannot be saved are answered as unavailable with the cause
-// logged, never as setup finished by another browser, and nothing is saved.
 func TestSetupThatCannotBeSavedIsUnavailable(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
-	server := serve(t, app.Handler())
-	client, jar := newBrowserClient(t)
-	request(t, client, http.MethodGet, server.URL+"/setup", nil, "")
-	response := request(t, client, http.MethodPost, server.URL+"/setup/redeem", url.Values{
-		"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "token": {"synthetic-owner-token"},
-	}, server.URL)
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("redeem status=%d", response.StatusCode)
-	}
-	session, ok, err := store.Session(context.Background(), cookieValue(t, jar, server.URL, setupCookie), "setup", time.Now())
-	if err != nil || !ok {
-		t.Fatalf("setup session ok=%v err=%v", ok, err)
-	}
-	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
-	refuseWrites(t, store, "refuse_passwords", "INSERT ON passwords")
-	serverLog := captureServerLog(t)
-	result := browserForm(t, client, server.URL+"/setup", url.Values{
-		"csrf": {session.CSRF}, "storage_path": {repositoryRoot}, "access_mode": {"open"},
-		"admin_password": {"admin-password-one"}, "insecure_ack": {"on"},
-	}, server.URL)
-	if result.status != http.StatusServiceUnavailable || strings.Contains(result.body, "Another browser finished setup first.") {
-		t.Fatalf("setup that could not be saved status=%d body=%s", result.status, result.body)
-	}
-	checkLoggedSteps(t, "setup save", loggedFailures(serverLog, 0), "setup completion")
-	if !strings.Contains(serverLog.String(), "injected failure") {
-		t.Fatalf("log does not name the cause: %s", serverLog)
-	}
-	if settings, err := store.Settings(context.Background()); err != nil || settings.Initialized {
-		t.Fatalf("settings=%+v err=%v, want nothing saved", settings, err)
+	for _, test := range []struct {
+		name      string
+		cancelled bool
+	}{{"password write refused", false}, {"request cancelled", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			app, store, repositoryRoot := newTestApp(t)
+			if test.cancelled {
+				ctx, cancel := context.WithCancel(context.Background())
+				cancel()
+				feedback, err := app.CompleteSetup(ctx, setupAnswers(repositoryRoot), true)
+				if len(feedback.Problems) != 0 || !errors.Is(err, ErrSetupUnavailable) || !errors.Is(err, context.Canceled) {
+					t.Fatalf("cancelled setup feedback=%+v err=%v, want unavailable with its cause", feedback, err)
+				}
+			} else {
+				noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
+				server := serve(t, app.Handler())
+				client, jar := newBrowserClient(t)
+				request(t, client, http.MethodGet, server.URL+"/setup", nil, "")
+				response := request(t, client, http.MethodPost, server.URL+"/setup/redeem", url.Values{
+					"csrf": {cookieValue(t, jar, server.URL, preauthCookie)}, "token": {"synthetic-owner-token"},
+				}, server.URL)
+				if response.StatusCode != http.StatusSeeOther {
+					t.Fatalf("redeem status=%d", response.StatusCode)
+				}
+				session, ok, err := store.Session(context.Background(), cookieValue(t, jar, server.URL, setupCookie), "setup", time.Now())
+				if err != nil || !ok {
+					t.Fatalf("setup session ok=%v err=%v", ok, err)
+				}
+				noErr(t, os.MkdirAll(repositoryRoot, 0o700))
+				refuseWrites(t, store, "refuse_passwords", "INSERT ON passwords")
+				serverLog := captureServerLog(t)
+				result := browserForm(t, client, server.URL+"/setup", url.Values{
+					"csrf": {session.CSRF}, "storage_path": {repositoryRoot}, "access_mode": {"open"},
+					"admin_password": {"admin-password-one"}, "insecure_ack": {"on"},
+				}, server.URL)
+				if result.status != http.StatusServiceUnavailable || strings.Contains(result.body, "Another browser finished setup first.") {
+					t.Fatalf("setup that could not be saved status=%d body=%s", result.status, result.body)
+				}
+				checkLoggedSteps(t, "setup save", loggedFailures(serverLog, 0), "setup completion")
+				if !strings.Contains(serverLog.String(), "injected failure") {
+					t.Fatalf("log does not name the cause: %s", serverLog)
+				}
+			}
+			if settings, err := store.Settings(context.Background()); err != nil || settings.Initialized {
+				t.Fatalf("settings=%+v err=%v, want nothing saved", settings, err)
+			}
+		})
 	}
 }
 

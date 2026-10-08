@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
+	"owngit/internal/hostmem"
 	"owngit/internal/state"
 )
 
@@ -85,7 +86,8 @@ type Manager struct {
 	// AdminSessionLife is how long an administrator sign-in keeps the
 	// administrator pages open when the confirmation choice remembers no
 	// password (Every time, Do not ask). A remembering choice sets its own.
-	AdminSessionLife        time.Duration
+	AdminSessionLife time.Duration
+	// MaximumConcurrentChecks may lower the host-aware password-work limit.
 	MaximumConcurrentChecks int
 	Now                     func() time.Time
 	checkMu                 sync.Mutex
@@ -110,6 +112,27 @@ type NewSession struct {
 	Token   string
 	CSRF    string
 	Expires time.Time
+}
+
+// HashPassword creates a hash under the same admission as password checks.
+func (m *Manager) HashPassword(ctx context.Context, password string) (string, error) {
+	if err := ValidatePassword(password); err != nil {
+		return "", err
+	}
+	if err := m.acquireCheck(ctx); err != nil {
+		return "", err
+	}
+	defer func() { <-m.checkSlots }()
+	return HashPassword(password)
+}
+
+// CheckPassword compares a password without changing login failure counts.
+func (m *Manager) CheckPassword(ctx context.Context, encoded, password string) (bool, error) {
+	if err := m.acquireCheck(ctx); err != nil {
+		return false, err
+	}
+	defer func() { <-m.checkSlots }()
+	return CheckPassword(encoded, password), nil
 }
 
 func HashPassword(password string) (string, error) {
@@ -434,12 +457,24 @@ func (m *Manager) ValidateSession(ctx context.Context, token, kind string) (stat
 	return session, true, nil
 }
 
+func passwordCheckLimit(ceiling uint64) int {
+	maximum := 4
+	if ceiling == 0 {
+		return maximum
+	}
+	passwordHeapShare := hostmem.HeapLimit(ceiling, "") / 2
+	return max(1, min(maximum, int(passwordHeapShare/(int64(argonMemory)*1024))))
+}
+
 func (m *Manager) acquireCheck(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	m.checkMu.Lock()
 	if m.checkSlots == nil {
-		maximum := m.MaximumConcurrentChecks
-		if maximum <= 0 {
-			maximum = 4
+		maximum := passwordCheckLimit(hostmem.Ceiling())
+		if m.MaximumConcurrentChecks > 0 {
+			maximum = min(maximum, m.MaximumConcurrentChecks)
 		}
 		m.checkSlots = make(chan struct{}, maximum)
 	}
@@ -447,6 +482,10 @@ func (m *Manager) acquireCheck(ctx context.Context) error {
 	m.checkMu.Unlock()
 	select {
 	case slots <- struct{}{}:
+		if err := ctx.Err(); err != nil {
+			<-slots
+			return err
+		}
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

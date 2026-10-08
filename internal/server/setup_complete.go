@@ -132,15 +132,21 @@ func (app *App) CompleteSetup(ctx context.Context, answers SetupAnswers, insecur
 	if len(feedback.Problems) != 0 {
 		return feedback, nil
 	}
-	adminHash, err := auth.HashPassword(answers.AdminPassword)
+	adminHash, err := app.Auth.HashPassword(ctx, answers.AdminPassword)
 	if err != nil {
+		if ctx.Err() != nil {
+			return feedback, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
+		}
 		feedback.Problems = append(feedback.Problems, webui.Error("admin_password", webui.MsgSetupAdminShort))
 		return feedback, nil
 	}
 	accessHash := ""
 	if answers.AccessMode == "password" {
-		accessHash, err = auth.HashPassword(answers.AccessPassword)
+		accessHash, err = app.Auth.HashPassword(ctx, answers.AccessPassword)
 		if err != nil {
+			if ctx.Err() != nil {
+				return feedback, fmt.Errorf("%w: %w", ErrSetupUnavailable, err)
+			}
 			feedback.Problems = append(feedback.Problems, webui.Error("access_password", webui.MsgSetupAccessPassShort))
 			return feedback, nil
 		}

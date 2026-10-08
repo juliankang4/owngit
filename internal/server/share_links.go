@@ -54,7 +54,7 @@ func (app *App) createShareLink(ctx context.Context, id string, input shareLinkI
 		link.ExpiresAt = &expires
 	}
 	if input.password != "" {
-		hash, err := auth.HashPassword(input.password)
+		hash, err := app.Auth.HashPassword(ctx, input.password)
 		if err != nil {
 			return state.ShareLink{}, "", err
 		}
