@@ -381,49 +381,13 @@ func (s *Service) inspectLFS(ctx context.Context, run *runState) error {
 		return nil
 	}
 	inspection.Objects = int64(len(objects))
-	if inspection.Objects > int64(run.limits.LFS.MaxObjects) {
-		objects = objects[:run.limits.LFS.MaxObjects]
-		inspection.Objects = int64(run.limits.LFS.MaxObjects)
-		inspection.ObjectListTruncated = true
-		inspection.Complete = false
-	}
-	types, truncated, err := s.inspectObjectTypes(ctx, run, objects)
+	candidates, truncated, candidatesTruncated, err := s.inspectObjectTypes(ctx, run, objects)
 	if err != nil {
 		return err
 	}
-	if truncated {
+	inspection.CandidatesTruncated = candidatesTruncated
+	if truncated || candidatesTruncated {
 		inspection.Complete = false
-	}
-	pointerBound := run.limits.LFS.MaxPointerBytes
-	if pointerBound > checksource.MaxLFSPointerBytes {
-		pointerBound = checksource.MaxLFSPointerBytes
-	}
-	candidateCap := int64(run.limits.LFS.MaxCandidateBlobs)
-	if maximum := run.limits.LFS.MaxCandidateBytes / pointerBound; maximum < candidateCap {
-		candidateCap = maximum
-	}
-	if candidateCap < 1 {
-		candidateCap = 1
-	}
-	var candidates []string
-	for _, oid := range objects {
-		entry, exists := types[oid]
-		if !exists || entry.objectType != "blob" {
-			continue
-		}
-		if entry.size > pointerBound {
-			if entry.size <= checksource.MaxLFSPointerBytes {
-				inspection.CandidatesTruncated = true
-				inspection.Complete = false
-			}
-			continue
-		}
-		if int64(len(candidates)) >= candidateCap {
-			inspection.CandidatesTruncated = true
-			inspection.Complete = false
-			break
-		}
-		candidates = append(candidates, oid)
 	}
 	if len(candidates) == 0 {
 		run.inspection = inspection
@@ -451,87 +415,138 @@ func (s *Service) inspectLFS(ctx context.Context, run *runState) error {
 	return nil
 }
 
+var errInspectionLimit = errors.New("LFS inspection limit reached")
+
+func (s *Service) streamInspectionLines(ctx context.Context, run *runState, objects []string, output int64, consume func(string) error, args ...string) (bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, run.limits.LFS.Timeout)
+	defer cancel()
+	input := io.NopCloser(strings.NewReader(strings.Join(objects, "\n") + "\n"))
+	list := func(stdout io.Reader) error {
+		return readInspectionLines(stdout, output, consume)
+	}
+	_, err := s.Repositories.Git.StreamGitWithOptions(ctx, run.stagingPath, gitexec.StreamOptions{
+		Input: input, Environment: run.limits.commandLimits(run.limits.LFS.Timeout).Environment,
+	}, list, args...)
+	if err == errInspectionLimit && ctx.Err() == nil {
+		return true, nil
+	}
+	return false, err
+}
+
+func readInspectionLines(stdout io.Reader, output int64, consume func(string) error) error {
+	limited := &io.LimitedReader{R: stdout, N: output}
+	reader := bufio.NewReader(limited)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if err == io.EOF && limited.N == 0 {
+			continues, readErr := outputContinuesPastCap(stdout)
+			if readErr != nil {
+				return readErr
+			}
+			if continues {
+				return errInspectionLimit
+			}
+		}
+		if line != "" {
+			if consumeErr := consume(strings.TrimSuffix(line, "\n")); consumeErr != nil {
+				return consumeErr
+			}
+		}
+		if err == io.EOF {
+			return nil
+		}
+	}
+}
+
+func outputContinuesPastCap(stdout io.Reader) (bool, error) {
+	var extra [1]byte
+	_, err := io.ReadFull(stdout, extra[:])
+	if err == io.EOF {
+		return false, nil
+	}
+	return err == nil, err
+}
+
 // listReachableObjects walks every object reachable from every advertised tip,
-// including skipped namespaces and HEAD. A truncated result covers only the
-// complete records in the captured prefix.
+// including skipped namespaces and HEAD.
 func (s *Service) listReachableObjects(ctx context.Context, run *runState) ([]string, bool, error) {
 	roots := advertisedTipOIDs(run.advertisement)
 	if len(roots) == 0 {
 		return nil, false, nil
 	}
-	input := strings.NewReader(strings.Join(roots, "\n") + "\n")
-	stdout, truncated, err := s.boundedCommand(ctx, run.stagingPath, input, gitexec.CommandLimits{
-		Timeout:     run.limits.LFS.Timeout,
-		OutputLimit: run.limits.LFS.MaxObjectListBytes,
-		Environment: run.limits.commandLimits(run.limits.LFS.Timeout).Environment,
-	}, "--git-dir", ".", "rev-list", "--objects", "--stdin")
+	var objects []string
+	list := func(oid string) error {
+		if len(objects) == run.limits.LFS.MaxObjects {
+			return errInspectionLimit
+		}
+		objects = append(objects, oid)
+		return nil
+	}
+	truncated, err := s.streamInspectionLines(ctx, run, roots, run.limits.LFS.MaxObjectListBytes, list,
+		"--git-dir", ".", "rev-list", "--objects", "--no-object-names", "--stdin")
 	if err != nil {
 		return nil, false, newProblem(CodeVerifyFailed, "reachable objects could not be listed for LFS inspection", err)
-	}
-	if truncated && len(stdout) > 0 && stdout[len(stdout)-1] != '\n' {
-		if index := bytes.LastIndexByte(stdout, '\n'); index >= 0 {
-			stdout = stdout[:index+1]
-		} else {
-			stdout = nil
-		}
-	}
-	lines := splitBoundedLines(stdout)
-	objects := make([]string, 0, len(lines))
-	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) == 0 {
-			continue
-		}
-		objects = append(objects, fields[0])
 	}
 	return objects, truncated, nil
 }
 
-type objectTypeEntry struct {
-	objectType string
-	size       int64
-}
-
-func (s *Service) inspectObjectTypes(ctx context.Context, run *runState, objects []string) (map[string]objectTypeEntry, bool, error) {
-	input := strings.NewReader(strings.Join(objects, "\n") + "\n")
-	stdout, truncated, err := s.boundedCommand(ctx, run.stagingPath, input, gitexec.CommandLimits{
-		Timeout:     run.limits.LFS.Timeout,
-		OutputLimit: run.limits.LFS.MaxTypeListBytes,
-		Environment: run.limits.commandLimits(run.limits.LFS.Timeout).Environment,
-	}, "--git-dir", ".", "cat-file", "--batch-check")
-	if err != nil {
-		return nil, false, newProblem(CodeVerifyFailed, "object types could not be listed for LFS inspection", err)
-	}
-	if truncated && len(stdout) > 0 && stdout[len(stdout)-1] != '\n' {
-		if index := bytes.LastIndexByte(stdout, '\n'); index >= 0 {
-			stdout = stdout[:index+1]
-		} else {
-			stdout = nil
+func (s *Service) inspectObjectTypes(ctx context.Context, run *runState, objects []string) ([]string, bool, bool, error) {
+	pointerBound := min(run.limits.LFS.MaxPointerBytes, checksource.MaxLFSPointerBytes)
+	candidateCap := max(int64(1), min(int64(run.limits.LFS.MaxCandidateBlobs), run.limits.LFS.MaxCandidateBytes/pointerBound))
+	var candidates []string
+	var candidatesTruncated, candidatesFull bool
+	var records int
+	var recordErr error
+	list := func(line string) error {
+		index := records
+		records++
+		if recordErr != nil {
+			return nil
 		}
-	}
-	lines := splitBoundedLines(stdout)
-	if !truncated && len(lines) != len(objects) {
-		return nil, false, newProblem(CodeVerifyFailed, "object type inspection returned an unexpected record count", nil)
-	}
-	entries := make(map[string]objectTypeEntry, len(lines))
-	for index, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) != 3 || index >= len(objects) || fields[0] != objects[index] {
-			if truncated {
-				break
-			}
-			return nil, false, newProblem(CodeVerifyFailed, "object type inspection returned an unexpected object", nil)
+		oid, rest, _ := strings.Cut(line, " ")
+		kind, sizeText, ok := strings.Cut(rest, " ")
+		if !ok || index >= len(objects) || oid != objects[index] {
+			recordErr = newProblem(CodeVerifyFailed, "object type inspection returned an unexpected object", nil)
+			return nil
 		}
-		size, err := strconv.ParseInt(fields[2], 10, 64)
+		size, err := strconv.ParseInt(sizeText, 10, 64)
 		if err != nil || size < 0 {
-			if truncated {
-				break
-			}
-			return nil, false, newProblem(CodeVerifyFailed, "object type inspection returned an invalid size", err)
+			recordErr = newProblem(CodeVerifyFailed, "object type inspection returned an invalid size", err)
+			return nil
 		}
-		entries[fields[0]] = objectTypeEntry{objectType: fields[1], size: size}
+		if candidatesFull || kind != "blob" {
+			return nil
+		}
+		if size > pointerBound {
+			if size <= checksource.MaxLFSPointerBytes {
+				candidatesTruncated = true
+			}
+			return nil
+		}
+		if int64(len(candidates)) == candidateCap {
+			candidatesTruncated, candidatesFull = true, true
+			return nil
+		}
+		candidates = append(candidates, objects[index])
+		return nil
 	}
-	return entries, truncated, nil
+	truncated, err := s.streamInspectionLines(ctx, run, objects, run.limits.LFS.MaxTypeListBytes, list,
+		"--git-dir", ".", "cat-file", "--batch-check")
+	if err != nil {
+		return nil, false, false, newProblem(CodeVerifyFailed, "object types could not be listed for LFS inspection", err)
+	}
+	if !truncated {
+		if records != len(objects) {
+			return nil, false, false, newProblem(CodeVerifyFailed, "object type inspection returned an unexpected record count", nil)
+		}
+		if recordErr != nil {
+			return nil, false, false, recordErr
+		}
+	}
+	return candidates, truncated, candidatesTruncated, nil
 }
 
 // inspectPointerCandidates reads candidate blob content and detects the Git LFS

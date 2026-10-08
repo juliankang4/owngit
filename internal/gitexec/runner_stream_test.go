@@ -119,56 +119,90 @@ func awaitStreamConsumerStart(t *testing.T, started <-chan struct{}, done <-chan
 }
 
 func TestStreamConsumesFullOutputBeforeWait(t *testing.T) {
-	root := t.TempDir()
-	runner := streamTestRunner(t, root)
-	var consumed bytes.Buffer
-	stderr, err := runner.Stream(context.Background(), runner.GitPath, root, nil,
-		[]string{streamFixtureEnv + "=success"},
-		func(reader io.Reader) error {
-			_, err := io.Copy(&consumed, reader)
-			return err
+	for _, test := range []struct {
+		name, mode, stdout, stderr string
+		withInput                  bool
+	}{
+		{"backend", "success", "stdout-payload", "stderr-payload", false},
+		{"Git with input and environment", "echo-stdin", "input-payload", "", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			runner := streamTestRunner(t, root)
+			var consumed bytes.Buffer
+			consume := func(reader io.Reader) error {
+				_, err := io.Copy(&consumed, reader)
+				return err
+			}
+			env := []string{streamFixtureEnv + "=" + test.mode}
+			var stderr []byte
+			var err error
+			if test.withInput {
+				stderr, err = runner.StreamGitWithOptions(context.Background(), root,
+					StreamOptions{Input: io.NopCloser(strings.NewReader("input-payload")), Environment: env}, consume, "cat-file")
+			} else {
+				stderr, err = runner.Stream(context.Background(), runner.GitPath, root, nil, env, consume)
+			}
+			if err != nil || consumed.String() != test.stdout || string(stderr) != test.stderr {
+				t.Fatalf("stdout=%q stderr=%q err=%v", consumed.String(), stderr, err)
+			}
 		})
-	if err != nil {
-		t.Fatalf("Stream error=%v", err)
-	}
-	if consumed.String() != "stdout-payload" {
-		t.Fatalf("consumed=%q, want stdout-payload", consumed.String())
-	}
-	if string(stderr) != "stderr-payload" {
-		t.Fatalf("stderr=%q, want stderr-payload", stderr)
 	}
 }
 
 func TestStreamPreservesConsumerErrorWithCleanupFailures(t *testing.T) {
-	root := t.TempDir()
-	runner := streamTestRunner(t, root)
 	consumerErr := errors.New("consumer stopped early")
 	terminateErr := errors.New("termination failed")
 	closeErr := errors.New("owner close failed")
-	seams := injectCleanupFaults(runner, terminateErr, closeErr)
-	_, err := runner.Stream(context.Background(), runner.GitPath, root, nil,
-		[]string{streamFixtureEnv + "=hold-stdout"},
-		func(reader io.Reader) error {
-			buffer := make([]byte, len("ready\n"))
-			if _, err := io.ReadFull(reader, buffer); err != nil {
-				return err
+	for _, test := range []struct {
+		name        string
+		consumerErr error
+		closeErr    error
+	}{
+		{"termination and owner release failure", consumerErr, closeErr},
+		{"termination failure", consumerErr, nil},
+		{"consumer limit with termination failure", fmt.Errorf("read prefix: %w", &LimitError{Command: "cat-file", Stream: "stdout", Limit: 8}), nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			runner := streamTestRunner(t, root)
+			seams := injectCleanupFaults(runner, terminateErr, test.closeErr)
+			_, err := runner.StreamGitWithOptions(context.Background(), root,
+				StreamOptions{Input: io.NopCloser(strings.NewReader("input-payload")), Environment: []string{streamFixtureEnv + "=hold-stdout"}},
+				func(reader io.Reader) error {
+					buffer := make([]byte, len("ready\n"))
+					if _, err := io.ReadFull(reader, buffer); err != nil {
+						return err
+					}
+					return test.consumerErr
+				})
+			if err == test.consumerErr || !errors.Is(err, ErrProcessCleanup) {
+				t.Fatalf("Stream error=%v, want marked cleanup failure, not a clean consumer stop", err)
 			}
-			return consumerErr
+			var limitErr *LimitError
+			if errors.As(err, &limitErr) {
+				t.Fatalf("Stream error=%v, cleanup failure must not be a LimitError", err)
+			}
+			if errors.As(test.consumerErr, &limitErr) {
+				if !strings.Contains(err.Error(), test.consumerErr.Error()) {
+					t.Fatalf("Stream error=%v, want consumer limit text", err)
+				}
+			} else if !errors.Is(err, test.consumerErr) {
+				t.Fatalf("Stream error=%v, want consumer sentinel", err)
+			}
+			if !errors.Is(err, terminateErr) {
+				t.Fatalf("Stream error=%v, want termination sentinel", err)
+			}
+			if test.closeErr != nil && !errors.Is(err, test.closeErr) {
+				t.Fatalf("Stream error=%v, want close sentinel", err)
+			}
+			if seams.terminateErr != nil {
+				t.Fatalf("real termination failed: %v", seams.terminateErr)
+			}
+			if seams.closeErr != nil {
+				t.Fatalf("real owner close failed: %v", seams.closeErr)
+			}
 		})
-	if !errors.Is(err, consumerErr) {
-		t.Fatalf("Stream error=%v, want consumer sentinel", err)
-	}
-	if !errors.Is(err, terminateErr) {
-		t.Fatalf("Stream error=%v, want termination sentinel", err)
-	}
-	if !errors.Is(err, closeErr) {
-		t.Fatalf("Stream error=%v, want close sentinel", err)
-	}
-	if seams.terminateErr != nil {
-		t.Fatalf("real termination failed: %v", seams.terminateErr)
-	}
-	if seams.closeErr != nil {
-		t.Fatalf("real owner close failed: %v", seams.closeErr)
 	}
 }
 
@@ -183,8 +217,8 @@ func TestStreamReturnsCloseFailureWithoutPrimaryError(t *testing.T) {
 			_, err := io.Copy(io.Discard, reader)
 			return err
 		})
-	if !errors.Is(err, closeErr) {
-		t.Fatalf("Stream error=%v, want close sentinel", err)
+	if !errors.Is(err, ErrProcessCleanup) || !errors.Is(err, closeErr) {
+		t.Fatalf("Stream error=%v, want marked close failure", err)
 	}
 	if seams.closeErr != nil {
 		t.Fatalf("real owner close failed: %v", seams.closeErr)
@@ -209,8 +243,9 @@ func TestStreamPreservesStderrLimitWithCleanupFailures(t *testing.T) {
 			return consumerErr
 		})
 	var limitErr *LimitError
-	if !errors.As(err, &limitErr) || limitErr.Stream != "stderr" || limitErr.Limit != 8 {
-		t.Fatalf("Stream error=%v, want stderr LimitError", err)
+	if errors.As(err, &limitErr) || !errors.Is(err, ErrProcessCleanup) ||
+		!strings.Contains(err.Error(), (&LimitError{Command: "Git backend", Stream: "stderr", Limit: 8}).Error()) {
+		t.Fatalf("Stream error=%v, want marked cleanup failure with stderr limit text only", err)
 	}
 	if !errors.Is(err, terminateErr) || !errors.Is(err, closeErr) {
 		t.Fatalf("Stream error=%v, want cleanup sentinels", err)

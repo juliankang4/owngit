@@ -248,24 +248,72 @@ func TestStrictPackIndexingRejectsMalformedObject(t *testing.T) {
 }
 
 func TestIncompleteLFSInspectionRequiresConsentForInitialImport(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		limits   LFSLimits
+		complete bool
+	}{
+		{"object count truncated", LFSLimits{MaxObjects: 1}, false},
+		{"exact object cap", LFSLimits{MaxObjects: 3}, true},
+		{"pointer size bound", LFSLimits{MaxPointerBytes: 16}, false},
+		{"candidate byte bound", LFSLimits{MaxCandidateBytes: 1}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			tip := f.commit("ordinary", "ordinary content\n")
+			limits := Limits{LFS: test.limits}
+			if !test.complete {
+				refused, err := f.importProject(ImportInput{Limits: limits})
+				require(t, err != nil && problemCode(err) == CodeLFSRequired,
+					"incomplete import result=%+v err=%v", refused.Run, err)
+				require(t, refused.Run.LFSDetected == 0 && !refused.Run.LFSInspectionDone, "refused inspection=%+v", refused.Run)
+				assertImportDestinationAbsent(t, f)
+			}
+			accepted := f.mustImport(ImportInput{GitOnlyConsent: !test.complete, Limits: limits})
+			require(t, accepted.Run.Status == state.ImportRunComplete && accepted.Run.LFSDetected == 0 &&
+				accepted.Run.LFSInspectionDone == test.complete, "consented run=%+v", accepted.Run)
+			got := f.destinationRefs()["refs/heads/main"]
+			require(t, got == tip, "destination main=%s want %s", got, tip)
+			status, err := f.service.Status(context.Background(), "project")
+			require(t, err == nil && status.Content.Incomplete == !test.complete && status.Content.InspectionComplete == test.complete &&
+				status.Content.LFSDetected == 0, "content status=%+v err=%v", status.Content, err)
+		})
+	}
+}
+
+func TestLFSInspectionListingBounds(t *testing.T) {
 	f := newFixture(t)
-	tip := f.commit("ordinary", "ordinary content\n")
-	limits := Limits{LFS: LFSLimits{MaxObjects: 1}}
-
-	refused, err := f.importProject(ImportInput{Limits: limits})
-	require(t, err != nil && problemCode(err) == CodeLFSRequired,
-		"incomplete import result=%+v err=%v", refused.Run, err)
-	require(t, refused.Run.LFSDetected == 0 && !refused.Run.LFSInspectionDone, "refused inspection=%+v", refused.Run)
-	assertImportDestinationAbsent(t, f)
-
-	accepted := f.mustImport(ImportInput{GitOnlyConsent: true, Limits: limits})
-	require(t, accepted.Run.Status == state.ImportRunComplete && accepted.Run.LFSDetected == 0 &&
-		!accepted.Run.LFSInspectionDone, "consented run=%+v", accepted.Run)
-	got := f.destinationRefs()["refs/heads/main"]
-	require(t, got == tip, "destination main=%s want %s", got, tip)
-	status, err := f.service.Status(context.Background(), "project")
-	require(t, err == nil && status.Content.Incomplete && !status.Content.InspectionComplete &&
-		status.Content.LFSDetected == 0, "content status=%+v err=%v", status.Content, err)
+	f.commit("ordinary", "ordinary content\n")
+	_, err := f.service.Prepare(context.Background())
+	noErr(t, err)
+	root, ok := f.service.preparedRuntime()
+	require(t, ok, "runtime not prepared")
+	objects := f.gitInput(f.source, nil, "rev-list", "--objects", "--no-object-names", "HEAD")
+	types := f.gitInput(f.source, objects, "cat-file", "--batch-check")
+	for _, test := range []struct {
+		name        string
+		objectBytes int64
+		typeBytes   int64
+		wantObjects int64
+		complete    bool
+	}{
+		{"object record cut", 40, int64(len(types)), 0, false},
+		{"object prefix", 82, int64(len(types)), 2, false},
+		{"exact object and type byte caps", int64(len(objects)), int64(len(types)), 3, true},
+		{"type record cut", int64(len(objects)), 40, 3, false},
+		{"type prefix", int64(len(objects)), int64(len(types) - 1), 3, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limits := DefaultLimits()
+			limits.LFS.MaxObjectListBytes = test.objectBytes
+			limits.LFS.MaxTypeListBytes = test.typeBytes
+			run := &runState{stagingPath: filepath.Join(f.source, ".git"), runtimeGeneration: root.generation,
+				advertisement: f.transport.advertisement(), limits: limits}
+			noErr(t, f.service.inspectLFS(context.Background(), run))
+			require(t, run.inspection.Objects == test.wantObjects && run.inspection.Complete == test.complete &&
+				run.inspection.Pointers == 0, "inspection=%+v", run.inspection)
+		})
+	}
 }
 
 func TestIncompleteLFSInspectionRequiresConsentForRefresh(t *testing.T) {

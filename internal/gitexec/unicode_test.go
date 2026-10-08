@@ -42,16 +42,31 @@ func TestRunnerKeepsExactNamesWithoutChangingRepositoryConfig(t *testing.T) {
 			}
 		})
 	}
-	t.Run("stream", func(t *testing.T) {
-		var output strings.Builder
-		_, err := runner.StreamGit(ctx, repositoryPath, func(reader io.Reader) error {
-			_, err := io.Copy(&output, reader)
-			return err
-		}, args...)
-		if err != nil || output.String() != "false\n" {
-			t.Fatalf("effective precomposition=%q err=%v", output.String(), err)
+	for _, withOptions := range []bool{false, true} {
+		name := "stream"
+		if withOptions {
+			name = "stream options"
 		}
-	})
+		t.Run(name, func(t *testing.T) {
+			var output strings.Builder
+			consume := func(reader io.Reader) error {
+				_, err := io.Copy(&output, reader)
+				return err
+			}
+			var err error
+			want := "false\n"
+			if withOptions {
+				_, err = runner.StreamGitWithOptions(ctx, repositoryPath, StreamOptions{Environment: extra}, consume,
+					"config", "--get", "user.name")
+				want = "Caller\n"
+			} else {
+				_, err = runner.StreamGit(ctx, repositoryPath, consume, args...)
+			}
+			if err != nil || output.String() != want {
+				t.Fatalf("effective configuration=%q want=%q err=%v", output.String(), want, err)
+			}
+		})
+	}
 
 	// update-ref takes names on stdin without precomposing them. Its listing
 	// still needs the command policy, including for refs created before startup.

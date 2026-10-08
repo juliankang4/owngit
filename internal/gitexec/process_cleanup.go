@@ -13,13 +13,11 @@ import (
 // buffers shared with the command are still mutable.
 var errStartedProcessUnreaped = errors.New("started process was not reaped within the termination grace")
 
-// ErrProcessCleanup marks a buffered command (Run, the RunWith variants and
-// RunOwned) whose owned process could not be stopped or whose owner could not
-// be released. The error keeps the original causes. Removal of the process
-// and its descendants is not confirmed, so neither the output nor the exit
-// status is a complete answer: the error is never a *LimitError, and ExitCode
-// reports no status for it. Stream returns its cleanup causes without this
-// mark; its callers only describe a transfer that already failed.
+// ErrProcessCleanup marks any owned command, including Stream, whose process
+// could not be stopped or whose owner could not be released. Original causes
+// remain available. Removal of the process and its descendants is not confirmed,
+// so neither output nor exit status is a complete answer. ExitCode reports no
+// status, and the error is never a *LimitError.
 var ErrProcessCleanup = errors.New("owned process cleanup failed")
 
 // processCleanupSeam injects the owned-process cleanup operations for tests.

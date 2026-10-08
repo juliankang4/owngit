@@ -583,7 +583,20 @@ func (r *Runner) Stream(ctx context.Context, executable string, dir string, stdi
 // and the output in consume; returning an error from consume, or cancelling
 // ctx, stops Git and its owned descendants before StreamGit returns.
 func (r *Runner) StreamGit(ctx context.Context, dir string, consume func(io.Reader) error, args ...string) ([]byte, error) {
-	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), keepsTextSemantics(commandName(args)), dir, nil, nil, consume)
+	return r.StreamGitWithOptions(ctx, dir, StreamOptions{}, consume, args...)
+}
+
+type StreamOptions struct {
+	// Input is closed when the process stops. Close must release a blocked Read.
+	Input io.ReadCloser
+	// Environment entries are appended to the runner's isolated environment.
+	Environment []string
+}
+
+// StreamGitWithOptions runs the same owned stream with input and environment.
+// The caller bounds time with ctx and output in consume, as with StreamGit.
+func (r *Runner) StreamGitWithOptions(ctx context.Context, dir string, options StreamOptions, consume func(io.Reader) error, args ...string) ([]byte, error) {
+	return r.stream(ctx, commandName(args), exec.Command(r.GitPath, args...), keepsTextSemantics(commandName(args)), dir, options.Input, options.Environment, consume)
 }
 
 // stream runs cmd for Stream and StreamGit; name names it in error text. Its
@@ -730,8 +743,10 @@ func (r *Runner) stream(ctx context.Context, name string, cmd *exec.Cmd, textOut
 		primary = fmt.Errorf("stream Git backend input: %w", inputErr)
 	}
 	if cleanupErr != nil {
-		if primary == nil {
-			return stderr.Bytes(), cleanupErr
+		cleanupErr = fmt.Errorf("%w: %w", ErrProcessCleanup, cleanupErr)
+		var limitErr *LimitError
+		if errors.As(primary, &limitErr) {
+			return stderr.Bytes(), fmt.Errorf("%s: %w", primary, cleanupErr)
 		}
 		return stderr.Bytes(), errors.Join(primary, cleanupErr)
 	}
