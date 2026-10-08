@@ -263,7 +263,7 @@ func (coordinator *Coordinator) runContainerChecks(ctx context.Context, job stat
 		}
 		runResults, runCancelled := checkexec.Run(ctx, []checkexec.Definition{direct}, checkexec.Options{
 			Timeout:     time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
-			OutputLimit: job.Limits.OutputLimitBytes,
+			OutputLimit: job.Limits.OutputLimitBytes, Env: os.Environ(),
 		})
 		result := runResults[0]
 		if runCancelled {
@@ -311,6 +311,10 @@ func (coordinator *Coordinator) containerCreateArguments(job state.CheckJob, pre
 		"--workdir", "/workspace",
 		"--env", "HOME=/tmp", "--env", "TMPDIR=/tmp", "--env", "TMP=/tmp", "--env", "TEMP=/tmp",
 		"--env", "XDG_CACHE_HOME=/tmp/.cache", "--env", "GOCACHE=/tmp/go-build", "--env", "GOTMPDIR=/tmp",
+		// Explicit empty values override Docker client proxy configuration.
+		"--env", "HTTP_PROXY=", "--env", "http_proxy=", "--env", "HTTPS_PROXY=", "--env", "https_proxy=",
+		"--env", "NO_PROXY=", "--env", "no_proxy=", "--env", "FTP_PROXY=", "--env", "ftp_proxy=",
+		"--env", "ALL_PROXY=", "--env", "all_proxy=",
 		"--tmpfs", "/tmp:rw,exec,nosuid,nodev,size=" + strconv.FormatInt(settings.ContainerScratchBytes, 10),
 	}
 	// Each limit is passed only when this Docker enforces it. Docker
@@ -765,7 +769,7 @@ func runDockerControl(ctx context.Context, docker, dockerHost string, arguments 
 		arguments = append([]string{"--host", dockerHost}, arguments...)
 	}
 	definition := checkexec.Definition{Name: "docker-control", Command: "docker control", Executable: docker, Arguments: arguments}
-	results, cancelled := checkexec.Run(ctx, []checkexec.Definition{definition}, checkexec.Options{Timeout: 30 * time.Second, OutputLimit: dockerProbeOutputLimit})
+	results, cancelled := checkexec.Run(ctx, []checkexec.Definition{definition}, checkexec.Options{Timeout: 30 * time.Second, OutputLimit: dockerProbeOutputLimit, Env: os.Environ()})
 	result := results[0]
 	if cancelled {
 		return result.Output, ctx.Err()

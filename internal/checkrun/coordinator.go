@@ -1115,7 +1115,7 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 		results, cancelled = coordinator.runContainerChecks(jobContext, job, container, workspace, definitions)
 	} else {
 		results, cancelled = checkexec.Run(jobContext, definitions, checkexec.Options{
-			Dir: workspace, Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
+			Dir: workspace, TempRoot: filepath.Dir(workspace), Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
 			OutputLimit: job.Limits.OutputLimitBytes,
 		})
 	}

@@ -2,6 +2,8 @@ package checkrunner_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -22,6 +24,41 @@ func TestRealDockerContainerOptions(t *testing.T) {
 	config := requireRealDocker(t)
 	imageID := strings.TrimSpace(mustDocker(t, config, "image", "inspect", "--format", "{{.Id}}", config.image))
 	unique := strconv.FormatInt(time.Now().UnixNano(), 36)
+
+	t.Run("client_proxy_settings", func(t *testing.T) {
+		for _, configured := range []bool{false, true} {
+			for _, network := range []string{state.ContainerNetworkNone, state.ContainerNetworkBridge} {
+				t.Run(strconv.FormatBool(configured)+"_"+network, func(t *testing.T) {
+					clientConfig := t.TempDir()
+					content := []byte(`{}`)
+					if configured {
+						proxy := &url.URL{Scheme: "http", Host: "proxy.invalid:3128", User: url.UserPassword("fixture-user", "fixture-password")}
+						var err error
+						content, err = json.Marshal(map[string]any{"proxies": map[string]any{"default": map[string]string{
+							"httpProxy": proxy.String(), "httpsProxy": proxy.String(), "ftpProxy": proxy.String(),
+							"allProxy": proxy.String(), "noProxy": "internal.invalid",
+						}}})
+						noErr(t, err)
+					}
+					noErr(t, os.WriteFile(filepath.Join(clientConfig, "config.json"), content, 0o600))
+					t.Setenv("DOCKER_CONFIG", clientConfig)
+					mustDocker(t, config, "info", "--format", "{{.ID}}")
+					command := `set -eu
+	for name in HTTP_PROXY http_proxy HTTPS_PROXY https_proxy NO_PROXY no_proxy FTP_PROXY ftp_proxy ALL_PROXY all_proxy; do
+		eval "value=\${$name-}"
+		if [ -n "$value" ]; then printf 'unexpected proxy setting: %s\n' "$name"; exit 1; fi
+	done
+	printf 'CONTAINER_PROXY_SETTINGS_EMPTY\n'`
+					fixture := newRealDockerFixture(t, config, network, command)
+					job := fixture.waitForTerminalJob(fixture.waitForAnyJob().ID)
+					attempt := fixture.attempt(job, state.AttemptPassed)
+					if !strings.Contains(attempt.Results[0].OutputExcerpt, "CONTAINER_PROXY_SETTINGS_EMPTY") {
+						t.Fatal("container did not confirm its proxy environment")
+					}
+				})
+			}
+		}
+	})
 
 	t.Run("tag_resolves_to_one_image_ID", func(t *testing.T) {
 		tag := "owngit-check-test/tagged:" + unique

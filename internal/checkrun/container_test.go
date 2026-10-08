@@ -32,6 +32,9 @@ func TestContainerCreateArgumentsEnforceRestrictions(t *testing.T) {
 		" --memory 268435456 ", " --memory-swap 268435456 ", " --pids-limit 64 ",
 		" --tmpfs /tmp:rw,exec,nosuid,nodev,size=33554432 ",
 		" --env HOME=/tmp ", " --env TMPDIR=/tmp ", " --env GOCACHE=/tmp/go-build ", " --env GOTMPDIR=/tmp ",
+		" --env HTTP_PROXY= ", " --env http_proxy= ", " --env HTTPS_PROXY= ", " --env https_proxy= ",
+		" --env NO_PROXY= ", " --env no_proxy= ", " --env FTP_PROXY= ", " --env ftp_proxy= ",
+		" --env ALL_PROXY= ", " --env all_proxy= ",
 		" --label com.owngit.check-job=0123456789abcdef ",
 	} {
 		if !strings.Contains(joined, required) {

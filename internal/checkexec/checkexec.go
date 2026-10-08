@@ -1,8 +1,9 @@
-// Package checkexec runs project check commands in the user's own working
-// environment. It tracks each command with an operating-system process owner,
+// Package checkexec runs project check commands with the user's permissions.
+// It tracks each command with an operating-system process owner,
 // bounds captured output, and reports cleanup failures. It cannot contain a
 // process that deliberately escapes its assigned group or job, and it does not
-// isolate the filesystem. Commands inherit the user's environment and permissions.
+// isolate the filesystem. Commands receive a defined host environment unless
+// a trusted caller supplies an explicit environment.
 package checkexec
 
 import (
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -90,16 +92,45 @@ type Options struct {
 	OutputLimit int64
 	// Redact replaces each literal value in captured output.
 	Redact []string
-	// Env overrides the inherited environment when non-nil.
+	// Env supplies the complete environment when non-nil, for trusted adapters.
 	Env []string
+	// TempRoot holds the private temporary folder for a host run. Empty uses
+	// the operating system's temporary directory.
+	TempRoot string
 }
 
 // Run executes the definitions in order and returns one result per definition.
 // The boolean reports whether the run was cancelled before every check
 // finished. A cancelled run still returns the results collected so far.
-func Run(ctx context.Context, definitions []Definition, options Options) ([]Result, bool) {
-	results := make([]Result, 0, len(definitions))
-	cancelled := false
+func Run(ctx context.Context, definitions []Definition, options Options) (results []Result, cancelled bool) {
+	results = make([]Result, 0, len(definitions))
+	var environmentNote string
+	if options.Env == nil && len(definitions) != 0 && ctx.Err() == nil {
+		root := options.TempRoot
+		if root == "" {
+			root = os.TempDir()
+		}
+		root, err := filepath.Abs(root)
+		var temporary string
+		if err == nil {
+			temporary, err = os.MkdirTemp(root, "owngit-check-")
+		}
+		if err != nil {
+			for _, definition := range definitions {
+				results = append(results, Result{Name: definition.Name, Command: definition.Command, Status: StatusError,
+					Output: redact("prepare check temporary directory: "+err.Error(), options.Redact)})
+			}
+			return results, false
+		}
+		options.Env, environmentNote = hostEnvironment(temporary)
+		defer func() {
+			if err := os.RemoveAll(temporary); err != nil && len(results) != 0 {
+				last := &results[len(results)-1]
+				last.Status = StatusError
+				setCleanupError(last, fmt.Errorf("remove check temporary directory: %w", err), options.Redact)
+			}
+		}()
+	}
 	for _, definition := range definitions {
 		if err := ctx.Err(); err != nil {
 			results = append(results, Result{Name: definition.Name, Command: definition.Command, Status: StatusCancelled})
@@ -107,6 +138,12 @@ func Run(ctx context.Context, definitions []Definition, options Options) ([]Resu
 			continue
 		}
 		result, checkCancelled := runOne(ctx, definition, options)
+		if environmentNote != "" && (result.Status == StatusFailed || result.Status == StatusError || result.Status == StatusUnavailable) {
+			log := checkapi.LogBuffer{Limit: KeptOutputBytes}
+			log.Add(redact(environmentNote, options.Redact))
+			log.AddClipped(result.Output, result.OutputGap)
+			result.Output, result.OutputGap, _ = log.ResultWithGap()
+		}
 		if checkCancelled {
 			cancelled = true
 		}
@@ -148,9 +185,7 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 		cmd = exec.Command(definition.Executable, definition.Arguments...)
 	}
 	cmd.Dir = options.Dir
-	if options.Env != nil {
-		cmd.Env = options.Env
-	}
+	cmd.Env = options.Env
 	output := newBoundedBuffer(limit, options.Redact)
 	cmd.Stdout = output
 	cmd.Stderr = output
@@ -371,6 +406,9 @@ func setExitCode(result *Result, wait *processWait) {
 
 func setCleanupError(result *Result, err error, secrets []string) {
 	if err != nil {
+		if result.CleanupError != "" {
+			err = errors.Join(errors.New(result.CleanupError), err)
+		}
 		result.CleanupError = redact(err.Error(), secrets)
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"math/rand/v2"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"time"
 
 	"owngit/internal/apiclient"
@@ -288,7 +289,7 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		definitions = append(definitions, checkexec.Definition{Name: check.Name, Command: check.Command})
 	}
 	results, cancelled := checkexec.Run(leaseContext, definitions, checkexec.Options{
-		Dir: workspace, Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
+		Dir: workspace, TempRoot: filepath.Dir(workspace), Timeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
 		OutputLimit: job.Limits.OutputLimitBytes,
 	})
 	submittedWorktree := state.WorktreeClean

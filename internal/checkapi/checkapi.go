@@ -311,7 +311,7 @@ type Attempt struct {
 	// helper path, where the helper cannot assert a job origin.
 	JobID string `json:"job_id,omitempty"`
 	// Protection and ExecutionScope state what was actually established. The
-	// helper inherits the user's environment, so protection is unknown.
+	// helper runs with the user's account and files, so protection is unknown.
 	Protection     string `json:"protection"`
 	ExecutionScope string `json:"execution_scope"`
 	// CredentialID is the server-authenticated helper credential that

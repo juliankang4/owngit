@@ -61,7 +61,7 @@ func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
 		fixture := blockedCleanFilterFixture(t)
 		request := checkRunRequest{
 			TaskID: "local", Workdir: fixture.work, Timeout: 30 * time.Second, OutputLimit: checkexec.DefaultOutputLimit(),
-			Checks: []checkexec.Definition{{Name: "edit", Command: "printf 'edit\\n' > tracked.txt && : > \"$OWN_FILTER_ARMING\""}},
+			Checks: []checkexec.Definition{{Name: "edit", Command: fixture.checkCommand("printf 'edit\\n' > tracked.txt && : > \"$OWN_FILTER_ARMING\"")}},
 		}
 		type runResult struct {
 			output checkRunOutput
@@ -115,7 +115,7 @@ func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
 			TaskID: "local", Workdir: fixture.work, Timeout: 30 * time.Second, OutputLimit: checkexec.DefaultOutputLimit(),
 			// The check puts the tracked file back and disarms the filter, so only
 			// the observation before it pays the bound.
-			Checks: []checkexec.Definition{{Name: "restore", Command: "printf 'base\\n' > tracked.txt && rm -f \"$OWN_FILTER_ARMING\""}},
+			Checks: []checkexec.Definition{{Name: "restore", Command: fixture.checkCommand("printf 'base\\n' > tracked.txt && rm -f \"$OWN_FILTER_ARMING\"")}},
 		}
 		started := time.Now()
 		attempt, err := prepareCheckAttempt(context.Background(), nil, request)
@@ -133,6 +133,9 @@ func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
 		content, err := os.ReadFile(filepath.Join(fixture.work, "tracked.txt"))
 		if err != nil || string(content) != "base\n" {
 			t.Fatalf("the check did not run: %q err=%v", content, err)
+		}
+		if _, err := os.Stat(fixture.arming); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the check did not disarm the filter: %v", err)
 		}
 		for _, expected := range []string{"unknown", worktreeObservationBound.String()} {
 			if !strings.Contains(attempt.log, expected) {
@@ -308,12 +311,12 @@ func startBlockedRun(t *testing.T, binary string, armedBefore bool) blockedRun {
 	setWorktreeObservationBound(t, time.Minute)
 	remoteFlags, taskID, work := startCheckCLIServer(t)
 	fixture := installBlockedCleanFilter(t, work)
-	check := "edit=printf 'edit\\n' > tracked.txt && : > \"$OWN_FILTER_ARMING\""
+	check := "edit=" + fixture.checkCommand("printf 'edit\\n' > tracked.txt && : > \"$OWN_FILTER_ARMING\"")
 	if armedBefore {
 		// The check puts the tracked file back and disarms the filter, so only
 		// the observation before it pays for the blocked filter.
 		armBlockedFilter(t, fixture)
-		check = "restore=printf 'base\\n' > tracked.txt && rm -f \"$OWN_FILTER_ARMING\""
+		check = "restore=" + fixture.checkCommand("printf 'base\\n' > tracked.txt && rm -f \"$OWN_FILTER_ARMING\"")
 	}
 	command := exec.Command(binary, append([]string{
 		"check", "run", "--task", taskID, "--workdir", work, "--check", check,
@@ -547,6 +550,10 @@ type filterFixture struct {
 	revision string
 	arming   string
 	pidFile  string
+}
+
+func (fixture filterFixture) checkCommand(command string) string {
+	return "OWN_FILTER_ARMING='" + strings.ReplaceAll(fixture.arming, "'", "'\"'\"'") + "'; " + command
 }
 
 // blockedCleanFilterFixture returns an empty committed checkout with the
