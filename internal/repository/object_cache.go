@@ -13,8 +13,7 @@ import (
 // objectCache keeps Git read results that are fixed by the object IDs they
 // were read for: folder listings of a commit, file contents, commit metadata
 // and changed files, diffs, merge bases, ancestry answers and tag peeling.
-// Objects never change, so an entry needs no invalidation while its
-// repository exists.
+// Object contents never change.
 //
 // Entries are raw Git output, parsed again on every use, so a listing does
 // not depend on the path it was reached by. Each repository has its own

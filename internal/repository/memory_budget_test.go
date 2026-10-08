@@ -407,6 +407,62 @@ func TestBlobReadRefusesAFileWhoseStoredDeltaIsExpensive(t *testing.T) {
 	}
 }
 
+func TestRepackRefreshesCachedBlobCostsAndComparisonMarks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs real Git repacks before and after a simulated failure")
+	}
+	previous := memoryBudget
+	memoryBudget = func() int64 { return 1 }
+	defer func() { memoryBudget = previous }()
+
+	for _, failed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failed=%t", failed), func(t *testing.T) {
+			ctx := context.Background()
+			manager, remote, work := newTestRepository(t)
+			_, older, _ := deltaFixture(t, work)
+			size, err := strconv.ParseInt(gitOutput(t, work, "cat-file", "-s", older), 10, 64)
+			noErr(t, err)
+			entry := TreeEntry{Path: "file.txt", OID: older, Type: "blob", Size: size}
+			blob, err := manager.BlobAt(ctx, "sample", entry, 1<<20)
+			noErr(t, err)
+			files := []ChangedFile{{Path: "file.txt", Status: "D", oldOID: older}}
+			noErr(t, manager.markBinaryBySize(ctx, "sample", files))
+			if !blob.TooLargeMemory || !files[0].BinaryBySize {
+				t.Fatal("the delta did not prime both refusal caches")
+			}
+
+			args := []string{"repack", "-a", "-d", "-f", "--depth=0"}
+			var failure error
+			if failed {
+				failure = errors.New("repack reported failure after publishing")
+				manager.maintenanceHook = func(context.Context, string, []string) error {
+					runGit(t, "", append([]string{"--git-dir", remote}, args...)...)
+					return failure
+				}
+			}
+			lock := manager.Locks.For("sample")
+			generation := lock.Generation()
+			noErr(t, lock.LockContext(ctx))
+			if err := manager.maintenanceStep(ctx, "sample", lock, time.Minute, args); !errors.Is(err, failure) {
+				t.Fatalf("repack: %v, want %v", err, failure)
+			}
+			if !failed && lock.Generation() != generation {
+				t.Fatal("repack invalidated the ref snapshot generation")
+			}
+			if base := deltabaseOf(t, remote, older); base != "" {
+				t.Fatalf("repack left a delta on %s", base)
+			}
+			blob, err = manager.BlobAt(ctx, "sample", entry, 1<<20)
+			noErr(t, err)
+			files[0].BinaryBySize = false
+			noErr(t, manager.markBinaryBySize(ctx, "sample", files))
+			if blob.TooLarge || int64(len(blob.Content)) != size || files[0].BinaryBySize {
+				t.Fatalf("repacked file is still refused: tooLarge=%t bytes=%d mark=%t", blob.TooLarge, len(blob.Content), files[0].BinaryBySize)
+			}
+		})
+	}
+}
+
 // The price of a whole pinned set must keep the pinned error contract: a
 // repository write in progress answers ErrPinnedRepositoryBusy at once, so the
 // caller's retry loop runs again. Waiting for the registered repository lock

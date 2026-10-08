@@ -69,10 +69,7 @@ func exclusionSpecs(args, excluded []string) []string {
 //
 // The answer is kept with the read that listed the files, keyed by their
 // objects and the line, so a repeated view of the same change starts no Git
-// process. It holds until the read cache drops the entry, which is as long as
-// the cache of the same repository keeps an object read; a repack can make a
-// chain shorter in the meantime, and the file then reads as above the line
-// until the entry is dropped.
+// process.
 func (m *Manager) markBinaryBySize(ctx context.Context, id string, files []ChangedFile) error {
 	bound := memoryBudget()
 	if bound <= 0 || len(files) == 0 {

@@ -1009,7 +1009,12 @@ func acquireMemoryGate(ctx context.Context, bound time.Duration) (func(), error)
 func (m *Manager) maintenanceStep(ctx context.Context, id string, lock *gitexec.RepositoryLock, timeout time.Duration, args []string) error {
 	// Nothing has run until the command starts.
 	refsUnchanged := true
+	repackMayWrite := false
 	defer func() {
+		if repackMayWrite {
+			// A failed repack may have published a pack.
+			m.objects.drop(id)
+		}
 		if refsUnchanged {
 			lock.UnlockWithoutRefChanges()
 		} else {
@@ -1036,6 +1041,7 @@ func (m *Manager) maintenanceStep(ctx context.Context, id string, lock *gitexec.
 			before = state
 		}
 	}
+	repackMayWrite = args[0] == "repack"
 	refsUnchanged = false
 	if m.maintenanceHook != nil {
 		if err := m.maintenanceHook(ctx, id, args); err != nil {

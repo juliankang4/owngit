@@ -201,9 +201,7 @@ const metadataLineBytes = 200
 // file whole can still be stored as a delta on a much larger base: measured on
 // Git 2.47.3, a 7 MiB file whose base holds 192 MiB uses 395 MiB to read, while
 // its own size stays far below the line. The answer is cached with the object,
-// so a repeated view of one file starts no Git process; a repack can make a
-// chain shorter in the meantime and the object then reads as expensive until
-// the cache drops the entry (the same trade-off as the change-page mark).
+// so a repeated view of one file starts no Git process.
 func (m *Manager) blobRebuildCost(ctx context.Context, id, oid string) (int64, error) {
 	if !isOID(oid) {
 		return 0, nil
