@@ -101,16 +101,18 @@ func (l *RepositoryLock) RLock() {
 // ctx's error and does not hold the lock. Release a lock it took through
 // Unlock or UnlockWithoutRefChanges.
 func (l *RepositoryLock) LockContext(ctx context.Context) error {
-	if err := l.LockContextUngated(ctx); err != nil {
+	if err := l.lockWithoutGate(ctx); err != nil {
 		return err
 	}
 	return l.passGate()
 }
 
-// LockContextUngated takes the write lock without the gate. Storage preparation
-// and recorded lifecycle cleanup verify their storage separately before writing.
-// Ordinary writers use LockContext or TryLockGated.
+// LockContextUngated takes the write lock without running the write gate.
 func (l *RepositoryLock) LockContextUngated(ctx context.Context) error {
+	return l.lockWithoutGate(ctx)
+}
+
+func (l *RepositoryLock) lockWithoutGate(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}

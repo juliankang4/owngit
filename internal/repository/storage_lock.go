@@ -80,9 +80,6 @@ func (m *Manager) ClaimStorage() error {
 	return m.claimStorageLocked(false)
 }
 
-// installWriteGate makes write locks taken through LockContext or TryLockGated
-// verify root and repository identity. Writers using ungated locks or writing
-// outside the write lock call VerifyRepositoryStorage themselves.
 func (m *Manager) installWriteGate() {
 	if m.Locks != nil {
 		m.Locks.SetWriteGate(m.VerifyRepositoryStorage)

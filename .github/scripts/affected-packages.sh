@@ -68,9 +68,8 @@ done
 
 # The tests that read files by path beyond their test binary, and what they
 # read.
-# internal/gitexec: TestNoCodeReachesTheEmbeddedRepositoryMutex parses every
-# .go file of the module, test files included, outside testdata and dot
-# directories.
+# internal/gitexec: TestUngatedLockReferencesStayWithinStorageVerificationPaths
+# parses every non-test .go file of the module outside testdata and dot directories.
 # tools/release: TestInstallerCommandsAreTheSafeForms reads every .md, .sh
 # and .ps1 file outside testdata, node_modules and dot directories. Its other
 # tests build ./cmd/owngit and compare the checked-in notices with those
