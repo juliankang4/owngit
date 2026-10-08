@@ -111,7 +111,7 @@ Program messages and other documents link to headings. Search for an anchor befo
 
 ## Continuous integration
 
-The `CI` workflow (`.github/workflows/ci.yml`) runs gofmt, `go vet` and the tests on Linux (with the race detector), Windows and macOS. A pull request tests only the packages its change affects, chosen by `.github/scripts/affected-packages.sh`. A package with a changed file runs in full; a package affected only through a dependency runs with `-short`. The daily run and manual runs test everything, add Linux arm64 and check for known vulnerabilities. Complete a full test run on the release commit before tagging.
+The `CI` workflow (`.github/workflows/ci.yml`) runs gofmt, `go vet` and the tests on Linux (with the race detector), Windows and macOS. A pull request tests only the packages its change affects, chosen by `.github/scripts/affected-packages.sh`. A package with a changed file runs in full; a package affected only through a dependency runs with `-short`. A pull request also runs golangci-lint (`.golangci.yml`), which rejects `time.Sleep` and `time.Since` on test lines the pull request adds or changes. The daily run and manual runs test everything, add Linux arm64 and check for known vulnerabilities. Complete a full test run on the release commit before tagging.
 
 When you write a test:
 

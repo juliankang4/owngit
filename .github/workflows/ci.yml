@@ -76,6 +76,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -96,6 +97,33 @@ jobs:
           go vet ./...
           GOOS=windows go vet ./...
           GOOS=darwin go vet ./...
+
+      - name: Install golangci-lint
+        if: github.event_name == 'pull_request'
+        env:
+          LINT_VERSION: 2.14.0
+          LINT_SHA256: ab90aeb7b066f92a33415b638a50fe5344bbb75a0d32ad30cc248d88f81032ab
+        run: |
+          archive="golangci-lint-${LINT_VERSION}-linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --max-time 120 \
+            --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/golangci/golangci-lint/releases/download/v${LINT_VERSION}/$archive"
+          printf '%s  %s\n' "$LINT_SHA256" "$RUNNER_TEMP/$archive" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" \
+            "golangci-lint-${LINT_VERSION}-linux-amd64/golangci-lint"
+          echo "$RUNNER_TEMP/golangci-lint-${LINT_VERSION}-linux-amd64" >>"$GITHUB_PATH"
+
+      - name: Test timing (linux, windows, darwin, new lines only)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          status=0
+          for goos in linux windows darwin; do
+            echo "== GOOS=$goos"
+            GOOS=$goos golangci-lint run --new-from-merge-base="origin/$BASE_REF" ./... || status=1
+          done
+          exit $status
 
   select:
     name: select packages
