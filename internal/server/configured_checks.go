@@ -497,6 +497,26 @@ func (app *App) runnerSourceManifest(writer http.ResponseWriter, request *http.R
 		writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused", "The exact source does not satisfy the configured materialization bounds.", nil)
 		return
 	}
+	oids := make([]string, 0, len(entries))
+	bound := app.Repositories.Git.ReadBound()
+	for _, entry := range entries {
+		if bound > 0 && entry.Size > bound {
+			writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused", checkSourceReadRefusal, nil)
+			return
+		}
+		oids = append(oids, entry.OID)
+	}
+	err = checksource.RetryWhileRepositoryBusy(request.Context(), runnerSourceBusyWait, func() error {
+		return source.CheckBlobRebuilds(request.Context(), oids)
+	})
+	if errors.Is(err, repository.ErrPinnedBlobTooLarge) {
+		writeAPIError(writer, http.StatusUnprocessableEntity, "check_source_refused", checkSourceReadRefusal, nil)
+		return
+	}
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "configured check source memory check", err), "check_source_unavailable", "The exact configured-check source is unavailable.", nil)
+		return
+	}
 	response := checkapi.SourceManifest{OK: true, JobID: job.ID, CommitOID: job.SourceOID, ObjectFormat: source.ObjectFormat(), Limits: job.Execution.Source}
 	for _, entry := range entries {
 		response.Entries = append(response.Entries, checkapi.SourceEntry{Path: entry.Path, OID: entry.OID, Mode: entry.Mode, Type: entry.Type, Size: entry.Size})

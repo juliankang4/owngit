@@ -447,10 +447,6 @@ func (source *remoteSource) ListTree(ctx context.Context, metadataLimit int64) (
 	return entries, nil
 }
 
-// CheckBlobRebuilds prices nothing for this source: the objects arrive over the
-// network from the server that holds the repository, and that server refuses an
-// object it cannot read without rebuilding a stored delta beyond its memory
-// when the runner asks for it.
 func (source *remoteSource) CheckBlobRebuilds(ctx context.Context, oids []string) error {
 	return nil
 }

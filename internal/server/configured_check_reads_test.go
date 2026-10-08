@@ -236,6 +236,121 @@ func mustJSON(t *testing.T, value any) string {
 	return string(encoded)
 }
 
+func claimedSourceRunner(t *testing.T, fixture apiFixture, commit string) (*apiclient.Client, *checkapi.Job) {
+	t.Helper()
+	ctx := context.Background()
+	now := fixture.app.now()
+	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
+		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, now)
+	noErr(t, err)
+	_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
+	noErr(t, err)
+	_, token, created, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
+	if err != nil || !created {
+		t.Fatalf("issue runner token created=%v err=%v", created, err)
+	}
+	job, deduped, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
+		RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/main@" + commit,
+		SourceOID: commit, TriggerRef: "main", WorkflowDigest: strings.Repeat("b", 64),
+		Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
+	}, now)
+	if err != nil || deduped {
+		t.Fatalf("admit job deduped=%v err=%v", deduped, err)
+	}
+	server := serve(t, fixture.app.Handler())
+	serverURL, err := url.Parse(server.URL)
+	noErr(t, err)
+	runner := apiclient.NewBearer(serverURL, token)
+	content, err := runner.Do(ctx, http.MethodPost, "/api/v1/repositories/project/runner/claim", nil)
+	noErr(t, err)
+	var claimed checkapi.JobResponse
+	noErr(t, json.Unmarshal(content, &claimed))
+	if claimed.Job == nil || claimed.Job.ID != job.ID || claimed.Job.LeaseID == "" {
+		t.Fatalf("claim job=%+v", claimed.Job)
+	}
+	return runner, claimed.Job
+}
+
+func TestRunnerManifestRefusesFilesAboveServerReadBounds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs real Git repacks to change the source delta storage")
+	}
+	saved := hostmem.Ceiling
+	defer func() { hostmem.Ceiling = saved }()
+	for _, test := range []struct {
+		name    string
+		ceiling uint64
+	}{
+		{"memory", 16 << 20},
+		{"size", 512 << 20},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			hostmem.Ceiling = func() uint64 { return test.ceiling }
+			fixture := newAPIFixture(t, false)
+			apiRunGit(t, fixture.work, "checkout", "main")
+			text := strings.Repeat("a line of source text\n", 4096)
+			if test.name == "size" {
+				bound := fixture.app.Repositories.Git.ReadBound()
+				if bound == 0 {
+					t.Fatal("the forced ceiling gave no read bound")
+				}
+				text = strings.Repeat("x", int(bound)+1)
+			}
+			versions := []string{text}
+			if test.name == "memory" {
+				versions = append(versions, text+"a change\n")
+			}
+			for _, content := range versions {
+				noErr(t, os.WriteFile(filepath.Join(fixture.work, "file.txt"), []byte(content), 0o600))
+				apiRunGit(t, fixture.work, "add", "file.txt")
+				apiRunGit(t, fixture.work, "commit", "-m", "source content")
+			}
+			apiRunGit(t, fixture.work, "push", "-q", "origin", "HEAD:refs/heads/main")
+			revision := "HEAD"
+			if test.name == "memory" {
+				revision = "HEAD~1"
+				apiRunGit(t, "", "--git-dir", fixture.remote, "repack", "-a", "-d", "-f", "--window=10", "--depth=1")
+			}
+			commit := apiGitOutput(t, fixture.work, "rev-parse", revision)
+			oid := apiGitOutput(t, fixture.work, "rev-parse", revision+":file.txt")
+			if test.name == "memory" {
+				objects := apiGitOutput(t, fixture.remote, "cat-file", "--batch-all-objects", "--batch-check=%(objectname) %(deltabase)")
+				if strings.Contains(objects, oid+" "+strings.Repeat("0", len(oid))) || !strings.Contains(objects, oid+" ") {
+					t.Fatal("the source fixture is not stored as a delta")
+				}
+			}
+			runner, job := claimedSourceRunner(t, fixture, commit)
+			if int64(len(text)) > job.Execution.Source.MaxFileBytes {
+				t.Fatal("the fixture exceeds the configured file bound")
+			}
+			ctx := context.Background()
+			endpoint := "/api/v1/repositories/project/runner/jobs/" + job.ID + "/source"
+			headers := map[string]string{runnerLeaseHeader: job.LeaseID}
+			_, err := runner.DoWithHeaders(ctx, http.MethodGet, endpoint, nil, headers)
+			problem := requireAPIError(t, "source manifest read refusal", err, http.StatusUnprocessableEntity, "check_source_refused")
+			if problem.Message != "The exact source contains a file this server cannot read within its size or memory limits." {
+				t.Fatalf("source refusal message = %q", problem.Message)
+			}
+
+			if test.name == "memory" {
+				apiRunGit(t, "", "--git-dir", fixture.remote, "repack", "-a", "-d", "-f", "--depth=0")
+			} else {
+				hostmem.Ceiling = func() uint64 { return 1 << 30 }
+			}
+			content, err := runner.DoWithHeaders(ctx, http.MethodGet, endpoint, nil, headers)
+			noErr(t, err)
+			var manifest checkapi.SourceManifest
+			noErr(t, json.Unmarshal(content, &manifest))
+			if !manifest.OK || manifest.JobID != job.ID || manifest.CommitOID != commit || len(manifest.Entries) != 1 || manifest.Entries[0].OID != oid {
+				t.Fatalf("source manifest within the read bounds = %+v", manifest)
+			}
+		})
+	}
+}
+
 // A runner source read of a file above the server read bound is refused before
 // Git reconstructs the object, with the stable refusal code the runner reports
 // as the job's reason. The same request for a small file is served unchanged.
@@ -259,44 +374,12 @@ func TestRunnerSourceBlobAboveTheReadBoundIsRefused(t *testing.T) {
 	bigOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:big.txt")
 	smallOID := apiGitOutput(t, fixture.work, "rev-parse", "HEAD:file.txt")
 
-	now := fixture.app.now()
-	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
-		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
-		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
-		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
-	}, now)
-	noErr(t, err)
-	_, err = fixture.store.GrantCheckConsent(ctx, "project", now)
-	noErr(t, err)
-	_, token, created, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
-	if err != nil || !created {
-		t.Fatalf("issue runner token created=%v err=%v", created, err)
-	}
-	job, deduped, err := fixture.store.AdmitCheckJob(ctx, state.CheckJobRequest{
-		RepositoryID: "project", Trigger: "push", EventKey: "refs/heads/main@" + commit,
-		SourceOID: commit, TriggerRef: "main", WorkflowDigest: strings.Repeat("b", 64),
-		Checks: []state.CheckDefinition{{Name: "unit", Command: "go test ./..."}},
-	}, now)
-	if err != nil || deduped {
-		t.Fatalf("admit job deduped=%v err=%v", deduped, err)
-	}
-
-	server := serve(t, fixture.app.Handler())
-	serverURL, err := url.Parse(server.URL)
-	noErr(t, err)
-	runner := apiclient.NewBearer(serverURL, token)
-	content, err := runner.Do(ctx, http.MethodPost, "/api/v1/repositories/project/runner/claim", nil)
-	noErr(t, err)
-	var claimed checkapi.JobResponse
-	noErr(t, json.Unmarshal(content, &claimed))
-	if claimed.Job == nil || claimed.Job.ID != job.ID || claimed.Job.LeaseID == "" {
-		t.Fatalf("claim job=%+v", claimed.Job)
-	}
-	lease := claimed.Job.LeaseID
+	runner, job := claimedSourceRunner(t, fixture, commit)
+	lease := job.LeaseID
 	blobURL := func(path, oid string) string {
 		return "/api/v1/repositories/project/runner/jobs/" + job.ID + "/files/" + base64.RawURLEncoding.EncodeToString([]byte(path)) + "/" + oid
 	}
-	_, _, err = runner.GetBytes(ctx, blobURL("big.txt", bigOID), map[string]string{runnerLeaseHeader: lease}, bound+1)
+	_, _, err := runner.GetBytes(ctx, blobURL("big.txt", bigOID), map[string]string{runnerLeaseHeader: lease}, bound+1)
 	problem := requireAPIError(t, "source blob above the read bound", err, http.StatusUnprocessableEntity, "check_source_refused")
 	if problem.Message != "The exact source contains a file this server cannot read within its size or memory limits." {
 		t.Fatalf("source refusal message = %q", problem.Message)
