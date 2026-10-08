@@ -24,6 +24,11 @@ func NewCheckEnvironment(t *testing.T) CheckEnvironment {
 	fixture := CheckEnvironment{values: make(map[string]string)}
 	for _, name := range strings.Fields(names) {
 		value := os.Getenv(name)
+		// Windows uses this optional WOW64 value to rewrite the child architecture.
+		if name == "PROCESSOR_ARCHITEW6432" && value == "" {
+			fixture.values[environmentKey(name)] = ""
+			continue
+		}
 		if value == "" {
 			value = "allowlist-value"
 		}
@@ -46,7 +51,7 @@ func NewCheckEnvironment(t *testing.T) CheckEnvironment {
 	fixture.values["TEMPORARY_READY"] = "1"
 	fixture.Command = `env; test -d "$TMPDIR" && test "$TMPDIR" = "$TEMP" && test "$TEMP" = "$TMP" && printf temporary > "$TMPDIR/probe" && echo TEMPORARY_READY=1; exit 3`
 	if runtime.GOOS == "windows" {
-		fixture.Command = `set & if not exist "%TEMP%\" exit /b 2 & echo temporary>"%TEMP%\probe" & if errorlevel 1 exit /b 2 & echo TEMPORARY_READY=1 & exit /b 3`
+		fixture.Command = `set & (if not exist "%TEMP%\" exit /b 2) & (echo temporary>"%TEMP%\probe" || exit /b 2) & (echo TEMPORARY_READY=1) & exit /b 3`
 	}
 	return fixture
 }

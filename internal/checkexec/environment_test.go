@@ -26,7 +26,7 @@ func TestRunEnvironment(t *testing.T) {
 	large := `i=0; while [ "$i" -lt 300 ]; do echo ` + line + `; i=$((i+1)); done; exit 3`
 	if runtime.GOOS == "windows" {
 		dump = "set"
-		large = "for /l %i in (1,1,300) do @echo " + line + " & exit /b 3"
+		large = "(for /l %i in (1,1,300) do @echo " + line + ") & exit /b 3"
 	}
 	for _, test := range []struct {
 		name, command, status string
@@ -67,6 +67,9 @@ func TestRunEnvironment(t *testing.T) {
 			results, cancelled := Run(context.Background(), []Definition{{Name: "environment", Command: test.command}}, test.options)
 			if cancelled || len(results) != 1 || results[0].Status != test.status {
 				t.Fatalf("results=%+v cancelled=%v", results, cancelled)
+			}
+			if code := results[0].ExitCode; test.status == StatusFailed && (code == nil || *code != 3) {
+				t.Fatal("failed command did not return exit code 3")
 			}
 			if test.name == "process and temporary cleanup errors" {
 				cleanup := results[0].CleanupError
