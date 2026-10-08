@@ -29,7 +29,7 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 In a terminal, it ends by printing the setup link. Running it again keeps the state and the repositories.
 
-The program goes to `~/.local/bin/owngit` (`/usr/local/bin/owngit` for root) or, on Windows, to a folder per release under `%LOCALAPPDATA%\Programs\OwnGit`. The installer does not change PATH; when the folder is not on PATH, it says how to run the program.
+The program goes to `~/.local/bin/owngit` (`/usr/local/bin/owngit` for root) or, on Windows, to a folder per release under `%LOCALAPPDATA%\Programs\OwnGit`. The installer does not change PATH; when the folder is not on PATH, it says how to run the program. On Windows, it also registers OwnGit for [Windows notifications](#windows-notifications), with or without a service.
 
 | Linux and macOS | Windows | What it does |
 | --- | --- | --- |
@@ -289,7 +289,7 @@ When a service under your account runs this program, the printed command also ru
 
 With Homebrew, `owngit service install` after `brew upgrade owngit` hands the restart to `brew services restart owngit` without opening the state first, so the new version backs up the state and then upgrades it.
 
-`owngit uninstall` removes the service and prints how to remove the program. It never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
+`owngit uninstall` removes the service and prints how to remove the program. On Windows, it also removes OwnGit's registration for [Windows notifications](#windows-notifications). It never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
 
 ### Backup versions
 
@@ -468,8 +468,23 @@ owngit tray notifications only_others on
 
 Notifications are a convenience. The dashboard keeps every push, check and backup result, whether or not a notification appeared. Clicking a notification opens the page it names. A notification that groups several pushes to one repository opens the commit list of the latest pushed branch or tag, or the repository when that latest push deleted it.
 
-- Windows: notifications that arrive together appear one after another, about 10 seconds apart (5 seconds while the panel is open). When more than three arrive at once, one notification says how many there are, for example "4 new OwnGit notifications", and clicking it opens the dashboard. A click after a notification has left the screen opens nothing.
+- Windows: notifications that arrive together appear one after another, about 10 seconds apart (5 seconds while the panel is open). When more than three arrive at once, one notification says how many there are, for example "4 new OwnGit notifications", and clicking it opens the dashboard. How Windows shows them is in [Windows notifications](#windows-notifications).
 - Linux: when the desktop has no notification service, the Notifications section of the panel and the icon menu say so. OwnGit keeps trying, waiting longer each time up to five minutes, and writes the reason to its log once until notifications work again. When a service starts, the waiting notifications appear, each one once.
+
+### Windows notifications
+
+On Windows 10 version 1809 or later, including Windows 11, OwnGit's notifications are regular Windows notifications from an app named OwnGit (tested on Windows 11). Each one appears as a banner and then stays in the notification center. Clicking it, on the banner or in the notification center, opens its page, even after the icon has quit. The click needs OwnGit itself to be running; when it is not, no page opens.
+
+Windows settings decide how notifications appear. With Do not disturb on, no banner appears, and the notification goes to the notification center. If you turn off OwnGit's notifications in Windows settings, OwnGit does not show them in any other way.
+
+Windows needs OwnGit registered for your account: the app name, and the program that Windows starts when you click a notification.
+
+- The one-line installer registers it, also with `-NoService`.
+- The icon registers it again each time it starts. A program you unpacked yourself, or one that is now in another folder, works the same way.
+- If registration fails, the installer prints a warning and finishes the installation anyway. To try again, run `owngit tray icon --register-notifications`; the warning shows this command with the program's full path.
+- `owngit uninstall` removes the registration. If part of the registration cannot be removed, it removes the rest, warns with the registry keys left, still prints how to remove the program, and exits with an error. Your Windows notification settings for OwnGit stay for a later install.
+
+On Windows 10 versions before 1809, or when registration fails or Windows notifications are unavailable as the icon starts, the icon shows notification area balloons instead. Windows decides how long a balloon stays and whether the notification center keeps it, and this differs between Windows versions. OwnGit opens a balloon's page only when you click the balloon while it is on screen and the icon is running. When Windows refuses one notification after the icon has started, OwnGit does not switch to a balloon; it offers that notification again later.
 
 ## Reaching the server from another device
 
