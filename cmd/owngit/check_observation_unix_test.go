@@ -43,6 +43,14 @@ import (
 // on Windows is a job object in the shared Git runner, which this package does
 // not replace.
 func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
+	var binary string
+	builtBinary := func() string {
+		if binary == "" {
+			binary = buildOwngit(t)
+		}
+		return binary
+	}
+
 	// The bound belongs to the observation: nobody stops this run, and the
 	// result still arrives, with the check's own result and an unknown
 	// worktree state that names the reason in the recorded log. The check
@@ -189,7 +197,7 @@ func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
 				if interrupt.started != nil {
 					interrupt.started(t)
 				}
-				run := startBlockedRun(t, true)
+				run := startBlockedRun(t, builtBinary(), true)
 				noErr(t, syscall.Kill(-run.command.Process.Pid, interrupt.signal))
 				if interrupt.code == 0 {
 					// The signal changed nothing: the command and its observation
@@ -255,7 +263,7 @@ func TestBlockedCleanFilterCannotHoldTheWorktreeObservation(t *testing.T) {
 				if interrupt.started != nil {
 					interrupt.started(t)
 				}
-				run := startBlockedRun(t, false)
+				run := startBlockedRun(t, builtBinary(), false)
 				noErr(t, syscall.Kill(-run.command.Process.Pid, interrupt.signal))
 				waitForExit(t, run.command, "the interrupted run")
 				waitForFilterGone(t, run.filter)
@@ -295,7 +303,7 @@ type blockedRun struct {
 // it, against a fresh server task and a checkout whose configured clean filter
 // blocks the worktree observation: the one before the checks when armedBefore is
 // true, and the one after them, which the check itself arms, otherwise.
-func startBlockedRun(t *testing.T, armedBefore bool) blockedRun {
+func startBlockedRun(t *testing.T, binary string, armedBefore bool) blockedRun {
 	t.Helper()
 	setWorktreeObservationBound(t, time.Minute)
 	remoteFlags, taskID, work := startCheckCLIServer(t)
@@ -307,7 +315,7 @@ func startBlockedRun(t *testing.T, armedBefore bool) blockedRun {
 		armBlockedFilter(t, fixture)
 		check = "restore=printf 'base\\n' > tracked.txt && rm -f \"$OWN_FILTER_ARMING\""
 	}
-	command := exec.Command(buildOwngit(t), append([]string{
+	command := exec.Command(binary, append([]string{
 		"check", "run", "--task", taskID, "--workdir", work, "--check", check,
 	}, remoteFlags...)...)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

@@ -14,12 +14,16 @@ import (
 // every color depth and background, open and closed cards, Korean width,
 // long paths, characters of uncertain width, and control characters.
 type renderCase struct {
-	Width  int             `json:"width"`
-	Depth  string          `json:"depth"`
-	Theme  string          `json:"theme"`
-	Kind   string          `json:"kind"`
-	Spec   json.RawMessage `json:"spec"`
-	Output string          `json:"output"`
+	Width  int    `json:"width"`
+	Depth  string `json:"depth"`
+	Theme  string `json:"theme"`
+	Input  int    `json:"input"`
+	Output string `json:"output"`
+}
+
+type renderInput struct {
+	Kind string          `json:"kind"`
+	Spec json.RawMessage `json:"spec"`
 }
 
 type cardSpec struct {
@@ -88,19 +92,26 @@ func TestRendererMatchesTheApprovedDesign(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var cases []renderCase
-	if err := json.Unmarshal(content, &cases); err != nil {
+	var fixture struct {
+		Inputs []renderInput `json:"inputs"`
+		Cases  []renderCase  `json:"cases"`
+	}
+	if err := json.Unmarshal(content, &fixture); err != nil {
 		t.Fatal(err)
 	}
 	depths := map[string]depth{"none": depthNone, "16": depth16, "256": depth256, "truecolor": depthTrue}
 	themes := map[string]theme{"unknown": themeUnknown, "dark": themeDark, "light": themeLight}
-	for i, c := range cases {
+	for i, c := range fixture.Cases {
+		if c.Input < 0 || c.Input >= len(fixture.Inputs) {
+			t.Fatalf("case %d: input index %d out of range", i, c.Input)
+		}
+		input := fixture.Inputs[c.Input]
 		s, out := testScreen(c.Width, depths[c.Depth], themes[c.Theme])
-		name := c.Kind
-		switch c.Kind {
+		name := input.Kind
+		switch input.Kind {
 		case "card":
 			var spec cardSpec
-			if err := json.Unmarshal(c.Spec, &spec); err != nil {
+			if err := json.Unmarshal(input.Spec, &spec); err != nil {
 				t.Fatal(err)
 			}
 			name += " " + spec.Name
@@ -115,11 +126,11 @@ func TestRendererMatchesTheApprovedDesign(t *testing.T) {
 			s.card(spec.Title, items, style)
 		case "say":
 			var spec struct{ Tag, Text string }
-			_ = json.Unmarshal(c.Spec, &spec)
+			_ = json.Unmarshal(input.Spec, &spec)
 			s.notice(spec.Tag, spec.Text)
 		case "prompt":
 			var spec struct{ Label, Default, Suggested string }
-			_ = json.Unmarshal(c.Spec, &spec)
+			_ = json.Unmarshal(input.Spec, &spec)
 			s.prompt(spec.Label, spec.Default, spec.Suggested)
 		case "banner":
 			s.banner("First-run setup", "http://127.0.0.1:7654/")

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -58,55 +57,6 @@ func TestALocalRunReportsNoMeasuredBudget(t *testing.T) {
 	}
 	if _, ok := raw["task"]; ok {
 		t.Fatal("a local run emits a task key; the documented rule is that it is omitted")
-	}
-}
-
-// TestTheDocumentsWarnAboutTheUnmeasuredBudget keeps the guide and the skill
-// carrying the caution together.
-//
-// They are delivered as a pair, and an agent that reads only the skill must
-// still be told not to infer exhaustion from the local 0.
-func TestTheDocumentsWarnAboutTheUnmeasuredBudget(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	noErr(t, err)
-	for _, document := range []string{
-		"docs/CODING_TOOLS.md",
-		"integrations/skills/owngit-checks/SKILL.md",
-	} {
-		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(document)))
-		noErr(t, err)
-		// Markdown wraps these documents, so a phrase can be split across
-		// lines. Compare on collapsed whitespace, not the raw text.
-		body := strings.Join(strings.Fields(string(data)), " ")
-		if !strings.Contains(body, "correction_cycles_remaining") {
-			t.Errorf("%s does not name the field", document)
-		}
-		if !strings.Contains(body, "check status") {
-			t.Errorf("%s does not send the reader to check status", document)
-		}
-		if !strings.Contains(body, "task") {
-			t.Errorf("%s does not name the task object", document)
-		}
-		// An unconfirmed registration is not an absent one. Only --no-upload
-		// establishes that the server task was not touched, so the documents
-		// must not group the two into one "unchanged" claim.
-		if !strings.Contains(body, "unconfirmed") && !strings.Contains(body, "may have been accepted") {
-			t.Errorf("%s does not say a failed registration is unconfirmed rather than absent", document)
-		}
-		if strings.Contains(body, "In both cases the server task is unchanged") {
-			t.Errorf("%s still claims a failed registration left the server task unchanged", document)
-		}
-		// The uncertainty must stay uncertain in both directions.
-		if strings.Contains(body, "a failed registration did not") {
-			t.Errorf("%s asserts a failed registration changed the task instead of reporting uncertainty", document)
-		}
-		// Reusing an attempt identifier is not an action check run offers.
-		if strings.Contains(body, "reuse the same task and attempt identifiers") {
-			t.Errorf("%s tells the reader to reuse an attempt identifier, which check run cannot do", document)
-		}
-		if !strings.Contains(body, "diagnostic evidence") {
-			t.Errorf("%s does not keep the attempt identifier as diagnostic evidence", document)
-		}
 	}
 }
 

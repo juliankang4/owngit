@@ -233,9 +233,8 @@ func TestRunHonoursTheSavedSetting(t *testing.T) {
 		<-done
 	}()
 
-	// Off: a wake makes no request.
-	checker.Wake()
-	time.Sleep(100 * time.Millisecond)
+	// Off: checking the saved setting makes no request.
+	checker.CheckIfEnabled(ctx)
 	if hits.Load() != 0 {
 		t.Fatalf("a disabled checker made %d requests", hits.Load())
 	}
