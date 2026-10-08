@@ -407,6 +407,14 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 	const token = "synthetic-issued-token"
 	const password = "synthetic-admin-password"
 	const credentialID = "ffffffffffffffffffffffffffffffff"
+	lostResponse := func(writer http.ResponseWriter, _, _ string) {
+		connection, _, err := writer.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("lose the issuance response: %v", err)
+			return
+		}
+		noErr(t, connection.Close())
+	}
 	malformed := func(writer http.ResponseWriter, _, _ string) {
 		_, _ = io.WriteString(writer, `{"ok":true}`)
 	}
@@ -428,6 +436,19 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 			_, _ = fmt.Fprintf(writer, `{"ok":false,"error":{"code":%q,"message":%q}}`, code, message)
 		}
 	}
+	unavailableWithDetails := func(details any) func(http.ResponseWriter, string, string) {
+		encoded, err := json.Marshal(details)
+		noErr(t, err)
+		return func(writer http.ResponseWriter, _, _ string) {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = fmt.Fprintf(writer, `{"ok":false,"error":{"code":"state_unavailable","message":"Authentication is unavailable.","details":%s}}`, encoded)
+		}
+	}
+	notStarted := pullrequest.OperationErrorDetails{OperationStarted: new(bool)}
+	started := true
+	invalidMarker, err := json.Marshal(notStarted)
+	noErr(t, err)
+	invalidMarker = bytes.Replace(invalidMarker, []byte("false"), []byte(`"false"`), 1)
 	// A proxy page is not an OwnGit answer, so it settles nothing.
 	proxyPage := func(writer http.ResponseWriter, _, _ string) {
 		writer.Header().Set("Content-Type", "text/html")
@@ -473,8 +494,20 @@ func TestCredentialIssuanceReportsItsCompensation(t *testing.T) {
 				"token_unavailable", command.command + " revoke " + command.idFlag + " " + credentialID, 0, true, false},
 			{"proxy page and confirmed revoke", proxyPage, false,
 				"invalid_response", "non-JSON", 1, false, true},
+			{"authentication refused before issuance", unavailableWithDetails(notStarted), true,
+				"state_unavailable", "Authentication is unavailable.", 0, false, false},
+			{"operation started and failed revoke", unavailableWithDetails(pullrequest.OperationErrorDetails{OperationStarted: &started}), true,
+				"credential_creation_unconfirmed", "Authentication is unavailable.", 1, true, true},
+			{"missing operation marker and failed revoke", unavailableWithDetails(struct{}{}), true,
+				"credential_creation_unconfirmed", "Authentication is unavailable.", 1, true, true},
+			{"null operation marker and failed revoke", unavailableWithDetails(pullrequest.OperationErrorDetails{}), true,
+				"credential_creation_unconfirmed", "Authentication is unavailable.", 1, true, true},
+			{"invalid operation marker and failed revoke", unavailableWithDetails(json.RawMessage(invalidMarker)), true,
+				"credential_creation_unconfirmed", "Authentication is unavailable.", 1, true, true},
 			{"server failure and failed revoke", refusal(http.StatusServiceUnavailable, "state_unavailable", unavailable), true,
 				"credential_creation_unconfirmed", unavailable, 1, true, true},
+			{"lost response and confirmed revoke", lostResponse, false,
+				"connection_failed", "request failed", 1, false, true},
 			{"malformed response and confirmed revoke", malformed, false,
 				"invalid_response", "did not return", 1, false, true},
 			{"malformed response and failed revoke", malformed, true,
@@ -557,9 +590,27 @@ func TestRunnerCredentialReuseKeepsTheEarlierCredential(t *testing.T) {
 	if failure != "" {
 		t.Fatal(failure)
 	}
-	// An invalid label is refused before the creation identity is looked up.
-	if _, failure := fixture.issue(t, activeID, "bad\nlabel", "refused-token"); !strings.HasPrefix(failure, "invalid_runner_credential: ") {
-		t.Fatalf("refused reuse: %s", failure)
+	for _, refusal := range []struct {
+		name, label, code string
+		unavailable       bool
+	}{
+		{"invalid label", "bad\nlabel", "invalid_runner_credential", false},
+		{"unfinished authentication", "build-host", "state_unavailable", true},
+	} {
+		t.Run(refusal.name, func(t *testing.T) {
+			if refusal.unavailable {
+				noErr(t, fixture.store.RecordFailedAttempt(fixture.ctx, "admin", "127.0.0.1", time.Now()))
+				noErr(t, fixture.store.Exec(fixture.ctx, `CREATE TRIGGER refuse_clearing BEFORE DELETE ON login_attempts BEGIN SELECT RAISE(ABORT, 'injected failure'); END`))
+				t.Cleanup(func() { noErr(t, fixture.store.Exec(fixture.ctx, `DROP TRIGGER refuse_clearing`)) })
+			}
+			_, failure := fixture.issue(t, activeID, refusal.label, refusal.code+"-token")
+			if !strings.HasPrefix(failure, refusal.code+": ") || strings.Contains(failure, "was revoked") {
+				t.Fatalf("refused reuse: %s", failure)
+			}
+			if revokes := fixture.creationRevokes.Load(); revokes != 0 {
+				t.Fatalf("a pre-issuance refusal sent %d revokes", revokes)
+			}
+		})
 	}
 	// The same content replays the earlier creation without its token.
 	_, failure = fixture.issue(t, activeID, "build-host", "replayed-token")
@@ -574,6 +625,19 @@ func TestRunnerCredentialReuseKeepsTheEarlierCredential(t *testing.T) {
 		listed.Credentials[0].CreationID != activeID {
 		t.Fatalf("earlier credential count=%d still active=%v", len(listed.Credentials),
 			len(listed.Credentials) == 1 && listed.Credentials[0].ID == active.Credential.ID && listed.Credentials[0].RevokedAt == nil)
+	}
+
+	token, err := readTokenFile(filepath.Join(fixture.root, "active-token"))
+	noErr(t, err)
+	credential, accepted, err := fixture.store.RunnerCredentialByToken(fixture.ctx, fixture.repository.ID, token.secret, time.Now())
+	noErr(t, err)
+	if !accepted || credential.ID != active.Credential.ID {
+		t.Fatal("the earlier runner token is no longer active")
+	}
+	content, err := os.ReadFile(filepath.Join(fixture.root, "replayed-token"))
+	noErr(t, err)
+	if len(content) != 0 {
+		t.Fatal("the replay disclosed a token")
 	}
 
 	// A replay of a credential the owner revoked names it as revoked and asks
@@ -618,6 +682,10 @@ func TestCompensatedRunnerIssuanceAsksForANewCreationIdentity(t *testing.T) {
 	}
 	if revokes := fixture.creationRevokes.Load(); revokes != 1 {
 		t.Fatalf("revokes by creation identity=%d, want the compensation only", revokes)
+	}
+	listed := fixture.runCredentialList(t)
+	if len(listed.Credentials) != 1 || listed.Credentials[0].CreationID != strings.Repeat("e", 32) || listed.Credentials[0].RevokedAt == nil {
+		t.Fatalf("compensation did not revoke the issued credential: %+v", listed.Credentials)
 	}
 	if _, failure := fixture.issue(t, "", "compensated-host", "fresh-token"); failure != "" {
 		t.Fatalf("issuance without a chosen identity: %s", failure)

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -85,6 +86,9 @@ func failAttemptClearing(t *testing.T, store *state.Store) {
 // A password check that could not be completed says nothing about the
 // password: the API answers 503 without a challenge and changes nothing.
 func TestAPIPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Full password checks exceed the short-test budget")
+	}
 	for _, failure := range []struct {
 		name   string
 		wrong  bool
@@ -113,10 +117,17 @@ func TestAPIPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 					"title": "Unverified", "source_branch": "feature", "target_branch": "main", "review": "skip",
 				}, general, ""),
 				adminAPIRequest(t, http.MethodPost, base+"/helper-credentials", map[string]any{"label": "unverified"}, admin),
+				adminAPIRequest(t, http.MethodPost, base+"/runner-credentials", map[string]any{"label": "unverified"}, admin),
 			} {
 				challenge := response.Header.Get("WWW-Authenticate")
-				if status, code := checkStatus(t, response); status != http.StatusServiceUnavailable || code != "state_unavailable" || challenge != "" {
-					t.Fatalf("%s status=%d code=%q challenge=%q", response.Request.URL.Path, status, code, challenge)
+				var envelope pullrequest.ErrorEnvelope
+				noErr(t, json.NewDecoder(response.Body).Decode(&envelope))
+				noErr(t, response.Body.Close())
+				var details pullrequest.OperationErrorDetails
+				noErr(t, json.Unmarshal(envelope.Error.Details, &details))
+				if response.StatusCode != http.StatusServiceUnavailable || envelope.Error.Code != "state_unavailable" || challenge != "" ||
+					envelope.Error.Message != "The password could not be verified. Try again later." || details.OperationStarted == nil || *details.OperationStarted {
+					t.Fatalf("%s status=%d error=%+v challenge=%q", response.Request.URL.Path, response.StatusCode, envelope.Error, challenge)
 				}
 			}
 			listed, err := fixture.app.PullRequests.List(context.Background(), "project", pullrequest.ListInput{})
@@ -124,8 +135,10 @@ func TestAPIPasswordCheckThatCouldNotFinishIsUnavailable(t *testing.T) {
 			pullRequests := listed.Items
 			credentials, err := fixture.store.HelperCredentials(context.Background(), "project")
 			noErr(t, err)
-			if len(pullRequests) != 0 || len(credentials) != 0 {
-				t.Fatalf("an unverified request changed state: pull requests=%d credentials=%d", len(pullRequests), len(credentials))
+			runners, err := fixture.store.CheckRunnerCredentials(context.Background(), "project")
+			noErr(t, err)
+			if len(pullRequests) != 0 || len(credentials) != 0 || len(runners) != 0 {
+				t.Fatalf("an unverified request changed state: pull requests=%d helpers=%d runners=%d", len(pullRequests), len(credentials), len(runners))
 			}
 			requireLogged(t, serverLog,
 				"POST /api/v1/repositories/project/pull-requests: general password check could not be completed: ",

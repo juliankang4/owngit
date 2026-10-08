@@ -233,13 +233,6 @@ func (issuance credentialIssuance) replayed(credentialID string, revoked bool) e
 // compensate reports a failed issuance and revokes the credential this
 // attempt may have created.
 //
-// Only an attempt that may have created a credential is compensated. An
-// OwnGit refusal (a 4xx error object, including a creation conflict) settles
-// that nothing was created, so it is reported as received and nothing is
-// revoked. This also keeps a reused creation identity from revoking the
-// earlier credential it names. The revoke is scoped by the creation identity
-// sent with the request, so it never trusts a returned credential identifier.
-//
 // The result states why creation failed and then what compensation achieved.
 // A confirmed revoke keeps the failure's code and tells the owner how to
 // retry, since the server did not refuse the request and nothing from it
@@ -247,7 +240,7 @@ func (issuance credentialIssuance) replayed(credentialID string, revoked bool) e
 // tells the owner how to find and revoke the credential by its non-secret
 // creation identity before retrying.
 func (issuance credentialIssuance) compensate(cause error) error {
-	if definiteRefusal(cause) {
+	if definiteRefusal(cause) || refusedBeforeOperation(cause) {
 		return cause
 	}
 	failure := apiclient.Error{Code: "credential_creation_failed", Message: "Credential creation failed."}

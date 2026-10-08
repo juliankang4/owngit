@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"owngit/internal/state"
@@ -132,6 +133,14 @@ func TestUnfinishedPasswordChecksAreNotInvalidCredentials(t *testing.T) {
 			t.Cleanup(cancel)
 			return ctx
 		}, context.DeadlineExceeded},
+		{"request deadline while admission is full", "wrong-password", func(t *testing.T, manager *Manager) context.Context {
+			manager.checkSlots = make(chan struct{}, 1)
+			manager.checkSlots <- struct{}{}
+			t.Cleanup(func() { <-manager.checkSlots })
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			t.Cleanup(cancel)
+			return ctx
+		}, context.DeadlineExceeded},
 		{"request ends during the hash of a correct password", "shared-password", func(t *testing.T, manager *Manager) context.Context {
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
@@ -147,14 +156,30 @@ func TestUnfinishedPasswordChecksAreNotInvalidCredentials(t *testing.T) {
 		{"stored password missing", "shared-password", broken(`DELETE FROM passwords WHERE kind='access'`), nil},
 	} {
 		t.Run(failure.name, func(t *testing.T) {
-			manager, _, _, _ := countingManager(t)
-			ctx := failure.inject(t, manager)
-			for attempt := 0; attempt <= maximumFailures; attempt++ {
-				_, err := manager.VerifyCredential(ctx, "general", failure.password, "192.0.2.40:4000")
-				if err == nil || errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrRateLimited) || (failure.cause != nil && !errors.Is(err, failure.cause)) {
-					t.Fatalf("attempt %d: %v", attempt+1, err)
+			synctest.Test(t, func(t *testing.T) {
+				manager, _, checks, _ := countingManager(t)
+				ctx := failure.inject(t, manager)
+				for attempt := 0; attempt <= maximumFailures; attempt++ {
+					_, err := manager.VerifyCredential(ctx, "general", failure.password, "192.0.2.40:4000")
+					if err == nil || errors.Is(err, ErrInvalidCredentials) || errors.Is(err, ErrRateLimited) || (failure.cause != nil && !errors.Is(err, failure.cause)) {
+						t.Fatalf("attempt %d: %v", attempt+1, err)
+					}
 				}
-			}
+				if failure.name == "request deadline while admission is full" {
+					if checks.Load() != 0 {
+						t.Fatal("an expired admission performed a password comparison")
+					}
+					oneBelowLimit := maximumFailures - 1
+					for attempt := 0; attempt < oneBelowLimit; attempt++ {
+						noError(t, manager.Store.RecordFailedAttempt(context.Background(), "general", "192.0.2.40", time.Now()))
+					}
+					blocked, err := manager.Store.AttemptBlocked(context.Background(), "general", "192.0.2.40", time.Now())
+					noError(t, err)
+					if blocked != 0 {
+						t.Fatal("an expired admission counted a wrong password")
+					}
+				}
+			})
 		})
 	}
 }

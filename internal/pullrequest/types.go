@@ -426,3 +426,7 @@ type ErrorDescription struct {
 	Message string          `json:"message"`
 	Details json.RawMessage `json:"details,omitempty"`
 }
+
+type OperationErrorDetails struct {
+	OperationStarted *bool `json:"operation_started"`
+}

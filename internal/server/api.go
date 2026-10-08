@@ -348,7 +348,7 @@ func (app *App) checkAPIPassword(writer http.ResponseWriter, request *http.Reque
 		writer.Header().Set("WWW-Authenticate", realm)
 		writeAPIError(writer, http.StatusUnauthorized, code, message, nil)
 	default:
-		writeAPIError(writer, unavailable(request, kind+" password check", err), "state_unavailable", "The password could not be verified. Try again later.", nil)
+		writeAPIError(writer, unavailable(request, kind+" password check", err), "state_unavailable", "The password could not be verified. Try again later.", pullrequest.OperationErrorDetails{OperationStarted: new(bool)})
 	}
 	return 0, false
 }

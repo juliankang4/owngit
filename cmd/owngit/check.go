@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -24,6 +25,7 @@ import (
 	"owngit/internal/checkexec"
 	"owngit/internal/checkworkflow"
 	"owngit/internal/gitexec"
+	"owngit/internal/pullrequest"
 	"owngit/internal/state"
 )
 
@@ -679,6 +681,15 @@ func parseCheckDefinitions(values []string) ([]checkexec.Definition, error) {
 func definiteRefusal(err error) bool {
 	var problem *apiclient.Error
 	return errors.As(err, &problem) && problem.Status >= 400 && problem.Status < 500
+}
+
+func refusedBeforeOperation(cause error) bool {
+	var problem *apiclient.Error
+	if !errors.As(cause, &problem) || problem.Status != http.StatusServiceUnavailable || problem.Code != "state_unavailable" {
+		return false
+	}
+	var details pullrequest.OperationErrorDetails
+	return json.Unmarshal(problem.Details, &details) == nil && details.OperationStarted != nil && !*details.OperationStarted
 }
 
 // committedCheckDefinitions reads the checks from the workflow file committed
