@@ -237,8 +237,12 @@ var overlapCases = []struct {
 // is split into writes.
 func TestOverlappingSecretsAreReplacedWhole(t *testing.T) {
 	for _, testCase := range overlapCases {
-		for split := 0; split <= len(testCase.output); split++ {
-			for _, piece := range []int{1, len(testCase.output)} {
+		for _, piece := range []int{1, len(testCase.output)} {
+			lastSplit := len(testCase.output)
+			if piece == 1 {
+				lastSplit = 0
+			}
+			for split := 0; split <= lastSplit; split++ {
 				buffer := newBoundedBuffer(1<<20, testCase.secrets)
 				for _, part := range []string{testCase.output[:split], testCase.output[split:]} {
 					for start := 0; start < len(part); start += piece {
@@ -259,17 +263,23 @@ func TestOverlappingSecretsAreReplacedWhole(t *testing.T) {
 // No part of an overlapping secret is kept where the kept text cuts through it
 // (at the end of the head or the start of the tail) or the output limit does.
 func TestOverlappingSecretsAtTheMarkerAndTheLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("checks every overlapping secret across large head and tail excerpts")
+	}
 	space := KeptOutputBytes - 32
 	for _, testCase := range overlapCases[:2] {
-		for shift := -len(testCase.output) - 40; shift <= 40; shift++ {
-			for name, output := range map[string]string{
-				"head": strings.Repeat("x", max(0, space/4+shift)) + testCase.output + strings.Repeat("y", 2*KeptOutputBytes),
-				"tail": strings.Repeat("x", 2*KeptOutputBytes) + testCase.output + strings.Repeat("y", max(0, space-space/4+shift)),
-			} {
-				buffer := newBoundedBuffer(1<<30, testCase.secrets)
-				_, _ = buffer.Write([]byte(output))
-				if got := buffer.text(); !withoutSecretLetters(got) || !keptWithMarker(got) {
-					t.Fatalf("%s at the %s cut, shift %d: kept %d bytes", testCase.name, name, shift, len(got))
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			for shift := -len(testCase.output) - 40; shift <= 40; shift++ {
+				for name, output := range map[string]string{
+					"head": strings.Repeat("x", max(0, space/4+shift)) + testCase.output + strings.Repeat("y", 2*KeptOutputBytes),
+					"tail": strings.Repeat("x", 2*KeptOutputBytes) + testCase.output + strings.Repeat("y", max(0, space-space/4+shift)),
+				} {
+					buffer := newBoundedBuffer(1<<30, testCase.secrets)
+					_, _ = buffer.Write([]byte(output))
+					if got := buffer.text(); !withoutSecretLetters(got) || !keptWithMarker(got) {
+						t.Fatalf("%s at the %s cut, shift %d: kept %d bytes", testCase.name, name, shift, len(got))
+					}
 				}
 			}
 			for limit := 1; limit <= len(testCase.output)+1; limit++ {
@@ -279,6 +289,6 @@ func TestOverlappingSecretsAtTheMarkerAndTheLimit(t *testing.T) {
 					t.Fatalf("%s cut by a limit of %d: %q", testCase.name, len("xx")+limit, got)
 				}
 			}
-		}
+		})
 	}
 }

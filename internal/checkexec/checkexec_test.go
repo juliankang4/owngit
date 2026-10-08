@@ -70,6 +70,13 @@ func TestRunCancellationTerminatesTheOwnedProcess(t *testing.T) {
 		command = "ping -n 30 127.0.0.1"
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	originalObserver := ownedProcessStartedObserver
+	t.Cleanup(func() { ownedProcessStartedObserver = originalObserver })
+	ownedProcessStartedObserver = func() error {
+		cancel()
+		return nil
+	}
 	done := make(chan struct{})
 	var results []Result
 	var cancelled bool
@@ -77,8 +84,6 @@ func TestRunCancellationTerminatesTheOwnedProcess(t *testing.T) {
 		results, cancelled = Run(ctx, []Definition{{Name: "slow", Command: command}}, Options{Timeout: time.Minute})
 		close(done)
 	}()
-	time.Sleep(300 * time.Millisecond)
-	cancel()
 	select {
 	case <-done:
 	case <-time.After(20 * time.Second):
@@ -244,22 +249,26 @@ func processAliveAfter(pid int, bound time.Duration) bool {
 // to fail before the real retry runs.
 func TestRunReportsCleanupFailureOnEveryPath(t *testing.T) {
 	originalTerminate := terminateOwnedProcess
-	t.Cleanup(func() { terminateOwnedProcess = originalTerminate })
+	originalObserver := ownedProcessStartedObserver
+	t.Cleanup(func() {
+		terminateOwnedProcess = originalTerminate
+		ownedProcessStartedObserver = originalObserver
+	})
 	slow := "sleep 30"
 	if runtime.GOOS == "windows" {
 		slow = "ping -n 30 127.0.0.1"
 	}
 	cases := []struct {
-		name        string
-		command     string
-		timeout     time.Duration
-		cancelAfter time.Duration
+		name          string
+		command       string
+		timeout       time.Duration
+		cancelOnStart bool
 	}{
 		{name: "success", command: "echo ok"},
 		{name: "failure", command: "exit 7"},
 		{name: "missing", command: "definitely-not-a-command-owngit"},
 		{name: "timeout", command: slow, timeout: 300 * time.Millisecond},
-		{name: "cancelled", command: slow, cancelAfter: 200 * time.Millisecond},
+		{name: "cancelled", command: slow, cancelOnStart: true},
 	}
 	for _, testCase := range cases {
 		failFirstTermination := true
@@ -271,13 +280,14 @@ func TestRunReportsCleanupFailureOnEveryPath(t *testing.T) {
 			return originalTerminate(owner, grace)
 		}
 		ctx := context.Background()
-		if testCase.cancelAfter > 0 {
+		ownedProcessStartedObserver = originalObserver
+		if testCase.cancelOnStart {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithCancel(ctx)
-			go func() {
-				time.Sleep(testCase.cancelAfter)
+			ownedProcessStartedObserver = func() error {
 				cancel()
-			}()
+				return nil
+			}
 			defer cancel()
 		}
 		results, cancelled := Run(ctx, []Definition{{Name: testCase.name, Command: testCase.command}}, Options{Timeout: testCase.timeout})

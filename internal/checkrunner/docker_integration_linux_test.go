@@ -205,6 +205,9 @@ func TestRealDockerConfiguredChecks(t *testing.T) {
 
 func requireRealDocker(t *testing.T) realDockerConfig {
 	t.Helper()
+	if testing.Short() {
+		t.Skip("starts and waits for multiple real Docker containers")
+	}
 	if os.Getenv(realDockerEnableEnv) != "1" {
 		t.Skipf("set %s=1 with %s and a shared absolute TMPDIR to run real Docker integration", realDockerEnableEnv, realDockerImageEnv)
 	}
