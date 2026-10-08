@@ -210,6 +210,13 @@ certificate authority.
   The server keeps only a hash of each token.
 - After a repository is renamed, restart the runner with the new
   `--repository` within 90 days.
+- The read limits described under [What a check sees](#what-a-check-sees)
+  belong to the computer that runs OwnGit. Before the runner downloads any
+  file, OwnGit checks each file's size and the memory needed to rebuild it.
+  If a file is over either limit, OwnGit refuses the file list with HTTP 422
+  and `check_source_refused`.
+- OwnGit checks each file again when the runner downloads it. A runner on a
+  larger computer does not raise these limits.
 
 To keep a runner running after a reboot, use the service manager. On Linux
 with systemd:
@@ -275,8 +282,11 @@ a new private folder.
 - Git LFS files arrive as pointer files.
 - On a Linux computer with little memory, OwnGit refuses a file larger than
   one Git process may read: about 16 MiB with 512 MiB of memory and 32 MiB
-  with 1 GiB. The limit grows with memory, up to 512 MiB. The job then ends
-  without running.
+  with 1 GiB. The limit grows with memory, up to 512 MiB. It also refuses a
+  file that needs more memory to rebuild from stored deltas than this
+  computer allows (see
+  [Memory on a small Linux host](OPERATIONS.md#memory-on-a-small-linux-host)).
+  The job then ends without running.
 
 The policy's `execution.source` limits what is copied. Leave it empty for the
 defaults:
