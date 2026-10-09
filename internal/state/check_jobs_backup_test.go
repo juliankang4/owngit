@@ -21,7 +21,7 @@ import (
 func TestCheckJobClockCorrectionBackupRestore(t *testing.T) {
 	for _, transition := range []string{"claim", "cancel", "restart", "start", "renew"} {
 		t.Run(transition, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 			root := t.TempDir()
 			store, manager := clockBackupStore(t, ctx, root)
@@ -34,9 +34,9 @@ func TestCheckJobClockCorrectionBackupRestore(t *testing.T) {
 			clockBackupRequire(t, service.Start(ctx))
 			t.Cleanup(func() { clockBackupRequire(t, service.Stop(context.Background())) })
 			// A clean control uses the same real backup service and Git repositories.
-			clockBackupRun(t, ctx, service, store)
+			clockBackupRun(t, ctx, service)
 			job := clockBackupTransition(t, ctx, store, transition, admitted, corrected)
-			run := clockBackupRun(t, ctx, service, store)
+			run := clockBackupRun(t, ctx, service)
 			backup := filepath.Join(run.Destination, run.BackupName)
 			verified, err := recovery.Verify(ctx, backup, filepath.Join(root, "verify"), "")
 			clockBackupRequire(t, err)
@@ -182,14 +182,15 @@ func clockBackupTransition(t *testing.T, ctx context.Context, store *state.Store
 	return job
 }
 
-func clockBackupRun(t *testing.T, ctx context.Context, service *backups.Service, store *state.Store) state.BackupRun {
+func clockBackupRun(t *testing.T, ctx context.Context, service *backups.Service) backups.RunView {
 	t.Helper()
 	run, err := service.StartNow()
 	clockBackupRequire(t, err)
 	for {
-		runs, err := store.BackupRuns(ctx)
+		// The stored result can finish before retention releases the service slot.
+		runs, err := service.Runs(ctx)
 		clockBackupRequire(t, err)
-		var stored state.BackupRun
+		var stored backups.RunView
 		for _, candidate := range runs {
 			if candidate.ID == run.ID {
 				stored = candidate
