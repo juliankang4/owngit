@@ -35,6 +35,7 @@ const (
 	MsgNetAckHelp     MessageCode = "settings.network.ack_help"
 	MsgNetSaveNote    MessageCode = "settings.network.save_note"
 	MsgNetReset       MessageCode = "settings.network.reset"
+	MsgNetResetCmd    MessageCode = "settings.network.reset_command"
 	MsgNetSaved       MessageCode = "settings.network.saved"
 	MsgNetStale       MessageCode = "settings.network.stale"
 	MsgNetBadListen   MessageCode = "settings.network.invalid_listen"
@@ -126,6 +127,7 @@ var networkCatalog = map[MessageCode]message{
 		en: "Saving does not change the running server. The new values apply the next time OwnGit starts.",
 		ko: "저장해도 실행 중인 서버는 바뀌지 않습니다. 새 값은 OwnGit을 다음에 시작할 때 적용됩니다.",
 	},
+	MsgNetResetCmd: {en: "Reset network settings command", ko: "네트워크 설정 초기화 명령"},
 	MsgNetReset: {
 		en: "If a saved value keeps you out, run this command on the computer running OwnGit. It removes the saved values for this computer's address, the address other devices use and the public address for share links, so OwnGit listens on %s at the next start. Allowed names and trusted proxies stay.",
 		ko: "저장한 값 때문에 접속할 수 없게 되면 OwnGit을 실행 중인 컴퓨터에서 이 명령을 실행하세요. 저장된 '이 컴퓨터의 주소', '다른 기기가 쓰는 주소', 공유 링크용 공개 주소를 지우므로 다음 시작부터 OwnGit이 %s에서 연결을 받습니다. 허용한 이름과 신뢰하는 프록시는 그대로 남습니다.",

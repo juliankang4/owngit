@@ -1448,7 +1448,8 @@ func TestScreensAreAccessible(t *testing.T) {
 			}},
 		screen{name: "diff lines carry a text marker and name their change", page: repoPage(fullChrome(LangEN), RepoTabCommits),
 			want:   []MessageCode{MsgDiffAddedLine, MsgDiffRemovedLine},
-			markup: []string{`class="difftable__s"`, "is-add", "is-del"}},
+			markup: []string{`class="difftable__s"`, "is-add", "is-del"},
+			extra:  countIs(`aria-label="internal/pagination/cursor.go"`, 1)},
 		screen{name: "field errors are linked to their inputs",
 			page: SetupPage{Chrome: Chrome{Lang: LangEN, Now: testNow, CSRF: "tok", Notices: []Notice{Error("storage_path", MsgSetupStorageDenied)}},
 				Stage: SetupWizard, SubmitURL: "/setup"},
@@ -1459,8 +1460,42 @@ func TestScreensAreAccessible(t *testing.T) {
 			markup: []string{`role="grid"`, `role="gridcell"`, `role="row"`, `data-ko-aria-label="`, `role="status"`, `class="hm__scroll" tabindex="0"`}},
 	}
 	for _, lang := range Langs() {
-		screens = append(screens, screen{name: string(lang) + " shows the brand", lang: lang,
-			page: OverviewPage{Chrome: fullChrome(lang), Activity: sampleGraph()}, markup: []string{"OwnGit"}})
+		c := fullChrome(lang)
+		pages := allPages(lang)
+		job := configuredChecksPage(c, ccFixtureJobDetail)
+		job.Detail.Job.BaseOID = "77b30d5aa"
+		screens = append(screens,
+			screen{name: string(lang) + " dashboard has a page heading", lang: lang,
+				page: OverviewPage{Chrome: c, Activity: sampleGraph()}, want: []MessageCode{MsgAppHome},
+				markup: []string{`<h1 class="visually-hidden">`}},
+			screen{name: string(lang) + " setup cards label their radios separately from the password", lang: lang, page: pages["setup-wizard"],
+				markup: []string{`for="access-mode-open"`, `for="access-mode-password"`, `for="access_password"`, `aria-labelledby="access-open-title"`, `aria-labelledby="access-password-title"`, `aria-describedby="access-password-help" checked`},
+				extra: func(t *testing.T, out string) {
+					labels := strings.Split(out, `<label class="choice__select"`)[1:]
+					if len(labels) != 2 {
+						t.Fatalf("got %d radio card labels, want 2", len(labels))
+					}
+					for _, rest := range labels {
+						label, _, _ := strings.Cut(rest, "</label>")
+						if !strings.Contains(label, `type="radio"`) || !strings.Contains(label, `class="choice__d"`) || strings.Contains(label, "<label") || strings.Contains(label, `type="password"`) {
+							t.Error("each card label must contain its radio and help, but no other label or password input")
+						}
+					}
+				}},
+			screen{name: string(lang) + " full commit groups retain their identifiers", lang: lang, page: job,
+				markup: []string{`role="group" aria-label="` + wantText(lang, MsgCCJobFullOID) + `"`, `role="group" aria-label="` + wantText(lang, MsgCCJobBaseOID) + `"`, "55d0e21aa", "77b30d5aa"}})
+		for _, command := range []struct {
+			name  string
+			page  Page
+			label MessageCode
+		}{
+			{"clone", with(repoPage(c, RepoTabOverview), func(p *RepositoryPage) { p.Repo.Empty = true }), MsgRepoCloneTitle},
+			{"runner", runnerPage(c, false), MsgRTConnectTitle},
+			{"network reset", pages["settings-network"], MsgNetResetCmd},
+		} {
+			screens = append(screens, screen{name: string(lang) + " " + command.name + " commands are keyboard regions", lang: lang, page: command.page,
+				markup: []string{`tabindex="0" role="region" aria-label="` + wantText(lang, command.label) + `"`}})
+		}
 	}
 	// The pull request and checks sections are optional: the repository
 	// sidebar has the three sections always offered, five when both

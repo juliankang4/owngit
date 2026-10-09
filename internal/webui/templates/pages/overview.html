@@ -1,6 +1,8 @@
 {{define "body"}}
 {{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}
 
+<h1 class="visually-hidden">{{bi $lang "app.home"}}</h1>
+
 {{/* A newer release is announced, never installed. Dismissing is an ordinary
      form, so it works with or without scripting: the server remembers the
      version in this browser and reloads the dashboard, and a later version

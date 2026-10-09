@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"net/url"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -136,7 +137,7 @@ func TestSetupFromAPublicAddressSelectsTheSharedPassword(t *testing.T) {
 		app, store, _ := newTestApp(t)
 		noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
 		page := browserFrom(t, app, peer).redeem("synthetic-owner-token")
-		password := strings.Contains(page, `name="access_mode" value="password" checked`)
+		password := passwordAccessSelected(t, page)
 		if password != public || strings.Contains(page, note) != public {
 			t.Errorf("peer %s: password selected=%v, note shown=%v, want %v", peer, password, strings.Contains(page, note), public)
 		}
@@ -150,13 +151,33 @@ func TestSetupWithUnknownForwardedClientSelectsTheSharedPassword(t *testing.T) {
 	})
 	noErr(t, store.PutBootstrap(context.Background(), "synthetic-owner-token", time.Now().Add(time.Hour)))
 	page := browserFrom(t, app, "127.0.0.1:40000").redeem("synthetic-owner-token")
-	if !strings.Contains(page, `name="access_mode" value="password" checked`) ||
+	if !passwordAccessSelected(t, page) ||
 		!strings.Contains(page, "Forwarded request, original address unknown") {
 		t.Fatalf("unknown forwarded client did not get the safe default and warning:\n%s", page)
 	}
 	if got := webui.Text(webui.LangKO, webui.MsgForwardedClientUnknown); got != "프록시를 거쳐 온 접속, 원래 주소 확인 불가" {
 		t.Fatalf("Korean unknown-client warning %q", got)
 	}
+}
+
+func passwordAccessSelected(t *testing.T, page string) bool {
+	t.Helper()
+	attributes := regexp.MustCompile(`([^\s=<>/]+)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?`)
+	for _, tag := range regexp.MustCompile(`<input\b[^>]*>`).FindAllString(page, -1) {
+		values := make(map[string]string)
+		for _, attribute := range attributes.FindAllStringSubmatch(tag, -1) {
+			values[attribute[1]] = strings.Trim(attribute[2], `"'`)
+		}
+		if values["name"] == "access_mode" && values["value"] == "password" {
+			if values["type"] != "radio" {
+				t.Fatal("password access control is not a radio")
+			}
+			_, checked := values["checked"]
+			return checked
+		}
+	}
+	t.Fatal("password access radio is missing")
+	return false
 }
 
 // finishPage is finish that also returns the page it ends on.

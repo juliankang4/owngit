@@ -63,7 +63,7 @@
      Call as: {{template "diffFile" dict "Lang" $lang "F" $file "ID" "f-0"}} */}}
 {{define "diffFile"}}
 {{$lang := .Lang}}{{$id := .ID}}{{with .F}}
-<section class="dfile"{{with $id}} id="{{.}}"{{end}} aria-label="{{.Path}}">
+<section class="dfile"{{with $id}} id="{{.}}"{{end}}>
   <div class="dfile__h">
     {{with $id}}<button type="button" class="dfile__fold" aria-expanded="true" aria-controls="{{.}}-b" data-diff-fold hidden>{{icon "chevron"}}<span class="visually-hidden">{{$.F.Path}}</span></button>{{end}}
     {{template "diffStatus" dict "Lang" $lang "F" .}}

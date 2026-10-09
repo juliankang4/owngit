@@ -671,6 +671,18 @@ a:hover { text-decoration: underline; }
 .choice__d { grid-column: 2; font-size: 11.5px; color: var(--text-3); }
 .choice:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); }
 .choice__nest { grid-column: 2; margin-top: 8px; display: grid; gap: 5px; }
+.choice--setup { grid-template-rows: auto auto; }
+.choice--setup:has(.choice__nest) { grid-template-rows: auto auto auto; }
+.choice--setup > .choice__select {
+  display: grid;
+  grid-area: 1 / 1 / -1 / -1;
+  grid-template-columns: subgrid;
+  grid-template-rows: subgrid;
+  margin: -10px -12px;
+  padding: 10px 12px;
+}
+.choice--setup > .choice__nest { grid-row: 3; grid-template-columns: minmax(0, 1fr); z-index: 1; cursor: auto; }
+.choice--setup > .choice__nest > input { min-width: 0; }
 
 .check {
   display: grid;

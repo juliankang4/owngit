@@ -465,7 +465,7 @@ func TestRunnerTokenAppearsOnceAndNeverInAURL(t *testing.T) {
 func TestRunnerCommandsCarryNoSecret(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, runnerPage(fullChrome(LangEN), true))
-	commands := regexp.MustCompile(`(?s)<pre class="clone__cmds">(.*?)</pre>`).FindStringSubmatch(out)
+	commands := regexp.MustCompile(`(?s)<pre class="clone__cmds"[^>]*>(.*?)</pre>`).FindStringSubmatch(out)
 	if len(commands) != 2 {
 		t.Fatal("the connect commands are not rendered")
 	}

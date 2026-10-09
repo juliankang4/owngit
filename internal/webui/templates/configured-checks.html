@@ -70,7 +70,7 @@
       <dt>{{bi $lang "cc.job.source"}}</dt>
       <dd>
         <span class="mono">{{$j.SourceShortOID}}</span>
-        <span class="oidfull mono" tabindex="0" {{biAttr $lang "aria-label" "cc.job.source_full"}}>{{.}}</span>
+        <span class="oidfull mono" tabindex="0" role="group" {{biAttr $lang "aria-label" "cc.job.source_full"}}>{{.}}</span>
       </dd>
     </div>
   {{end}}
@@ -79,7 +79,7 @@
       <dt>{{bi $lang "cc.job.base"}}</dt>
       <dd>
         <span class="mono">{{$j.BaseShortOID}}</span>
-        <span class="oidfull mono" tabindex="0" {{biAttr $lang "aria-label" "cc.job.base"}}>{{.}}</span>
+        <span class="oidfull mono" tabindex="0" role="group" {{biAttr $lang "aria-label" "cc.job.base"}}>{{.}}</span>
       </dd>
     </div>
   {{end}}

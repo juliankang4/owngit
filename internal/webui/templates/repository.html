@@ -98,7 +98,7 @@
   <p class="clone__h">{{bi $lang "repo.clone.title"}}</p>
   <p class="clone__v">{{.CloneURL}}</p>
   {{with .PushCommands}}
-    <pre class="clone__cmds">{{range .}}{{.}}
+    <pre class="clone__cmds" tabindex="0" role="region" {{biAttr $lang "aria-label" "repo.clone.title"}}>{{range .}}{{.}}
 {{end}}</pre>
   {{end}}
 </div>

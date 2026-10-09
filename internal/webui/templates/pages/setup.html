@@ -91,17 +91,21 @@
         <h2 class="setblock__h">{{bi $lang "setup.access.label"}}</h2>
         <p class="setblock__d">{{bi $lang "setup.access.help"}}</p>
 
-        <label class="choice">
-          <input type="radio" name="access_mode" value="open"{{if ne $p.Form.AccessMode "password"}} checked{{end}}>
-          <span class="choice__t">{{bi $lang "setup.access.open"}}</span>
-          <span class="choice__d">{{bi $lang "setup.access.open_help"}}</span>
-        </label>
+        <div class="choice choice--setup">
+          <label class="choice__select" for="access-mode-open">
+            <input id="access-mode-open" type="radio" name="access_mode" value="open" aria-labelledby="access-open-title" aria-describedby="access-open-help"{{if ne $p.Form.AccessMode "password"}} checked{{end}}>
+            <span class="choice__t" id="access-open-title">{{bi $lang "setup.access.open"}}</span>
+            <span class="choice__d" id="access-open-help">{{bi $lang "setup.access.open_help"}}</span>
+          </label>
+        </div>
 
-        <label class="choice">
-          <input type="radio" name="access_mode" value="password"{{if eq $p.Form.AccessMode "password"}} checked{{end}}>
-          <span class="choice__t">{{bi $lang "setup.access.password"}}</span>
-          <span class="choice__d">{{bi $lang "setup.access.password_help"}}</span>
-          <span class="choice__nest">
+        <div class="choice choice--setup">
+          <label class="choice__select" for="access-mode-password">
+            <input id="access-mode-password" type="radio" name="access_mode" value="password" aria-labelledby="access-password-title" aria-describedby="access-password-help"{{if eq $p.Form.AccessMode "password"}} checked{{end}}>
+            <span class="choice__t" id="access-password-title">{{bi $lang "setup.access.password"}}</span>
+            <span class="choice__d" id="access-password-help">{{bi $lang "setup.access.password_help"}}</span>
+          </label>
+          <div class="choice__nest">
             {{/* A submitted password is never written back into the form. */}}
             <label class="f__label" for="access_password">{{bi $lang "setup.access.password"}}</label>
             <input id="access_password" name="access_password" type="password" autocomplete="new-password"
@@ -110,8 +114,8 @@
             {{if $p.Form.AccessPasswordSet}}
               <span class="stateline">{{icon "check"}}{{bi $lang "setup.access.password_saved"}}</span>
             {{end}}
-          </span>
-        </label>
+          </div>
+        </div>
         {{template "fieldNotice" dict "Lang" $lang "Notices" $n "Field" "access_mode"}}
       </div>
 

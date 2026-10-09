@@ -631,7 +631,7 @@
     {{template "grpBar" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Group" "network" "Notices" $gn "Focus" $focus "Cancel" (tabURL "network")}}
   </form>
   <p class="f__help">{{biF $lang "settings.network.reset" $net.DefaultListen}}</p>
-  <pre class="clone__cmds netreset">owngit network reset</pre>
+  <pre class="clone__cmds netreset" tabindex="0" role="region" {{biAttr $lang "aria-label" "settings.network.reset_command"}}>owngit network reset</pre>
 </section>
 
 {{template "setTailscale" .}}
