@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"golang.org/x/sys/windows"
+	"owngit/internal/statepath"
 )
 
 func TestWindowsNetworkPathRecognizesUNCAndFinalUNCForms(t *testing.T) {
@@ -267,12 +268,26 @@ func TestWindowsManagedStateProtection(t *testing.T) {
 		file      string
 		foreign   bool
 		directory bool
+		unmanaged bool
+		linked    bool
 	}{
-		{"owned child", TrayHiddenFile, false, false},
-		{"foreign child", TrayHiddenFile, true, false},
-		{"Tailscale change lock", TailscaleChangeLockFile, false, false},
-		{"directory at a file name", TrayAccessFile, false, true},
-		{"file at a directory name", "runtime", false, false},
+		{name: "owned child", file: TrayHiddenFile},
+		{name: "foreign child", file: TrayHiddenFile, foreign: true},
+		{name: "Tailscale change lock", file: TailscaleChangeLockFile},
+		{name: "directory at a file name", file: TrayAccessFile, directory: true},
+		{name: "file at a directory name", file: "runtime"},
+		{name: "workflow secret directory", file: "workflow-secrets", directory: true},
+		{name: "workflow secret file", file: "workflow-secrets/project.json"},
+		{name: "workflow secret temporary", file: "workflow-secrets/.project.tmp-0123456789abcdef"},
+		{name: "workflow write separator", file: "workflow-secrets/.project.tmp-other.restore-other.tmp-0123456789abcdef"},
+		{name: "workflow restore separator", file: "workflow-secrets/.project.tmp-other.restore-other.restore-0123456789abcdef"},
+		{name: "import write separator", file: "import-credentials/.project.tmp-other.restore-other.tmp-0123456789abcdef"},
+		{name: "import restore separator", file: "import-credentials/.project.tmp-other.restore-other.restore-0123456789abcdef"},
+		{name: "malformed workflow temporary", file: "workflow-secrets/.project.tmp-not-hex", unmanaged: true},
+		{name: "unprefixed workflow temporary", file: "workflow-secrets/project.tmp-0123456789abcdef", unmanaged: true},
+		{name: "foreign workflow secret", file: "workflow-secrets/project.json", foreign: true},
+		{name: "foreign workflow temporary", file: "workflow-secrets/.project.tmp-other.tmp-0123456789abcdef", foreign: true},
+		{name: "linked workflow temporary", file: "workflow-secrets/.project.tmp-other.tmp-0123456789abcdef", linked: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			foreign := test.foreign
@@ -280,6 +295,7 @@ func TestWindowsManagedStateProtection(t *testing.T) {
 			noErr(t, err)
 			defer root.Close()
 			path := filepath.Join(root.Name(), test.file)
+			noErr(t, os.MkdirAll(filepath.Dir(path), 0o700))
 			if test.directory {
 				noErr(t, os.Mkdir(path, 0o700))
 			} else {
@@ -291,12 +307,21 @@ func TestWindowsManagedStateProtection(t *testing.T) {
 					noErr(t, windows.SetNamedSecurityInfo(path, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION, everyone, nil, nil, nil))
 				})
 			}
+			if test.linked {
+				noErr(t, os.Link(path, filepath.Join(t.TempDir(), "outside")))
+			}
 			before, err := pathDescriptor(path)
 			noErr(t, err)
+			_, temporary := statepath.CredentialTemporaryID(filepath.Base(path))
+			removed := filepath.Base(filepath.Dir(path)) == statepath.WorkflowSecrets && temporary && !foreign && !test.linked
 			err = ProtectManagedStateFiles(root)
-			if foreign {
+			if foreign || test.linked {
 				var private *NotPrivateError
-				if !errors.As(err, &private) || private.Fix == "" || private.Shell != "PowerShell" {
+				if test.linked {
+					if err == nil || errors.As(err, &private) {
+						t.Fatalf("linked child refusal=%v", err)
+					}
+				} else if !errors.As(err, &private) || private.Fix == "" || private.Shell != "PowerShell" {
 					t.Fatalf("foreign child refusal=%v", err)
 				}
 				after, err := pathDescriptor(path)
@@ -306,9 +331,21 @@ func TestWindowsManagedStateProtection(t *testing.T) {
 				}
 			} else {
 				noErr(t, err)
-				noErr(t, validateOwnerOnly(path, user, test.directory))
+				if removed {
+					if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("startup left a workflow temporary: %v", err)
+					}
+				} else if test.unmanaged {
+					after, err := pathDescriptor(path)
+					noErr(t, err)
+					if before.String() != after.String() {
+						t.Fatal("unmanaged child descriptor changed")
+					}
+				} else {
+					noErr(t, validateOwnerOnly(path, user, test.directory))
+				}
 			}
-			if !test.directory {
+			if !test.directory && !removed {
 				content, err := os.ReadFile(path)
 				noErr(t, err)
 				if string(content) != "kept" {

@@ -53,6 +53,7 @@ type Store struct {
 	credentialLocks      map[string]*sync.Mutex
 	credentialRestoreMu  sync.RWMutex
 	credentialAuthority  sync.Map
+	workflowSecretLocks  sync.Map
 }
 
 type Settings struct {

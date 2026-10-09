@@ -14,6 +14,15 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func syncPrivateDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}
+
 // CreatePrivateFile creates a new owner-only file and keeps its handle open.
 func CreatePrivateFile(path string) (*os.File, error) {
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

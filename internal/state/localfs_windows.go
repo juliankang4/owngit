@@ -571,6 +571,8 @@ func ownerOnlyACL(user *windows.SID, directory bool) (*windows.ACL, error) {
 	return acl, nil
 }
 
+func syncPrivateDirectory(string) error { return nil }
+
 func protectSQLiteFilesAfterOpen(path string) error {
 	for _, candidate := range []string{path, path + walSuffix, path + shmSuffix} {
 		if err := ProtectPrivatePath(candidate, false); err != nil && !errors.Is(err, os.ErrNotExist) {

@@ -34,6 +34,7 @@ const (
 	Temporary         = "tmp"
 	GitConfig         = "gitconfig.empty"
 	ImportCredentials = "import-credentials"
+	WorkflowSecrets   = "workflow-secrets"
 	CredentialSuffix  = ".json"
 	CredentialWrite   = ".tmp-"
 	CredentialRestore = ".restore-"
@@ -48,7 +49,7 @@ var managedPaths = [...]string{
 	OfflineLock, RunningLock, TailscaleLock, DatabaseLock, UpgradeBackupOff,
 	SetupPage, SetupLock, SetupJournal, ServeError,
 	Runtime, Runtime + "/" + GitHome, Runtime + "/" + Temporary, Runtime + "/" + GitConfig,
-	ImportCredentials, Logs, Logs + "/" + ServiceLog, Logs + "/" + PreviousLog,
+	ImportCredentials, WorkflowSecrets, Logs, Logs + "/" + ServiceLog, Logs + "/" + PreviousLog,
 }
 
 // Managed selects only OwnGit's entries, never repository or workspace contents.
@@ -77,16 +78,12 @@ func Managed(parent, name string) bool {
 			}
 		}
 	}
-	if parent == ImportCredentials {
+	if parent == ImportCredentials || parent == WorkflowSecrets {
 		if id, ok := strings.CutSuffix(name, CredentialSuffix); ok {
 			return credentialID(id)
 		}
-		for _, separator := range []string{CredentialWrite, CredentialRestore} {
-			id, suffix, ok := strings.Cut(strings.TrimPrefix(name, "."), separator)
-			if ok && credentialID(id) && encodedSuffix(suffix, hex.DecodeString) {
-				return true
-			}
-		}
+		_, temporary := CredentialTemporaryID(name)
+		return temporary
 	}
 	return false
 }
@@ -96,7 +93,7 @@ func DatabaseFile(name string) bool {
 }
 
 func HasChildren(path string) bool {
-	if path == ImportCredentials {
+	if path == ImportCredentials || path == WorkflowSecrets {
 		return true
 	}
 	for _, managed := range managedPaths {
@@ -117,6 +114,21 @@ func DatabaseTemporary(random []byte) string {
 
 func CredentialTemporary(id, operation string, random []byte) string {
 	return "." + id + operation + hex.EncodeToString(random)
+}
+
+// CredentialTemporaryID returns the repository ID of a private temporary file.
+func CredentialTemporaryID(name string) (string, bool) {
+	name, ok := strings.CutPrefix(name, ".")
+	if !ok {
+		return "", false
+	}
+	for _, separator := range []string{CredentialWrite, CredentialRestore} {
+		cut := strings.LastIndex(name, separator)
+		if cut >= 0 && credentialID(name[:cut]) && encodedSuffix(name[cut+len(separator):], hex.DecodeString) {
+			return name[:cut], true
+		}
+	}
+	return "", false
 }
 
 func encodedSuffix(suffix string, decode func(string) ([]byte, error)) bool {

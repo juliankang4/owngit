@@ -187,8 +187,8 @@ func repositoryDeletionBusy(ctx context.Context, queryer queryRower, repositoryI
 // transaction it refuses a busy repository, records the intent, and removes
 // the repository row and every record keyed by it. Queued check jobs are
 // removed with the rest, so nothing can claim them afterwards. The stored
-// import credential file is removed after the commit; FinishRepositoryDeletion
-// retries that removal.
+// import credential and workflow secret files are removed after the commit;
+// FinishRepositoryDeletion retries those removals.
 func (s *Store) BeginRepositoryDeletion(ctx context.Context, deletion RepositoryDeletion) error {
 	if deletion.Phase == "" {
 		deletion.Phase = RepositoryDeletionPending
@@ -202,6 +202,8 @@ func (s *Store) BeginRepositoryDeletion(ctx context.Context, deletion Repository
 	}
 	release := s.LockImportCredentialAuthority(deletion.RepositoryID)
 	defer release()
+	releaseSecrets := s.lockWorkflowSecrets(deletion.RepositoryID)
+	defer releaseSecrets()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -236,6 +238,7 @@ func (s *Store) BeginRepositoryDeletion(ctx context.Context, deletion Repository
 	}
 	// Best effort: the deletion is committed, and Finish retries a failure.
 	_ = s.discardImportCredentialsLocked(deletion.RepositoryID)
+	_ = s.removeWorkflowSecretFileLocked(deletion.RepositoryID)
 	return nil
 }
 
@@ -321,14 +324,16 @@ func (s *Store) MarkRepositoryDeletionMoved(ctx context.Context, repositoryID st
 	return nil
 }
 
-// FinishRepositoryDeletion removes a leftover import credential file and then
-// the intent. After it returns, the name has no remaining OwnGit state. The
+// FinishRepositoryDeletion removes leftover credential and secret files and
+// then the intent. After it returns, the name has no remaining OwnGit state. The
 // deletion removed the old source, so a source row that exists now belongs to
 // a newer configuration (for example from an older build that ignores the
 // intent), and its credential file is left alone.
 func (s *Store) FinishRepositoryDeletion(ctx context.Context, repositoryID string) error {
 	release := s.LockImportCredentialAuthority(repositoryID)
 	defer release()
+	releaseSecrets := s.lockWorkflowSecrets(repositoryID)
+	defer releaseSecrets()
 	var sources int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_sources WHERE repository_id=?`, repositoryID).Scan(&sources); err != nil {
 		return err
@@ -336,6 +341,15 @@ func (s *Store) FinishRepositoryDeletion(ctx context.Context, repositoryID strin
 	if sources == 0 {
 		if err := s.discardImportCredentialsLocked(repositoryID); err != nil {
 			return fmt.Errorf("remove stored import credentials: %w", err)
+		}
+	}
+	var repositories int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM repositories WHERE id=?`, repositoryID).Scan(&repositories); err != nil {
+		return err
+	}
+	if repositories == 0 {
+		if err := s.removeWorkflowSecretFileLocked(repositoryID); err != nil {
+			return fmt.Errorf("remove stored workflow secrets: %w", err)
 		}
 	}
 	_, err := s.db.ExecContext(ctx, `DELETE FROM metadata WHERE key=?`, repositoryDeletionKey(repositoryID))

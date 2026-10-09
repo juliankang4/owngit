@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -264,13 +263,6 @@ func (s *Store) writeImportCredentials(ctx context.Context, credential ImportCre
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return fmt.Errorf("create import credential directory: %w", err)
-	}
-	if err := ProtectPrivatePath(directory, true); err != nil {
-		return fmt.Errorf("protect import credential directory: %w", err)
-	}
 	encoded, err := json.Marshal(credential)
 	if err != nil {
 		return err
@@ -278,37 +270,7 @@ func (s *Store) writeImportCredentials(ctx context.Context, credential ImportCre
 	if len(encoded) > maxImportCredentialFileBytes {
 		return errors.New("import credential file exceeds its bound")
 	}
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
-		return err
-	}
-	temporary := filepath.Join(directory, statepath.CredentialTemporary(credential.RepositoryID, statepath.CredentialWrite, suffix))
-	file, err := CreatePrivateFile(temporary)
-	if err != nil {
-		return fmt.Errorf("create import credential file: %w", err)
-	}
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporary)
-		}
-	}()
-	if _, err := file.Write(encoded); err != nil {
-		file.Close()
-		return fmt.Errorf("write import credential file: %w", err)
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return fmt.Errorf("sync import credential file: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return fmt.Errorf("close import credential file: %w", err)
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return fmt.Errorf("publish import credential file: %w", err)
-	}
-	removeTemporary = false
-	return nil
+	return writePrivateBytesLocked(ctx, path, credential.RepositoryID, statepath.CredentialWrite, encoded, "import credential")
 }
 
 // LoadImportCredentials reads one stored credential. A bounded read refuses a
@@ -373,10 +335,7 @@ func (s *Store) removeImportCredentialFile(repositoryID string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	return nil
+	return removePrivateFileLocked(path)
 }
 
 // OrphanImportBindings lists names that have an import source or a stored
@@ -539,22 +498,7 @@ func (s *Store) readImportCredentialFile(ctx context.Context, repositoryID strin
 	if err != nil {
 		return nil, false, err
 	}
-	file, err := os.Open(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	defer file.Close()
-	content, err := io.ReadAll(io.LimitReader(file, maxImportCredentialFileBytes+1))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(content) > maxImportCredentialFileBytes {
-		return nil, false, errors.New("import credential file exceeds its bound")
-	}
-	return content, true, nil
+	return readPrivateBytes(ctx, path, maxImportCredentialFileBytes, "import credential file exceeds its bound", os.Open)
 }
 
 func (s *Store) writeImportCredentialBytes(ctx context.Context, repositoryID string, content []byte) error {
@@ -565,45 +509,5 @@ func (s *Store) writeImportCredentialBytes(ctx context.Context, repositoryID str
 	if err != nil {
 		return err
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	directory := filepath.Dir(path)
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		return err
-	}
-	if err := ProtectPrivatePath(directory, true); err != nil {
-		return err
-	}
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
-		return err
-	}
-	temporary := filepath.Join(directory, statepath.CredentialTemporary(repositoryID, statepath.CredentialRestore, suffix))
-	file, err := CreatePrivateFile(temporary)
-	if err != nil {
-		return err
-	}
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporary)
-		}
-	}()
-	if _, err := file.Write(content); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		return err
-	}
-	removeTemporary = false
-	return nil
+	return writePrivateBytesLocked(ctx, path, repositoryID, statepath.CredentialRestore, content, "")
 }

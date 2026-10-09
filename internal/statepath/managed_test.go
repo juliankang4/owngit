@@ -14,7 +14,7 @@ func TestManagedNames(t *testing.T) {
 		".offline-operation.lock", ".network-running.lock", ".tailscale-change.lock", ".database-create.lock", "no-upgrade-backup",
 		"owner-setup.html", ".owner-setup.lock", ".owner-setup.issue.json", "serve-error.txt",
 		"runtime", "runtime/git-home", "runtime/tmp", "runtime/gitconfig.empty",
-		"import-credentials", "import-credentials/project.json", "logs", "logs/service.log", "logs/service.log.1",
+		"import-credentials", "import-credentials/project.json", "workflow-secrets", "workflow-secrets/project.json", "logs", "logs/service.log", "logs/service.log.1",
 	} {
 		parent, name := "", path
 		if cut := strings.LastIndex(path, "/"); cut >= 0 {
@@ -39,6 +39,11 @@ func TestManagedNames(t *testing.T) {
 		{"", strings.Replace(statepath.JournalTemporary, "*", "123456", 1), true},
 		{statepath.ImportCredentials, statepath.CredentialTemporary("project", statepath.CredentialWrite, random), true},
 		{statepath.ImportCredentials, statepath.CredentialTemporary("project", statepath.CredentialRestore, random), true},
+		{statepath.WorkflowSecrets, statepath.CredentialTemporary("project", statepath.CredentialWrite, random), true},
+		{statepath.ImportCredentials, statepath.CredentialTemporary("project.tmp-other.restore-other", statepath.CredentialWrite, random), true},
+		{statepath.ImportCredentials, statepath.CredentialTemporary("project.tmp-other.restore-other", statepath.CredentialRestore, random), true},
+		{statepath.WorkflowSecrets, statepath.CredentialTemporary("project.tmp-other.restore-other", statepath.CredentialWrite, random), true},
+		{statepath.WorkflowSecrets, statepath.CredentialTemporary("project.tmp-other.restore-other", statepath.CredentialRestore, random), true},
 		{"", statepath.DatabaseTemporary(random[:7]), false},
 		{"", ".health-run.json-0123456789abcdef", false},
 		{"", statepath.ReplacementTemporary(statepath.TrayAccess, random) + "=", false},
@@ -48,6 +53,10 @@ func TestManagedNames(t *testing.T) {
 		{statepath.GitHome, statepath.GitConfig, false},
 		{statepath.ImportCredentials, ".project.tmp-not-hex", false},
 		{statepath.ImportCredentials, "pro\nject.json", false},
+		{statepath.WorkflowSecrets, ".project.tmp-not-hex", false},
+		{statepath.WorkflowSecrets, "project.tmp-0123456789abcdef", false},
+		{statepath.ImportCredentials, ".project.tmp-0123456789abcdef-extra", false},
+		{statepath.WorkflowSecrets, "user-file", false},
 		{statepath.Logs, "custom.log", false},
 	} {
 		t.Run(test.parent+"/"+test.name, func(t *testing.T) {
@@ -59,7 +68,7 @@ func TestManagedNames(t *testing.T) {
 	for _, test := range []struct {
 		path string
 		want bool
-	}{{statepath.Runtime, true}, {statepath.Logs, true}, {statepath.ImportCredentials, true},
+	}{{statepath.Runtime, true}, {statepath.Logs, true}, {statepath.ImportCredentials, true}, {statepath.WorkflowSecrets, true},
 		{statepath.Runtime + "/" + statepath.GitHome, false}, {"repositories", false}, {"check-workspaces", false}} {
 		if got := statepath.HasChildren(test.path); got != test.want {
 			t.Errorf("children(%q)=%v, want %v", test.path, got, test.want)

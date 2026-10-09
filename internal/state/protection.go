@@ -77,9 +77,20 @@ func requireManagedObject(file *os.File, directory bool) error {
 // ProtectManagedStateFiles protects existing managed entries before Git or
 // other helpers use them. It does not descend into repositories or workspaces.
 func ProtectManagedStateFiles(held *os.File) error {
-	return walkManagedState(held, "", inspectForStart, func(file *os.File, directory bool) error {
+	if err := walkManagedState(held, "", inspectForStart, func(file *os.File, directory bool) error {
 		return protectStateObject(held.Name(), file, directory)
-	})
+	}); err != nil {
+		return err
+	}
+	directory, err := OpenPrivateFolderIn(held, statepath.WorkflowSecrets)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return removeWorkflowSecretTemporariesLocked(directory, "")
 }
 
 func walkManagedState(parent *os.File, relative string, purpose inspectionPurpose, visit func(*os.File, bool) error) error {

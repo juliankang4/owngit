@@ -22,6 +22,7 @@ var notRestored = []string{
 	"Import credentials and each source's connection choices and limits, such as plain HTTP or redirects, are not restored: " +
 		"store the credentials again and turn on what a source needs on each repository's Import tab or with owngit import credentials and owngit import configure. " +
 		"A source follows an upstream deletion only after a refresh has seen the ref again.",
+	"Workflow secrets are never stored in the database or a backup and are not restored: enter them again for each repository.",
 	"Import schedules are not restored: turn scheduled refreshes on again on each repository's Import tab or with owngit import schedule.",
 	"Share links are not restored: create new ones on each repository's Share links page or with owngit repo share create.",
 	"Scheduled backups and the backup history, the recorded manual and scheduled backups with their results, are not restored: " +

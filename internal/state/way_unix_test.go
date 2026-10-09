@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+
+	"owngit/internal/statepath"
 )
 
 func TestStateDirectoryProtectsAtOpenAndRefusesUnsafeReaders(t *testing.T) {
@@ -75,6 +77,18 @@ func TestManagedStateProtectionUsesOwnedNames(t *testing.T) {
 		{name: TrayHiddenFile}, {name: TailscaleChangeLockFile},
 		{name: TrayAccessFile, directory: true}, {name: "runtime"},
 		{name: "runtime/git-home"},
+		{name: "workflow-secrets", directory: true}, {name: "workflow-secrets/project.json"},
+		{name: "workflow-secrets/.project.tmp-0123456789abcdef"},
+		{name: "workflow-secrets/.project.tmp-other.restore-other.tmp-0123456789abcdef"},
+		{name: "workflow-secrets/.project.tmp-other.restore-other.restore-0123456789abcdef"},
+		{name: "import-credentials/.project.tmp-other.restore-other.tmp-0123456789abcdef"},
+		{name: "import-credentials/.project.tmp-other.restore-other.restore-0123456789abcdef"},
+		{name: "workflow-secrets/.project.tmp-other.tmp-0123456789abcdef", linked: true},
+		{name: "workflow-secrets/.project.tmp-not-hex", unmanaged: true},
+		{name: "workflow-secrets/project.tmp-0123456789abcdef", unmanaged: true},
+		{name: "workflow-secrets/user-file", unmanaged: true},
+		{name: "workflow-secrets", directory: true, linked: true},
+		{name: "workflow-secrets/project.json", linked: true},
 		{name: "runtime/git-home", directory: true}, {name: "runtime/tmp", directory: true}, {name: "runtime/gitconfig.empty"},
 		{name: databaseName + ".new-0123456789abcdef"},
 		{name: "." + HealthRunFile + "-" + suffix}, {name: "." + TrayAccessFile + "-" + suffix},
@@ -132,23 +146,31 @@ func TestManagedStateProtectionUsesOwnedNames(t *testing.T) {
 			} else {
 				noErr(t, ProtectManagedStateFiles(root))
 			}
+			_, temporary := statepath.CredentialTemporaryID(filepath.Base(path))
+			removed := filepath.Base(filepath.Dir(path)) == statepath.WorkflowSecrets && temporary && !test.directory
 			info, err := os.Stat(path)
-			noErr(t, err)
-			want := os.FileMode(0o600)
-			if test.directory {
-				want = 0o700
-			}
-			if test.unmanaged {
-				want = 0o777
-			}
-			if info.Mode().Perm() != want {
-				t.Fatalf("mode=%o, want %o", info.Mode(), want)
-			}
-			if !test.directory {
-				content, err := os.ReadFile(path)
+			if removed {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("startup left a workflow temporary: %v", err)
+				}
+			} else {
 				noErr(t, err)
-				if string(content) != "kept" {
-					t.Fatalf("content changed: %q", content)
+				want := os.FileMode(0o600)
+				if test.directory {
+					want = 0o700
+				}
+				if test.unmanaged {
+					want = 0o777
+				}
+				if info.Mode().Perm() != want {
+					t.Fatalf("mode=%o, want %o", info.Mode(), want)
+				}
+				if !test.directory {
+					content, err := os.ReadFile(path)
+					noErr(t, err)
+					if string(content) != "kept" {
+						t.Fatalf("content changed: %q", content)
+					}
 				}
 			}
 			info, err = os.Stat(unmanaged)

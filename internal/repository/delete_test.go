@@ -15,6 +15,7 @@ import (
 
 	"owngit/internal/gitexec"
 	"owngit/internal/state"
+	"owngit/internal/statepath"
 )
 
 var testDeletionTime = time.Date(2027, 1, 15, 8, 0, 0, 0, time.UTC)
@@ -29,6 +30,8 @@ func newDeletionRepository(t *testing.T) (*Manager, string) {
 	t.Helper()
 	manager, remote, work := newTestRepository(t)
 	manager.deletionClock = func() time.Time { return testDeletionTime }
+	_, err := manager.Store.SetWorkflowSecret(t.Context(), "sample", "DELETE_SECRET", "synthetic-only", state.Actor{}, testDeletionTime)
+	noErr(t, err)
 	commitFile(t, work, "one", "one", "2024-01-01T00:00:00Z")
 	runGit(t, work, "tag", "v1")
 	commitFile(t, work, "two", "two", "2024-01-02T00:00:00Z")
@@ -97,6 +100,10 @@ func assertRepositoryGone(t *testing.T, manager *Manager, id string) {
 		if repository.ID == id || strings.HasPrefix(repository.ID, ".") {
 			t.Fatalf("listing includes %q", repository.ID)
 		}
+	}
+	secretPath := filepath.Join(manager.Store.Dir(), statepath.WorkflowSecrets, id+statepath.CredentialSuffix)
+	if _, err := os.Stat(secretPath); !os.IsNotExist(err) {
+		t.Fatalf("deleted repository's secrets remain: %v", err)
 	}
 	path, err := manager.Path(id)
 	noErr(t, err)
@@ -214,6 +221,15 @@ func TestDeleteChecksRepositoryStorage(t *testing.T) {
 				}
 				noErr(t, manager.ClaimStorage())
 				t.Cleanup(manager.ReleaseStorage)
+				_, secretErr := manager.Store.SetWorkflowSecret(ctx, "sample", "DELETE_SECRET", "synthetic-only", state.Actor{}, testDeletionTime)
+				noErr(t, secretErr)
+				secretPath := filepath.Join(manager.Store.Dir(), statepath.WorkflowSecrets, "sample.json")
+				var secretTemporaries []string
+				for _, operation := range []string{statepath.CredentialWrite, statepath.CredentialRestore} {
+					path := filepath.Join(filepath.Dir(secretPath), statepath.CredentialTemporary("sample", operation, []byte{0, 1, 2, 3, 4, 5, 6, 7}))
+					noErr(t, os.WriteFile(path, []byte("synthetic interrupted write"), 0o600))
+					secretTemporaries = append(secretTemporaries, path)
+				}
 				before := treeDigest(t, remote)
 				saved := filepath.Join(t.TempDir(), "saved.git")
 				var wantError error
@@ -322,6 +338,9 @@ func TestDeleteChecksRepositoryStorage(t *testing.T) {
 					if _, exists, err := manager.Store.RepositoryDeletion(ctx, "sample"); err != nil || exists {
 						t.Fatalf("refused deletion recorded an intent: exists=%v err=%v", exists, err)
 					}
+					if _, err := os.Stat(secretPath); err != nil {
+						t.Fatalf("refused deletion lost its secrets: %v", err)
+					}
 				} else {
 					noErr(t, err)
 					if !result.FolderMissing || result.KeptPath != "" {
@@ -330,6 +349,12 @@ func TestDeleteChecksRepositoryStorage(t *testing.T) {
 					assertRepositoryGone(t, manager, "sample")
 					_, err = manager.Create(ctx, "sample", "")
 					noErr(t, err)
+				}
+				for _, path := range secretTemporaries {
+					_, err := os.Stat(path)
+					if wantError == nil && !errors.Is(err, os.ErrNotExist) || wantError != nil && err != nil {
+						t.Fatalf("repository deletion temporary state: %v", err)
+					}
 				}
 				assertSameTree(t, before, treeDigest(t, saved))
 				if otherPath != "" {
