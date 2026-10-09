@@ -626,16 +626,24 @@ func TestPushRetentionIsBoundedAndReportsWhatItDrops(t *testing.T) {
 	if summaries := fixture.logLines("dropped 2 of 2 updates", "across repositories", "c-00", "c-01"); len(summaries) != 1 {
 		t.Fatalf("the arrival beyond the total was not named once: %v", fixture.logs)
 	}
-	// An update no observation or job can name is not retained. The head pass
-	// names such a branch once, and a push to it names nothing.
-	unrecordable := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
-	unrecordable.wake = make(chan struct{}, 1)
-	unrecordable.NotePush(fixture.repositoryID, []PushUpdate{{Ref: "refs/heads/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100), New: fmt.Sprintf("%040x", 4242)}})
-	unrecordable.mu.Lock()
-	unrecorded := unrecordable.pendingPushes
-	unrecordable.mu.Unlock()
-	if len(unrecorded) != 0 {
-		t.Fatalf("a branch name no job can carry was retained: %v", unrecorded)
+	for _, test := range []struct {
+		name, ref string
+		want      int
+	}{
+		{"long branch", "refs/heads/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100) + "/" + strings.Repeat("a", 100), 1},
+		{"oversized ref", "refs/heads/" + strings.Repeat("a", 4096), 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			coordinator := &Coordinator{Store: fixture.store, Repositories: fixture.coordinator.Repositories, Logf: fixture.recordLog}
+			coordinator.wake = make(chan struct{}, 1)
+			coordinator.NotePush(fixture.repositoryID, []PushUpdate{{Ref: test.ref, New: fmt.Sprintf("%040x", 4242)}})
+			coordinator.mu.Lock()
+			kept := coordinator.pendingPushes[fixture.repositoryID]
+			coordinator.mu.Unlock()
+			if len(kept) != test.want || test.want == 1 && kept[0].ref != test.ref {
+				t.Fatalf("retained=%v want=%d", kept, test.want)
+			}
+		})
 	}
 	// No loop would admit an update while the coordinator is not running, so a
 	// coordinator that has not started, or has stopped, keeps and names nothing.

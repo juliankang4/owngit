@@ -215,9 +215,10 @@ func validateJob(definition JobDefinition, workflowSecrets []string) ([]string, 
 // Dependency includes ancestor failure so failure() works through skipped jobs.
 // The coordinator supplies all combinations of each directly needed job.
 type Dependency struct {
-	Status         string
-	Tolerated      bool
-	AncestorFailed bool
+	Status            string
+	Tolerated         bool
+	AncestorFailed    bool
+	AncestorAmbiguous bool
 }
 
 // ResolveJob releases only fully finished dependency sets. An ambiguous needed
@@ -250,7 +251,7 @@ func ResolveJob(plan JobPlan, dependencies map[string][]Dependency) (PlannedJob,
 				if containsWord("pending waiting claimed started running queued", item.Status) {
 					ready = false
 				}
-				if item.Status == StatusAmbiguous {
+				if item.Status == StatusAmbiguous || item.AncestorAmbiguous {
 					uncertain = true
 				}
 				mapped := NeedsResult(item.Status, item.Tolerated)

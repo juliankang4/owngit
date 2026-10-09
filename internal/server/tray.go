@@ -267,7 +267,7 @@ func actorLabel(actor state.Actor, lang webui.Lang) string {
 	return actor.Label
 }
 
-// RecordPush records a push that updated refs, for the tray. It is the Git
+// RecordPush records accepted branch updates for workflow admission and the tray. It is the Git
 // handler's OnPush. Every push is authorized by general access; whether it
 // came from this computer is remembered for the event feed. The push has
 // already succeeded, so a failure to record it is logged and changes
@@ -282,6 +282,13 @@ func (app *App) RecordPush(request *http.Request, repositoryID string, updates [
 	}
 	ctx, cancel := context.WithTimeout(request.Context(), 10*time.Second)
 	defer cancel()
+	accepted := make([]state.AcceptedActionsPush, 0, len(updates))
+	for _, update := range updates {
+		accepted = append(accepted, state.AcceptedActionsPush{Ref: update.Ref, OldOID: update.Old, NewOID: update.New})
+	}
+	if err := app.Store.RecordAcceptedActionsPushes(ctx, repositoryID, accepted, app.now()); err != nil {
+		log.Printf("push to repository %q has no recorded workflow authority: %s", repositoryID, logtext.Cause(err))
+	}
 	sequence, err := app.Store.RecordPush(ctx, state.PushEvent{
 		RepositoryID: repositoryID, Ref: shown.Ref, OldOID: shown.Old, NewOID: shown.New,
 		RefsUpdated: len(updates), Actor: generalAccessActor, PushedAt: app.now(),

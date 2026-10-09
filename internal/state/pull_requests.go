@@ -14,6 +14,8 @@ import (
 )
 
 const (
+	MaximumPullRequestBranchBytes = 255
+
 	PullRequestCreating = "creating"
 	PullRequestOpen     = "open"
 	PullRequestMerged   = "merged"
@@ -914,7 +916,7 @@ func readPullRequestRecovery(ctx context.Context, tx *sql.Tx, snapshot *Recovery
 		return err
 	}
 
-	rows, err = tx.QueryContext(ctx, `SELECT repository_id,pull_request_number,source_oid,target_oid,recorded_at FROM pull_request_revisions ORDER BY repository_id,pull_request_number,recorded_at,source_oid,target_oid`)
+	rows, err = tx.QueryContext(ctx, `SELECT repository_id,pull_request_number,source_oid,target_oid,recorded_at FROM pull_request_revisions ORDER BY repository_id,pull_request_number,rowid`)
 	if err != nil {
 		return err
 	}
@@ -1281,7 +1283,7 @@ func validText(value string, maximum int) bool {
 }
 
 func validBranchText(value string) bool {
-	return value != "" && len(value) <= 255 && value == strings.TrimSpace(value) && importgit.ValidBranchName(value)
+	return value != "" && len(value) <= MaximumPullRequestBranchBytes && value == strings.TrimSpace(value) && importgit.ValidBranchName(value)
 }
 
 func pullRequestKey(repositoryID string, number int64) string {

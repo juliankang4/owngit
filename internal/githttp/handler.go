@@ -637,11 +637,7 @@ func (h *Handler) serve(writer http.ResponseWriter, request *http.Request, route
 		report.scan(stderr)
 		inBand = report.reason()
 		refsUnchanged = err == nil && !consumeFailed.Load() && report.refsUnchanged()
-		// Deferred, so it runs after the response is complete and before
-		// the repository lock is released.
-		if updates := report.updates(commands); len(updates) > 0 && h.OnPush != nil {
-			defer h.OnPush(request.WithContext(context.WithoutCancel(request.Context())), route.repositoryID, updates)
-		}
+		h.notifyAcceptedPushes(request, route.repositoryID, report.updates(commands))
 	}
 	if err == nil {
 		// Make sure the end of the response went out while the transfer still
@@ -729,6 +725,12 @@ func removeUnfinishedPushObjects(ctx context.Context, route route, path string, 
 			continue
 		}
 		log.Printf("Git push request for repository %q: removed the objects of an unfinished push (objects/%s, %d bytes)", route.repositoryID, name, size)
+	}
+}
+
+func (h *Handler) notifyAcceptedPushes(request *http.Request, repositoryID string, updates []RefUpdate) {
+	if len(updates) > 0 && h.OnPush != nil {
+		h.OnPush(request.WithContext(context.WithoutCancel(request.Context())), repositoryID, updates)
 	}
 }
 

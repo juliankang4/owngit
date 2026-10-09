@@ -138,6 +138,16 @@ func NeedsResult(status string, tolerated bool) string {
 	return ResultFailure
 }
 
+// FailFastFailure excludes cancellation and execution whose outcome is uncertain.
+func FailFastFailure(status string, tolerated bool) bool {
+	switch status {
+	case StatusFailed, StatusError, StatusIncomplete, StatusUnavailable:
+		return NeedsResult(status, tolerated) == ResultFailure
+	default:
+		return false
+	}
+}
+
 // RunConclusion counts all siblings, never only the latest attempt.
 func RunConclusion(run RunEvidence) string {
 	if run.Outcome != "" {

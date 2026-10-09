@@ -113,12 +113,16 @@ type Message struct {
 
 // RunFacts remain portable after job plans are deleted.
 type RunFacts struct {
-	WorkflowName   string       `json:"workflow_name,omitempty"`
-	WorkflowOID    string       `json:"workflow_oid,omitempty"`
-	WorkflowDigest string       `json:"workflow_digest,omitempty"`
-	RefusedJobs    []RefusedJob `json:"refused_jobs,omitempty"`
-	Notes          []Message    `json:"notes,omitempty"`
-	SecretNames    []string     `json:"secret_names,omitempty"`
+	WorkflowName       string              `json:"workflow_name,omitempty"`
+	WorkflowOID        string              `json:"workflow_oid,omitempty"`
+	WorkflowDigest     string              `json:"workflow_digest,omitempty"`
+	PullRequestAction  string              `json:"pull_request_action,omitempty"`
+	PullRequestHeadRef string              `json:"pull_request_head_ref,omitempty"`
+	RefusedJobs        []RefusedJob        `json:"refused_jobs,omitempty"`
+	Needs              map[string][]string `json:"needs,omitempty"`
+	FailFast           map[string]bool     `json:"fail_fast,omitempty"`
+	Notes              []Message           `json:"notes,omitempty"`
+	SecretNames        []string            `json:"secret_names,omitempty"`
 }
 
 type RefusedJob struct {

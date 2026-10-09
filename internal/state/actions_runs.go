@@ -11,16 +11,20 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"owngit/internal/actions"
 )
 
 const (
-	ActionsEventDispatch    = "workflow_dispatch"
-	ActionsEventSchedule    = "schedule"
-	MaximumActionsRunJobs   = 16
-	MaximumActionsJSONBytes = 64 << 10
-	MaximumActionsPlanBytes = 2 << 20
+	ActionsEventDispatch         = "workflow_dispatch"
+	ActionsEventSchedule         = "schedule"
+	MaximumActionsRunJobs        = 16
+	MaximumActionsJSONBytes      = 64 << 10
+	MaximumActionsPlanBytes      = 2 << 20
+	ActionsRefusedWorkflowPrefix = "!workflow-limit/"
+	ActionsRefusedRefPrefix      = "!ref-limit:"
 )
 
 var (
@@ -62,8 +66,10 @@ type ActionsJobRequest struct {
 }
 
 type ActionsRunRequest struct {
-	Run  ActionsRun
-	Jobs []ActionsJobRequest
+	Run         ActionsRun
+	Jobs        []ActionsJobRequest
+	Context     actions.PlanContext
+	Concurrency *actions.Concurrency
 }
 
 // AdmitActionsRun writes one file's run, jobs and local plans atomically. Queue
@@ -88,7 +94,10 @@ func (s *Store) AdmitActionsRun(ctx context.Context, request ActionsRunRequest, 
 }
 
 func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunRequest, now time.Time) (ActionsRun, bool, error) {
+	request.Jobs = append([]ActionsJobRequest(nil), request.Jobs...)
 	run := request.Run
+	run.Facts.Notes = append([]actions.Message(nil), run.Facts.Notes...)
+	run.Facts.RefusedJobs = append([]actions.RefusedJob(nil), run.Facts.RefusedJobs...)
 	policy, exists, err := readCheckPolicyTx(ctx, tx, run.RepositoryID)
 	if err != nil {
 		return ActionsRun{}, false, err
@@ -131,6 +140,19 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 			return ActionsRun{}, false, err
 		}
 	}
+	if request.Concurrency != nil {
+		request.Context.GitHub.RunID, request.Context.GitHub.RunNumber, request.Context.GitHub.RunAttempt = run.ID, run.Number, run.RerunGeneration+1
+		context, err := actions.ContextFromPlan(request.Context)
+		if err != nil {
+			return ActionsRun{}, false, fmt.Errorf("%w: %v", ErrInvalidActionsRun, err)
+		}
+		concurrency, err := actions.EvaluateConcurrency(*request.Concurrency, "workflow.concurrency", context)
+		if err != nil {
+			return ActionsRun{}, false, fmt.Errorf("%w: %v", ErrInvalidActionsRun, err)
+		}
+		run.ConcurrencyGroup, run.CancelInProgress, run.ConcurrencyQueue = concurrency.Group, concurrency.CancelInProgress, concurrency.Queue
+	}
+	run.ConcurrencyGroup = strings.ToLower(run.ConcurrencyGroup)
 	if err := validateActionsRun(run); err != nil {
 		return ActionsRun{}, false, err
 	}
@@ -166,6 +188,16 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 		}
 		identities[key] = true
 	}
+	request.Run = run
+	if err := prepareActionsGraph(&request); err != nil {
+		return ActionsRun{}, false, fmt.Errorf("%w: %v", ErrInvalidActionsRun, err)
+	}
+	run = request.Run
+	if run.Outcome == "" && len(request.Jobs) <= policy.QueueLimit {
+		if err := admitActionsRunConcurrencyTx(ctx, tx, run, now); err != nil {
+			return ActionsRun{}, false, err
+		}
+	}
 	unfinished, err := countUnfinishedCheckJobsTx(ctx, tx, run.RepositoryID)
 	if err != nil {
 		return ActionsRun{}, false, err
@@ -176,11 +208,14 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.never_fits", Detail: run.Reason})
 	} else if run.Outcome == "" && unfinished+len(request.Jobs) > policy.QueueLimit {
 		run.Outcome = actions.StatusNotRun
-		run.Reason = fmt.Sprintf("Not run: the queue holds %d of %d jobs and this run needs %d.", unfinished, policy.QueueLimit, len(request.Jobs))
+		run.Reason = fmt.Sprintf("Not run: the queue holds %d of %d jobs and this run needs %d. Rerun it later, or raise queue_limit.", unfinished, policy.QueueLimit, len(request.Jobs))
 		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.not_run_queue", Detail: run.Reason})
 	}
 	if err := validateActionsRun(run); err != nil {
 		return ActionsRun{}, false, err
+	}
+	if run.Outcome != "" {
+		run.Facts.Needs, run.Facts.FailFast = nil, nil
 	}
 	if err := insertActionsRunTx(ctx, tx, run); err != nil {
 		return ActionsRun{}, false, err
@@ -189,6 +224,7 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 		return run, false, nil
 	}
 	for _, request := range request.Jobs {
+		request.Waiting = true
 		job, deduped, err := admitCheckJobTx(ctx, tx, request.CheckJobRequest, now)
 		if err != nil {
 			return ActionsRun{}, false, err
@@ -203,7 +239,16 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 			return ActionsRun{}, false, err
 		}
 	}
-	return run, false, nil
+	if run.ConcurrencyQueue == "max" {
+		if err := admitActionsRunConcurrencyTx(ctx, tx, run, now); err != nil {
+			return ActionsRun{}, false, err
+		}
+	}
+	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
+		return ActionsRun{}, false, err
+	}
+	run, _, err = readActionsRunTx(ctx, tx, actionsRunSelect+` WHERE id=?`, run.ID)
+	return run, false, err
 }
 
 func insertActionsRunTx(ctx context.Context, tx *sql.Tx, run ActionsRun) error {
@@ -337,9 +382,11 @@ func normalizeActionsRunTimes(run *ActionsRun) {
 	}
 }
 
+func ValidActionsWorkflowPath(value string) bool { return validActionsWorkflowPath(value) }
+
 func validActionsWorkflowPath(value string) bool {
 	name := strings.TrimPrefix(value, ".github/workflows/")
-	return name != value && name != "" && len(name) <= 100 && !strings.ContainsAny(name, "/\\\x00\r\n") && (path.Ext(name) == ".yml" || path.Ext(name) == ".yaml")
+	return name != value && name != "" && len(name) <= 100 && utf8.ValidString(name) && !strings.ContainsAny(name, "/\\") && !strings.ContainsFunc(name, unicode.IsControl) && (path.Ext(name) == ".yml" || path.Ext(name) == ".yaml")
 }
 
 func validateActionsJobFacts(job CheckJob) error {
@@ -369,20 +416,29 @@ func validateActionsPlan(encoded json.RawMessage, key string, index int, digest 
 }
 
 func validateActionsRun(run ActionsRun) error {
-	if !validAttemptID(run.ID) || run.RepositoryID == "" || !validActionsWorkflowPath(run.WorkflowPath) || run.Number <= 0 || !validObjectID(run.SourceOID) || run.PolicyVersion <= 0 || run.ConsentVersion <= 0 || run.CreatedAt.IsZero() {
+	if !validAttemptID(run.ID) || run.RepositoryID == "" || !validActionsRunWorkflowPath(run) || run.Number <= 0 || !validObjectID(run.SourceOID) || run.PolicyVersion <= 0 || run.ConsentVersion <= 0 || run.CreatedAt.IsZero() {
 		return fmt.Errorf("%w: invalid identity", ErrInvalidActionsRun)
 	}
-	if run.TriggerRef == "" || run.TriggerRef == "@" || !validBranchText(run.TriggerRef) || len(run.TriggerRef) > MaximumCheckTriggerRefBytes || len(run.EventKey) == 0 || len(run.EventKey) > MaximumCheckEventKeyBytes || strings.ContainsAny(run.EventKey, "\x00\r\n") {
+	refValid := validBranchText(run.TriggerRef) && !strings.HasPrefix(run.TriggerRef, ActionsRefusedRefPrefix)
+	if run.Outcome == actions.StatusRefused && validRefusedActionsIdentity(run.TriggerRef, ActionsRefusedRefPrefix) {
+		refValid = true
+	}
+	if run.TriggerRef == "" || run.TriggerRef == "@" || !refValid || len(run.TriggerRef) > MaximumCheckTriggerRefBytes || len(run.EventKey) == 0 || len(run.EventKey) > MaximumCheckEventKeyBytes || strings.ContainsAny(run.EventKey, "\x00\r\n") {
 		return fmt.Errorf("%w: invalid event context", ErrInvalidActionsRun)
 	}
 	switch run.Event {
 	case "push", ActionsEventDispatch, ActionsEventSchedule:
-		if run.PullRequestNumber != 0 || run.BaseOID != "" {
+		if run.PullRequestNumber != 0 || run.BaseOID != "" || run.Facts.PullRequestAction != "" || run.Facts.PullRequestHeadRef != "" {
 			return fmt.Errorf("%w: unexpected pull request facts", ErrInvalidActionsRun)
 		}
 	case "pull_request":
-		if run.PullRequestNumber <= 0 || !validObjectID(run.BaseOID) {
-			return fmt.Errorf("%w: missing pull request facts", ErrInvalidActionsRun)
+		if run.PullRequestNumber <= 0 || !validObjectID(run.BaseOID) || !validBranchText(run.Facts.PullRequestHeadRef) || len(run.Facts.PullRequestHeadRef) > MaximumPullRequestBranchBytes {
+			return fmt.Errorf("%w: missing or invalid pull request facts", ErrInvalidActionsRun)
+		}
+		switch run.Facts.PullRequestAction {
+		case "assigned", "unassigned", "labeled", "unlabeled", "opened", "edited", "closed", "reopened", "synchronize", "converted_to_draft", "locked", "unlocked", "enqueued", "dequeued", "milestoned", "demilestoned", "ready_for_review", "review_requested", "review_request_removed", "auto_merge_enabled", "auto_merge_disabled":
+		default:
+			return fmt.Errorf("%w: unknown pull request action", ErrInvalidActionsRun)
 		}
 	default:
 		return fmt.Errorf("%w: unknown event", ErrInvalidActionsRun)
@@ -400,7 +456,21 @@ func validateActionsRun(run ActionsRun) error {
 	if (run.RerunRoot == "") != (run.RerunGeneration == 0) || run.RerunGeneration < 0 || (run.RerunRoot != "" && (!validAttemptID(run.RerunRoot) || run.RerunRoot == run.ID)) {
 		return fmt.Errorf("%w: invalid rerun identity", ErrInvalidActionsRun)
 	}
-	return run.Actor.Validate()
+	if strings.HasPrefix(run.WorkflowPath, ActionsRefusedWorkflowPrefix) || strings.HasPrefix(run.TriggerRef, ActionsRefusedRefPrefix) {
+		found := false
+		for _, note := range run.Facts.Notes {
+			if note.Code == "workflow.limit" && note.Path != "" && len(note.Path) <= 4096 {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("%w: refused identity has no bounded original name", ErrInvalidActionsRun)
+		}
+	}
+	if err := run.Actor.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidActionsRun, err)
+	}
+	return nil
 }
 
 func validateActionsRunRootTx(ctx context.Context, tx *sql.Tx, run ActionsRun) error {
@@ -418,5 +488,5 @@ func validateActionsRunRootTx(ctx context.Context, tx *sql.Tx, run ActionsRun) e
 }
 
 func sameActionsRunRoot(run, root ActionsRun) bool {
-	return root.RerunRoot == "" && root.RepositoryID == run.RepositoryID && root.WorkflowPath == run.WorkflowPath && root.Event == run.Event && root.EventKey == run.EventKey && root.SourceOID == run.SourceOID && root.BaseOID == run.BaseOID && root.PullRequestNumber == run.PullRequestNumber && root.TriggerRef == run.TriggerRef && root.InputsJSON == run.InputsJSON
+	return root.RerunRoot == "" && root.RepositoryID == run.RepositoryID && root.WorkflowPath == run.WorkflowPath && root.Event == run.Event && root.EventKey == run.EventKey && root.SourceOID == run.SourceOID && root.BaseOID == run.BaseOID && root.PullRequestNumber == run.PullRequestNumber && root.TriggerRef == run.TriggerRef && root.InputsJSON == run.InputsJSON && root.Facts.PullRequestAction == run.Facts.PullRequestAction && root.Facts.PullRequestHeadRef == run.Facts.PullRequestHeadRef
 }

@@ -86,6 +86,13 @@ func TestAdmitActionsRun(t *testing.T) {
 			r.Run.Event = "pull_request"
 			r.Run.PullRequestNumber = 1
 			r.Run.BaseOID = strings.Repeat("c", 40)
+			r.Run.Facts.PullRequestAction, r.Run.Facts.PullRequestHeadRef = "opened", "feature"
+		}},
+		{name: "push has pull request action", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
+			r.Run.Facts.PullRequestAction = "opened"
+		}},
+		{name: "push has pull request head", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
+			r.Run.Facts.PullRequestHeadRef = "feature"
 		}},
 		{name: "dispatch inputs", jobs: 1, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
 			r.Run.Event = ActionsEventDispatch
@@ -95,7 +102,10 @@ func TestAdmitActionsRun(t *testing.T) {
 			r.Run.Event = ActionsEventSchedule
 			r.Run.ScheduledFor = &f.now
 		}},
-		{name: "waiting job", jobs: 1, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) { r.Jobs[0].Waiting = true }},
+		{name: "waiting job", jobs: 2, change: func(t *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
+			*r = graphRunRequest(t, actions.JobPlan{JobKey: "test", Needs: []string{"build"}}, actions.JobPlan{JobKey: "build"})
+			r.Jobs[0].Waiting = true
+		}},
 		{name: "refused file", outcome: "refused", change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
 			r.Run.Outcome, r.Run.Reason, r.Jobs = "refused", "Unsupported event", nil
 		}},
@@ -141,6 +151,12 @@ func TestAdmitActionsRun(t *testing.T) {
 			r.Jobs[0].Plan = json.RawMessage(strings.Replace(string(r.Jobs[0].Plan), `"run_id":""`, `"run_id":"synthetic-run"`, 1))
 			r.Jobs[0].PlanDigest = fmt.Sprintf("%x", sha256.Sum256(r.Jobs[0].Plan))
 		}},
+		{name: "fail-fast differs from plan", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
+			r.Run.Facts.FailFast = map[string]bool{"test": true}
+		}},
+		{name: "graph differs from plan", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) {
+			r.Run.Facts.Needs = map[string][]string{"test": {"test"}}
+		}},
 		{name: "duplicate job", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) { r.Jobs = append(r.Jobs, r.Jobs[0]) }},
 		{name: "too many jobs", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) { r.Jobs = make([]ActionsJobRequest, 17) }},
 		{name: "empty run", wantErr: ErrInvalidActionsRun, change: func(_ *testing.T, _ *checkJobFixture, r *ActionsRunRequest) { r.Jobs = nil }},
@@ -185,8 +201,10 @@ func TestAdmitActionsRun(t *testing.T) {
 			if err != nil || len(jobs) != test.jobs {
 				t.Fatalf("jobs=%+v err=%v", jobs, err)
 			}
-			if len(jobs) != 0 && request.Jobs[0].Waiting && jobs[0].Status != CheckJobWaiting {
-				t.Fatalf("waiting status=%s", jobs[0].Status)
+			for _, job := range jobs {
+				if request.Jobs[0].Waiting && job.JobKey == request.Jobs[0].JobKey && job.Status != CheckJobWaiting {
+					t.Fatalf("waiting status=%s", job.Status)
+				}
 			}
 			again, deduped, err := fixture.store.AdmitActionsRun(ctx, request, fixture.now)
 			if err != nil || !deduped || again.ID != run.ID {
@@ -353,6 +371,8 @@ func TestValidateActionsRecovery(t *testing.T) {
 	fixture := workflowStore(t)
 	ctx := context.Background()
 	request := workflowRunRequest(t)
+	request.Run.Event, request.Run.BaseOID, request.Run.PullRequestNumber = "pull_request", strings.Repeat("c", 40), 1
+	request.Run.Facts.PullRequestAction, request.Run.Facts.PullRequestHeadRef = "opened", "feature"
 	root, _, err := fixture.store.AdmitActionsRun(ctx, request, fixture.now)
 	noErr(t, err)
 	request.Run.RerunRoot, request.Run.RerunGeneration = root.ID, 1
@@ -372,6 +392,23 @@ func TestValidateActionsRecovery(t *testing.T) {
 		{name: "root is a rerun", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[1].RerunRoot = s.ActionsRuns[1].ID }},
 		{name: "duplicate number", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[1].Number = s.ActionsRuns[0].Number }},
 		{name: "changed inputs", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[1].InputsJSON = `{"changed":true}` }},
+		{name: "missing pull request action", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.PullRequestAction = "" }},
+		{name: "unknown pull request action", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.PullRequestAction = "unknown" }},
+		{name: "changed rerun action", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[1].Facts.PullRequestAction = "synchronize" }},
+		{name: "missing pull request head", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.PullRequestHeadRef = "" }},
+		{name: "invalid pull request head", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.PullRequestHeadRef = "feature..invalid" }},
+		{name: "oversized pull request head", invalid: true, mutate: func(s *RecoveryState) {
+			s.ActionsRuns[0].Facts.PullRequestHeadRef = strings.Repeat("a", MaximumPullRequestBranchBytes+1)
+		}},
+		{name: "changed rerun head", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[1].Facts.PullRequestHeadRef = "other" }},
+		{name: "missing fail-fast", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.FailFast = nil }},
+		{name: "unknown fail-fast key", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.FailFast = map[string]bool{"unknown": true} }},
+		{name: "missing graph", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.Needs = nil }},
+		{name: "unknown graph key", invalid: true, mutate: func(s *RecoveryState) {
+			s.ActionsRuns[0].Facts.Needs = map[string][]string{"test": nil, "unknown": nil}
+		}},
+		{name: "unknown graph target", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.Needs = map[string][]string{"test": {"unknown"}} }},
+		{name: "graph cycle", invalid: true, mutate: func(s *RecoveryState) { s.ActionsRuns[0].Facts.Needs = map[string][]string{"test": {"test"}} }},
 		{name: "changed job key", invalid: true, mutate: func(s *RecoveryState) { s.CheckJobs[0].JobKey = "changed" }},
 		{name: "JSON job with workflow facts", invalid: true, mutate: func(s *RecoveryState) { s.CheckJobs[0].RunID = "" }},
 		{name: "waiting job has execution", invalid: true, mutate: func(s *RecoveryState) {

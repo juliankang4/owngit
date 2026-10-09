@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"testing"
@@ -171,6 +172,26 @@ func TestNeedsResult(t *testing.T) {
 		t.Run(test.status+"/"+test.want, func(t *testing.T) {
 			if got := NeedsResult(test.status, test.tolerated); got != test.want {
 				t.Fatalf("result=%q, want %q (tolerated=%v)", got, test.want, test.tolerated)
+			}
+		})
+	}
+}
+
+func TestFailFastFailure(t *testing.T) {
+	for _, test := range []struct {
+		status          string
+		tolerated, want bool
+	}{
+		{StatusFailed, false, true}, {StatusFailed, true, false},
+		{StatusError, false, true}, {StatusError, true, true},
+		{StatusIncomplete, false, true}, {StatusUnavailable, true, true},
+		{StatusAmbiguous, false, false}, {StatusInterrupted, false, false},
+		{StatusCancelled, false, false}, {StatusPassed, false, false},
+		{StatusSkipped, false, false}, {StatusPending, false, false},
+	} {
+		t.Run(test.status+fmt.Sprint(test.tolerated), func(t *testing.T) {
+			if got := FailFastFailure(test.status, test.tolerated); got != test.want {
+				t.Fatalf("fail-fast=%v, want %v", got, test.want)
 			}
 		})
 	}

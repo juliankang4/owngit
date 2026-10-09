@@ -1756,6 +1756,18 @@ var schemaSteps = []schemaStep{
 			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
 		)`,
 		`CREATE INDEX actions_schedules_due ON actions_schedules(next_due_at)`,
+		`CREATE TABLE actions_accepted_pushes (
+			sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+			repository_id TEXT NOT NULL,
+			ref_name TEXT NOT NULL CHECK (length(CAST(ref_name AS BLOB)) <= 4096),
+			old_oid TEXT NOT NULL,
+			new_oid TEXT NOT NULL,
+			consumed INTEGER NOT NULL DEFAULT 0 CHECK (consumed IN (0,1)),
+			FOREIGN KEY (repository_id) REFERENCES repositories(id) ON DELETE CASCADE
+		)`,
+		`CREATE INDEX actions_accepted_pushes_pending ON actions_accepted_pushes(repository_id,sequence) WHERE consumed=0`,
+		`CREATE INDEX actions_accepted_pushes_source ON actions_accepted_pushes(repository_id,new_oid)`,
+		`CREATE INDEX actions_accepted_pushes_consumed ON actions_accepted_pushes(repository_id,sequence) WHERE consumed=1`,
 	}},
 }
 

@@ -131,24 +131,70 @@ func TestFormat12RoundTrip(t *testing.T) {
 		{name: "tolerated failure without a plan", event: state.ActionsEventDispatch, status: "failed", role: "tolerated", want: "passed"},
 		{name: "builtin-only attempt", event: "push", status: "not_run", role: "builtin", want: "skipped"},
 		{name: "waiting schedule job", event: state.ActionsEventSchedule, waiting: true, want: "interrupted"},
+		{name: "pull request event and same-second revisions", event: "pull_request", status: "passed", role: "run", want: "passed"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
 			root := t.TempDir()
 			store, manager := newBackupStore(t, root)
 			now := time.Unix(1800000000, 0)
-			_, err := store.SaveCheckPolicyAndGrantConsent(ctx, state.CheckPolicyInput{RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", state.ActionsEventDispatch, state.ActionsEventSchedule}, MaxTimeoutMS: 60000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000}, nil, now)
+			_, err := store.SaveCheckPolicyAndGrantConsent(ctx, state.CheckPolicyInput{RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{"push", "pull_request", state.ActionsEventDispatch, state.ActionsEventSchedule}, MaxTimeoutMS: 60000, MaxOutputLimitBytes: 65536, QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60000}, nil, now)
 			noErr(t, err)
-			encoded, digest := testfixture.ActionsPlan(t, "test", 0)
+			original, originalDigest := testfixture.ActionsPlan(t, "test", 0)
+			plan, err := actions.DecodePlan(original, originalDigest)
+			noErr(t, err)
+			plan.ContinueOnError = "true"
+			plan.Concurrency = actions.Concurrency{Group: "synthetic-group"}
+			plan.Context.Strategy.MaxParallel = 2
+			if test.waiting {
+				plan.Needs = []string{"build"}
+			}
+			encoded, digest, err := actions.EncodePlan(plan)
+			noErr(t, err)
 			request := state.ActionsRunRequest{Run: state.ActionsRun{RepositoryID: "project", WorkflowPath: ".github/workflows/ci.yml", Event: test.event, EventKey: "synthetic-event", SourceOID: strings.Repeat("a", 40), TriggerRef: "main", InputsJSON: "\n" + `{"dry_run":true,"target":"synthetic","count":1.5}` + " \n", Facts: actions.RunFacts{WorkflowDigest: strings.Repeat("b", 64), SecretNames: []string{"SYNTHETIC_TOKEN"}}, Actor: state.Actor{Kind: state.ActorAccess}}, Jobs: []state.ActionsJobRequest{{CheckJobRequest: state.CheckJobRequest{JobKey: "test", PlanDigest: digest, WorkflowDigest: strings.Repeat("b", 64), Waiting: test.waiting, Tolerated: true, ConcurrencyGroup: "synthetic-group", MaxParallel: 2, Checks: []state.CheckDefinition{{Name: "test", Command: "echo synthetic"}}}, Plan: encoded}}}
+			if test.waiting {
+				build, buildDigest := testfixture.ActionsPlan(t, "build", 0)
+				request.Jobs = append(request.Jobs, state.ActionsJobRequest{CheckJobRequest: state.CheckJobRequest{JobKey: "build", PlanDigest: buildDigest, WorkflowDigest: strings.Repeat("b", 64), Checks: []state.CheckDefinition{{Name: "test", Command: "echo synthetic"}}}, Plan: build})
+			}
 			if test.event == state.ActionsEventSchedule {
 				request.Run.ScheduledFor = &now
+			}
+			var updatedOID string
+			if test.event == "pull_request" {
+				work := filepath.Join(root, "backup-work")
+				request.Run.BaseOID = gitOutput(t, work, "rev-parse", "HEAD")
+				runGit(t, work, "commit", "--allow-empty", "-m", "Synthetic source one")
+				first := gitOutput(t, work, "rev-parse", "HEAD")
+				runGit(t, work, "commit", "--allow-empty", "-m", "Synthetic source two")
+				second := gitOutput(t, work, "rev-parse", "HEAD")
+				if first < second {
+					first, second = second, first
+				}
+				remote, err := manager.Path("project")
+				noErr(t, err)
+				runGit(t, work, "push", remote, first+":refs/heads/feature")
+				runGit(t, work, "push", "--force", remote, second+":refs/heads/feature")
+				request.Run.SourceOID, updatedOID = first, second
+				pr, err := store.CreatePullRequest(ctx, "project", "Synthetic change", "feature", "main", request.Run.SourceOID, request.Run.BaseOID, state.ReviewNotRequested, now)
+				noErr(t, err)
+				noErr(t, store.RecordPullRequestRevision(ctx, state.PullRequestRevision{RepositoryID: "project", PullRequestNumber: pr.Number, SourceOID: updatedOID, TargetOID: request.Run.BaseOID, RecordedAt: now.Add(10 * time.Millisecond)}))
+				request.Run.PullRequestNumber = pr.Number
+				request.Run.Facts.PullRequestAction, request.Run.Facts.PullRequestHeadRef = "opened", "feature"
+				noErr(t, store.RecordAcceptedActionsPushes(ctx, "project", []state.AcceptedActionsPush{{Ref: "refs/heads/feature", NewOID: request.Run.SourceOID}}, now))
 			}
 			run, _, err := store.AdmitActionsRun(ctx, request, now)
 			noErr(t, err)
 			jobs, err := store.ActionsRunJobs(ctx, "project", run.ID)
 			noErr(t, err)
-			job := jobs[0]
+			var job state.CheckJob
+			for _, candidate := range jobs {
+				if candidate.JobKey == "test" {
+					job = candidate
+				}
+			}
+			if job.ID == "" || test.waiting && job.Status != state.CheckJobWaiting {
+				t.Fatalf("target job=%+v", job)
+			}
 			if !test.waiting {
 				runner, _, _, err := store.IssueCheckRunnerToken(ctx, "project", "synthetic-runner", "", now)
 				noErr(t, err)
@@ -173,8 +219,28 @@ func TestFormat12RoundTrip(t *testing.T) {
 			noErr(t, err)
 			manifest, err := readManifest(filepath.Join(backup, manifestName))
 			noErr(t, err)
-			if manifest.Version != 12 || len(manifest.ActionsRuns) != 1 || manifest.CheckJobs[0].PlanDigest != digest || !manifest.CheckJobs[0].Tolerated {
+			var manifestJob CheckJobManifest
+			for _, candidate := range manifest.CheckJobs {
+				if candidate.ID == job.ID {
+					manifestJob = candidate
+				}
+			}
+			if manifest.Version != 12 || len(manifest.ActionsRuns) != 1 || manifestJob.PlanDigest != digest || !manifestJob.Tolerated {
 				t.Fatalf("manifest version=%d runs=%d jobs=%+v", manifest.Version, len(manifest.ActionsRuns), manifest.CheckJobs)
+			}
+			if test.event == "pull_request" {
+				for _, field := range []string{"action", "head"} {
+					invalid := manifest
+					invalid.ActionsRuns = append([]state.ActionsRun(nil), manifest.ActionsRuns...)
+					if field == "action" {
+						invalid.ActionsRuns[0].Facts.PullRequestAction = ""
+					} else {
+						invalid.ActionsRuns[0].Facts.PullRequestHeadRef = ""
+					}
+					if err := validateManifest(invalid); err == nil {
+						t.Fatalf("backup without pull request %s was accepted", field)
+					}
+				}
 			}
 			for _, version := range []int{10, 11} {
 				older := manifest
@@ -185,7 +251,7 @@ func TestFormat12RoundTrip(t *testing.T) {
 			}
 			content, err := os.ReadFile(filepath.Join(backup, manifestName))
 			noErr(t, err)
-			for _, omitted := range []string{"synthetic-secret-not-for-backup", "actions_job_plans", "actions_schedules", `"plan_json"`} {
+			for _, omitted := range []string{"synthetic-secret-not-for-backup", "actions_job_plans", "actions_schedules", "actions_accepted_pushes", `"plan_json"`} {
 				if strings.Contains(string(content), omitted) {
 					t.Fatalf("backup contains %s", omitted)
 				}
@@ -205,7 +271,20 @@ func TestFormat12RoundTrip(t *testing.T) {
 			if err != nil || !found || gotJob.Status != test.want || gotJob.PlanDigest != digest || gotJob.ConcurrencyGroup != job.ConcurrencyGroup || gotJob.MaxParallel != job.MaxParallel {
 				t.Fatalf("restored job=%+v found=%v err=%v", gotJob, found, err)
 			}
-			for _, table := range []string{"actions_job_plans", "actions_schedules", "check_job_runtime_ownership", "check_runner_credentials"} {
+			if test.event == "pull_request" {
+				opened, err := restored.ActionsPullRequestAction(ctx, "project", run.PullRequestNumber, run.SourceOID, run.BaseOID)
+				noErr(t, err)
+				updated, err := restored.ActionsPullRequestAction(ctx, "project", run.PullRequestNumber, updatedOID, run.BaseOID)
+				noErr(t, err)
+				if opened != "opened" || updated != "synchronize" {
+					t.Fatalf("restored revision order: initial=%s updated=%s", opened, updated)
+				}
+				note, err := restored.ActionsPullRequestAdmissionNote(ctx, "project", run.SourceOID)
+				if err != nil || note == nil || note.Code != "note.push_required" {
+					t.Fatalf("restored push authority note=%+v err=%v", note, err)
+				}
+			}
+			for _, table := range []string{"actions_job_plans", "actions_schedules", "actions_accepted_pushes", "check_job_runtime_ownership", "check_runner_credentials"} {
 				count, err := restored.TableRowCount(ctx, table)
 				if err != nil || count != 0 {
 					t.Fatalf("restored %s rows=%d err=%v", table, count, err)

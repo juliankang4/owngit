@@ -747,17 +747,15 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	}
 	gitHandler.Authorize = application.AuthorizeGit
 	gitHandler.OnReceive = noteWrite
-	// The push's exact ref updates feed the tray and check admission. Admission
-	// keeps only the branch updates it needs, in memory, so the completed Git
-	// response neither waits for it nor depends on its result.
-	gitHandler.OnPush = func(request *http.Request, repositoryID string, updates []githttp.RefUpdate) {
+	recordAcceptedPushAndWake := func(request *http.Request, repositoryID string, updates []githttp.RefUpdate) {
 		application.RecordPush(request, repositoryID, updates)
 		pushes := make([]checkrun.PushUpdate, 0, len(updates))
 		for _, update := range updates {
-			pushes = append(pushes, checkrun.PushUpdate{Ref: update.Ref, New: update.New})
+			pushes = append(pushes, checkrun.PushUpdate{Ref: update.Ref, Old: update.Old, New: update.New})
 		}
 		checkCoordinator.NotePush(repositoryID, pushes)
 	}
+	gitHandler.OnPush = recordAcceptedPushAndWake
 	// The tray icon of this computer reads the server's status with the
 	// token of the tray access file, which only this account can read.
 	// Without it Git and the dashboard work as before. An install that

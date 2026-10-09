@@ -154,6 +154,7 @@ func validatePortableCheckJobs(snapshot RecoveryState, repositories map[string]b
 		return nil, err
 	}
 	jobCounts := make(map[string]int, len(runs))
+	runJobs := make(map[string][]CheckJob, len(runs))
 	jobKeys := make(map[string]bool)
 	jobs := make(map[string]CheckJob, len(snapshot.CheckJobs))
 	digests := make(map[string]bool, len(snapshot.CheckJobs))
@@ -171,6 +172,7 @@ func validatePortableCheckJobs(snapshot RecoveryState, repositories map[string]b
 			}
 			key := fmt.Sprintf("%s/%s/%d", job.RunID, job.JobKey, job.MatrixIndex)
 			jobCounts[job.RunID]++
+			runJobs[job.RunID] = append(runJobs[job.RunID], job)
 			if jobKeys[key] || jobCounts[job.RunID] > MaximumActionsRunJobs {
 				return nil, errors.New("duplicate or excessive workflow jobs")
 			}
@@ -186,6 +188,9 @@ func validatePortableCheckJobs(snapshot RecoveryState, repositories map[string]b
 		digests[job.RepositoryID+"\x00"+job.DedupDigest] = true
 	}
 	for _, run := range runs {
+		if err := validateActionsGraph(run, runJobs[run.ID]); err != nil {
+			return nil, err
+		}
 		if run.Outcome == "" && jobCounts[run.ID] == 0 {
 			return nil, errors.New("workflow run has neither jobs nor an outcome")
 		}

@@ -694,7 +694,7 @@ func policyAllowsCheckEvent(policy CheckPolicy, event string) bool {
 
 func checkJobAuthorityCurrent(job CheckJob, policy CheckPolicy) bool {
 	return checkConsentCurrent(policy) && job.PolicyVersion == policy.Version && job.ConsentVersion == policy.ConsentVersion &&
-		job.Executor == policy.Executor && policyAllowsCheckEvent(policy, job.Trigger)
+		job.Executor == policy.Executor && policyAllowsCheckEvent(policy, job.Trigger) && (job.RunID == "" || policy.RunWorkflows)
 }
 
 // checkPolicyDigest is the canonical identity of the operator-selected facts.
@@ -1047,6 +1047,9 @@ func (s *Store) RevokeCheckRunnerToken(ctx context.Context, repositoryID, id str
 		WHERE repository_id=? AND credential_id=? AND status='claimed'`, now.UTC().UnixNano(), now.UTC().UnixNano(), repositoryID, id); err != nil {
 		return err
 	}
+	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
@@ -1073,6 +1076,9 @@ func (s *Store) RevokeCheckRunnerTokenByCreation(ctx context.Context, repository
 	if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='interrupted',lease_id='',lease_expires_at=NULL,
 		finished_at=?,interrupted_at=?,summary='Runner authority was revoked before start.'
 		WHERE repository_id=? AND credential_id=? AND status='claimed'`, now.UTC().UnixNano(), now.UTC().UnixNano(), repositoryID, id); err != nil {
+		return err
+	}
+	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1660,10 +1666,8 @@ func (s *Store) claimCheckJob(ctx context.Context, repositoryID, credentialID, r
 		}
 		return CheckJob{}, false, nil
 	}
-	if !workflows {
-		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET summary=? WHERE repository_id=? AND status='pending' AND run_id!='' AND summary=''`, runnerOldNote, repositoryID); err != nil {
-			return CheckJob{}, false, err
-		}
+	if err := noteActionsClaimGuardsTx(ctx, tx, repositoryID, workflows); err != nil {
+		return CheckJob{}, false, err
 	}
 	job, exists, err := oldestPendingCheckJobTx(ctx, tx, repositoryID, workflows)
 	if err != nil {
@@ -1774,6 +1778,11 @@ func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now ti
 		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=? WHERE id=? AND status='claimed'`, leaseLostAt.UnixNano(), job.ID); err != nil {
 			return CheckJob{}, CheckAttempt{}, err
 		}
+		if job.RunID != "" {
+			if err := settleActionsRunsTx(ctx, tx, now, job.RunID); err != nil {
+				return CheckJob{}, CheckAttempt{}, err
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			return CheckJob{}, CheckAttempt{}, err
 		}
@@ -1791,6 +1800,11 @@ func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now ti
 		if err := interruptCheckJobTx(ctx, tx, job, startedAt, "Execution authority changed before start."); err != nil {
 			return CheckJob{}, CheckAttempt{}, err
 		}
+		if job.RunID != "" {
+			if err := settleActionsRunsTx(ctx, tx, startedAt, job.RunID); err != nil {
+				return CheckJob{}, CheckAttempt{}, err
+			}
+		}
 		if err := tx.Commit(); err != nil {
 			return CheckJob{}, CheckAttempt{}, err
 		}
@@ -1798,6 +1812,13 @@ func (s *Store) StartCheckJob(ctx context.Context, request CheckJobStart, now ti
 			return CheckJob{}, CheckAttempt{}, ErrCheckRunnerCredential
 		}
 		return CheckJob{}, CheckAttempt{}, ErrCheckConsentRequired
+	}
+	allowed, err := actionsStartAllowedTx(ctx, tx, job)
+	if err != nil {
+		return CheckJob{}, CheckAttempt{}, err
+	}
+	if job.CancelRequestedAt != nil || !allowed {
+		return CheckJob{}, CheckAttempt{}, ErrCheckJobState
 	}
 	attempt, err := s.startCheckJobTx(ctx, tx, job, request.AttemptID, protection, startedAt)
 	if err != nil {
@@ -1892,6 +1913,11 @@ func (s *Store) RenewCheckJobLease(ctx context.Context, authority CheckJobComple
 	if job.LeaseExpiresAt == nil || !when.Before(*job.LeaseExpiresAt) {
 		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=lease_expires_at WHERE id=? AND status IN ('claimed','started')`, job.ID); err != nil {
 			return CheckJob{}, err
+		}
+		if job.RunID != "" {
+			if err := settleActionsRunsTx(ctx, tx, now, job.RunID); err != nil {
+				return CheckJob{}, err
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return CheckJob{}, err
@@ -1993,6 +2019,11 @@ func (s *Store) FailCheckJobBeforeStart(ctx context.Context, authority CheckJobC
 	if err != nil || affected != 1 {
 		return CheckJob{}, ErrCheckJobState
 	}
+	if job.RunID != "" {
+		if err := settleActionsRunsTx(ctx, tx, now, job.RunID); err != nil {
+			return CheckJob{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return CheckJob{}, err
 	}
@@ -2022,34 +2053,14 @@ func (s *Store) CancelCheckJob(ctx context.Context, repositoryID, jobID string, 
 	if !exists {
 		return CheckJob{}, ErrCheckJobNotFound
 	}
-	if job.Status == CheckJobCancelled {
-		if err := tx.Commit(); err != nil {
-			return CheckJob{}, err
-		}
-		return job, nil
+	job, err = cancelCheckJobTx(ctx, tx, job, now, job.Summary)
+	if err != nil {
+		return CheckJob{}, err
 	}
-	cancelledAt := now.UTC()
-	if job.Status == CheckJobPending || job.Status == CheckJobClaimed {
-		result, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='cancelled',cancel_requested_at=?,finished_at=? WHERE id=? AND status=?`,
-			cancelledAt.UnixNano(), cancelledAt.UnixNano(), job.ID, job.Status)
-		if err != nil {
+	if job.RunID != "" {
+		if err := settleActionsRunsTx(ctx, tx, now, job.RunID); err != nil {
 			return CheckJob{}, err
 		}
-		affected, err := result.RowsAffected()
-		if err != nil {
-			return CheckJob{}, err
-		}
-		if affected != 1 {
-			return CheckJob{}, ErrCheckJobState
-		}
-		job.Status = CheckJobCancelled
-		job.CancelRequestedAt = &cancelledAt
-		job.FinishedAt = &cancelledAt
-	} else if (job.Status == CheckJobStarted || job.Status == CheckJobAmbiguous) && job.CancelRequestedAt == nil {
-		if _, err := tx.ExecContext(ctx, `UPDATE check_jobs SET cancel_requested_at=? WHERE id=? AND status=?`, cancelledAt.UnixNano(), job.ID, job.Status); err != nil {
-			return CheckJob{}, err
-		}
-		job.CancelRequestedAt = &cancelledAt
 	}
 	if err := tx.Commit(); err != nil {
 		return CheckJob{}, err
@@ -2086,6 +2097,9 @@ func (s *Store) ReconcileCheckJobRestart(ctx context.Context, now time.Time) (in
 	if err != nil {
 		return 0, err
 	}
+	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
+		return 0, err
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
@@ -2098,13 +2112,24 @@ func (s *Store) ExpireCheckJobLeases(ctx context.Context, now time.Time) (int, e
 	if now.IsZero() {
 		return 0, fmt.Errorf("%w: missing time", ErrInvalidCheckJob)
 	}
-	result, err := s.db.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=lease_expires_at
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE check_jobs SET status='ambiguous',lease_lost_at=lease_expires_at
 		WHERE status IN ('claimed','started') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?`, now.UTC().UnixNano())
 	if err != nil {
 		return 0, err
 	}
 	affected, err := result.RowsAffected()
 	if err != nil {
+		return 0, err
+	}
+	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return int(affected), nil
@@ -2180,7 +2205,12 @@ func readCheckJobByDedupTx(ctx context.Context, queryer querier, repositoryID, d
 
 func oldestPendingCheckJobTx(ctx context.Context, queryer querier, repositoryID string, workflows bool) (CheckJob, bool, error) {
 	job, err := scanCheckJob(queryer.QueryRowContext(ctx, checkJobSelect+` WHERE repository_id=? AND status='pending'
-		AND (? OR run_id='') ORDER BY admitted_at,id LIMIT 1`, repositoryID, workflows))
+		AND (? OR run_id='')
+		AND `+actionsRunClaimGuard+`
+		AND `+actionsWorkflowClaimGuard+`
+		AND `+actionsJobClaimGuard+`
+		AND `+actionsParallelClaimGuard+`
+		ORDER BY admitted_at,id LIMIT 1`, repositoryID, workflows))
 	if errors.Is(err, sql.ErrNoRows) {
 		return CheckJob{}, false, nil
 	}
@@ -2211,7 +2241,7 @@ func interruptStalePendingCheckJobsTx(ctx context.Context, tx *sql.Tx, policy Ch
 			return err
 		}
 	}
-	return nil
+	return settleActionsRunsTx(ctx, tx, now, "")
 }
 
 func interruptCheckJobTx(ctx context.Context, tx *sql.Tx, job CheckJob, now time.Time, summary string) error {
@@ -2438,9 +2468,9 @@ func finalizeCheckJobTx(ctx context.Context, tx *sql.Tx, attempt CheckAttempt, s
 		return err
 	}
 	if job.RunID != "" {
-		_, err = tx.ExecContext(ctx, `DELETE FROM actions_job_plans WHERE job_id=?`, job.ID)
+		return settleActionsRunsTx(ctx, tx, finished, job.RunID)
 	}
-	return err
+	return nil
 }
 
 func nullableNano(value *time.Time) any {

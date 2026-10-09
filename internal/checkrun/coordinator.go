@@ -3,7 +3,6 @@ package checkrun
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -37,9 +36,7 @@ const (
 
 	// maximumPendingPushTotal bounds the retained branch updates across all
 	// repositories, so many repositories cannot multiply the per-repository
-	// bound. An update holds a ref of at most 500 bytes (the observation ref
-	// bound), a 40- or 64-character object ID and two string headers, about
-	// 600 bytes at most, so the retained set stays under 2.5 MB.
+	// bound.
 	maximumPendingPushTotal = 4096
 
 	// repositoryBusyWait bounds how long a job waits for its exact source
@@ -73,6 +70,7 @@ var errRevisionRejected = errors.New("configured check workflow was rejected")
 // empty when the push deleted the ref.
 type PushUpdate struct {
 	Ref string
+	Old string
 	New string
 }
 
@@ -81,6 +79,7 @@ type PushUpdate struct {
 type pushUpdate struct {
 	ref string
 	oid string
+	old string
 }
 
 // RuntimeUnavailableError identifies a check-specific startup boundary that
@@ -268,16 +267,12 @@ func (coordinator *Coordinator) wakeAdmission() {
 	}
 }
 
-// NotePush retains the branch updates of one accepted push, so each of them is
-// admitted as its own job even while another job runs. It only adds to memory
-// and never waits for the state, the repository or the push: the Git response
-// is already complete and cannot be delayed or failed by check admission. A
-// deletion, a ref outside refs/heads and a branch name the check records
-// cannot hold carry no event, and the admission goroutine is woken here, so an
-// event is decided while a local job and the reconciliation pass continue. A
-// coordinator that has not started keeps nothing; the next start reconciles
-// each branch head as before, and a commit that is no longer a head keeps no
-// job.
+// NotePush retains accepted branch updates in memory and wakes admission without
+// waiting for state or repository access. The receive caller records durable
+// Actions authority separately before answering the push. Deletions, non-branch
+// refs and refs beyond the accepted-push bound carry no event here. A stopped
+// coordinator keeps nothing in memory; restart consumes durable Actions records
+// and reconciles current heads for JSON checks.
 func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpdate) {
 	if repositoryID == "" || len(updates) == 0 {
 		return
@@ -287,7 +282,7 @@ func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpda
 		if update.New == "" || !strings.HasPrefix(update.Ref, "refs/heads/") {
 			continue
 		}
-		facts = append(facts, pushUpdate{ref: update.Ref, oid: update.New})
+		facts = append(facts, pushUpdate{ref: update.Ref, oid: update.New, old: update.Old})
 	}
 	if len(facts) == 0 {
 		return
@@ -304,8 +299,7 @@ func (coordinator *Coordinator) NotePush(repositoryID string, updates []PushUpda
 // arrival, or the newest update when an older one goes back in front, so a
 // retry never loses the event it was retrying. When all repositories together
 // retain maximumPendingPushTotal updates, an arrival that would grow the set
-// is dropped instead. An update no observation or job can name is not
-// retained; the head pass names such a branch once.
+// is dropped instead.
 func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUpdate, front bool) {
 	if len(updates) == 0 {
 		return
@@ -326,7 +320,7 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 	if front {
 		var put []pushUpdate
 		for _, update := range updates {
-			if !state.ValidCheckObservationRef(update.ref) || containsPushUpdate(kept, update) {
+			if !state.ValidActionsPushRef(update.ref) || containsPushUpdate(kept, update) {
 				continue
 			}
 			put = append(put, update)
@@ -345,7 +339,7 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 			total += len(waiting)
 		}
 		for _, update := range updates {
-			if !state.ValidCheckObservationRef(update.ref) || containsPushUpdate(kept, update) {
+			if !state.ValidActionsPushRef(update.ref) || containsPushUpdate(kept, update) {
 				continue
 			}
 			if len(kept) < maximumPendingPushes && total+len(kept) >= maximumPendingPushTotal {
@@ -384,7 +378,7 @@ func (coordinator *Coordinator) keepPushes(repositoryID string, updates []pushUp
 // containsPushUpdate reports whether an update is already waiting.
 func containsPushUpdate(updates []pushUpdate, update pushUpdate) bool {
 	for _, pending := range updates {
-		if pending == update {
+		if pending.ref == update.ref && pending.oid == update.oid {
 			return true
 		}
 	}
@@ -411,6 +405,10 @@ func containsPushUpdate(updates []pushUpdate, update pushUpdate) bool {
 // the admitting transaction checks consent again, so the event path cannot
 // widen what a saved policy allows.
 func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
+	waiting, err := coordinator.admitAcceptedPushes(ctx, "")
+	if err != nil && ctx.Err() == nil {
+		coordinator.log("accepted workflow push admission: %v", err)
+	}
 	coordinator.mu.Lock()
 	pending := coordinator.pendingPushes
 	coordinator.pendingPushes = nil
@@ -419,7 +417,7 @@ func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 	}
 	coordinator.mu.Unlock()
 	if len(pending) == 0 {
-		return false
+		return waiting
 	}
 	defer func() {
 		coordinator.mu.Lock()
@@ -453,7 +451,6 @@ func (coordinator *Coordinator) admitPendingPushes(ctx context.Context) bool {
 		facts  []pushUpdate
 	}
 	var held []heldRepository
-	waiting := false
 	for _, repositoryID := range ids {
 		if ctx.Err() != nil {
 			return false
@@ -553,7 +550,7 @@ func (coordinator *Coordinator) admissionLoop(ctx context.Context, admits <-chan
 func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, repositoryID string, policy state.CheckPolicy, facts []pushUpdate, deadline time.Time) (undecided []pushUpdate, busy bool, failure error) {
 	events := make([]string, 0, len(facts))
 	for _, fact := range facts {
-		events = append(events, fact.ref+"@"+fact.oid)
+		events = append(events, pushEventKeys(fact.ref, fact.oid)...)
 	}
 	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, events)
 	if err != nil {
@@ -563,13 +560,13 @@ func (coordinator *Coordinator) admitPendingEvents(ctx context.Context, reposito
 		return facts, false, err
 	}
 	for index, fact := range facts {
-		if seen[fact.ref+"@"+fact.oid] {
+		if seenPushEvent(seen, fact.ref, fact.oid) {
 			continue
 		}
 		admit := func() error {
-			_, admitErr := coordinator.admit(ctx, policy, state.CheckJobRequest{
-				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
-				EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, TriggerRef: branchName(fact.ref),
+			_, admitErr := coordinator.admitEvent(ctx, policy, EventRequest{
+				RepositoryID: repositoryID, Event: checkworkflow.EventPush,
+				EventKey: fact.ref + "@" + fact.oid, SourceOID: fact.oid, PreviousOID: fact.old, TriggerRef: branchName(fact.ref),
 			})
 			return admitErr
 		}
@@ -675,6 +672,9 @@ func (coordinator *Coordinator) reconcile(ctx context.Context) error {
 	if _, err := coordinator.Store.ExpireCheckJobLeases(ctx, time.Now().UTC()); err != nil {
 		return err
 	}
+	if err := coordinator.Store.ReconcileActionsJobs(ctx, time.Now().UTC()); err != nil {
+		return err
+	}
 	ids, err := coordinator.Store.CheckPolicyRepositories(ctx)
 	if err != nil {
 		return err
@@ -736,6 +736,9 @@ type pushScan struct {
 }
 
 func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryID string, policy state.CheckPolicy) error {
+	if _, err := coordinator.admitAcceptedPushes(ctx, repositoryID); err != nil {
+		return err
+	}
 	if coordinator.pushCursor == nil {
 		coordinator.pushCursor = make(map[string]string)
 	}
@@ -810,7 +813,7 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	var unobserved []string
 	for _, branch := range branches {
 		if refName := "refs/heads/" + branch.Name; previous[refName] == "" || verifying {
-			unobserved = append(unobserved, refName+"@"+branch.OID)
+			unobserved = append(unobserved, pushEventKeys(refName, branch.OID)...)
 		}
 	}
 	seen, err := coordinator.Store.CheckEventsWithJobs(ctx, repositoryID, checkworkflow.EventPush, unobserved)
@@ -819,17 +822,18 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 	}
 	for _, branch := range branches {
 		refName := "refs/heads/" + branch.Name
-		if !state.ValidCheckObservationRef(refName) {
-			// No observation or job can name this branch, so it is skipped
-			// once per head and the rest of the repository continues.
+		observationValid := state.ValidCheckObservationRef(refName)
+		if !observationValid {
 			coordinator.noteSkippedRef(repositoryID, refName, branch.OID)
-			coordinator.pushCursor[repositoryID] = branch.Name
-			continue
+			if !policy.RunWorkflows || !state.ValidActionsPushRef(refName) {
+				coordinator.pushCursor[repositoryID] = branch.Name
+				continue
+			}
 		}
-		if (previous[refName] != branch.OID || verifying) && !seen[refName+"@"+branch.OID] {
-			admitted, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
-				RepositoryID: repositoryID, Trigger: checkworkflow.EventPush,
-				EventKey: refName + "@" + branch.OID, SourceOID: branch.OID, TriggerRef: branch.Name,
+		if (previous[refName] != branch.OID || verifying) && !seenPushEvent(seen, refName, branch.OID) {
+			admission, err := coordinator.admitEvent(ctx, policy, EventRequest{
+				RepositoryID: repositoryID, Event: checkworkflow.EventPush,
+				EventKey: refName + "@" + branch.OID, SourceOID: branch.OID, PreviousOID: previous[refName], TriggerRef: branch.Name,
 			})
 			switch {
 			case errors.Is(err, errRevisionRejected):
@@ -838,12 +842,14 @@ func (coordinator *Coordinator) reconcilePushes(ctx context.Context, repositoryI
 				coordinator.log("configured check push %s %s at %s was not admitted: %v", repositoryID, branch.Name, branch.OID, err)
 			case err != nil:
 				return err
-			case admitted || (previous[refName] != "" && previous[refName] != branch.OID):
+			case admission.Admitted || (previous[refName] != "" && previous[refName] != branch.OID):
 				coordinator.log("observed configured check push %s %s", repositoryID, branch.Name)
 			}
 		}
-		if err := coordinator.Store.RecordCheckObservation(ctx, repositoryID, refName, branch.OID, time.Now().UTC()); err != nil {
-			return err
+		if observationValid {
+			if err := coordinator.Store.RecordCheckObservation(ctx, repositoryID, refName, branch.OID, time.Now().UTC()); err != nil {
+				return err
+			}
 		}
 		coordinator.pushCursor[repositoryID] = branch.Name
 	}
@@ -914,11 +920,15 @@ func (coordinator *Coordinator) reconcilePullRequests(ctx context.Context, repos
 		if revision.SourceOID == "" || revision.TargetOID == "" || seen[eventKey(revision)] {
 			continue
 		}
-		_, err := coordinator.admit(ctx, policy, state.CheckJobRequest{
-			RepositoryID: repositoryID, Trigger: checkworkflow.EventPullRequest,
-			EventKey:  eventKey(revision),
+		action, err := coordinator.Store.ActionsPullRequestAction(ctx, repositoryID, revision.PullRequest.Number, revision.SourceOID, revision.TargetOID)
+		if err != nil {
+			return err
+		}
+		_, err = coordinator.admitEvent(ctx, policy, EventRequest{
+			RepositoryID: repositoryID, Event: checkworkflow.EventPullRequest,
+			EventKey: eventKey(revision), Action: action,
 			SourceOID: revision.SourceOID, BaseOID: revision.TargetOID, PullRequestNumber: revision.PullRequest.Number,
-			TriggerRef: revision.PullRequest.TargetBranch,
+			TriggerRef: revision.PullRequest.TargetBranch, HeadRef: revision.PullRequest.SourceBranch,
 		})
 		if errors.Is(err, errRevisionRejected) {
 			coordinator.log("configured check pull request %s #%d at %s was not admitted: %v", repositoryID, revision.PullRequest.Number, revision.SourceOID, err)
@@ -939,49 +949,11 @@ func (coordinator *Coordinator) reconcilePullRequests(ctx context.Context, repos
 }
 
 func (coordinator *Coordinator) admit(ctx context.Context, policy state.CheckPolicy, request state.CheckJobRequest) (bool, error) {
-	if !contains(policy.AllowedEvents, request.Trigger) {
-		return false, nil
-	}
-	pinned, err := coordinator.Repositories.PinRepository(ctx, request.RepositoryID, request.SourceOID, request.SourceOID)
-	if err != nil {
-		return false, fmt.Errorf("pin configured check source %s: %w", request.SourceOID, err)
-	}
-	blob, document, err := ReadPinnedWorkflow(ctx, pinned, policy.Execution.Source.MetadataLimit)
-	if errors.Is(err, repository.ErrPinnedPathNotFound) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	effective, err := checkworkflow.Tighten(document, checkworkflow.OperatorPolicy{
-		AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS,
-		MaxOutputLimitBytes: policy.MaxOutputLimitBytes,
-	})
-	if err != nil {
-		return false, fmt.Errorf("%w: %w", errRevisionRejected, err)
-	}
-	if !effective.MatchesBranch(request.Trigger, request.TriggerRef) {
-		return false, nil
-	}
-	request.WorkflowPath = checkworkflow.Path
-	request.WorkflowOID = blob.OID
-	digest := sha256.Sum256(blob.Content)
-	request.WorkflowDigest = fmt.Sprintf("%x", digest[:])
-	request.TimeoutMS = document.Limits.TimeoutMS
-	request.OutputLimitBytes = document.Limits.OutputLimitBytes
-	request.Checks = make([]state.CheckDefinition, 0, len(document.Checks))
-	for _, check := range document.Checks {
-		request.Checks = append(request.Checks, state.CheckDefinition{Name: check.Name, Command: check.Command})
-	}
-	var deduped bool
-	err = pinned.WhilePresent(ctx, func() (err error) {
-		_, deduped, err = coordinator.Store.AdmitCheckJob(ctx, request, time.Now().UTC())
-		return err
-	})
+	result, err := coordinator.admitEvent(ctx, policy, EventRequest{RepositoryID: request.RepositoryID, Event: request.Trigger, EventKey: request.EventKey, SourceOID: request.SourceOID, BaseOID: request.BaseOID, PullRequestNumber: request.PullRequestNumber, TriggerRef: request.TriggerRef})
 	if errors.Is(err, state.ErrInvalidCheckJob) {
 		return false, fmt.Errorf("%w: %w", errRevisionRejected, err)
 	}
-	return !deduped && err == nil, err
+	return result.Admitted, err
 }
 
 // ReadPinnedWorkflow reads and parses the workflow file of a pinned revision.
@@ -1038,6 +1010,9 @@ func (coordinator *Coordinator) runOneLocal(ctx context.Context) error {
 }
 
 func (coordinator *Coordinator) executeLocal(parent context.Context, job state.CheckJob) error {
+	if job.RunID != "" {
+		return coordinator.executeLocalActions(parent, job)
+	}
 	authority := state.CheckJobCompletionAuthority{
 		JobID: job.ID, LeaseID: job.LeaseID, CredentialID: job.CredentialID, CredentialGeneration: job.CredentialGeneration,
 	}
