@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -38,6 +39,9 @@ func TestHostRunJob(t *testing.T) {
 		check          func(*testing.T, actions.Script)
 		configure      func(*actions.RunOptions)
 	}{
+		{name: "private native script", code: strings.ReplaceAll(defaultCode, "HOST_OK", "${{ secrets.TOKEN }}"), want: actions.StatusPassed, output: "[redacted]"},
+		{name: "private powershell script", shell: "powershell", code: "Write-Output '${{ secrets.TOKEN }}'; Write-Error 'failed'", want: actions.StatusFailed, output: "[redacted]"},
+		{name: "private cmd script", shell: "cmd", code: "@echo off\r\necho ${{ secrets.TOKEN }}\r\nexit /b 0\r\n", want: actions.StatusPassed, output: "[redacted]"},
 		{name: "default", code: defaultCode, want: actions.StatusPassed, output: "HOST_OK"},
 		{name: "job-scoped tool state", code: defaultCode, want: actions.StatusPassed, output: "HOST_OK", check: func(t *testing.T, script actions.Script) {
 			values := environmentMap(script.Environment, windows)
@@ -126,7 +130,11 @@ func TestHostRunJob(t *testing.T) {
 			}
 			plan := actions.JobPlan{JobKey: "build", RunsOn: test.runsOn, Steps: []actions.Step{{Name: "step", Run: code, Shell: test.shell, WorkingDirectory: test.working}}, Context: actions.PlanContext{GitHub: actions.GitHubContext{Repository: "sample", EventName: "push", Ref: "refs/heads/main"}}}
 			plan.WorkflowEnv = test.env
-			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, MaxTimeout: 2 * time.Minute}
+			plan.SecretNames = []string{"TOKEN"}
+			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, MaxTimeout: 2 * time.Minute,
+				Secrets: map[string]string{"TOKEN": "synthetic-secret"}, Evaluator: func(_ string, text string, _ map[string]any) (any, error) {
+					return strings.ReplaceAll(text, "${{ secrets.TOKEN }}", "synthetic-secret"), nil
+				}}
 			base, _ := checkexec.HostEnvironment(workspace)
 			values := environmentMap(base, windows)
 			stepDirectory := filepath.Join(workspace, test.working)
@@ -215,9 +223,22 @@ func TestHostRunJob(t *testing.T) {
 			if job.Status != want || len(job.Steps) != 1 {
 				t.Fatalf("got %+v, want %s", job, want)
 			}
+			if !test.replaceScripts {
+				files, err := filepath.Glob(filepath.Join(filepath.Dir(workspace), "actions", "scripts", "step-*"))
+				if err != nil || len(files) != 0 {
+					t.Fatalf("current-step scripts remain: %v err=%v", files, err)
+				}
+			}
+			encoded, err := json.Marshal(job)
+			if err != nil || strings.Contains(string(encoded), "synthetic-secret") {
+				t.Fatalf("stored result contains private script text: %v", err)
+			}
 			step := job.Steps[0]
-			if want == actions.StatusPassed && !strings.Contains(step.Output, test.output) || strings.Contains(step.Output, "SHOULD_NOT_RUN") || step.CleanupError != "" {
+			if want == actions.StatusPassed && !strings.Contains(step.Output, test.output) || strings.Contains(step.Output, "SHOULD_NOT_RUN") || step.CleanupError != "" && !test.replaceScripts {
 				t.Fatal(job)
+			}
+			if test.replaceScripts && !strings.Contains(step.CleanupError, "path escapes") {
+				t.Fatal("unsafe script cleanup was not reported", step.CleanupError)
 			}
 			if test.exitCode != 0 && want != actions.StatusUnavailable && (step.ExitCode == nil || *step.ExitCode != test.exitCode) {
 				t.Fatal(job)

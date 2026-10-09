@@ -7,22 +7,40 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
+	"time"
 
 	"owngit/internal/actions"
-	"owngit/internal/checkrun"
 )
+
+// Executor provides a policy-prepared container and its execution boundary.
+type Executor interface {
+	Metadata() (environment []string, architecture, description string)
+	Limits() (time.Duration, int64)
+	RunScript(context.Context, actions.Script, ...string) actions.ScriptResult
+	CheckInterpreter(context.Context, actions.Script, ...string) actions.ScriptResult
+}
+
+func missingExecutor(executor Executor) bool {
+	if executor == nil {
+		return true
+	}
+	value := reflect.ValueOf(executor)
+	return value.Kind() == reflect.Pointer && value.IsNil()
+}
 
 // RunJob executes with a container prepared before the start grant. The caller
 // owns the job envelope and removes it after the engine and adapter return.
-func RunJob(ctx context.Context, plan actions.JobPlan, options actions.RunOptions, executor *checkrun.ActionsContainer) actions.JobResult {
-	if executor == nil {
+func RunJob(ctx context.Context, plan actions.JobPlan, options actions.RunOptions, executor Executor) actions.JobResult {
+	if missingExecutor(executor) {
 		return actions.JobResult{Status: actions.StatusError, Error: "workflow.executor: prepared container is required"}
 	}
-	options.RunnerOS, options.RunnerArch = "Linux", executor.Architecture
+	environment, architecture, description := executor.Metadata()
+	options.RunnerOS, options.RunnerArch = "Linux", architecture
 	if options.BaseEnvironment == nil && options.Environment == nil {
-		base := slices.Clone(executor.Environment)
+		base := slices.Clone(environment)
 		imagePath, pathIndex := "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", -1
 		for index, entry := range base {
 			if value, found := strings.CutPrefix(entry, "PATH="); found {
@@ -50,8 +68,8 @@ func RunJob(ctx context.Context, plan actions.JobPlan, options actions.RunOption
 	if options.RunScript == nil {
 		options.RunScript = Runner(executor)
 	}
-	if executor.Description != "" {
-		plan.Notes = append(slices.Clone(plan.Notes), actions.Message{Code: "note.container", Detail: executor.Description})
+	if description != "" {
+		plan.Notes = append(slices.Clone(plan.Notes), actions.Message{Code: "note.container", Detail: description})
 	}
 	return actions.RunJob(ctx, plan, options)
 }
@@ -60,13 +78,13 @@ type interpreterLookup struct {
 	name, path, directory string
 }
 
-func Runner(executor *checkrun.ActionsContainer) actions.ScriptRunner {
+func Runner(executor Executor) actions.ScriptRunner {
 	availability := make(map[interpreterLookup]bool)
 	return func(ctx context.Context, script actions.Script) actions.ScriptResult {
 		fail := func(err error) actions.ScriptResult {
 			return actions.ScriptResult{Status: actions.StatusError, Output: err.Error()}
 		}
-		if executor == nil || script.ActionsRoot == nil {
+		if missingExecutor(executor) || script.ActionsRoot == nil {
 			return fail(fmt.Errorf("workflow.executor: prepared container and actions root are required"))
 		}
 		command, implicit, err := shellCommand(script)
@@ -133,8 +151,12 @@ func Runner(executor *checkrun.ActionsContainer) actions.ScriptRunner {
 	}
 }
 
-func runPayload(ctx context.Context, executor *checkrun.ActionsContainer, script actions.Script, payload string, lookup bool) (result actions.ScriptResult) {
+func runPayload(ctx context.Context, executor Executor, script actions.Script, payload string, lookup bool) (result actions.ScriptResult) {
 	result.Status = actions.StatusError
+	if missingExecutor(executor) || script.ActionsRoot == nil {
+		result.Output = "workflow.executor: prepared container and actions root are required"
+		return result
+	}
 	remove := func(relative string) {
 		if err := script.ActionsRoot.Remove(relative); err != nil {
 			result.Status = actions.StatusError

@@ -72,6 +72,10 @@ func (coordinator *Coordinator) PrepareActionsContainer(ctx context.Context, job
 		coordinator: coordinator, job: job, prepared: prepared, workspace: workspace}, nil
 }
 
+func (container *ActionsContainer) Metadata() (environment []string, architecture, description string) {
+	return container.Environment, container.Architecture, container.Description
+}
+
 func (container *ActionsContainer) Limits() (time.Duration, int64) {
 	return time.Duration(container.job.Limits.TimeoutMS) * time.Millisecond, container.job.Limits.OutputLimitBytes
 }

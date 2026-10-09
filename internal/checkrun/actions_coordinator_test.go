@@ -465,18 +465,53 @@ func TestCoordinatorHostActions(t *testing.T) {
 	for _, test := range []struct {
 		name, workflow, status, output string
 		count                          int
-		json                           bool
+		json, container                bool
 	}{
-		{"two files and needs", eventWorkflow, "passed", "after", 3, false},
-		{"multi-line display", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo first\n          echo second\n", "passed", "second", 1, false},
-		{"step outputs", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - id: source\n        run: echo 'answer=ready' >> \"$GITHUB_OUTPUT\"\n      - env:\n          ANSWER: ${{ steps.source.outputs.answer }}\n        run: test \"$ANSWER\" = ready && echo OUTPUT_READY\n", "passed", "OUTPUT_READY", 1, false},
-		{"tracked source change before builtin", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo changed > .github/workflows/ci.yml\n          echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false},
-		{"all skipped", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: false\n        run: echo MUST_NOT_RUN\n", "skipped", "", 1, false},
-		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false},
-		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true},
+		{"two files and needs", eventWorkflow, "passed", "after", 3, false, false},
+		{"multi-line display", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo first\n          echo second\n", "passed", "second", 1, false, false},
+		{"step outputs", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - id: source\n        run: echo 'answer=ready' >> \"$GITHUB_OUTPUT\"\n      - env:\n          ANSWER: ${{ steps.source.outputs.answer }}\n        run: test \"$ANSWER\" = ready && echo OUTPUT_READY\n", "passed", "OUTPUT_READY", 1, false, false},
+		{"tracked source change before builtin", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo changed > .github/workflows/ci.yml\n          echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, false},
+		{"all skipped", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: false\n        run: echo MUST_NOT_RUN\n", "skipped", "", 1, false, false},
+		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false, false},
+		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true, false},
+		{"container passes", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - run: test \"$GITHUB_WORKSPACE\" = /workspace; test \"$RUNNER_OS\" = Linux; echo state > \"$HOME/job-state\"\n      - run: test -f \"$HOME/job-state\"; echo CONTAINER_PASSED\n", "passed", "CONTAINER_PASSED", 1, false, true},
+		{"container step failure", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - shell: sh\n        run: echo STEP_FAILED; exit 7\n      - run: echo MUST_NOT_RUN\n", "failed", "STEP_FAILED", 1, false, true},
+		{"container masks secret", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          TOKEN: ${{ secrets.TOKEN }}\n        run: test -n \"$TOKEN\" && test -z \"$OTHER\" && printf 'token:%s:end\\n' \"$TOKEN\"\n", "passed", "[redacted]", 1, false, true},
+		{"container tracked source", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo changed > .github/workflows/ci.yml; echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, true},
+		{"container early timeout", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 0.000000001\n    steps:\n      - run: echo MUST_NOT_RUN\n", "incomplete", "note.stopped", 1, false, true},
+		{"container engine unavailable", simpleWorkflow, "unavailable", "", 1, false, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			executor := state.CheckExecutorHost
+			if test.container {
+				if runtime.GOOS != "linux" || testing.Short() || os.Getenv("OWNGIT_REAL_DOCKER_TEST") != "1" {
+					t.Skip("requires opt-in real Docker on Linux")
+				}
+				if os.Geteuid() == 0 || !state.ImmutableContainerImage(os.Getenv("OWNGIT_DOCKER_IMAGE")) || !filepath.IsAbs(os.Getenv("TMPDIR")) {
+					t.Fatal("requires a nonroot controller, cached immutable image and shared absolute TMPDIR")
+				}
+				executor = state.CheckExecutorContainer
+			}
 			fixture := actionsFixture(t, state.CheckExecutorHost)
+			if test.container {
+				_, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{RepositoryID: fixture.repositoryID, Executor: executor,
+					AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 16, MaxActiveJobs: 4, MaxLeaseMS: 60_000,
+					Execution: state.CheckExecutionSettings{ContainerRuntime: "docker-local", ContainerImage: os.Getenv("OWNGIT_DOCKER_IMAGE"), ContainerNetwork: "none",
+						ContainerCPUMillis: 1000, ContainerMemoryBytes: 128 << 20, ContainerPIDs: 64, ContainerScratchBytes: 16 << 20}}, time.Now().UTC())
+				noErr(t, err)
+				_, err = fixture.store.GrantCheckConsent(fixture.ctx, fixture.repositoryID, time.Now().UTC())
+				noErr(t, err)
+			}
+			if test.name == "container engine unavailable" {
+				fixture.coordinator.DockerPath = "/owngit-no-such-docker"
+			}
+			const secret = "synthetic-selected-secret"
+			if test.name == "container masks secret" {
+				for name, value := range map[string]string{"TOKEN": secret, "OTHER": "synthetic-not-delivered"} {
+					_, err := fixture.store.SetWorkflowSecret(fixture.ctx, fixture.repositoryID, name, value, state.Actor{Kind: state.ActorAdministrator}, time.Now().UTC())
+					noErr(t, err)
+				}
+			}
 			files := map[string]string{}
 			if test.json {
 				files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"fail","command":"exit 1"},{"name":"later","command":"echo JSON_CONTINUED"}]}`
@@ -503,7 +538,7 @@ func TestCoordinatorHostActions(t *testing.T) {
 			}
 			seenOutput := test.output == ""
 			for _, job := range jobs {
-				if job.Status != test.status || job.StartedAt == nil {
+				if job.Status != test.status || (job.StartedAt == nil) != (test.status == "unavailable") {
 					for _, item := range jobs {
 						if item.AttemptID != "" {
 							t.Logf("job %s log=%q", item.JobKey, workflowFixtureLog(t, fixture, item.AttemptID))
@@ -511,7 +546,27 @@ func TestCoordinatorHostActions(t *testing.T) {
 					}
 					t.Fatalf("job=%+v", job)
 				}
-				log := workflowFixtureLog(t, fixture, job.AttemptID)
+				log := ""
+				if job.AttemptID != "" {
+					log = workflowFixtureLog(t, fixture, job.AttemptID)
+					attempt, found, err := fixture.store.CheckAttemptByID(fixture.ctx, fixture.repositoryID, job.AttemptID)
+					noErr(t, err)
+					protection := state.ProtectionHost
+					if test.container {
+						protection = state.ProtectionContainer
+					}
+					if !found || attempt.Protection != protection {
+						t.Fatalf("attempt=%+v", attempt)
+					}
+					for _, step := range attempt.Results {
+						if strings.Contains(step.OutputExcerpt, "MUST_NOT_RUN") {
+							t.Fatalf("skipped script executed: %+v", step)
+						}
+					}
+				}
+				if strings.Contains(log, secret) || strings.Contains(log, "synthetic-not-delivered") {
+					t.Fatalf("unexpected output: %q", log)
+				}
 				seenOutput = seenOutput || strings.Contains(log, test.output)
 				if !test.json {
 					if _, exists, err := fixture.store.ActionsJobPlan(fixture.ctx, fixture.repositoryID, job.ID); err != nil || exists {
@@ -528,6 +583,16 @@ func TestCoordinatorHostActions(t *testing.T) {
 			snapshot, err := fixture.store.RecoverySnapshot(fixture.ctx)
 			noErr(t, err)
 			noErr(t, state.ValidateCheckRecovery(snapshot))
+			encoded, err := json.Marshal(snapshot)
+			noErr(t, err)
+			if strings.Contains(string(encoded), secret) {
+				t.Fatal("secret entered portable state")
+			}
+			owned, err := fixture.store.ActiveCheckContainers(fixture.ctx, 100)
+			noErr(t, err)
+			if len(owned) != 0 {
+				t.Fatalf("containers left: %+v", owned)
+			}
 		})
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"owngit/internal/actions"
+	"owngit/internal/actions/container"
 	"owngit/internal/actions/host"
 	"owngit/internal/checkapi"
 	"owngit/internal/checksource"
@@ -57,8 +58,8 @@ func (coordinator *Coordinator) executeLocalActions(parent context.Context, job 
 	if err != nil {
 		return failBeforeStart("workflow.secrets_unreadable", "The secrets of this repository could not be read, so this job did not start. An administrator can check them on the Secrets page.")
 	}
-	if job.Executor != state.CheckExecutorHost {
-		return failBeforeStart("workflow.executor", "Local workflow execution requires the host executor in this build.")
+	if job.Executor != state.CheckExecutorHost && job.Executor != state.CheckExecutorContainer {
+		return failBeforeStart("workflow.executor", "Local workflow execution requires a host or container executor.")
 	}
 	plan.Context.GitHub.RunID, plan.Context.GitHub.RunNumber, plan.Context.GitHub.RunAttempt = run.ID, run.Number, run.RerunGeneration+1
 	if err := executionRunsOn(&plan); err != nil {
@@ -68,11 +69,21 @@ func (coordinator *Coordinator) executeLocalActions(parent context.Context, job 
 	if err != nil {
 		return failBeforeStart("workflow.source", "The exact workflow source or private workspace is unavailable, so this job did not start.")
 	}
+	protection := state.ProtectionHost
+	var executor *ActionsContainer
+	if job.Executor == state.CheckExecutorContainer {
+		executor, err = coordinator.PrepareActionsContainer(ctx, job, workspace)
+		if err != nil {
+			_ = stopWatcher()
+			return coordinator.recordNotRun(parent, job, authority, "Configured workflow container runtime is unavailable: ", err)
+		}
+		protection = state.ProtectionContainer
+	}
 	attemptID, err := state.RandomID()
 	if err != nil {
 		return failBeforeStart("workflow.start", "An attempt identity could not be allocated, so this job did not start.")
 	}
-	_, attempt, err := coordinator.Store.StartCheckJob(ctx, state.CheckJobStart{RepositoryID: job.RepositoryID, JobID: job.ID, LeaseID: job.LeaseID, CredentialID: job.CredentialID, CredentialGeneration: job.CredentialGeneration, Protection: state.ProtectionHost, AttemptID: attemptID}, time.Now().UTC())
+	_, attempt, err := coordinator.Store.StartCheckJob(ctx, state.CheckJobStart{RepositoryID: job.RepositoryID, JobID: job.ID, LeaseID: job.LeaseID, CredentialID: job.CredentialID, CredentialGeneration: job.CredentialGeneration, Protection: protection, AttemptID: attemptID}, time.Now().UTC())
 	var notStarted *state.CheckJobNotStartedError
 	if errors.As(err, &notStarted) {
 		return failBeforeStart("workflow.start", "The execution grant was not recorded, so this job did not start.")
@@ -81,7 +92,13 @@ func (coordinator *Coordinator) executeLocalActions(parent context.Context, job 
 		_ = coordinator.workspace.RemoveJob(job.ID)
 		return err
 	}
-	result := host.RunJob(ctx, plan, actions.RunOptions{Workspace: workspace, Directory: filepath.Join(filepath.Dir(workspace), "actions"), Identity: actions.RunIdentity{ID: run.ID, Number: run.Number, Attempt: run.RerunGeneration + 1}, Secrets: secrets, Evaluator: workflowEvaluator, MaxTimeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond, OutputLimit: job.Limits.OutputLimitBytes}, coordinator.Repositories.Git.GitPath)
+	options := actions.RunOptions{Workspace: workspace, Directory: filepath.Join(filepath.Dir(workspace), "actions"), Identity: actions.RunIdentity{ID: run.ID, Number: run.Number, Attempt: run.RerunGeneration + 1}, Secrets: secrets, Evaluator: workflowEvaluator, MaxTimeout: time.Duration(job.Limits.TimeoutMS) * time.Millisecond, OutputLimit: job.Limits.OutputLimitBytes}
+	var result actions.JobResult
+	if executor != nil {
+		result = container.RunJob(ctx, plan, options, executor)
+	} else {
+		result = host.RunJob(ctx, plan, options, coordinator.Repositories.Git.GitPath)
+	}
 	results := actionsStateResults(attempt, result)
 	worktree := state.WorktreeClean
 	verifyContext, cancelVerify := context.WithTimeout(context.WithoutCancel(parent), 30*time.Second)

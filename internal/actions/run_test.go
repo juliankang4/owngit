@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func jobFixture(t *testing.T) (JobPlan, RunOptions) {
 }
 
 func TestRunJob(t *testing.T) {
-	tests := []struct {
+	type runCase struct {
 		name        string
 		steps       []Step
 		statuses    []string
@@ -76,7 +77,8 @@ func TestRunJob(t *testing.T) {
 		cancelStep  bool
 		configure   func(*JobPlan, *RunOptions)
 		check       func(*testing.T, JobResult, []Script)
-	}{
+	}
+	tests := []runCase{
 		{name: "cancel before start", steps: []Step{{Run: "one"}, {Run: "two", If: "always()"}}, want: []string{StatusSkipped, StatusSkipped}, jobStatus: StatusCancelled, cancelStart: true},
 		{name: "cancel during step", steps: []Step{{Run: "one"}, {Run: "two", If: "always()"}}, want: []string{StatusCancelled, StatusSkipped}, jobStatus: StatusCancelled, cancelStep: true},
 		{name: "missing identity", jobStatus: StatusError, configure: func(_ *JobPlan, options *RunOptions) { options.Identity = RunIdentity{} }},
@@ -176,6 +178,16 @@ func TestRunJob(t *testing.T) {
 				}
 			}},
 	}
+	for _, status := range []string{StatusPassed, StatusFailed, StatusIncomplete, StatusCancelled} {
+		tests = append(tests, runCase{name: "private script " + status, steps: []Step{{Run: "${{ secrets.TEST }}"}, {Run: "${{ secrets.TEST }}", If: "always()"}}, statuses: []string{status, StatusPassed}, want: []string{status, StatusPassed}, jobStatus: status,
+			check: func(t *testing.T, _ JobResult, scripts []Script) {
+				for _, script := range scripts {
+					if _, err := os.Stat(script.Path); !os.IsNotExist(err) {
+						t.Fatalf("evaluated script remains after step: %v", err)
+					}
+				}
+			}})
+	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			plan, options := jobFixture(t)
@@ -190,6 +202,18 @@ func TestRunJob(t *testing.T) {
 				status := StatusPassed
 				if len(scripts) < len(test.statuses) {
 					status = test.statuses[len(scripts)]
+				}
+				if strings.HasPrefix(test.name, "private script ") {
+					value, err := os.ReadFile(script.Path)
+					info, statErr := os.Stat(script.Path)
+					if err != nil || string(value) != testSecret || statErr != nil || info.Mode().Perm() != 0o600 && runtime.GOOS != "windows" {
+						t.Fatalf("private current-step script: read=%v stat=%v", err, statErr)
+					}
+				}
+				for _, previous := range scripts {
+					if _, err := os.Stat(previous.Path); !os.IsNotExist(err) {
+						t.Fatalf("previous step script is still available: %v", err)
+					}
 				}
 				scripts = append(scripts, script)
 				if test.cancelStep {

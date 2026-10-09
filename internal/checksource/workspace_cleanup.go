@@ -239,6 +239,16 @@ func (root *WorkspaceRoot) RemoveJob(jobID string) error {
 // Unknown entries are preserved. more reports an incomplete bounded scan or
 // additional owned envelopes beyond the removal limit.
 func (root *WorkspaceRoot) Cleanup(limit int) (removed int, more bool, err error) {
+	return root.cleanup(limit, false)
+}
+
+// ScrubActionsPayloads removes interrupted step material without removing the
+// authenticated envelope, source workspace or container ownership metadata.
+func (root *WorkspaceRoot) ScrubActionsPayloads(limit int) (scrubbed int, more bool, err error) {
+	return root.cleanup(limit, true)
+}
+
+func (root *WorkspaceRoot) cleanup(limit int, scrub bool) (removed int, more bool, err error) {
 	if root == nil || root.release == nil || limit < 1 || limit > maximumCleanupScan {
 		return 0, false, errors.New("invalid workspace cleanup bound")
 	}
@@ -278,8 +288,19 @@ func (root *WorkspaceRoot) Cleanup(limit int) (removed int, more bool, err error
 			more = true
 			continue
 		}
-		if err := os.RemoveAll(envelope); err != nil {
-			failures = errors.Join(failures, fmt.Errorf("remove workspace %s: %w", entry.Name(), err))
+		cleanupErr := error(nil)
+		if scrub {
+			private, openErr := os.OpenRoot(envelope)
+			if openErr != nil {
+				cleanupErr = openErr
+			} else {
+				cleanupErr = errors.Join(private.RemoveAll(filepath.Join("actions", "scripts")), private.RemoveAll(filepath.Join("actions", "files")), private.Close())
+			}
+		} else {
+			cleanupErr = os.RemoveAll(envelope)
+		}
+		if cleanupErr != nil {
+			failures = errors.Join(failures, fmt.Errorf("clean workspace %s: %w", entry.Name(), cleanupErr))
 			continue
 		}
 		removed++

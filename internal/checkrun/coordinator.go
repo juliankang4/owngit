@@ -165,6 +165,10 @@ func (coordinator *Coordinator) Start(parent context.Context) error {
 			workspace.Close()
 		}
 	}()
+	scrubbed, more, scrubErr := workspace.ScrubActionsPayloads(1000)
+	if scrubErr != nil || more {
+		coordinator.log("configured check startup private payload cleanup scrubbed=%d more=%v error=%v", scrubbed, more, scrubErr)
+	}
 	containerCleanupErr := coordinator.reconcileContainers(parent)
 	if containerCleanupErr != nil {
 		coordinator.log("configured check startup container cleanup: %v", containerCleanupErr)

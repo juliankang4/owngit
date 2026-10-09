@@ -1,4 +1,4 @@
-package container
+package container_test
 
 import (
 	"context"
@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"owngit/internal/actions"
+	"owngit/internal/actions/container"
 	"owngit/internal/checkrun"
 	"owngit/internal/testfixture/containerjob"
 )
+
+func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
 
 func TestContainerRunJob(t *testing.T) {
 	const secret = "synthetic-container-secret"
@@ -38,14 +41,14 @@ printf 'ignored summary\n' >> "$GITHUB_STEP_SUMMARY"
 printf 'old step\n' > /owngit/files/previous-step
 printf 'source state\n' > /workspace/source-state`
 	tests := []struct {
-		name, shell, code, working, want, output        string
-		steps                                           []actions.Step
-		env                                             map[string]string
-		statuses                                        []string
-		transport, cancel, invalidPayload, lookupMounts bool
-		limit                                           int64
-		timeout                                         time.Duration
-		lookupChecks, exitCode                          int
+		name, shell, code, working, want, output                       string
+		steps                                                          []actions.Step
+		env                                                            map[string]string
+		statuses                                                       []string
+		transport, cancel, invalidPayload, lookupMounts, privateScript bool
+		limit                                                          int64
+		timeout                                                        time.Duration
+		lookupChecks, exitCode                                         int
 	}{
 		{name: "default shell", code: "false | true\nprintf 'DEFAULT_OK:%s\\n' \"${BASH_VERSION:-sh}\"", want: actions.StatusPassed, output: "DEFAULT_OK"},
 		{name: "explicit sh and job state", shell: "sh", code: stateCode, want: actions.StatusPassed, output: "STATE_OK"},
@@ -116,6 +119,10 @@ chmod +x "$HOME/.local/bin/user-tool"`},
 		{name: "script exit 126", code: "exit 126", want: actions.StatusFailed, exitCode: 126},
 		{name: "script exit 127", code: "exit 127", want: actions.StatusFailed, exitCode: 127},
 		{name: "script prints unavailable prefix", code: "printf 'workflow.shell_unavailable: synthetic\\n'; exit 127", want: actions.StatusFailed, exitCode: 127, output: "workflow.shell_unavailable: synthetic"},
+		{name: "private script passed", privateScript: true, transport: true, code: "printf '%s\\n' '${{ secrets.TOKEN }}'", want: actions.StatusPassed},
+		{name: "private script failed", privateScript: true, transport: true, code: "printf '%s\\n' '${{ secrets.TOKEN }}'; exit 7", want: actions.StatusFailed, exitCode: 7},
+		{name: "private script timeout", privateScript: true, transport: true, code: "printf '%s\\n' '${{ secrets.TOKEN }}'; exec tail -f /dev/null", timeout: 2 * time.Second, want: actions.StatusIncomplete},
+		{name: "private script cancelled", privateScript: true, transport: true, cancel: true, code: "printf '%s\\nCANCEL_READY\\n' '${{ secrets.TOKEN }}'; exec tail -f /dev/null", want: actions.StatusCancelled},
 		{name: "output limit", code: "printf 'abcdefghijklmnopqrstuvwxyz\\n'", limit: 16, want: actions.StatusIncomplete},
 		{name: "policy timeout", code: "exec tail -f /dev/null", timeout: 200 * time.Millisecond, want: actions.StatusIncomplete},
 		{name: "cancel running container", cancel: true, code: "printf 'CANCEL_READY\\n'; exec tail -f /dev/null", want: actions.StatusCancelled, output: "CANCEL_READY"},
@@ -145,6 +152,10 @@ chmod +x "$HOME/.local/bin/user-tool"`},
 				wrapper := filepath.Join(t.TempDir(), "docker-control")
 				code := "#!/bin/sh\n[ -z \"${PAYLOAD_MARKER-}\" ] || exit 88\n[ -z \"${TOKEN-}\" ] || exit 88\ncase \"$PATH\" in *synthetic-container-secret*) exit 88;; esac\nprintf '%s\\n' \"$@\" >> " + shellQuote(trace+".args") + "\ncreating=0\nfor value do [ \"$value\" != create ] || creating=1; done\n"
 				code += "if [ \"$creating\" = 1 ]; then\nlookup_source=\nfor file in " + shellQuote(filepath.Join(filepath.Dir(fixture.Workspace), "actions", "scripts")) + "/*/*.lookup.env; do\n[ -f \"$file\" ] || continue\nlookup_source=\"${file%/*}\"\n[ \"$(stat -c %a \"$file\")\" = 600 ] || exit 88\n[ \"$(stat -c %a \"$lookup_source\")\" = 700 ] || exit 88\n[ \"$(grep -c '^export ' \"$file\")\" = 1 ] || exit 88\ngrep -q '^export PATH=' \"$file\" || exit 88\nprintf 'lookup\\n' >> " + shellQuote(trace+".lookups") + "\ndone\n"
+				if test.privateScript {
+					script := filepath.Join(filepath.Dir(fixture.Workspace), "actions", "scripts", "step-1.script")
+					code += "step=0\nfor value do case \"$value\" in owngit-check-*-step-*) step=1;; esac; done\nif [ \"$step\" = 1 ]; then\n[ -f " + shellQuote(script) + " ] || exit 88\n[ \"$(stat -c %a " + shellQuote(script) + ")\" = 600 ] || exit 88\ngrep -Fq " + shellQuote(secret) + " " + shellQuote(script) + " || exit 88\nfi\n"
+				}
 				code += "id=$(" + shellQuote(fixture.Docker) + " \"$@\") || exit $?\n"
 				if test.lookupMounts {
 					code += "if [ -n \"$lookup_source\" ]; then\n" + shellQuote(fixture.Docker) + " inspect --format '{{json .Mounts}}' \"$id\" >> " + shellQuote(trace+".mounts") + " || exit $?\nfi\n"
@@ -186,10 +197,10 @@ chmod +x "$HOME/.local/bin/user-tool"`},
 					} else {
 						script.Environment = append(script.Environment, "INVALID=payload\x00value")
 					}
-					return Runner(executor)(ctx, script)
+					return container.Runner(executor)(ctx, script)
 				}
 			}
-			result := RunJob(ctx, plan, options, executor)
+			result := container.RunJob(ctx, plan, options, executor)
 			if result.Status != test.want || len(result.Steps) != len(steps) {
 				t.Fatalf("want %s, got %+v", test.want, result)
 			}
@@ -272,7 +283,7 @@ chmod +x "$HOME/.local/bin/user-tool"`},
 			if test.limit != 0 && !last.Truncated {
 				t.Fatal("output limit was not reported")
 			}
-			for _, pattern := range []string{"*.env", "*.lookup"} {
+			for _, pattern := range []string{"*.env", "*.lookup", "*.script", "*.ps1", "*.cmd"} {
 				files, err := filepath.Glob(filepath.Join(filepath.Dir(fixture.Workspace), "actions", "scripts", pattern))
 				if err != nil || len(files) != 0 {
 					t.Fatalf("private step payloads remain: %v err=%v", files, err)

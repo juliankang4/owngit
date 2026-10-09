@@ -426,6 +426,13 @@ func executeStep(ctx context.Context, root *os.Root, plan JobPlan, step Step, op
 	if err := writePrivate(root, scriptName, []byte(code)); err != nil {
 		return err
 	}
+	defer func() {
+		for _, extension := range []string{"", ".ps1", ".cmd"} {
+			if err := root.Remove(scriptName + extension); err != nil && !errors.Is(err, os.ErrNotExist) {
+				result.CleanupError = strings.TrimSpace(result.CleanupError + "\nremove private step script: " + err.Error())
+			}
+		}
+	}()
 	stream := newCommandMaskingWriter(mask)
 	native := options.RunScript(ctx, Script{Path: filepath.Join(root.Name(), scriptName), Shell: shell, RunsOn: plan.RunsOn,
 		Workspace: workspace, Directory: directory, ScriptsDirectory: filepath.Join(root.Name(), "scripts"), WorkDirectory: filepath.Join(root.Name(), "work"),
@@ -490,7 +497,10 @@ func writePrivate(root *os.Root, name string, value []byte) error {
 		return err
 	}
 	_, writeErr := file.Write(value)
-	return errors.Join(writeErr, file.Close())
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return errors.Join(err, root.Remove(name))
+	}
+	return nil
 }
 
 func workingDirectory(workspace, relative string) (string, error) {
