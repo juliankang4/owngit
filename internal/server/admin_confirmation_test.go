@@ -365,8 +365,6 @@ func TestSharedPasswordEqualToTheAdminPasswordIsRefusedWithoutATypedPassword(t *
 	if result.status != http.StatusUnprocessableEntity || !strings.Contains(result.body, enText(webui.MsgSetupGenSameAsAdmin)) {
 		t.Fatalf("status=%d, want the equal password refused", result.status)
 	}
-	// The new shared password signs this browser out of shared access, and
-	// its administrator confirmation keeps Settings open.
 	changed := browser.post("/settings/access", url.Values{"action": {webui.ActionSaveAccess}, "access_mode": {"password"}, "access_password": {"shared-password-2"}})
 	if changed.status != http.StatusSeeOther || changed.header.Get("Location") != "/settings/access?notice=access_changed#grp-access" {
 		t.Fatalf("a different shared password: status=%d location=%q", changed.status, changed.header.Get("Location"))

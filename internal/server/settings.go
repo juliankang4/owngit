@@ -144,10 +144,27 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 	// cleared only once the change is saved; a change that was not saved
 	// changes nothing, this browser's session included.
 	var ends string
+	var accessSession auth.NewSession
+	var accessLinks state.CrossSiteLinks
 	// notice is the result the page shows in the saved group.
 	notice := "settings_saved"
 	switch action {
 	case webui.ActionEnableAccessPassword, webui.ActionChangeAccessPassword:
+		authority, readErr := app.adminAuthority(writer, request)
+		if readErr != nil {
+			if verified.password == "" {
+				app.renderNotSaved(writer, request, settings, csrf, action, "administrator confirmation read", readErr)
+				return
+			}
+			logFailure(request, "administrator confirmation read", readErr)
+		}
+		if verified.password != "" || authority.confirmed {
+			accessSession, accessLinks, err = app.accessChangeSession(request)
+			if err != nil {
+				app.renderNotSaved(writer, request, settings, csrf, action, "general session read", err)
+				return
+			}
+		}
 		err = app.setAccessPassword(request.Context(), requestctx.Of(request).ClientAddress, verified.password, postValue(request, "access_password"))
 		var policyErr *state.PolicyError
 		switch {
@@ -385,27 +402,24 @@ func (app *App) handleSettingsPost(writer http.ResponseWriter, request *http.Req
 		app.renderNotSaved(writer, request, settings, csrf, action, "settings save", err)
 		return
 	}
+	if accessSession.Token != "" {
+		if err := app.Store.StartSession(request.Context(), "", accessSession.Token, "general", accessSession.CSRF, settings.AccessSessionVersion+1, accessSession.Expires); err != nil {
+			logFailure(request, "general session start", err)
+		} else {
+			app.setGeneralCookie(writer, request, accessSession.Token, accessSession.Expires, accessLinks)
+			ends = ""
+		}
+	}
 	if ends != "" {
 		app.clearCookie(writer, request, cookieNameForScheme(request, ends))
 	}
-	// A new shared password signs out every general session, this browser's
-	// too. Without an administrator session Settings would send it to the
-	// sign-in page and drop the confirmation, so the confirmation goes there.
-	if action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword {
-		// A session that could not be read may have ended, so the
-		// confirmation goes where it is shown either way.
-		authority, err := app.adminAuthority(writer, request)
-		if err != nil {
-			logFailure(request, "administrator confirmation read", err)
+	if ends == generalCookie && (action == webui.ActionEnableAccessPassword || action == webui.ActionChangeAccessPassword) {
+		next := settingsLeaveTarget(request)
+		if next == "" {
+			next = webui.SettingsTabURL(webui.SettingsAccess)
 		}
-		if !authority.confirmed {
-			next := settingsLeaveTarget(request)
-			if next == "" {
-				next = webui.SettingsTabURL(webui.SettingsAccess)
-			}
-			app.settingsAnswer(writer, request, "/login?notice=access_password_saved&next="+url.QueryEscape(next))
-			return
-		}
+		app.settingsAnswer(writer, request, "/login?notice=access_password_saved&next="+url.QueryEscape(next))
+		return
 	}
 	app.settingsSaved(writer, request, settingsResultURL(action, notice))
 }

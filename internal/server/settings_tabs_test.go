@@ -100,20 +100,14 @@ func TestSavingTheAccessGroupAsksForOneChange(t *testing.T) {
 		t.Fatalf("a short shared password: status=%d mode=%s", result.status, mode())
 	}
 	result = save(url.Values{"access_mode": {"password"}, "access_password": {"first-shared-password"}})
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" || mode() != "password" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/access?notice=access_enabled#grp-access" || mode() != "password" {
 		t.Fatalf("turning the shared password on: status=%d location=%q", result.status, result.header.Get("Location"))
 	}
 
-	// Signed in again with the new password.
-	client, jar := newBrowserClient(t)
-	browserGET(t, client, base+"/login")
-	login := browserForm(t, client, base+"/login", url.Values{
-		"csrf": {cookieValue(t, jar, base, preauthCookie)}, "password": {"first-shared-password"}, "next": {"/settings/access"},
-	}, base)
-	if login.status != http.StatusSeeOther {
-		t.Fatalf("sign-in status=%d", login.status)
+	body, status := dashboardGET(t, client, base+"/settings/access")
+	if status != http.StatusOK {
+		t.Fatalf("changing browser lost Settings access: status=%d", status)
 	}
-	body, _ := dashboardGET(t, client, base+"/settings/access")
 	csrf = formValue(t, body, "csrf")
 	result = save(url.Values{"access_mode": {"password"}, "access_password": {""}})
 	if result.status != http.StatusOK || !strings.Contains(settingsGroup(t, result.body, "access"), nothing) {
@@ -250,13 +244,14 @@ func TestASavedGroupContinuesToThePageBeingLeftFor(t *testing.T) {
 		t.Fatalf("the script's answer: status=%d location=%q", result.status, answer.Location)
 	}
 
-	// A new shared password signs this browser out, so sign-in comes first
-	// and then continues to the page being left for.
 	result = browserForm(t, client, base+"/settings/access", url.Values{
 		"csrf": {csrf}, "action": {webui.ActionSaveAccess}, "admin_password": {"admin-password"},
 		"access_mode": {"password"}, "access_password": {"first-shared-password"}, "leave_to": {"/activity"},
 	}, base)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Factivity" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/activity" {
 		t.Fatalf("a new shared password: status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+	if result := browserGET(t, client, base+"/activity"); result.status != http.StatusOK {
+		t.Fatalf("changing browser lost ordinary access: status=%d", result.status)
 	}
 }

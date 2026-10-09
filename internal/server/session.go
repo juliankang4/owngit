@@ -37,6 +37,26 @@ func (app *App) requireGeneral(writer http.ResponseWriter, request *http.Request
 	return state.Session{}, false
 }
 
+func (app *App) accessChangeSession(request *http.Request) (auth.NewSession, state.CrossSiteLinks, error) {
+	previous, ok, err := app.cookieSession(request, "general", generalCookie)
+	if err != nil {
+		return auth.NewSession{}, "", err
+	}
+	expires := previous.Expires
+	if !ok {
+		choice, err := app.Store.GeneralSession(request.Context())
+		if err != nil {
+			return auth.NewSession{}, "", err
+		}
+		expires = app.now().Add(choice.Length())
+	}
+	links, err := app.Store.CrossSiteLinks(request.Context())
+	if err != nil {
+		return auth.NewSession{}, "", err
+	}
+	return auth.NewSession{Token: auth.RandomToken(32), CSRF: auth.RandomToken(32), Expires: expires}, links, nil
+}
+
 // loginNext is where signing in again returns to. A page read with GET returns
 // to itself. A form submission returns to the page that held the form: the
 // same-origin Referer when there is one, otherwise the submission address.

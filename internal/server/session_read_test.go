@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"owngit/internal/auth"
 	"owngit/internal/state"
 	"owngit/internal/webui"
 )
@@ -147,11 +148,6 @@ func TestSetupSessionThatCannotBeReadIsUnavailable(t *testing.T) {
 	}
 }
 
-// A new shared password ends this browser's general session, so after the
-// save the confirmation goes to sign-in unless an administrator session keeps
-// Settings open. An administrator session that could not be read may have
-// ended: the confirmation goes to sign-in, where it is shown either way, and
-// the read failure is logged instead of passing as no session.
 func TestSavedPasswordConfirmationSurvivesAnUnreadableAdminSession(t *testing.T) {
 	fixture := newAPIFixture(t, true)
 	server := serve(t, fixture.app.Handler())
@@ -171,8 +167,18 @@ func TestSavedPasswordConfirmationSurvivesAnUnreadableAdminSession(t *testing.T)
 		"csrf": {"general-csrf"}, "action": {webui.ActionChangeAccessPassword}, "admin_password": {"admin-password"},
 		"access_password": {"another-shared-password"},
 	}, server.URL)
-	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" {
+	if result.status != http.StatusSeeOther || result.header.Get("Location") != "/settings/access?notice=access_changed#grp-access" {
 		t.Fatalf("save status=%d location=%q", result.status, result.header.Get("Location"))
+	}
+	token := cookieValue(t, jar, server.URL, generalCookie)
+	current, ok, err := fixture.app.Auth.ValidateSession(ctx, token, "general")
+	if err != nil || !ok || token == "general-session" || current.Version != settings.AccessSessionVersion+1 {
+		t.Fatalf("replacement ordinary session ok=%v version=%d err=%v", ok, current.Version, err)
+	}
+	encoded, err := fixture.store.PasswordHash(ctx, "access")
+	noErr(t, err)
+	if !auth.CheckPassword(encoded, "another-shared-password") {
+		t.Fatal("the replacement ordinary session is not under the saved shared password")
 	}
 	checkLoggedSteps(t, "save", loggedFailures(serverLog, 0), "administrator confirmation read")
 }

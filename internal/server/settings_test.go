@@ -4,7 +4,6 @@ import (
 	"context"
 	"html"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,37 +12,82 @@ import (
 	"time"
 
 	"owngit/internal/auth"
+	"owngit/internal/state"
 	"owngit/internal/webui"
 )
 
 func TestChangingSharedPasswordRevokesGeneralSessions(t *testing.T) {
-	app, store, repositoryRoot := newTestApp(t)
-	noErr(t, os.MkdirAll(repositoryRoot, 0o700))
-	canonical, _ := filepath.EvalSymlinks(repositoryRoot)
-	accessHash := fixturePasswordHash(t, "old-shared-password")
-	adminHash := fixturePasswordHash(t, "admin-password")
-	noErr(t, store.CompleteSetup(context.Background(), canonical, "password", accessHash, adminHash, true))
-	app.Repositories.SetRoot(canonical)
-	settings, _ := store.Settings(context.Background())
-	noErr(t, store.CreateSession(context.Background(), "general-token", "general", "csrf-token", settings.AccessSessionVersion, time.Now().Add(time.Hour)))
-	server := serve(t, app.Handler())
-	jar, _ := cookiejar.New(nil)
-	parsed, _ := url.Parse(server.URL)
-	jar.SetCookies(parsed, []*http.Cookie{{Name: generalCookie, Value: "general-token", Path: "/"}})
-	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	response := request(t, client, http.MethodPost, server.URL+"/settings", url.Values{
-		"csrf": {"csrf-token"}, "action": {webui.ActionChangeAccessPassword},
-		"admin_password": {"admin-password"}, "access_password": {"new-shared-password"},
-	}, server.URL)
-	if response.StatusCode != http.StatusSeeOther {
-		t.Fatalf("change shared password status=%d", response.StatusCode)
-	}
-	encoded, _ := store.PasswordHash(context.Background(), "access")
-	if auth.CheckPassword(encoded, "old-shared-password") || !auth.CheckPassword(encoded, "new-shared-password") {
-		t.Fatal("shared password change was not persisted")
-	}
-	if _, ok, err := store.Session(context.Background(), "general-token", "general", time.Now()); err != nil || ok {
-		t.Fatalf("general session survived shared password change: ok=%v err=%v", ok, err)
+	for _, check := range []struct {
+		name, password string
+		choice         state.AdminConfirmation
+		protected      bool
+		remembered     bool
+		keep           bool
+		refuseSession  bool
+	}{
+		{"remembered change", "", state.DefaultAdminConfirmation, true, true, true, false},
+		{"remembered enable", "", state.DefaultAdminConfirmation, false, true, true, false},
+		{"every time change", "admin-password", state.ConfirmEveryTime, true, false, true, false},
+		{"every time enable", "admin-password", state.ConfirmEveryTime, false, false, true, false},
+		{"unconfirmed change", "", state.ConfirmNever, true, false, false, false},
+		{"session write refused", "", state.DefaultAdminConfirmation, true, true, false, true},
+	} {
+		t.Run(check.name, func(t *testing.T) {
+			fixture, server, clock := newConfirmationFixture(t, check.protected, check.choice)
+			ctx := context.Background()
+			browser := openConfirmationBrowser(t, server, check.protected)
+			other := openConfirmationBrowser(t, server, check.protected)
+			if check.remembered {
+				browser.adminSignIn()
+				other.adminSignIn()
+			}
+			browser.get("/settings/access")
+			oldToken := browser.cookie(generalCookie)
+			previous, _, err := fixture.store.Session(ctx, oldToken, "general", clock.Now())
+			noErr(t, err)
+			if check.refuseSession {
+				refuseWrites(t, fixture.store, "refuse_general_session", "INSERT ON sessions")
+			}
+			clock.Add(time.Minute)
+			result := browser.post("/settings/access", url.Values{
+				"action": {webui.ActionSaveAccess}, "access_mode": {"password"},
+				"admin_password": {check.password}, "access_password": {"new-shared-password"},
+			})
+			if result.status != http.StatusSeeOther {
+				t.Fatalf("shared password save status=%d", result.status)
+			}
+			encoded, err := fixture.store.PasswordHash(ctx, "access")
+			noErr(t, err)
+			if auth.CheckPassword(encoded, "shared-password") || !auth.CheckPassword(encoded, "new-shared-password") {
+				t.Fatal("shared password change was not persisted")
+			}
+			if _, ok, err := fixture.store.Session(ctx, oldToken, "general", clock.Now()); err != nil || ok {
+				t.Fatalf("old general token survived: ok=%v err=%v", ok, err)
+			}
+			if result := other.get("/"); result.status != http.StatusSeeOther || !strings.HasPrefix(result.header.Get("Location"), "/login?") {
+				t.Fatalf("other browser kept ordinary access: status=%d", result.status)
+			}
+			want := http.StatusSeeOther
+			if check.keep {
+				want = http.StatusOK
+				current, ok, err := fixture.app.Auth.ValidateSession(ctx, browser.cookie(generalCookie), "general")
+				if err != nil || !ok {
+					t.Fatalf("replacement session ok=%v err=%v", ok, err)
+				}
+				expires := previous.Expires
+				if expires.IsZero() {
+					expires = clock.Now().Add(state.DefaultGeneralSession.Length())
+				}
+				if !current.Expires.Equal(expires) || current.CSRF == previous.CSRF {
+					t.Fatalf("replacement expiry=%s want=%s, csrf rotated=%v", current.Expires, expires, current.CSRF != previous.CSRF)
+				}
+			} else if !strings.HasPrefix(result.header.Get("Location"), "/login?notice=access_password_saved&") {
+				t.Fatalf("saved password is not confirmed at sign-in: location=%q", result.header.Get("Location"))
+			}
+			if result := browser.get("/"); result.status != want {
+				t.Fatalf("changing browser ordinary access status=%d want=%d", result.status, want)
+			}
+		})
 	}
 }
 
@@ -199,10 +243,6 @@ func TestSettingsChangesConfirmTheSave(t *testing.T) {
 	}
 }
 
-// Turning the shared password off keeps the reader on Settings, so the save is
-// confirmed there too. Turning it on or changing it ends the current session
-// by design, so the reader signs in again, and the sign-in page confirms the
-// save.
 func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	app, store, repositoryRoot := newTestApp(t)
 	askEveryTime(t, app)
@@ -239,14 +279,14 @@ func TestAccessPasswordChangesEndOnTheExpectedPage(t *testing.T) {
 	if response.StatusCode != http.StatusSeeOther {
 		t.Fatalf("enable status=%d", response.StatusCode)
 	}
-	if location := response.Header.Get("Location"); location != "/login?notice=access_password_saved&next=%2Fsettings%2Faccess" {
-		t.Fatalf("after enabling the shared password location=%q, want sign-in with the confirmation", location)
+	if location := response.Header.Get("Location"); location != "/settings/access?notice=access_enabled#grp-access" {
+		t.Fatalf("after enabling the shared password location=%q, want Settings with the confirmation", location)
 	}
 	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
-		afterAction(t, jar, server.URL, "access_password_saved")
-		body, status := dashboardGET(t, client, server.URL+response.Header.Get("Location")+"&lang="+string(lang))
-		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessSaved)) || !strings.Contains(body, `name="next" value="/settings/access"`) {
-			t.Fatalf("%s: the sign-in page does not confirm the saved shared password (status %d)", lang, status)
+		afterAction(t, jar, server.URL, "access_enabled")
+		body, status := dashboardGET(t, client, server.URL+"/settings/access?notice=access_enabled&lang="+string(lang))
+		if status != http.StatusOK || !strings.Contains(body, webui.Text(lang, webui.MsgSettingsAccessEnabled)) {
+			t.Fatalf("%s: Settings does not confirm the saved shared password (status %d)", lang, status)
 		}
 	}
 
