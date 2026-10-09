@@ -10,7 +10,10 @@
      command for this computer while OwnGit is stopped.
 
      Both sections are groups (data-group), so a schedule saved without
-     leaving the page also shows the state and Back up now as saved. */}}
+     leaving the page also shows the state and Back up now as saved. While
+     something runs (data-backup-busy), the script reads the state section,
+     the recorded backups and the upload again until it ends, and the
+     status line after the state says so once. */}}
 {{define "setBackups"}}{{$p := .Page}}{{$lang := .Lang}}{{$b := $p.Backups}}{{$v := .Chrome.Viewer}}
 {{$gn := forAction $p.Group "backups" $p.Notices}}{{$focus := firstError $gn "backup_destination" "backup_interval" "backup_keep" "admin_password"}}
 <section class="grp" id="grp-backups" aria-labelledby="grp-backups-h" data-group="backups"{{if hasError $gn}} data-group-refused{{end}}{{if and $b.Visible (not $b.Configured)}} data-group-open{{end}}>
@@ -63,7 +66,7 @@
 
 {{if $b.Visible}}
 {{$rn := forAction $p.Group "backup_runs" $p.Notices}}{{$rfocus := firstError $rn "admin_password"}}
-<section class="grp" id="grp-backup_runs" aria-labelledby="grp-backup_runs-h" data-group="backup_runs">
+<section class="grp" id="grp-backup_runs" aria-labelledby="grp-backup_runs-h" data-group="backup_runs"{{if $b.Busy}} data-backup-busy{{end}}>
   <div class="grp__h"><h2 id="grp-backup_runs-h">{{bi $lang "backup.state_title"}}</h2></div>
   {{template "grpNotes" dict "Lang" $lang "Notices" $rn "Focus" $rfocus}}
   <dl class="kv">
@@ -101,6 +104,8 @@
     </div>
   </form>
 </section>
+<p class="visually-hidden" role="status" data-backup-ended
+   data-say-en="{{t "en" "backup.work_ended"}}" data-say-ko="{{t "ko" "backup.work_ended"}}"></p>
 
 <section class="grp" id="grp-backup-list" aria-labelledby="grp-backup-list-h">
   <div class="grp__h"><h2 id="grp-backup-list-h">{{bi $lang "backup.runs_title"}}</h2></div>

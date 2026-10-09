@@ -1283,10 +1283,11 @@
    * form has no password field, so it never builds the form data of a form
    * that holds a password. It POSTs to the form's own address on this
    * site, and after a saved change makes one GET of the address the server
-   * returned, again only on this site. Both send only this site's cookies
-   * and follow no redirect. It copies the anti-forgery token of the fetched
-   * page into this page's forms, because a saved change can end the
-   * session that token belongs to. It stores nothing. */
+   * returned, again only on this site. The same GET reads this tab again
+   * while its backup state shows work in progress. Both send only this
+   * site's cookies and follow no redirect. It copies the anti-forgery
+   * token of the fetched page into this page's forms, because a saved
+   * change can end the session that token belongs to. It stores nothing. */
   var groupSave = (function groupSave() {
     if (!window.fetch || !window.DOMParser || !window.FormData || !window.URLSearchParams) { return null; }
 
@@ -1320,7 +1321,6 @@
       });
     }
 
-    // Read the page at the address a saved change returned.
     function read(address) {
       var target = onThisSite(address);
       if (!target) { return Promise.reject(new Error('not read')); }
@@ -1340,15 +1340,17 @@
     return { onThisSite: onThisSite, eligible: eligible, send: send, read: read, copyToken: copyToken };
   })();
 
-  // Put a group from another rendering of this tab in place of group, and
-  // return it.
   function replaceGroup(group, fresh) {
     var node = document.importNode(fresh, true);
     group.parentNode.replaceChild(node, group);
+    prepareGroup(node);
+    return node;
+  }
+
+  function prepareGroup(node) {
     all('[data-clone]', node).forEach(cloneField);
     selectOnFocus(node);
     syncGroup(node);
-    return node;
   }
 
   function parsePage(html) {
@@ -1373,6 +1375,7 @@
     groupSave.copyToken(doc);
     takeChrome(doc, '[data-session-controls]', document.querySelector('.sidebar__inner'));
     takeChrome(doc, '[data-connection]', null);
+    restartBackupWatch();
     return taken;
   }
 
@@ -1506,6 +1509,115 @@
       replacePage(group, function () { window.location.assign(target.href); });
       return true;
     });
+  }
+
+  var backupTimer = 0;
+  var backupUntil = 0;
+  var backupSectionsBehind = false;
+
+  function restartBackupWatch() {
+    backupUntil = 0;
+    watchBackups();
+  }
+
+  function watchBackups() {
+    var group = groupSave && groupNamed('backup_runs');
+    if (!group || !(group.hasAttribute('data-backup-busy') || backupSectionsBehind)) { backupUntil = 0; return; }
+    if (!backupUntil) { backupUntil = Date.now() + 30 * 60 * 1000; }
+    if (backupTimer || document.hidden || Date.now() >= backupUntil) { return; }
+    backupTimer = window.setTimeout(readBackups, 5000);
+  }
+
+  function readBackups() {
+    backupTimer = 0;
+    var group = groupNamed('backup_runs');
+    if (!group || document.hidden) { return; }
+    groupSave.read(addressWithoutNotice()).then(function (html) {
+      var doc = parsePage(html);
+      var replacedMeanwhile = groupNamed('backup_runs') !== group;
+      if (replacedMeanwhile) { return; }
+      groupSave.copyToken(doc);
+      var listCaughtUp = catchUpBackupSection(doc, 'grp-backup-list');
+      var uploadCaughtUp = catchUpBackupSection(doc, 'grp-backup-upload');
+      backupSectionsBehind = !(listCaughtUp && uploadCaughtUp);
+      takeBackupState(group, doc.querySelector('[data-group="backup_runs"]'));
+    }).catch(function () {}).then(function () { watchBackups(); });
+  }
+
+  function addressWithoutNotice() {
+    var address = new URL(window.location.href);
+    address.searchParams.delete('notice');
+    return address.href;
+  }
+
+  function takeBackupState(group, fresh) {
+    var active = document.activeElement;
+    if (!fresh || group.querySelector('[data-typed]') || selectionIn(group) ||
+        (group.contains(active) && /^(INPUT|SELECT|TEXTAREA|BUTTON)$/.test(active.tagName)) ||
+        renderedState(fresh) === renderedState(group)) { return; }
+    var ended = group.hasAttribute('data-backup-busy') && !fresh.hasAttribute('data-backup-busy');
+    takeKeepingReaderNotices(group, fresh);
+    if (ended) { sayBackupsEnded(); }
+  }
+
+  function takeKeepingReaderNotices(group, fresh) {
+    var notices = readerNotices(group);
+    var node = document.importNode(fresh, true);
+    readerNotices(node).forEach(function (notice) { notice.parentNode.removeChild(notice); });
+    Array.prototype.slice.call(group.childNodes).forEach(function (child) {
+      if (notices.indexOf(child) < 0) { group.removeChild(child); }
+    });
+    group.insertBefore(node.querySelector('.grp__h'), notices[0] || null);
+    while (node.firstChild) { group.appendChild(node.firstChild); }
+    group.toggleAttribute('data-backup-busy', node.hasAttribute('data-backup-busy'));
+    prepareGroup(group);
+  }
+
+  function readerNotices(group) {
+    return all('[data-group-note]', group);
+  }
+
+  function catchUpBackupSection(doc, id) {
+    var own = document.getElementById(id);
+    var fresh = doc.getElementById(id);
+    if (!own || !fresh || renderedState(fresh) === renderedState(own)) { return true; }
+    if (readerUses(own)) { return false; }
+    replaceGroup(own, fresh);
+    return true;
+  }
+
+  function readerUses(section) {
+    return !!section.querySelector('details[data-reader-toggled], [data-typed]') ||
+      section.contains(document.activeElement) || selectionIn(section) ||
+      all('input[type="file"]', section).some(function (field) { return field.files && field.files.length > 0; });
+  }
+
+  function renderedState(node) {
+    var copy = node.cloneNode(true);
+    readerNotices(copy).forEach(function (notice) { notice.parentNode.removeChild(notice); });
+    var disabled = all('button, input, select, textarea', copy).map(function (control) {
+      return control.hasAttribute('disabled') ? '1' : '0';
+    }).join('');
+    return [copy.hasAttribute('data-backup-busy'), disabled, shownText(copy)].join('|');
+  }
+
+  function selectionIn(node) {
+    var selection = window.getSelection();
+    return !!selection && !selection.isCollapsed && node.contains(selection.anchorNode);
+  }
+
+  function shownText(node) {
+    return node.textContent.replace(/\s+/g, ' ').trim();
+  }
+
+  function sayBackupsEnded() {
+    var status = settingsPanel.querySelector('[data-backup-ended]');
+    if (!status) { return; }
+    var en = status.getAttribute('data-say-en') || '';
+    var ko = status.getAttribute('data-say-ko') || '';
+    status.setAttribute('data-en', en);
+    status.setAttribute('data-ko', ko);
+    status.textContent = root.getAttribute('data-lang') === 'ko' ? ko : en;
   }
 
   // Focus the group's first control on screen, as the save bar that held
@@ -2056,6 +2168,12 @@
     };
     settingsPanel.addEventListener('input', editGroup);
     settingsPanel.addEventListener('change', editGroup);
+    // Marks a note whose open state the reader changed from the server's; the
+    // toggle event cannot tell, as it also fires for a note rendered open.
+    settingsPanel.addEventListener('click', function (event) {
+      var summary = !event.defaultPrevented && event.target.closest && event.target.closest('summary');
+      if (summary && summary.parentNode.tagName === 'DETAILS') { summary.parentNode.toggleAttribute('data-reader-toggled'); }
+    });
     settingsPanel.addEventListener('submit', function (event) {
       var form = event.target;
       var group = form.closest && form.closest('[data-group]');
@@ -2076,6 +2194,8 @@
       focusControl(group);
     });
     all('[data-group]', settingsPanel).forEach(syncGroup);
+    watchBackups();
+    document.addEventListener('visibilitychange', function () { watchBackups(); });
     // A saved change comes back at an address naming its group. Its notice
     // takes focus, so it is read out and the reader stays at that group.
     // The browser moves to the address's group once the page has loaded,

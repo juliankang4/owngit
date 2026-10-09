@@ -42,6 +42,7 @@ const (
 	MsgBackupNow                  MessageCode = "backup.now"
 	MsgBackupStarted              MessageCode = "backup.started"
 	MsgBackupBusy                 MessageCode = "backup.busy"
+	MsgBackupWorkEnded            MessageCode = "backup.work_ended"
 	MsgBackupRunningRefused       MessageCode = "backup.running_refused"
 	MsgBackupChooseFolder         MessageCode = "backup.choose_folder"
 	MsgBackupRestoreLimit         MessageCode = "backup.restore_limit"
@@ -252,12 +253,16 @@ var backupsCatalog = map[MessageCode]message{
 		ko: "지금 백업",
 	},
 	MsgBackupStarted: {
-		en: "A backup has started. Reload this page to see when it ends.",
-		ko: "백업을 시작했습니다. 끝났는지 보려면 이 페이지를 새로 고치세요.",
+		en: "A backup has started. Current state updates when it ends; if it does not, reload this page.",
+		ko: "백업을 시작했습니다. 끝나면 현재 상태가 바뀝니다. 바뀌지 않으면 이 페이지를 새로 고치세요.",
 	},
 	MsgBackupBusy: {
 		en: "A backup, a verification or an upload is running. Wait for it to finish.",
 		ko: "백업, 검사, 올리기 중 하나가 진행 중입니다. 끝날 때까지 기다리세요.",
+	},
+	MsgBackupWorkEnded: {
+		en: "The backup, verification or upload has ended. Current state shows the result.",
+		ko: "백업, 검사, 올리기 중 하나가 끝났습니다. 결과는 현재 상태에 나옵니다.",
 	},
 	MsgBackupRunningRefused: {
 		en: "A backup is already running. Wait for it to finish.",
