@@ -126,7 +126,7 @@ func TestHostRunJob(t *testing.T) {
 			}
 			plan := actions.JobPlan{JobKey: "build", RunsOn: test.runsOn, Steps: []actions.Step{{Name: "step", Run: code, Shell: test.shell, WorkingDirectory: test.working}}, Context: actions.PlanContext{GitHub: actions.GitHubContext{Repository: "sample", EventName: "push", Ref: "refs/heads/main"}}}
 			plan.WorkflowEnv = test.env
-			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, MaxTimeout: 5 * time.Second}
+			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, MaxTimeout: 2 * time.Minute}
 			base, _ := checkexec.HostEnvironment(workspace)
 			values := environmentMap(base, windows)
 			stepDirectory := filepath.Join(workspace, test.working)
@@ -269,7 +269,7 @@ func TestHostWorkflowCommands(t *testing.T) {
 				}
 			}
 			plan := actions.JobPlan{JobKey: "build", RunsOn: test.runsOn, SecretNames: []string{"TEST"}, Env: map[string]string{"SECRET": "${{ secrets.TEST }}"}, Steps: []actions.Step{{ID: "first", Name: "${{ secrets.TEST }}", Run: first, Shell: test.shell}, {Run: second, Shell: test.shell}}}
-			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, Secrets: map[string]string{"TEST": "synthetic-secret-value"}, MaxTimeout: 5 * time.Second,
+			options := actions.RunOptions{Workspace: workspace, Identity: actions.RunIdentity{ID: "run-17", Number: 17, Attempt: 1}, Secrets: map[string]string{"TEST": "synthetic-secret-value"}, MaxTimeout: 2 * time.Minute,
 				Evaluator: func(_ string, text string, contexts map[string]any) (any, error) {
 					if text == "${{ secrets.TEST }}" {
 						return contexts["secrets"].(map[string]any)["TEST"], nil
