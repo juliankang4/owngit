@@ -228,7 +228,7 @@
     {{template "archiveLinks" dict "Lang" $lang "Links" $p.Downloads}}
     {{with $f}}
     <div class="codebar__tools">
-      {{if and (not .Binary) (not .TooLarge)}}<span class="codebar__fact">{{$lines := .Continuation.Total}}{{if not $lines}}{{$lines = len .Lines}}{{end}}{{if .Truncated}}{{biN $lang "code.loaded_lines" $lines}}{{else}}{{biCount $lang "line" $lines}}{{end}}</span>{{end}}
+      {{if and (not .Binary) (not .TooLarge)}}<span class="codebar__fact">{{$lines := .Continuation.Total}}{{if not $lines}}{{$lines = len .Lines}}{{end}}{{if .Truncated}}{{biF $lang "code.loaded_lines" (number $lines)}}{{else}}{{biCount $lang "line" $lines}}{{end}}</span>{{end}}
       {{if and .Image .ImageWidth}}<span class="codebar__fact">{{.ImageWidth}} &times; {{.ImageHeight}} px</span>{{end}}
       <span class="codebar__fact">{{bytes .Size}}</span>
       {{/* The source view renders nothing, so it offers the switch unless the
@@ -288,7 +288,7 @@
       {{/* Repository content is rendered as text through the template's
            escaping. It is never inserted as markup. A long file's page
            links sit above and below it. */}}
-      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation "Lines" true}}
       {{$first := .FirstLine}}{{if not $first}}{{$first = 1}}{{end}}
       <div class="codebox" tabindex="0" role="region" aria-label="{{.Path}}"{{if .LineURL}} data-line-page="{{.LineURL}}" data-line-first="{{$first}}" data-line-last="{{.Continuation.Last}}" data-line-total="{{.Continuation.Total}}"{{end}}>
         <table class="codetable">
@@ -299,7 +299,7 @@
           </tbody>
         </table>
       </div>
-      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation "Lines" true}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "code.truncated"}}</span></p>{{end}}
     {{end}}
     {{if and .RawTooLarge (not .TooLarge)}}<p class="hm__note">{{bi $lang "code.raw_too_large"}}</p>{{end}}
@@ -372,11 +372,11 @@
       {{/* Every file's diff in turn. A commit opened for one file by address
            shows that file alone and says so. */}}
       {{with .AllFilesURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
-      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation "Lines" true}}
       {{template "pageContinuation" dict "Lang" $lang "C" .FilePages}}
       {{template "diffFiles" dict "Lang" $lang "Files" .Files "Pages" .FilePages "Title" "app.changed_files"}}
       {{template "pageContinuation" dict "Lang" $lang "C" .FilePages}}
-      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Continuation "Lines" true}}
       {{if .Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{bi $lang "commits.diff_truncated"}}</span></p>{{end}}
     {{end}}
     {{end}}

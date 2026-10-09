@@ -85,7 +85,7 @@ var shareCatalog = map[MessageCode]message{
 	},
 	MsgShareScopeClone: {
 		en: "Browse, and clone with Git",
-		ko: "보기와 Git 복제",
+		ko: "보기와 Git 클론",
 	},
 	MsgShareExpiry:       {en: "Expires", ko: "만료"},
 	MsgShareExpiry1:      {en: "After 1 day", ko: "1일 뒤"},
@@ -139,8 +139,8 @@ var shareCatalog = map[MessageCode]message{
 		ko: "공유 링크를 폐기했습니다. 이제 이 링크로는 저장소를 열 수 없습니다.",
 	},
 	MsgShareLabelInvalid: {
-		en: "Give the link a name on one line, at most 100 bytes.",
-		ko: "링크 이름을 한 줄로, 100바이트 이하로 적으세요.",
+		en: "Give the link a name on one line, at most 100 UTF-8 bytes. The number of characters depends on the characters used.",
+		ko: "링크 이름을 한 줄로, UTF-8 기준 100바이트 이하로 적으세요. 한글 음절은 보통 한 글자에 3바이트이며, 쓸 수 있는 글자 수는 문자에 따라 달라집니다.",
 	},
 	MsgSharePasswordRule: {
 		en: "An extra password needs at least 8 characters and at most 1024.",

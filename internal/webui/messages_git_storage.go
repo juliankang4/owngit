@@ -98,7 +98,7 @@ var gitStorageCatalog = map[MessageCode]message{
 	MsgTransferPerRepository: {en: "Transfers per repository", ko: "저장소당 동시 전송"},
 	MsgTransferPerRepositoryHlp: {
 		en: "How many clones, fetches, pushes and archive downloads of one repository run at once: from 1 to 32. The default is 4.",
-		ko: "한 저장소에서 동시에 진행하는 클론, 가져오기(fetch), 푸시, 압축 파일 내려받기의 수입니다. 1부터 32까지 정할 수 있고 기본값은 4입니다.",
+		ko: "한 저장소에서 동시에 진행하는 클론, fetch, 푸시, 압축 파일 내려받기의 수입니다. 1부터 32까지 정할 수 있고 기본값은 4입니다.",
 	},
 	MsgTransferExtraSlots: {en: "Extra slots for other repositories", ko: "다른 저장소용 추가 자리"},
 	MsgTransferExtraSlotsHelp: {
@@ -168,7 +168,7 @@ var gitStorageCatalog = map[MessageCode]message{
 		ko: "한 페이지가 파일, 차이(diff), 풀 리퀘스트 비교를 얼마나 읽을지 정합니다. 저장한 뒤 여는 페이지부터 새 한도를 쓰며, 페이지는 여전히 자체 시간 한도에서 멈춥니다.",
 	},
 	MsgBrowseChange:      {en: "Change the limits", ko: "한도 바꾸기"},
-	MsgBrowseRaw:         {en: "Raw file download", ko: "원본 파일 내려받기"},
+	MsgBrowseRaw:         {en: "Raw file download", ko: "원문 파일 내려받기"},
 	MsgBrowseRawHelp:     {en: "A larger file is not downloaded from the file view; clone the repository to get it. From 1 MB to 256 MB; the default is 10 MB.", ko: "이보다 큰 파일은 파일 화면에서 내려받을 수 없으니 저장소를 클론해서 받으세요. 1 MB부터 256 MB까지 정할 수 있고 기본값은 10 MB입니다."},
 	MsgBrowseFile:        {en: "File view", ko: "파일 보기"},
 	MsgBrowseFileHelp:    {en: "How much of one file the file view shows; the rest is offered as a download. From 64 KB to 64 MB; the default is 2 MB.", ko: "파일 화면에 한 파일을 얼마나 보여 줄지 정합니다. 나머지는 내려받기로 제공합니다. 64 KB부터 64 MB까지 정할 수 있고 기본값은 2 MB입니다."},

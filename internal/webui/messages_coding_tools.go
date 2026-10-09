@@ -45,7 +45,7 @@ var codingToolsCatalog = map[MessageCode]message{
 	},
 	MsgCodingPasswordFile: {
 		en: "This server asks for the shared password. Save it in a file only you can read, and replace PASSWORD_FILE in the commands with that file's path.",
-		ko: "이 서버는 공유 비밀번호를 요구합니다. 비밀번호를 나만 읽을 수 있는 파일에 저장하고, 명령의 PASSWORD_FILE을 그 파일 경로로 바꾸세요.",
+		ko: "이 서버는 공용 비밀번호를 요구합니다. 비밀번호를 나만 읽을 수 있는 파일에 저장하고, 명령의 PASSWORD_FILE을 그 파일 경로로 바꾸세요.",
 	},
 	MsgCodingSkillTitle: {en: "Skill", ko: "스킬"},
 	MsgCodingSkillHelp: {
@@ -85,7 +85,7 @@ var codingToolsCatalog = map[MessageCode]message{
 		ko: "체크 에이전트 토큰을 읽지 못했습니다. 페이지를 새로 고쳐 다시 시도하세요.",
 	},
 	MsgCodingCredsManage: {en: "Manage", ko: "관리"},
-	MsgCodingTasksTitle:  {en: "Recent tasks", ko: "최근 작업"},
+	MsgCodingTasksTitle:  {en: "Recent tasks", ko: "최근 체크 에이전트 작업"},
 	MsgCodingTasksNone:   {en: "No task has been recorded yet.", ko: "아직 기록된 작업이 없습니다."},
 	MsgCodingTasksCut: {
 		en: "Only the %s most recently updated tasks are shown. Each repository's Checks tab lists all of its tasks.",

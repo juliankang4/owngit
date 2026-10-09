@@ -126,7 +126,7 @@ var navigationCatalog = map[MessageCode]message{
 	},
 	MsgCodeRawTooLarge: {
 		en: "This file is larger than the raw file download limit (10 MB by default, under Settings, Repositories, Browsing limits), so it cannot be downloaded from the browser. Clone the repository to get this file.",
-		ko: "이 파일은 원본 파일 내려받기 한도(기본 10 MB, 설정의 저장소 탭, 보기 한도)보다 커서 브라우저에서 내려받을 수 없습니다. 저장소를 클론해서 받으세요.",
+		ko: "이 파일은 원문 파일 내려받기 한도(기본 10 MB, 설정의 저장소 탭, 보기 한도)보다 커서 브라우저에서 내려받을 수 없습니다. 저장소를 클론해서 받으세요.",
 	},
 	MsgCodeTooLarge: {
 		en: "This file is too large to show here. Clone the repository to get this file.",

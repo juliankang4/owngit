@@ -810,7 +810,7 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 
 	// -- jobs -----------------------------------------------------------
-	MsgCCJobsTitle: {en: "Recent jobs", ko: "최근 작업"},
+	MsgCCJobsTitle: {en: "Recent jobs", ko: "최근 자동 체크 작업"},
 	MsgCCJobsHelp: {
 		en: "Each job names the exact commit it was pinned to and the mode that actually applied to it.",
 		ko: "각 작업에는 고정된 커밋과 실제로 적용된 실행 모드가 함께 기록됩니다.",

@@ -99,7 +99,7 @@ var accessPoliciesCatalog = map[MessageCode]message{
 	MsgLoginLimitsAttempts:    {en: "Wrong passwords", ko: "틀린 비밀번호 횟수"},
 	MsgLoginLimitsAttemptsHlp: {
 		en: "How many wrong passwords within the window pause the address: from 1 to 100. The default is 4.",
-		ko: "기간 안에 몇 번 틀리면 그 주소를 멈출지 정합니다. 1부터 100까지 정할 수 있고 기본값은 4입니다.",
+		ko: "기간 안에 몇 번 틀리면 그 접속 주소의 로그인 시도를 일시 차단할지 정합니다. 1부터 100까지 정할 수 있고 기본값은 4입니다.",
 	},
 	MsgLoginLimitsWindow: {en: "Within", ko: "세는 기간"},
 	MsgLoginLimitsWindowHelp: {

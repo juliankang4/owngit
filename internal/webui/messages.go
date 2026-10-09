@@ -393,6 +393,7 @@ const (
 	MsgCodeBinary        MessageCode = "code.binary"
 	MsgCodeTruncated     MessageCode = "code.truncated"
 	MsgCodeShowing       MessageCode = "code.showing"
+	MsgCodeShowingLines  MessageCode = "code.showing_lines"
 	MsgCodeShowingLoaded MessageCode = "code.showing_loaded"
 	MsgCodeLoadedLines   MessageCode = "code.loaded_lines"
 	MsgCodeMore          MessageCode = "code.more"
@@ -564,8 +565,8 @@ var catalog = map[MessageCode]message{
 	MsgEndAdmin:       {en: "End admin confirmation", ko: "관리자 확인 종료"},
 	MsgBackToRepos:    {en: "All repositories", ko: "저장소 목록"},
 	MsgBackToRepo:     {en: "Back to repository", ko: "저장소로 돌아가기"},
-	MsgOlder:          {en: "Older", ko: "이전"},
-	MsgNewer:          {en: "Newer", ko: "다음"},
+	MsgOlder:          {en: "Older", ko: "더 오래된 기록"},
+	MsgNewer:          {en: "Newer", ko: "더 최근 기록"},
 	MsgCancel:         {en: "Cancel", ko: "취소"},
 	MsgSelectYear:     {en: "Select year", ko: "연도 선택"},
 	MsgGraphRegion:    {en: "Daily commit activity. Scroll horizontally to see the whole year.", ko: "일별 커밋 활동 표입니다. 가로로 스크롤하면 한 해 전체를 볼 수 있습니다."},
@@ -811,11 +812,11 @@ var catalog = map[MessageCode]message{
 	},
 	MsgOriginRefusedHint: {
 		en: "Behind a proxy, save the settings with owngit network set --base-url <public address> --trusted-proxy <proxy address> on the computer running OwnGit, then restart OwnGit.",
-		ko: "프록시 뒤에서는 OwnGit이 실행 중인 컴퓨터에서 owngit network set --base-url <공개 주소> --trusted-proxy <프록시 주소> 명령으로 저장한 뒤 OwnGit을 다시 시작하세요.",
+		ko: "프록시 뒤에서는 OwnGit이 실행 중인 컴퓨터에서 owngit network set --base-url <public address> --trusted-proxy <proxy address> 명령으로 저장한 뒤 OwnGit을 다시 시작하세요.",
 	},
 	MsgHostRefusedHint: {
 		en: "To use this address, add it to Allowed names in OwnGit's network settings, or run owngit network set --allowed-host on the computer running OwnGit. Behind a proxy, also save the public address and the proxy with owngit network set --base-url <public address> --trusted-proxy <proxy address>. Then restart OwnGit. Names for that computer itself, such as localhost, work only on that computer, and not for OwnGit in a container; there, use the computer's name or address.",
-		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용하세요. 프록시 뒤에서는 owngit network set --base-url <공개 주소> --trusted-proxy <프록시 주소> 명령으로 공개 주소와 프록시도 저장하세요. 그런 다음 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있고, 컨테이너 안의 OwnGit에는 쓸 수 없습니다. 이때는 그 컴퓨터의 이름이나 주소를 쓰세요.",
+		ko: "이 주소를 쓰려면 OwnGit 네트워크 설정의 허용한 이름에 추가하거나, OwnGit이 실행 중인 컴퓨터에서 owngit network set --allowed-host 명령으로 허용하세요. 프록시 뒤에서는 owngit network set --base-url <public address> --trusted-proxy <proxy address> 명령으로 공개 주소와 프록시도 저장하세요. 그런 다음 OwnGit을 다시 시작하세요. localhost처럼 그 컴퓨터 자신을 가리키는 이름은 그 컴퓨터에서만 쓸 수 있고, 컨테이너 안의 OwnGit에는 쓸 수 없습니다. 이때는 그 컴퓨터의 이름이나 주소를 쓰세요.",
 	},
 	MsgSetupDoneLocalOnlyHint: {
 		en: "From its next start OwnGit listens only on the installation host, so open it there. To use this address, set the listen address and allow the address there with owngit network, and restart OwnGit.",
@@ -870,8 +871,8 @@ var catalog = map[MessageCode]message{
 		ko: "이 서버는 이미 설정을 마쳤습니다.",
 	},
 	MsgSetupRaceLost: {
-		en: "Another browser finished setup first.",
-		ko: "다른 브라우저에서 먼저 설정을 마쳤습니다.",
+		en: "Setup was completed elsewhere.",
+		ko: "다른 곳에서 설정을 마쳤습니다.",
 	},
 	MsgSetupSessionEnded: {
 		en: "The setup session ended. Open the setup link again to continue.",
@@ -1589,11 +1590,15 @@ var catalog = map[MessageCode]message{
 		en: "Showing %s of %s (%s to %s).",
 		ko: "전체 %[2]s개 중 %[3]s번째부터 %[4]s번째까지 %[1]s개를 표시합니다.",
 	},
+	MsgCodeShowingLines: {
+		en: "Showing %s of %s lines (%s to %s).",
+		ko: "전체 %[2]s줄 중 %[3]s번째부터 %[4]s번째까지 %[1]s줄을 표시합니다.",
+	},
 	MsgCodeShowingLoaded: {
 		en: "Showing %s of %s loaded lines (%s to %s). Lines outside the display size limit were not loaded.",
 		ko: "읽어온 %[2]s줄 중 %[3]s번째부터 %[4]s번째까지 %[1]s줄을 표시합니다. 보기 한도를 넘는 줄은 읽지 않았습니다.",
 	},
-	MsgCodeLoadedLines: {en: "%d loaded lines", ko: "읽어온 %d줄"},
+	MsgCodeLoadedLines: {en: "%s loaded lines", ko: "읽어온 %s줄"},
 	MsgCodeReceivingPage: {
 		en: "Receiving the page. If this notice remains, the page has not arrived in full.",
 		ko: "페이지를 받는 중입니다. 이 안내가 계속 보이면 페이지가 끝까지 오지 않은 것입니다.",

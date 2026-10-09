@@ -127,7 +127,7 @@ var workflowCatalog = map[MessageCode]message{
 	"wf.job.steps":    {en: "Steps", ko: "단계"},
 	"wf.step.builtin": {en: "Built in", ko: "기본 제공"},
 	"wf.job.back":     {en: "Back to", ko: "돌아가기:"},
-	"wf.job.open_log": {en: "Open the raw log", ko: "원본 로그 열기"},
+	"wf.job.open_log": {en: "Open the raw log", ko: "원문 로그 열기"},
 	"wf.job.log_help": {en: "Secret values are hidden in the log. The log keeps the start and the end of long output.", ko: "로그에서 시크릿 값은 가려집니다. 긴 출력은 처음과 끝만 남습니다."},
 
 	"wf.dispatch.open":          {en: "Run workflow", ko: "워크플로 실행"},

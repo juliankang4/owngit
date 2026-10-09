@@ -106,7 +106,7 @@ var settingsCatalog = map[MessageCode]message{
 	},
 	MsgSettingsLeadStorage: {
 		en: "Where OwnGit keeps your repositories, how it backs them up and restores them, how long it keeps raw check logs, and how it maintains repositories and cleans up unused objects.",
-		ko: "OwnGit이 저장소를 보관하는 곳, 백업하고 복원하는 방법, 체크 원본 로그를 보관하는 기간, 저장소 유지 관리와 쓰지 않는 객체 정리입니다.",
+		ko: "OwnGit이 저장소를 보관하는 곳, 백업하고 복원하는 방법, 체크 원문 로그를 보관하는 기간, 저장소 유지 관리와 쓰지 않는 객체 정리입니다.",
 	},
 
 	MsgSettingsSave:       {en: "Save", ko: "저장"},

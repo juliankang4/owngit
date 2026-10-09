@@ -111,12 +111,12 @@ var policiesCatalog = map[MessageCode]message{
 	MsgTransferTitle: {en: "Git transfers", ko: "Git 전송"},
 	MsgTransferScope: {
 		en: "Clones, fetches, pushes and archive downloads that start after you save. Transfers already running keep their limits.",
-		ko: "저장한 뒤 시작하는 클론, 가져오기(fetch), 푸시, 압축 파일 내려받기에 적용됩니다. 이미 진행 중인 전송은 원래 한도를 그대로 씁니다.",
+		ko: "저장한 뒤 시작하는 클론, fetch, 푸시, 압축 파일 내려받기에 적용됩니다. 이미 진행 중인 전송은 원래 한도를 그대로 씁니다.",
 	},
 	MsgTransferSize: {en: "Largest transfer", ko: "최대 전송 크기"},
 	MsgTransferSizeHelp: {
 		en: "The most one transfer may receive and, separately, the most it may send: from 1 MB to 64 GB (1 GB is 1024 MB). The default is 4 GB. A larger push is refused, and a larger clone or fetch is cut off.",
-		ko: "전송 하나가 받을 수 있는 최대 크기이자, 따로 보낼 수 있는 최대 크기입니다. 1 MB부터 64 GB까지 정할 수 있고(1 GB는 1024 MB) 기본값은 4 GB입니다. 이보다 큰 푸시는 거부되고, 이보다 큰 클론이나 가져오기(fetch)는 중간에 끊깁니다.",
+		ko: "전송 하나가 받을 수 있는 최대 크기이자, 따로 보낼 수 있는 최대 크기입니다. 1 MB부터 64 GB까지 정할 수 있고(1 GB는 1024 MB) 기본값은 4 GB입니다. 이보다 큰 푸시는 거부되고, 이보다 큰 클론이나 fetch는 중간에 끊깁니다.",
 	},
 	MsgTransferTime: {en: "Longest transfer", ko: "최대 전송 시간"},
 	MsgTransferTimeHelp: {
@@ -132,19 +132,19 @@ var policiesCatalog = map[MessageCode]message{
 		ko: "저장했습니다. 이제부터 시작하는 전송에 새 한도가 적용됩니다.",
 	},
 
-	MsgCheckLogsTitle: {en: "Raw check logs", ko: "체크 원본 로그"},
+	MsgCheckLogsTitle: {en: "Raw check logs", ko: "체크 원문 로그"},
 	MsgCheckLogsScope: {
 		en: "The full output of project checks, counted from when each check started. A new choice applies at once to every raw log kept now: a log it no longer keeps cannot be opened, and the next cleanup, when OwnGit starts or a check result arrives, deletes it. Check results, summaries and excerpts are always kept.",
-		ko: "프로젝트 체크의 전체 출력에 적용되며, 각 체크가 시작된 때부터 기간을 셉니다. 새로 고른 기간은 지금 보관 중인 원본 로그 전체에 바로 적용됩니다. 기간이 지난 로그는 더는 열 수 없고, OwnGit이 시작하거나 체크 결과가 들어올 때 하는 다음 정리에서 지워집니다. 체크 결과, 요약, 발췌는 언제나 남습니다.",
+		ko: "프로젝트 체크의 전체 출력에 적용되며, 각 체크가 시작된 때부터 기간을 셉니다. 새로 고른 기간은 지금 보관 중인 원문 로그 전체에 바로 적용됩니다. 기간이 지난 로그는 더는 열 수 없고, OwnGit이 시작하거나 체크 결과가 들어올 때 하는 다음 정리에서 지워집니다. 체크 결과, 요약, 발췌는 언제나 남습니다.",
 	},
-	MsgCheckLogsLabel: {en: "Keep raw logs", ko: "원본 로그 보관"},
+	MsgCheckLogsLabel: {en: "Keep raw logs", ko: "원문 로그 보관"},
 	MsgCheckLogsHelp: {
 		en: "A shorter time deletes older raw logs, which are then no longer available. A longer time, or keeping them indefinitely, uses more space in the state database.",
-		ko: "기간을 줄이면 오래된 원본 로그가 지워져 더는 볼 수 없습니다. 기간을 늘리거나 계속 보관하면 상태 데이터베이스가 공간을 더 씁니다.",
+		ko: "기간을 줄이면 오래된 원문 로그가 지워져 더는 볼 수 없습니다. 기간을 늘리거나 계속 보관하면 상태 데이터베이스가 공간을 더 씁니다.",
 	},
 	MsgCheckLogsSaved: {
 		en: "Saved. Every raw log kept now follows the new choice.",
-		ko: "저장했습니다. 지금 보관 중인 원본 로그 모두에 새 기간이 적용됩니다.",
+		ko: "저장했습니다. 지금 보관 중인 원문 로그 모두에 새 기간이 적용됩니다.",
 	},
 	MsgCheckLogs7d:         {en: "7 days", ko: "7일"},
 	MsgCheckLogs30d:        {en: "30 days", ko: "30일"},

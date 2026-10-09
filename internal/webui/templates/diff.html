@@ -111,9 +111,9 @@
      renders it above and below its content, so it carries no id and both
      copies are identical; the file drawer renders it once above its list. */}}
 {{define "pageContinuation"}}
-{{$lang := .Lang}}{{with .C}}{{if or .MoreURL .FirstURL}}
+{{$lang := .Lang}}{{$lines := .Lines}}{{with .C}}{{if or .MoreURL .FirstURL}}
 <nav class="pager pager--pages" data-page-continuation {{biAttr $lang "aria-label" "code.pages"}}>
-  <p class="pager__at">{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
+  <p class="pager__at">{{if .Incomplete}}{{biF $lang "code.showing_loaded" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else if $lines}}{{biF $lang "code.showing_lines" (number .Shown) (number .Total) (number .First) (number .Last)}}{{else}}{{biF $lang "code.showing" (number .Shown) (number .Total) (number .First) (number .Last)}}{{end}}</p>
   <span class="pager__links">
     {{with .FirstURL}}<a class="btn" href="{{.}}">{{bi $lang "code.first_page"}}</a>{{end}}
     {{with .MoreURL}}<a class="btn" href="{{.}}" rel="next">{{bi $lang "code.more"}}</a>{{end}}

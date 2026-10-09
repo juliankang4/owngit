@@ -412,7 +412,7 @@ var evidenceCatalog = map[MessageCode]message{
 		ko: "워킹 트리: 읽지 못함",
 	},
 
-	MsgCheckLogTitle:       {en: "Raw log", ko: "원본 로그"},
+	MsgCheckLogTitle:       {en: "Raw log", ko: "원문 로그"},
 	MsgCheckLogAvailable:   {en: "Kept for now", ko: "아직 보관 중"},
 	MsgCheckLogExpired:     {en: "Expired. The recorded result below stays.", ko: "만료되었습니다. 아래 기록된 결과는 남아 있습니다."},
 	MsgCheckLogNotRecorded: {en: "Not recorded for this run", ko: "이 실행에서는 기록하지 않았습니다"},
@@ -525,10 +525,10 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRNewTitle: {en: "New pull request", ko: "새 풀 리퀘스트"},
 	MsgPRNewIntro: {
 		en: "Choose the branch with your work and the branch it should go into.",
-		ko: "작업이 있는 브랜치와 그 작업이 들어갈 브랜치를 고르세요.",
+		ko: "가져올 브랜치와 대상 브랜치를 고르세요.",
 	},
-	MsgPRNewSource:  {en: "Branch with your work", ko: "작업이 있는 브랜치"},
-	MsgPRNewTarget:  {en: "Branch it goes into", ko: "작업이 들어갈 브랜치"},
+	MsgPRNewSource:  {en: "Branch with your work", ko: "가져올 브랜치"},
+	MsgPRNewTarget:  {en: "Branch it goes into", ko: "대상 브랜치"},
 	MsgPRNewCompare: {en: "Compare these branches", ko: "두 브랜치 비교"},
 	MsgPRNewCompareHelp: {
 		en: "OwnGit reads both branch tips and shows the difference before anything is created.",
@@ -574,7 +574,7 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRChangesTitle: {en: "Changes", ko: "변경 내용"},
 	MsgPRChangesNone: {
 		en: "The source branch has no changes that the target does not already have.",
-		ko: "원본 브랜치에 대상 브랜치로 가져올 새 변경 내용이 없습니다.",
+		ko: "가져올 브랜치에 대상 브랜치에 없는 새 변경 내용이 없습니다.",
 	},
 	MsgPRChangesUnavail: {
 		en: "The comparison could not be produced, so the change list is missing rather than empty.",
@@ -590,15 +590,15 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 	MsgPRChangesBase: {
 		en: "Changes the source branch made since it branched off the target. Merge base:",
-		ko: "원본 브랜치가 대상 브랜치에서 갈라진 뒤에 바꾼 내용입니다. 병합 기준 커밋:",
+		ko: "가져올 브랜치가 대상 브랜치에서 갈라진 뒤에 바꾼 내용입니다. 병합 기준 커밋:",
 	},
 	MsgPRChangesNoBase: {
 		en: "The source and target branches have no commit in common, so their changes cannot be compared.",
-		ko: "원본 브랜치와 대상 브랜치에 공통 커밋이 없어 변경 내용을 비교할 수 없습니다.",
+		ko: "가져올 브랜치와 대상 브랜치에 공통 커밋이 없어 변경 내용을 비교할 수 없습니다.",
 	},
 	MsgPRChangesManyBases: {
 		en: "The branches have more than one merge base, so where the source branched off is ambiguous. OwnGit does not pick one, so no change list is shown.",
-		ko: "두 브랜치의 병합 기준 커밋이 여러 개라서 원본 브랜치가 어디서 갈라졌는지 하나로 정할 수 없습니다. OwnGit은 그중 하나를 임의로 고르지 않으므로 변경 목록을 표시하지 않습니다.",
+		ko: "두 브랜치의 병합 기준 커밋이 여러 개라서 가져올 브랜치가 어디서 갈라졌는지 하나로 정할 수 없습니다. OwnGit은 그중 하나를 임의로 고르지 않으므로 변경 목록을 표시하지 않습니다.",
 	},
 	MsgPRChangesBinary: {en: "Binary file", ko: "바이너리 파일"},
 
@@ -668,9 +668,9 @@ var evidenceCatalog = map[MessageCode]message{
 	},
 
 	MsgMergeBlockedMerged:     {en: "This pull request is already merged.", ko: "이미 병합된 풀 리퀘스트입니다."},
-	MsgMergeBlockedSourceGone: {en: "The branch with your work no longer exists.", ko: "작업이 있던 브랜치가 더 이상 없습니다."},
+	MsgMergeBlockedSourceGone: {en: "The branch with your work no longer exists.", ko: "가져올 브랜치가 더 이상 없습니다."},
 	MsgMergeBlockedTargetGone: {en: "The target branch no longer exists.", ko: "대상 브랜치가 더 이상 없습니다."},
-	MsgMergeBlockedSourceKind: {en: "The branch with your work does not point at a commit.", ko: "작업이 있는 브랜치가 커밋을 가리키지 않습니다."},
+	MsgMergeBlockedSourceKind: {en: "The branch with your work does not point at a commit.", ko: "가져올 브랜치가 커밋을 가리키지 않습니다."},
 	MsgMergeBlockedTargetKind: {en: "The target branch does not point at a commit.", ko: "대상 브랜치가 커밋을 가리키지 않습니다."},
 	MsgMergeBlockedConflict: {
 		en: "The same lines changed on both branches, so Git cannot combine them automatically.",

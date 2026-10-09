@@ -205,7 +205,6 @@ func TestTailscalePortListIsTranslated(t *testing.T) {
 // of the address shown.
 func TestTailscaleStaleAddressIsExplained(t *testing.T) {
 	r := newRenderer(t)
-	port := map[Lang]string{LangEN: "PORT", LangKO: "포트"}
 	for _, lang := range Langs() {
 		page := SettingsPage{Chrome: fullChrome(lang), Tab: SettingsNetwork, SubmitURL: "/settings/network",
 			Tailscale: TailscaleInfo{Stale: []TailscaleUse{{Kind: "proxy", Address: "https://oldbox.tail0000.ts.net:8443/", Target: "http://127.0.0.1:7654"}}}}
@@ -214,7 +213,7 @@ func TestTailscaleStaleAddressIsExplained(t *testing.T) {
 			t.Errorf("%s: the earlier name's address is not explained", lang)
 		}
 		text := Text(lang, MsgTSStale)
-		for _, want := range []string{"tailscale serve --https=" + port[lang] + " --set-path=/ off", "tailscale set --hostname=", "Tailscale"} {
+		for _, want := range []string{"tailscale serve --https=PORT --set-path=/ off", "tailscale set --hostname=NAME", "Tailscale"} {
 			if !strings.Contains(text, want) {
 				t.Errorf("%s: the explanation lacks %q: %q", lang, want, text)
 			}

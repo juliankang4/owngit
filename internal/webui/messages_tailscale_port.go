@@ -51,7 +51,7 @@ var tailscalePortCatalog = map[MessageCode]message{
 		en: "Tailscale on this computer already serves something else on each HTTPS port OwnGit can use, so sharing cannot be turned on. What is on each port is below.",
 		ko: "이 컴퓨터에서 OwnGit이 쓸 수 있는 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 공유를 켤 수 없습니다. 포트마다 무엇이 있는지는 아래에 있습니다.",
 	},
-	MsgTSReplaceTitle: {en: "Replace what is on a port", ko: "포트의 기존 설정 바꾸기"},
+	MsgTSReplaceTitle: {en: "Replace what is on a port", ko: "포트의 기존 서비스를 OwnGit으로 교체"},
 	MsgTSReplaceLead: {
 		en: "Choosing a free port above keeps everything else working. If you no longer need what Tailscale serves on one of these ports, OwnGit can take its place there. Only that port changes; other ports, names and Funnel stay as they are.",
 		ko: "위에서 비어 있는 포트를 고르면 다른 설정은 그대로 둘 수 있습니다. 이 포트들 중 하나에서 Tailscale이 제공하는 것이 더는 필요 없다면, 그 자리에 OwnGit을 둘 수 있습니다. 그 포트만 바뀌고 다른 포트와 이름, Funnel은 그대로입니다.",
@@ -61,7 +61,7 @@ var tailscalePortCatalog = map[MessageCode]message{
 		en: "What is listed here stops answering at %s, and OwnGit answers there instead.",
 		ko: "여기 나열된 것은 %s 주소에서 더는 응답하지 않고, 그 자리에서 OwnGit이 응답합니다.",
 	},
-	MsgTSReplaceButton: {en: "Replace this endpoint", ko: "이 설정 바꾸기"},
+	MsgTSReplaceButton: {en: "Replace this endpoint", ko: "기존 서비스를 OwnGit으로 교체"},
 	MsgTSReplaceNotAllowed: {
 		en: "OwnGit does not replace a port open to Funnel, which would make OwnGit public, or one a \"tailscale serve\" in a terminal holds.",
 		ko: "OwnGit은 Funnel로 공개된 포트는 바꾸지 않습니다. 바꾸면 OwnGit이 인터넷에 공개되기 때문입니다. 터미널에서 실행 중인 \"tailscale serve\"가 쓰는 포트도 바꾸지 않습니다.",

@@ -236,15 +236,15 @@ var importOptionsCatalog = map[MessageCode]message{
 		en: "By default a refresh brings in branches and tags, keeps a branch or tag you changed here, and only counts refs the source deleted. These choices apply from the next refresh.",
 		ko: "기본적으로 새로고침은 브랜치와 태그를 가져오고, 여기서 바꾼 브랜치나 태그는 그대로 두며, 원본에서 삭제된 ref는 개수만 셉니다. 이 설정은 다음 새로고침부터 적용됩니다.",
 	},
-	MsgImportExtraRefs: {en: "Extra ref namespaces", ko: "추가 ref 네임스페이스"},
+	MsgImportExtraRefs: {en: "Extra ref namespaces", ko: "추가 ref 이름공간"},
 	MsgImportExtraRefsHelp: {
 		en: "One per line, each ending with a slash, such as refs/notes/. Refs under these namespaces are imported with branches and tags. Pushes to this repository are not affected.",
-		ko: "한 줄에 하나씩, refs/notes/처럼 슬래시로 끝나게 적습니다. 이 네임스페이스의 ref를 브랜치, 태그와 함께 가져옵니다. 이 저장소로의 푸시에는 영향을 주지 않습니다.",
+		ko: "한 줄에 하나씩, refs/notes/처럼 슬래시로 끝나게 적습니다. 이 이름공간의 ref를 브랜치, 태그와 함께 가져옵니다. 이 저장소로의 푸시에는 영향을 주지 않습니다.",
 	},
-	MsgImportExtraRefsWarning: {en: "Overwritten or deleted refs in these namespaces have no kept history.", ko: "이 네임스페이스에서 덮어쓰거나 삭제한 ref는 보관된 기록에 남지 않습니다."},
+	MsgImportExtraRefsWarning: {en: "Overwritten or deleted refs in these namespaces have no kept history.", ko: "이 이름공간에서 덮어쓰거나 삭제한 ref는 보관된 기록에 남지 않습니다."},
 	MsgImportExtraRefsInvalid: {
 		en: "Enter ref namespaces such as refs/notes/, one per line, each once. Branches, tags and refs/owngit/ are not allowed.",
-		ko: "refs/notes/ 같은 ref 네임스페이스를 한 줄에 하나씩, 중복 없이 적으세요. 브랜치, 태그, refs/owngit/은 쓸 수 없습니다.",
+		ko: "refs/notes/ 같은 ref 이름공간을 한 줄에 하나씩, 중복 없이 적으세요. 브랜치, 태그, refs/owngit/은 쓸 수 없습니다.",
 	},
 	MsgImportOverwrite: {en: "Overwrite diverged branches", ko: "원본과 달라진 브랜치 덮어쓰기"},
 	MsgImportOverwriteHelp: {
@@ -273,7 +273,7 @@ var importOptionsCatalog = map[MessageCode]message{
 	MsgImportFactExtraRefs:        {en: "Extra refs", ko: "추가 ref"},
 	MsgImportFactOverwrite:        {en: "Overwrites diverged branches", ko: "달라진 브랜치 덮어씀"},
 	MsgImportFactFollowDeletions:  {en: "Follows upstream deletions", ko: "원본의 삭제 따름"},
-	MsgImportRefNotImported:       {en: "Namespace not imported", ko: "가져오지 않는 네임스페이스"},
+	MsgImportRefNotImported:       {en: "Namespace not imported", ko: "가져오지 않는 이름공간"},
 	MsgImportRefusedPrivate: {
 		en: "OwnGit did not connect: the source address is on a private network, which this source does not allow. To connect, turn on “Allow a private-network source” in this source's settings.",
 		ko: "원본 주소가 사설망에 있고 이 원본은 사설망 연결을 허용하지 않아 OwnGit이 연결하지 않았습니다. 연결하려면 이 원본 설정에서 ‘사설망 원본 허용’을 켜세요.",

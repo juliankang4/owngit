@@ -542,7 +542,7 @@ func TestRawFilesAnswerHeadAndRefuseLargeFilesInWords(t *testing.T) {
 				if !strings.HasPrefix(result.header.Get("Content-Disposition"), "attachment") || !strings.Contains(result.header.Get("Content-Security-Policy"), "sandbox") {
 					t.Errorf("HEAD lacks download protections: %v", result.header)
 				}
-			} else if row.status == http.StatusForbidden && (!strings.Contains(get.body, "larger than the raw file download limit") || !strings.Contains(get.body, "원본 파일 내려받기 한도")) {
+			} else if row.status == http.StatusForbidden && (!strings.Contains(get.body, "larger than the raw file download limit") || !strings.Contains(get.body, "원문 파일 내려받기 한도")) {
 				t.Error("the size refusal has no bilingual explanation")
 			} else if row.status == http.StatusNotFound && !strings.Contains(get.header.Get("Content-Type"), "text/html") {
 				t.Error("a missing file did not get an HTML error")

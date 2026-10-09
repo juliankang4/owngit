@@ -24,7 +24,7 @@ var mergeabilityCatalog = map[MessageCode]message{
 	},
 	MsgMergeabilityFastForward: {
 		en: "Can merge: the target branch moves forward to the source commit.",
-		ko: "병합할 수 있습니다. 대상 브랜치가 원본 커밋으로 앞당겨집니다.",
+		ko: "병합할 수 있습니다. 대상 브랜치가 가져올 브랜치의 커밋으로 앞당겨집니다.",
 	},
 	MsgMergeabilityMergeCommit: {
 		en: "Can merge without conflicts: OwnGit creates a merge commit.",
@@ -32,7 +32,7 @@ var mergeabilityCatalog = map[MessageCode]message{
 	},
 	MsgMergeabilityUpToDate: {
 		en: "Can merge: the target branch already contains the source, so it stays as it is.",
-		ko: "병합할 수 있습니다. 대상 브랜치에 원본이 이미 들어 있어 대상은 그대로입니다.",
+		ko: "병합할 수 있습니다. 대상 브랜치에 가져올 브랜치의 커밋이 이미 들어 있어 대상은 그대로입니다.",
 	},
 	MsgMergeabilityConflict: {
 		en: "These files conflict. Resolve them on a branch and push, then check again.",

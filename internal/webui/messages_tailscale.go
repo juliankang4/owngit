@@ -207,7 +207,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	// Detail: what is on the port.
 	"tailscale.problem.port_taken": {
 		en: "Tailscale already serves something else on each HTTPS port that OwnGit tried on this computer, so OwnGit changed nothing. Name a free port with \"owngit tailscale on --https-port PORT\", or remove what you no longer need with \"tailscale serve\", and try again. On those ports now:",
-		ko: "이 컴퓨터에서 OwnGit이 시도한 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. \"owngit tailscale on --https-port 포트\"로 비어 있는 포트를 지정하거나, 더 이상 필요 없는 설정을 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 지금 그 포트들의 설정:",
+		ko: "이 컴퓨터에서 OwnGit이 시도한 HTTPS 포트마다 Tailscale이 이미 다른 것을 제공하고 있어 OwnGit은 아무것도 바꾸지 않았습니다. \"owngit tailscale on --https-port PORT\"로 비어 있는 포트를 지정하거나, 더 이상 필요 없는 설정을 \"tailscale serve\"로 지운 뒤 다시 시도하세요. 지금 그 포트들의 설정:",
 	},
 	"tailscale.problem.port_taken_listed": {
 		en: "Tailscale already serves something else on each HTTPS port that OwnGit tried on this computer, so OwnGit changed nothing. What is on those ports, and what to do, is below.",
@@ -251,7 +251,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	// Followed by the addresses.
 	MsgTSStale: {
 		en: "Tailscale still has an address under a name this computer had before. It answers for nothing, because Tailscale answers only for the current name, and it does not keep OwnGit from sharing. Tailscale can remove it only while the computer has that name: rename the computer back, in the Tailscale admin console or with \"tailscale set --hostname=NAME\" on this computer, run \"tailscale serve --https=PORT --set-path=/ off\" with the port of the address, then rename it again. If Tailscale serves nothing else on this computer, \"tailscale serve reset\" also removes it. The address:",
-		ko: "Tailscale에 이 컴퓨터의 예전 이름으로 된 주소가 남아 있습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않으며, OwnGit의 공유도 막지 않습니다. Tailscale은 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다. Tailscale 관리 콘솔이나 이 컴퓨터의 \"tailscale set --hostname=이름\"으로 이름을 예전 이름으로 되돌리고, 주소에 있는 포트로 \"tailscale serve --https=포트 --set-path=/ off\"를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 \"tailscale serve reset\"으로도 지울 수 있습니다. 남아 있는 주소:",
+		ko: "Tailscale에 이 컴퓨터의 예전 이름으로 된 주소가 남아 있습니다. Tailscale은 지금 이름으로만 응답하므로 이 주소는 아무 데도 연결되지 않으며, OwnGit의 공유도 막지 않습니다. Tailscale은 컴퓨터가 그 이름일 때만 이 주소를 지울 수 있습니다. Tailscale 관리 콘솔이나 이 컴퓨터의 \"tailscale set --hostname=NAME\"으로 이름을 예전 이름으로 되돌리고, 주소에 있는 포트로 \"tailscale serve --https=PORT --set-path=/ off\"를 실행한 뒤 다시 이름을 바꾸세요. 이 컴퓨터에서 Tailscale이 다른 것을 제공하지 않는다면 \"tailscale serve reset\"으로도 지울 수 있습니다. 남아 있는 주소:",
 	},
 
 	// What is on Tailscale's HTTPS port: %[1]s is the address and %[2]s the
@@ -320,7 +320,7 @@ var tailscaleCatalog = map[MessageCode]message{
 	},
 	MsgTSTakenSteps: {
 		en: "Choose Custom under HTTPS port and enter another free port, or run \"owngit tailscale on --https-port PORT\" on this computer. Or, if you no longer need one of these, replace it below or remove it with \"tailscale serve\" (\"tailscale serve status\" shows them) and turn sharing on.",
-		ko: "HTTPS 포트에서 직접 지정을 고르고 비어 있는 다른 포트를 입력하거나, 이 컴퓨터에서 \"owngit tailscale on --https-port 포트\"를 실행하세요. 또는 이 중 더 이상 필요 없는 설정을 아래에서 바꾸거나 \"tailscale serve\"로 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
+		ko: "HTTPS 포트에서 직접 지정을 고르고 비어 있는 다른 포트를 입력하거나, 이 컴퓨터에서 \"owngit tailscale on --https-port PORT\"를 실행하세요. 또는 이 중 더 이상 필요 없는 설정을 아래에서 바꾸거나 \"tailscale serve\"로 지운 뒤 공유를 켜세요. 무엇이 있는지는 \"tailscale serve status\"로 볼 수 있습니다.",
 	},
 	// Detail: what is on the port.
 	"tailscale.problem.unrecorded": {

@@ -236,9 +236,9 @@
            serves every place a change is read. */}}
       {{with .AllURL}}<p class="dnote">{{icon "info"}}<span>{{bi $lang "diff.one_file"}} <a href="{{.}}">{{bi $lang "diff.show_all"}}</a></span></p>{{end}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Pages}}
-      {{template "pageContinuation" dict "Lang" $lang "C" .Lines}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Lines "Lines" true}}
       {{template "diffFiles" dict "Lang" $lang "Files" $files "Pages" .Pages "Title" "pr.changes.title"}}
-      {{template "pageContinuation" dict "Lang" $lang "C" .Lines}}
+      {{template "pageContinuation" dict "Lang" $lang "C" .Lines "Lines" true}}
       {{template "pageContinuation" dict "Lang" $lang "C" .Pages}}
     {{else if not .FilesTruncated}}
       <p class="empty">{{bi $lang "pr.changes.none"}}</p>
