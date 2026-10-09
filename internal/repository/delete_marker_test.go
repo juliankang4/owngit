@@ -261,26 +261,20 @@ func TestDeletionMarkerMustBeRegularFile(t *testing.T) {
 func TestDeletionMarkerRemovedWhenCommitIsRefused(t *testing.T) {
 	ctx := context.Background()
 	manager, remote := newDeletionRepository(t)
-	lock := manager.Locks.For("sample")
-	lock.RLock()
-	done := make(chan error, 1)
-	go func() {
-		_, err := manager.Delete(ctx, "sample", DeleteFiles)
-		done <- err
-	}()
-	// Delete passes its first busy check and waits for the lock.
-	time.Sleep(500 * time.Millisecond)
 	now := time.Unix(1_800_000_000, 0)
 	source, err := manager.Store.ConfigureImportSource(ctx, state.ImportSourceInput{
 		RepositoryID: "sample", URL: "https://example.invalid/team/sample.git", Mode: state.ImportModeStandalone, Now: now,
 	})
 	noErr(t, err)
-	noErr(t, manager.Store.BeginImportRun(ctx, state.ImportRun{
-		ID: strings.Repeat("a", 32), RepositoryID: "sample", SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
-		Kind: state.ImportKindRefresh, Status: state.ImportRunFetching, StartedAt: now, CreatedAt: now,
-	}))
-	lock.RUnlock()
-	if err := <-done; !errors.Is(err, ErrImportRunning) {
+	// The deletion clock runs with the write lock held, before the commit.
+	manager.deletionClock = func() time.Time {
+		noErr(t, manager.Store.BeginImportRun(ctx, state.ImportRun{
+			ID: strings.Repeat("a", 32), RepositoryID: "sample", SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
+			Kind: state.ImportKindRefresh, Status: state.ImportRunFetching, StartedAt: now, CreatedAt: now,
+		}))
+		return now
+	}
+	if _, err := manager.Delete(ctx, "sample", DeleteFiles); !errors.Is(err, ErrImportRunning) {
 		t.Fatalf("refused deletion error=%v", err)
 	}
 	if _, err := os.Lstat(sampleMarkerPath(manager)); !os.IsNotExist(err) {
