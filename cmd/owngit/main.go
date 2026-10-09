@@ -520,9 +520,13 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	// nothing until the coordinator starts.
 	checkCoordinator := &checkrun.Coordinator{Store: store, Repositories: repositories, PullRequests: pullRequests, Logf: logf}
 	var changeApp atomic.Pointer[server.App]
+	var changeImports atomic.Pointer[importLifetime]
 	// A repository change or readiness wakes reconciliation and activity.
 	noteChange := func(id string) {
 		checkCoordinator.Wake(id)
+		if imports := changeImports.Load(); imports != nil {
+			imports.wakeReconciliation()
+		}
 		if app := changeApp.Load(); app != nil {
 			app.NoteRepositoryChange(id)
 		}
@@ -650,7 +654,8 @@ func serveWithContext(ctx context.Context, arguments []string, opener func(strin
 	imports := &importsync.Service{Store: store, Repositories: repositories, Logf: logf}
 	// Registered after the store is opened, so in-flight imports record their
 	// outcome before the store closes.
-	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf, shutdown: shutdown}
+	importRuntime := &importLifetime{ctx: ctx, service: imports, logf: logf, shutdown: shutdown, reconcileWake: make(chan struct{}, 1)}
+	changeImports.Store(importRuntime)
 	defer importRuntime.stop()
 	if settings.Initialized {
 		importRuntime.start()
@@ -999,14 +1004,17 @@ func stopServing(servers []*http.Server, gitHandler *githttp.Handler, deadline t
 // initialized installation starts serving or when first-run setup completes
 // while serving; both share the serve context and the same shutdown.
 type importLifetime struct {
-	ctx       context.Context
-	service   *importsync.Service
-	logf      func(string, ...any)
-	mu        sync.Mutex
-	started   bool
-	stopped   bool
-	scheduler *importsync.Scheduler
-	shutdown  *shutdownClock
+	ctx             context.Context
+	service         *importsync.Service
+	logf            func(string, ...any)
+	mu              sync.Mutex
+	started         bool
+	stopped         bool
+	scheduler       *importsync.Scheduler
+	shutdown        *shutdownClock
+	reconcileWake   chan struct{}
+	reconcileDone   chan struct{}
+	cancelReconcile context.CancelFunc
 }
 
 func (lifetime *importLifetime) start() {
@@ -1020,12 +1028,43 @@ func (lifetime *importLifetime) start() {
 		lifetime.logf("import reconciliation failed; ordinary Git service remains available: %v", err)
 		lifetime.service.NoteStartupFailure(err)
 	}
+	ctx, cancel := context.WithCancel(lifetime.ctx)
+	lifetime.cancelReconcile = cancel
+	lifetime.reconcileDone = make(chan struct{})
+	go lifetime.reconcileReady(ctx)
+	lifetime.wakeReconciliation()
 	scheduler := &importsync.Scheduler{Service: lifetime.service, Logf: lifetime.logf}
 	if err := scheduler.Start(lifetime.ctx); err != nil {
 		lifetime.logf("import scheduler did not start; ordinary Git service remains available: %v", err)
 		return
 	}
 	lifetime.scheduler = scheduler
+}
+
+func (lifetime *importLifetime) wakeReconciliation() {
+	select {
+	case lifetime.reconcileWake <- struct{}{}:
+	default:
+	}
+}
+
+func (lifetime *importLifetime) reconcileReady(ctx context.Context) {
+	defer close(lifetime.reconcileDone)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-lifetime.reconcileWake:
+			if err := lifetime.service.ReconcileReady(ctx); err != nil && ctx.Err() == nil {
+				lifetime.logf("import reconciliation after preparation failed: %v", err)
+				lifetime.service.NoteStartupFailure(err)
+			}
+			if err := lifetime.service.ReconcilePackKeeps(ctx); err != nil && ctx.Err() == nil {
+				lifetime.logf("import pack keep cleanup failed: %v", err)
+				lifetime.service.NoteStartupFailure(err)
+			}
+		}
+	}
 }
 
 // stop stops the scheduler, then cancels and drains manual runs, bounded,
@@ -1039,6 +1078,10 @@ func (lifetime *importLifetime) stop() {
 	lifetime.stopped = true
 	stopContext, cancel := lifetime.shutdown.context()
 	defer cancel()
+	if lifetime.cancelReconcile != nil {
+		lifetime.cancelReconcile()
+		lifetime.shutdown.wait(lifetime.logf, "import reconciliation shutdown", lifetime.reconcileDone)
+	}
 	if lifetime.scheduler != nil {
 		if err := lifetime.scheduler.Stop(stopContext); err != nil {
 			lifetime.logf("import scheduler shutdown: %v", err)

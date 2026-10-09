@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -200,6 +201,161 @@ func importRuntimeStatus(t *testing.T, base, repositoryID, adminPassword string)
 // First-run setup completed inside a running serve starts the import runtime
 // then: the status surface reports a running scheduler, and a schedule that
 // became due while setup was pending is claimed without a restart.
+func TestImportLifetimeReconcilesOnRepositoryReadiness(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		blocked   bool
+		completed bool
+	}{
+		{name: "ready repository"},
+		{name: "shutdown cancels a waiting retry", blocked: true},
+		{name: "startup and health progress behind a maintenance writer", completed: true},
+		{name: "shutdown cancels waiting keep cleanup", completed: true, blocked: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := startImportCLIServer(t)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			now := time.Now().UTC()
+			source, _, err := f.store.ImportSource(ctx, f.repositoryID)
+			noErr(t, err)
+			run := state.ImportRun{ID: strings.Repeat("1", 32), RepositoryID: f.repositoryID,
+				SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
+				Kind: state.ImportKindRefresh, Status: state.ImportRunPublishing, StartedAt: now}
+			noErr(t, f.store.BeginImportRun(ctx, run))
+			confirmed := make(chan struct{}, 1)
+			logf := func(format string, args ...any) {
+				if strings.Contains(fmt.Sprintf(format, args...), "import reconciliation after repository preparation completed") {
+					confirmed <- struct{}{}
+				}
+			}
+			f.service.Logf = logf
+			lifetime := &importLifetime{ctx: ctx, service: f.service, logf: logf,
+				shutdown: newShutdownClock(ctx, 10*time.Second), reconcileWake: make(chan struct{}, 1)}
+			manager := f.service.Repositories
+			lock := manager.Locks.For(f.repositoryID)
+			t.Cleanup(func() {
+				cancel()
+				lifetime.stop()
+				stop, finish := context.WithTimeout(context.Background(), 10*time.Second)
+				defer finish()
+				noErr(t, manager.StopPreparation(stop))
+			})
+			if test.completed {
+				run.Status, run.FinishedAt = state.ImportRunComplete, now
+				noErr(t, f.store.FinishImportRun(ctx, run))
+				path, _, _, err := manager.ExistingPath(ctx, f.repositoryID)
+				noErr(t, err)
+				keep := filepath.Join(path, "objects", "pack", "pack-"+strings.Repeat("a", 40)+".keep")
+				marker := "owngit import " + run.ID + "\n"
+				noErr(t, os.WriteFile(keep, []byte(marker), 0o600))
+				lock.Lock()
+				var released sync.Once
+				release := func() { released.Do(lock.Unlock) }
+				t.Cleanup(release)
+				started := make(chan struct{})
+				go func() { lifetime.start(); close(started) }()
+				select {
+				case <-started:
+				case <-time.After(10 * time.Second):
+					t.Fatal("import startup waited for an unrelated maintenance writer")
+				}
+				request, err := http.NewRequestWithContext(ctx, http.MethodGet, f.url+"/healthz", nil)
+				noErr(t, err)
+				response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+				noErr(t, err)
+				noErr(t, response.Body.Close())
+				if response.StatusCode != http.StatusOK {
+					t.Fatalf("health behind maintenance writer=%d", response.StatusCode)
+				}
+				content, err := os.ReadFile(keep)
+				noErr(t, err)
+				if string(content) != marker {
+					t.Fatalf("keep changed while the repository writer held its lock: %q", content)
+				}
+				waiting := time.NewTimer(10 * time.Second)
+				defer waiting.Stop()
+				for !lock.Waiting() {
+					select {
+					case <-waiting.C:
+						t.Fatal("background keep cleanup did not wait for the repository writer")
+					default:
+						runtime.Gosched()
+					}
+				}
+				if test.blocked {
+					lifetime.stop()
+					if _, err := os.Stat(keep); err != nil {
+						t.Fatalf("cancelled cleanup changed the keep: %v", err)
+					}
+					return
+				}
+				release()
+				check, finish := context.WithTimeout(ctx, 10*time.Second)
+				defer finish()
+				noErr(t, lock.LockContext(check))
+				lock.Unlock()
+				if _, err := os.Stat(keep); !os.IsNotExist(err) {
+					t.Fatalf("abandoned keep remained after maintenance release: %v", err)
+				}
+				return
+			}
+			head := map[string]string{state.ImportHeadRef: "symbolic refs/heads/main "}
+			intent := state.ImportIntent{ID: strings.Repeat("2", 32), RepositoryID: f.repositoryID, RunID: run.ID,
+				SourceGeneration: run.SourceGeneration, AuthorityRevision: run.AuthorityRevision, Status: state.ImportIntentApplied,
+				Expected: head, Desired: head, Observed: head, Retained: map[string]string{}, CreatedAt: now}
+			noErr(t, f.store.CreateImportIntent(ctx, intent))
+			entered, release, notified := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			manager.OnReady = func(string) {
+				if test.blocked {
+					lock.RLock()
+				}
+				lifetime.wakeReconciliation()
+				close(notified)
+			}
+			manager.OnChange = manager.OnReady
+			noErr(t, manager.StartPreparation(ctx, func(ctx context.Context, _, _ string) error {
+				close(entered)
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}, 0, nil))
+			lifetime.start()
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("preparation did not start")
+			}
+			close(release)
+			select {
+			case <-notified:
+			case <-time.After(10 * time.Second):
+				t.Fatal("preparation did not notify the import lifetime")
+			}
+			if test.blocked {
+				defer lock.RUnlock()
+				lifetime.stop()
+				return
+			}
+			select {
+			case <-confirmed:
+			case <-time.After(10 * time.Second):
+				t.Fatal("readiness did not retry import reconciliation")
+			}
+			storedRun, _, err := f.store.ImportRun(ctx, run.ID)
+			noErr(t, err)
+			storedIntent, _, err := f.store.ImportIntent(ctx, intent.ID)
+			noErr(t, err)
+			if storedRun.Status != state.ImportRunComplete || storedIntent.Status != state.ImportIntentComplete {
+				t.Fatalf("after preparation run=%s intent=%s", storedRun.Status, storedIntent.Status)
+			}
+		})
+	}
+}
+
 func TestSchedulerStartsWhenSetupCompletesWhileServing(t *testing.T) {
 	base := t.TempDir()
 	stateDir := filepath.Join(base, "state")

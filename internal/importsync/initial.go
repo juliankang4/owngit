@@ -700,9 +700,7 @@ func (s *Service) reconcileOneInitialDestination(ctx context.Context, generation
 		}
 		return 1, nil
 	}
-	// As in reconcileLandedInitialDestination, a repository being prepared
-	// is left for the next start instead of waiting for its lock.
-	if s.Repositories.Preparing(row.RepositoryID) {
+	if s.registerPreparationWaitBeforeReadiness(row.RepositoryID) {
 		return 1, nil
 	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)
@@ -986,10 +984,7 @@ func (s *Service) reconcileLandedInitialDestination(ctx context.Context, generat
 	if !intentExists {
 		return 1, nil
 	}
-	// A registered repository still being prepared after startup may have a
-	// hung preparation attempt holding its lock. Startup recovery does not
-	// wait for it; the destination stays unresolved until the next start.
-	if s.Repositories.Preparing(row.RepositoryID) {
+	if s.registerPreparationWaitBeforeReadiness(row.RepositoryID) {
 		return 1, nil
 	}
 	lock := s.Repositories.Locks.For(row.RepositoryID)

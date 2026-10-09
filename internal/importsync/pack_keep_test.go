@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/state"
 )
@@ -115,6 +117,76 @@ func TestSuccessfulRefreshRemovesItsPackKeepBehindAReader(t *testing.T) {
 	require(t, err == nil && run.Status == state.ImportRunComplete, "refresh run=%+v err=%v", run, err)
 	keeps := destinationKeepFiles(t, f.destinationPath())
 	require(t, len(keeps) == 0, "the refresh left keep files %v while a reader held the repository", keeps)
+}
+
+func TestReconcileRemovesOnlyAbandonedImportKeeps(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	f.commit("one", "one\n")
+	completed := f.mustImport(ImportInput{}).Run
+	otherSource, err := f.store.ConfigureImportSource(ctx, state.ImportSourceInput{
+		RepositoryID: "other", URL: "https://example.invalid/other.git", Mode: string(ModeStandalone), Now: f.now,
+	})
+	noErr(t, err)
+	other := state.ImportRun{ID: strings.Repeat("e", 32), RepositoryID: "other", SourceGeneration: otherSource.SourceGeneration,
+		AuthorityRevision: otherSource.AuthorityRevision, Kind: state.ImportKindRefresh, Status: state.ImportRunPreparing, StartedAt: f.now}
+	noErr(t, f.store.BeginImportRun(ctx, other))
+	other.Status, other.FinishedAt = state.ImportRunFailed, f.now
+	noErr(t, f.store.FinishImportRun(ctx, other))
+	entered, gate := make(chan struct{}), make(chan struct{})
+	f.transport.before = func() { close(entered) }
+	f.transport.gate = gate
+	refreshed := make(chan error, 1)
+	t.Cleanup(func() {
+		close(gate)
+		select {
+		case err := <-refreshed:
+			noErr(t, err)
+		case <-time.After(10 * time.Second):
+			t.Error("refresh did not finish")
+		}
+	})
+	go func() { _, err := f.refresh(); refreshed <- err }()
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("refresh did not reach the source")
+	}
+	live := f.service.liveRunIDs()
+	require(t, len(live) == 1, "live runs=%v", live)
+	packDir := filepath.Join(f.destinationPath(), "objects", "pack")
+	for _, test := range []struct {
+		name    string
+		content string
+		removed bool
+		link    bool
+	}{
+		{"completed", "owngit import " + completed.ID + "\n", true, false},
+		{"live", "owngit import " + live[0] + "\n", false, false},
+		{"other repository", "owngit import " + other.ID + "\n", false, false},
+		{"unknown run", "owngit import " + strings.Repeat("f", 32) + "\n", false, false},
+		{"operator", "operator\n", false, false},
+		{"extra text", "owngit import " + completed.ID + "\noperator\n", false, false},
+		{"linked keep", "owngit import " + completed.ID + "\n", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(packDir, "pack-"+state.ImportReceiptDigest(test.name)[:40]+".keep")
+			if test.link {
+				target := filepath.Join(f.root, "keep-target")
+				noErr(t, os.WriteFile(target, []byte(test.content), 0o600))
+				noErr(t, os.Symlink(target, path))
+			} else {
+				noErr(t, os.WriteFile(path, []byte(test.content), 0o600))
+			}
+			noErr(t, f.service.ReconcilePackKeeps(ctx))
+			content, err := os.ReadFile(path)
+			if test.removed {
+				require(t, os.IsNotExist(err), "abandoned keep remained: %q err=%v", content, err)
+			} else {
+				require(t, err == nil && string(content) == test.content, "unowned or active keep changed: %q err=%v", content, err)
+			}
+		})
+	}
 }
 
 func TestCreatedPackKeepOnlyTrustsKeepReports(t *testing.T) {

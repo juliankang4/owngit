@@ -75,78 +75,91 @@ func waitUntil(t *testing.T, what string, condition func() bool) {
 	}
 }
 
-// An initial import that stopped after its rename is registered by recovery
-// after startup. The repository is served only once preparation for this
-// process succeeds.
-func TestRecoveredInitialRepositoryIsServedOnlyAfterPreparation(t *testing.T) {
-	f := newFixture(t)
-	wanted := f.commit("one", "one\n")
-	f.service.beforeInitialRepositoryRecord = func() error { return errors.New("synthetic row write crash") }
-	_, err := f.importProject(ImportInput{})
-	require(t, problemCode(err) == CodeUnresolved, "row crash err=%v", err)
-	f.service.beforeInitialRepositoryRecord = nil
-	var failing atomic.Bool
-	failing.Store(true)
-	startFixturePreparation(t, f, func(context.Context, string, string) error {
-		if failing.Load() {
-			return errors.New("synthetic preparation failure")
-		}
-		return nil
-	}, 5*time.Second)
-	noErr(t, f.service.Reconcile(context.Background()))
-	_, exists, err := f.store.Repository(context.Background(), "project")
-	require(t, err == nil && exists, "recovery did not register the repository: exists=%v err=%v", exists, err)
-	_, _, _, err = f.manager.ExistingPath(context.Background(), "project")
-	require(t, errors.Is(err, repository.ErrRepositoryPreparing),
-		"recovered repository lookup error=%v before preparation succeeded", err)
-	failing.Store(false)
-	waitUntil(t, "the recovered repository is served", func() bool { return !f.manager.Preparing("project") })
-	got := f.destinationRefs()["refs/heads/main"]
-	require(t, got == wanted, "recovered main=%s want %s", got, wanted)
-}
-
-// Startup import recovery does not wait for a repository whose preparation
-// attempt hangs while holding the repository lock.
-func TestImportRecoveryDoesNotWaitForAHungPreparation(t *testing.T) {
-	f := newFixture(t)
-	f.commit("one", "one\n")
-	f.service.beforeInitialRepositoryRecord = func() error { return errors.New("synthetic row write crash") }
-	_, err := f.importProject(ImportInput{})
-	require(t, problemCode(err) == CodeUnresolved, "row crash err=%v", err)
-	f.service.beforeInitialRepositoryRecord = nil
-	// The process stopped after the repository row was written but before
-	// the destination was marked published.
-	noErr(t, f.store.AddRepository(context.Background(),
-		state.Repository{ID: "project", Name: "project", CreatedAt: f.now}))
-	release := make(chan struct{})
-	var entered atomic.Bool
-	startFixturePreparation(t, f, func(ctx context.Context, _, _ string) error {
-		entered.Store(true)
-		select {
-		case <-release:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-	}, 50*time.Millisecond)
-	waitUntil(t, "the preparation attempt holds the lock", entered.Load)
-	finished := make(chan error, 1)
-	go func() { finished <- f.service.Reconcile(context.Background()) }()
-	select {
-	case err := <-finished:
-		noErr(t, err)
-	case <-time.After(5 * time.Second):
-		close(release)
-		t.Fatal("import recovery waited for a hung repository preparation")
-	}
-	close(release)
-	waitUntil(t, "the repository is served", func() bool { return !f.manager.Preparing("project") })
-	// The next start completes the recovery that was left unresolved.
-	noErr(t, f.service.Reconcile(context.Background()))
-	rows, err := f.store.ImportInitialDestinations(context.Background())
-	noErr(t, err)
-	for _, row := range rows {
-		require(t, row.RepositoryID != "project" || row.State == state.ImportInitialPublished,
-			"the destination was not published after the repository became ready: %+v", row)
+func TestRecoveredInitialImportRetainsWaitForBufferedReadiness(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		before     bool
+		registered bool
+		retry      bool
+	}{
+		{name: "before rename", before: true},
+		{name: "after rename"},
+		{name: "after repository record", registered: true},
+		{name: "failed first preparation", retry: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			wanted := f.commit("one", "one\n")
+			crash := func() error { return errors.New("synthetic publication crash") }
+			if test.before {
+				f.service.beforeInitialRename = crash
+			} else {
+				f.service.beforeInitialRepositoryRecord = crash
+			}
+			_, err := f.importProject(ImportInput{})
+			require(t, problemCode(err) == CodeUnresolved, "publication crash err=%v", err)
+			f.service.beforeInitialRename, f.service.beforeInitialRepositoryRecord = nil, nil
+			run := f.lastRun()
+			if test.registered {
+				noErr(t, f.store.AddRepository(ctx, state.Repository{ID: "project", Name: "project", CreatedAt: f.now}))
+			}
+			entered, release, ready := make(chan struct{}, 1), make(chan struct{}), make(chan struct{}, 1)
+			f.manager.OnChange = func(string) { ready <- struct{}{} }
+			f.manager.OnReady = f.manager.OnChange
+			var attempts atomic.Int32
+			startFixturePreparation(t, f, func(ctx context.Context, _, _ string) error {
+				if test.retry && attempts.Add(1) == 1 {
+					return errors.New("synthetic preparation failure")
+				}
+				entered <- struct{}{}
+				select {
+				case <-release:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}, 0)
+			finished := make(chan error, 1)
+			go func() { finished <- f.service.Reconcile(ctx) }()
+			select {
+			case err := <-finished:
+				noErr(t, err)
+			case <-time.After(10 * time.Second):
+				t.Fatal("import recovery waited for repository preparation")
+			}
+			select {
+			case <-entered:
+			case <-time.After(10 * time.Second):
+				t.Fatal("recovered repository preparation did not start")
+			}
+			_, _, _, err = f.manager.ExistingPath(ctx, "project")
+			require(t, errors.Is(err, repository.ErrRepositoryPreparing), "unprepared repository lookup err=%v", err)
+			close(release)
+			select {
+			case <-ready:
+			case <-time.After(10 * time.Second):
+				t.Fatal("recovered repository did not become ready")
+			}
+			require(t, !f.service.registerPreparationWaitBeforeReadiness("project"), "ready repository stayed preparing")
+			_, retainedWait := f.service.preparingReconciliation.Load("project")
+			require(t, retainedWait, "buffered readiness lost the earlier reconciliation wait")
+			noErr(t, f.service.ReconcileReady(ctx))
+			stored, _, err := f.store.ImportRun(ctx, run.ID)
+			noErr(t, err)
+			require(t, stored.Status == state.ImportRunComplete, "recovered run status=%s", stored.Status)
+			intent, exists, err := f.store.CompletedImportIntentForRun(ctx, run.ID)
+			require(t, err == nil && exists && intent.Status == state.ImportIntentComplete,
+				"recovered intent=%+v exists=%v err=%v", intent, exists, err)
+			rows, err := f.store.ImportInitialDestinationsForRun(ctx, run.ID)
+			require(t, err == nil && len(rows) == 1 && rows[0].State == state.ImportInitialPublished,
+				"recovered destination=%+v err=%v", rows, err)
+			require(t, f.destinationRefs()["refs/heads/main"] == wanted, "recovered refs changed")
+			f.git(f.destinationPath(), "--git-dir", ".", "fsck", "--strict")
+			f.manager.OnChange, f.manager.OnReady = nil, nil
+			f.commit("two", "two\n")
+			refreshed, err := f.refresh()
+			require(t, err == nil && refreshed.Status == state.ImportRunComplete, "refresh after recovery=%+v err=%v", refreshed, err)
+		})
 	}
 }

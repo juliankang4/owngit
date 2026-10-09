@@ -40,8 +40,9 @@ type Service struct {
 	Clock  func() time.Time
 	Logf   func(string, ...any)
 
-	mutexes sync.Map
-	active  sync.Map
+	mutexes                 sync.Map
+	active                  sync.Map
+	preparingReconciliation sync.Map
 
 	// lifecycle is the admission/reconciliation barrier. A run takes the read
 	// side only while it registers itself, creates and claims its staging
@@ -1535,6 +1536,38 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return errors.Join(problems...)
 }
 
+func (s *Service) registerPreparationWaitBeforeReadiness(repositoryID string) bool {
+	_, previousWait := s.preparingReconciliation.LoadOrStore(repositoryID, struct{}{})
+	if s.Repositories.Preparing(repositoryID) {
+		return true
+	}
+	if !previousWait {
+		s.preparingReconciliation.Delete(repositoryID)
+	}
+	return false
+}
+
+// ReconcileReady retries recovery deferred by preparation. Readiness signals
+// can be coalesced; ordinary repository changes without a deferred wait do no work.
+func (s *Service) ReconcileReady(ctx context.Context) error {
+	ready := false
+	s.preparingReconciliation.Range(func(key, _ any) bool {
+		if !s.Repositories.Preparing(key.(string)) {
+			s.preparingReconciliation.Delete(key)
+			ready = true
+		}
+		return true
+	})
+	if !ready {
+		return nil
+	}
+	if err := s.Reconcile(ctx); err != nil {
+		return err
+	}
+	s.logf("import reconciliation after repository preparation completed")
+	return nil
+}
+
 func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation string, problems *[]error) error {
 	var afterRowID int64
 	for {
@@ -1567,6 +1600,9 @@ func (s *Service) reconcilePendingIntentPages(ctx context.Context, generation st
 		}
 		now := s.clock()
 		for _, repositoryID := range order {
+			if s.registerPreparationWaitBeforeReadiness(repositoryID) {
+				continue
+			}
 			var logs []deferredImportLog
 			path, _, exists, err := s.Repositories.ExistingPath(ctx, repositoryID)
 			if err != nil {
