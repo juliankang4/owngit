@@ -121,10 +121,14 @@ func TestWindowsObservedStatePreservesACLs(t *testing.T) {
 				noErr(t, err)
 				_, err = temporary.WriteString("kept")
 				noErr(t, err)
+				temporaryInfo, err := temporary.Stat()
+				noErr(t, err)
 				noErr(t, temporary.Close())
 				visited := false
 				noErr(t, walkManagedState(held, "", inspectForReader, func(file *os.File, directory bool) error {
-					if file.Name() != temporary.Name() {
+					info, err := file.Stat()
+					noErr(t, err)
+					if !os.SameFile(info, temporaryInfo) {
 						return nil
 					}
 					visited = true
