@@ -346,9 +346,12 @@ func prReview(arguments []string) error {
 	number := flags.Int64("number", 0, "pull request number")
 	sourceOID := flags.String("source-oid", "", "exact source commit object ID")
 	targetOID := flags.String("target-oid", "", "exact target commit object ID")
-	decision := flags.String("decision", "", "review result: approved or changes_requested")
-	reviewer := flags.String("reviewer", "", "supplied reviewer label")
-	noteFile := flags.String("note-file", "", "file with a Markdown review note, or - for standard input")
+	var decision, reviewer, noteFile string
+	if action == "submit" {
+		flags.StringVar(&decision, "decision", "", "review result: approved or changes_requested")
+		flags.StringVar(&reviewer, "reviewer", "", "supplied reviewer label")
+		flags.StringVar(&noteFile, "note-file", "", "file with a Markdown review note, or - for standard input")
+	}
 	if err := parseFlagsWithoutOperands(flags, arguments[1:]); err != nil {
 		return err
 	}
@@ -360,19 +363,16 @@ func prReview(arguments []string) error {
 		return err
 	}
 	if action == "submit" {
-		if *decision == "" || *reviewer == "" {
+		if decision == "" || reviewer == "" {
 			return cliProblem("invalid_arguments", "pr review submit requires --decision and --reviewer.")
 		}
-		note, err := readPullRequestText(*noteFile, "--note-file")
+		note, err := readPullRequestText(noteFile, "--note-file")
 		if err != nil {
 			return err
 		}
 		return writeResult(submitPullRequestReview(context.Background(), target, *number, pullrequest.ReviewSubmitInput{
-			SourceOID: *sourceOID, TargetOID: *targetOID, Decision: *decision, ReviewerLabel: *reviewer, Note: note,
+			SourceOID: *sourceOID, TargetOID: *targetOID, Decision: decision, ReviewerLabel: reviewer, Note: note,
 		}))
-	}
-	if *decision != "" || *reviewer != "" || *noteFile != "" {
-		return cliProblem("invalid_arguments", "--decision, --reviewer and --note-file are valid only for pr review submit.")
 	}
 	return writeResult(markPullRequestReview(context.Background(), target, *number, action, pullrequest.RevisionInput{SourceOID: *sourceOID, TargetOID: *targetOID}))
 }

@@ -136,6 +136,9 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 		{"repo list", []string{"--server", "--password-file"}, []string{"--repository", "--name"}},
 		{"repo show", []string{"--repository"}, []string{"--name"}},
 		{"repo create", []string{"--name", "--description"}, []string{"--repository"}},
+		{"pr review request", []string{"--number", "--source-oid", "--target-oid"}, []string{"--decision", "--reviewer", "--note-file"}},
+		{"pr review submit", []string{"--number", "--source-oid", "--target-oid", "--decision", "--reviewer", "--note-file"}, nil},
+		{"pr review skip", []string{"--number", "--source-oid", "--target-oid"}, []string{"--decision", "--reviewer", "--note-file"}},
 		{"repo restore preview", []string{"--source OID", "--target BRANCH", "--path FILE"}, []string{"--expected-head"}},
 		{"repo restore apply", []string{"--source OID", "--target BRANCH", "--path FILE", "--expected-head OID"}, nil},
 	} {
@@ -159,10 +162,20 @@ func TestActionHelpListsOnlyItsOwnOptions(t *testing.T) {
 	if !strings.Contains(usage.String(), "[--limit N] [--cursor ROW]") {
 		t.Errorf("import usage does not match the history options: %q", usage.String())
 	}
-	_, err := captureStdout(func() error { return run([]string{"check-policy", "show", "--policy-file", "policy.json"}) })
-	var problem *apiclient.Error
-	if !errors.As(err, &problem) || problem.Code != "invalid_arguments" {
-		t.Errorf("check-policy show --policy-file err=%v, want invalid_arguments", err)
+	for _, arguments := range [][]string{
+		{"check-policy", "show", "--policy-file", "policy.json"},
+		{"pr", "review", "request", "--decision", "approved"},
+		{"pr", "review", "request", "--reviewer", "synthetic-reviewer"},
+		{"pr", "review", "request", "--note-file", "note.md"},
+		{"pr", "review", "skip", "--decision", "approved"},
+		{"pr", "review", "skip", "--reviewer", "synthetic-reviewer"},
+		{"pr", "review", "skip", "--note-file", "note.md"},
+	} {
+		_, err := captureStdout(func() error { return run(arguments) })
+		var problem *apiclient.Error
+		if !errors.As(err, &problem) || problem.Code != "invalid_arguments" || !strings.Contains(problem.Message, "flag provided but not defined:") {
+			t.Errorf("owngit %s err=%v, want invalid_arguments for an undefined flag", strings.Join(arguments, " "), err)
+		}
 	}
 }
 
