@@ -85,49 +85,56 @@ func TestWindowsStateIsNotSwappedAfterItsCheck(t *testing.T) {
 	}
 }
 
-// A folder on the way that another program holds open to rename or remove
-// it is a change in progress, which OpenIn's callers try again, not a
-// failure or a crash, and OpenIn leaves no folder on the way held: every
-// folder can be opened to rename it again afterwards.
-func TestWindowsFolderHeldForRenamingIsAChangeInProgress(t *testing.T) {
-	root := t.TempDir()
-	path := filepath.Join(root, "parent", "state")
-	held, err := CreateDirectory(path)
-	noErr(t, err)
-	defer held.Close()
-	openIn := func() (store *Store, err error) {
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				t.Fatalf("OpenIn panicked: %v", recovered)
+func TestWindowsFolderSharingFaultKeepsCauseAndPath(t *testing.T) {
+	for _, name := range []string{"state", "backup"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "parent", "state")
+			held, err := CreateDirectory(path)
+			noErr(t, err)
+			defer held.Close()
+			open := func() error {
+				if name == "backup" {
+					destination, err := OpenDestination(filepath.Join(path, "backup.tar"))
+					if destination != nil {
+						destination.Close()
+					}
+					return err
+				}
+				store, err := OpenIn(context.Background(), held, nil)
+				if store != nil {
+					noErr(t, store.Close())
+				}
+				return err
 			}
-		}()
-		return OpenIn(context.Background(), held, nil)
-	}
-	requireRenameable := func(when string) {
-		t.Helper()
-		for _, folder := range []string{root, filepath.Dir(path), path} {
-			handle, err := openToRename(folder)
-			if err != nil {
-				t.Fatalf("%s, %s cannot be opened to rename it: %v", when, folder, err)
+			requireRenameable := func() {
+				t.Helper()
+				for _, folder := range []string{root, filepath.Dir(path), path} {
+					handle, err := openToRename(folder)
+					noErr(t, err)
+					noErr(t, windows.CloseHandle(handle))
+				}
 			}
-			noErr(t, windows.CloseHandle(handle))
-		}
+			parent, err := openToRename(filepath.Dir(path))
+			noErr(t, err)
+			err = open()
+			noErr(t, windows.CloseHandle(parent))
+			var pathErr *os.PathError
+			if !errors.Is(err, windows.ERROR_SHARING_VIOLATION) || errors.Is(err, ErrInspectionUnstable) || !errors.As(err, &pathErr) {
+				t.Fatalf("folder sharing fault lost its cause or path: %v", err)
+			}
+			got, err := os.Stat(pathErr.Path)
+			noErr(t, err)
+			want, err := os.Stat(filepath.Dir(path))
+			noErr(t, err)
+			if !os.SameFile(got, want) {
+				t.Fatalf("sharing fault named %s instead of the held parent", pathErr.Path)
+			}
+			requireRenameable()
+			noErr(t, open())
+			requireRenameable()
+		})
 	}
-	parent, err := openToRename(filepath.Dir(path))
-	noErr(t, err)
-	store, err := openIn()
-	noErr(t, windows.CloseHandle(parent))
-	if store != nil {
-		noErr(t, store.Close())
-	}
-	if !errors.Is(err, ErrInspectionUnstable) {
-		t.Fatalf("OpenIn with a folder on the way held for renaming: %v, want a change in progress", err)
-	}
-	requireRenameable("after the refused OpenIn")
-	store, err = openIn()
-	noErr(t, err)
-	noErr(t, store.Close())
-	requireRenameable("after OpenIn")
 }
 
 // openToRename opens the folder at path with the access that renaming or

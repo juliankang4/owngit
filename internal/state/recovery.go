@@ -166,7 +166,10 @@ var ErrDatabaseReplaced = errors.New("the state database is no longer the file O
 func (s *Store) sameDatabase(path string) error {
 	current, err := os.Stat(path)
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrDatabaseReplaced, err)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("%w: %w", ErrDatabaseReplaced, err)
+		}
+		return fmt.Errorf("could not check the state database: %w", err)
 	}
 	if s.database == nil || !os.SameFile(current, s.database) {
 		return ErrDatabaseReplaced

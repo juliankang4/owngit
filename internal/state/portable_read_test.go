@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -84,30 +85,60 @@ func TestPortableReadLetsTheStoreWrite(t *testing.T) {
 	}
 }
 
-// A backup reads the database the store opened. When another state folder
-// takes the store's path while it runs, the snapshot refuses instead of
-// reading the other database.
-func TestPortableReadRefusesAnotherDatabaseAtThePath(t *testing.T) {
-	ctx := context.Background()
-	parent := t.TempDir()
-	serving := filepath.Join(parent, "state")
-	store, err := Open(ctx, serving)
-	noErr(t, err)
-	defer store.Close()
-	noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
-
-	other := filepath.Join(parent, "other")
-	replacement, err := Open(ctx, other)
-	noErr(t, err)
-	noErr(t, replacement.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
-	noErr(t, replacement.AddRepository(ctx, Repository{ID: "replacement", Name: "replacement", CreatedAt: time.Unix(1_800_000_000, 0)}))
-	noErr(t, replacement.Close())
-
-	if err := os.Rename(serving, filepath.Join(parent, "moved")); err != nil {
-		t.Skipf("this system does not let a state folder in use move: %v", err)
-	}
-	noErr(t, os.Rename(other, serving))
-	if _, err := store.BeginPortableRead(ctx); !errors.Is(err, ErrDatabaseReplaced) {
-		t.Fatalf("snapshot of a replaced state err=%v", err)
+func TestPortableReadChecksDatabaseIdentity(t *testing.T) {
+	for _, name := range []string{"replaced", "missing", "unreadable"} {
+		t.Run(name, func(t *testing.T) {
+			if name == "unreadable" && (runtime.GOOS == "windows" || os.Geteuid() == 0) {
+				t.Skip("requires Unix directory permissions without root access")
+			}
+			ctx := context.Background()
+			parent := t.TempDir()
+			serving := filepath.Join(parent, "state")
+			store, err := Open(ctx, serving)
+			noErr(t, err)
+			defer store.Close()
+			noErr(t, store.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+			databasePath, err := filepath.EvalSymlinks(filepath.Join(serving, databaseName))
+			noErr(t, err)
+			if name == "unreadable" {
+				noErr(t, os.Chmod(serving, 0))
+				t.Cleanup(func() { noErr(t, os.Chmod(serving, 0o700)) })
+			} else {
+				if err := os.Rename(serving, filepath.Join(parent, "moved")); err != nil {
+					t.Skipf("this system does not let a state folder in use move: %v", err)
+				}
+				if name == "replaced" {
+					replacement, err := Open(ctx, serving)
+					noErr(t, err)
+					noErr(t, replacement.CompleteSetup(ctx, t.TempDir(), "open", "", "admin-hash", true))
+					noErr(t, replacement.Close())
+				}
+			}
+			read, err := store.BeginPortableRead(ctx)
+			if read != nil {
+				noErr(t, read.Close())
+				t.Fatal("snapshot accepted an unchecked database")
+			}
+			if name != "unreadable" {
+				if !errors.Is(err, ErrDatabaseReplaced) {
+					t.Fatalf("snapshot of %s database: %v", name, err)
+				}
+				return
+			}
+			var pathErr *os.PathError
+			if !errors.Is(err, os.ErrPermission) || errors.Is(err, ErrDatabaseReplaced) ||
+				!errors.As(err, &pathErr) || pathErr.Path != databasePath {
+				t.Fatalf("unreadable database lost its permission cause or path: %v", err)
+			}
+			noErr(t, os.Chmod(serving, 0o700))
+			info, err := os.Stat(filepath.Join(serving, databaseName))
+			noErr(t, err)
+			if !os.SameFile(info, store.database) {
+				t.Fatal("permission change replaced the database")
+			}
+			read, err = store.BeginPortableRead(ctx)
+			noErr(t, err)
+			noErr(t, read.Close())
+		})
 	}
 }
