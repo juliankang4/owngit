@@ -194,6 +194,7 @@ func TestRoomNeededSaturates(t *testing.T) {
 func TestDiskFullIsRecognized(t *testing.T) {
 	for _, err := range append(systemDiskFullErrors(),
 		errors.New("fetch: exit status 128: fatal: write error: No space left on device"),
+		errors.New("git bundle: exit status 1: fatal: sha1 file '<stdout>' write error. Out of diskspace\nerror: pack-objects died"),
 		errors.New("database or disk is full (13)"),
 	) {
 		if !diskFull(err) {

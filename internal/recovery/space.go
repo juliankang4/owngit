@@ -100,7 +100,7 @@ func diskFull(err error) bool {
 		return true
 	}
 	message := err.Error()
-	for _, text := range []string{"No space left on device", "There is not enough space on the disk", "database or disk is full"} {
+	for _, text := range []string{"No space left on device", "There is not enough space on the disk", "database or disk is full", "Out of diskspace"} {
 		if strings.Contains(message, text) {
 			return true
 		}
