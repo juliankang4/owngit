@@ -849,11 +849,14 @@ func (s *Store) IssueCheckRunnerToken(ctx context.Context, repositoryID, label, 
 	if creationID != "" && !validAttemptID(creationID) {
 		return RunnerCredential{}, "", false, fmt.Errorf("%w: invalid creation identity", ErrInvalidCheckJob)
 	}
+	if len(label) > 100 || strings.ContainsAny(label, "\x00\r\n") {
+		return RunnerCredential{}, "", false, fmt.Errorf("%w: invalid label", ErrInvalidCheckJob)
+	}
 	label = trimLabel(label)
 	if label == "" {
 		label = "check runner"
 	}
-	if !validText(label, 100) {
+	if !validCheckText(label, 100) {
 		return RunnerCredential{}, "", false, fmt.Errorf("%w: invalid label", ErrInvalidCheckJob)
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -1580,7 +1583,7 @@ func validateCheckJobRequest(request CheckJobRequest) error {
 		return fmt.Errorf("%w: invalid check count", ErrInvalidCheckJob)
 	}
 	for _, check := range request.Checks {
-		if !validText(check.Name, MaximumCheckNameBytes) || !validText(check.Command, MaximumCheckCommandBytes) {
+		if !validCheckText(check.Name, MaximumCheckNameBytes) || !validCheckText(check.Command, MaximumCheckCommandBytes) {
 			return fmt.Errorf("%w: invalid check definition", ErrInvalidCheckJob)
 		}
 	}

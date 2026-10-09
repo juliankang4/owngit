@@ -448,6 +448,15 @@ func decodeAPIJSON(writer http.ResponseWriter, request *http.Request, destinatio
 	return decodeAPIJSONLimit(writer, request, destination, maximumAPIRequest)
 }
 
+// decodeAPIAction accepts the empty requests sent by older action clients.
+func decodeAPIAction(writer http.ResponseWriter, request *http.Request) bool {
+	if request.ContentLength == 0 {
+		return true
+	}
+	var input struct{}
+	return decodeAPIJSON(writer, request, &input)
+}
+
 func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, destination any, limit int64) bool {
 	mediaType, parameters, err := mime.ParseMediaType(request.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" || len(parameters) != 0 {
@@ -466,6 +475,10 @@ func decodeAPIJSONLimit(writer http.ResponseWriter, request *http.Request, desti
 	// store text other than the one sent.
 	if err == nil && !jsoninput.Valid(content) {
 		writeAPIError(writer, http.StatusBadRequest, "invalid_json", "The request body is not valid UTF-8 text, which JSON requires.", nil)
+		return false
+	}
+	if err == nil && (len(bytes.TrimSpace(content)) == 0 || bytes.TrimSpace(content)[0] != '{') {
+		writeAPIError(writer, http.StatusBadRequest, "invalid_json", "The request body must contain one valid JSON object with known fields.", nil)
 		return false
 	}
 	decoder := json.NewDecoder(bytes.NewReader(content))

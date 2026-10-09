@@ -89,7 +89,14 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 		app.writePolicyAPIAnswer(writer, request, repositoryID, policy, err)
 		return
 	}
-	if (remainder == "enable" || remainder == "disable") && request.Method == http.MethodPost {
+	if remainder == "enable" || remainder == "disable" {
+		if request.Method != http.MethodPost {
+			writeAPIMethodError(writer, http.MethodPost)
+			return
+		}
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		var (
 			policy state.CheckPolicy
 			err    error
@@ -117,6 +124,10 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 	}
 	if remainder == "" {
 		writeAPIMethodError(writer, http.MethodGet+", "+http.MethodPut)
+		return
+	}
+	if remainder == "save-and-enable" {
+		writeAPIMethodError(writer, http.MethodPost)
 		return
 	}
 	writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
@@ -221,7 +232,14 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 		app.writeCheckAttemptLog(writer, request, attempt)
 		return
 	}
-	if len(parts) == 2 && request.Method == http.MethodPost {
+	if len(parts) == 2 && (parts[1] == "cancel" || parts[1] == "rerun") {
+		if request.Method != http.MethodPost {
+			writeAPIMethodError(writer, http.MethodPost)
+			return
+		}
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		var (
 			job state.CheckJob
 			err error
@@ -250,6 +268,10 @@ func (app *App) handleCheckJobs(writer http.ResponseWriter, request *http.Reques
 		// change and are in its detail, so a failed read of them cannot turn
 		// this success into an error.
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, nil)})
+		return
+	}
+	if len(parts) == 1 || len(parts) == 2 && parts[1] == "log" {
+		writeAPIMethodError(writer, http.MethodGet)
 		return
 	}
 	writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
@@ -296,7 +318,10 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 			response.Token = token
 		}
 		writeAPIJSON(writer, http.StatusOK, response)
-	case len(parts) == 1 && parts[0] != "" && request.Method == http.MethodDelete:
+	case len(parts) == 1 && parts[0] != "" && parts[0] != "by-creation" && request.Method == http.MethodDelete:
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		if err := app.Store.RevokeCheckRunnerToken(request.Context(), repositoryID, parts[0], app.now()); errors.Is(err, state.ErrCheckRunnerRevoked) {
 			writeAPIError(writer, http.StatusConflict, "runner_credential_not_found", "The runner credential was not found or was already revoked.", nil)
 			return
@@ -307,13 +332,23 @@ func (app *App) handleRunnerCredentials(writer http.ResponseWriter, request *htt
 		app.wakeChecks(repositoryID)
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
 	case len(parts) == 2 && parts[0] == "by-creation" && parts[1] != "" && request.Method == http.MethodDelete:
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		if err := app.Store.RevokeCheckRunnerTokenByCreation(request.Context(), repositoryID, parts[1], app.now()); err != nil {
 			writeAPIError(writer, unavailable(request, "runner credential revoke", err), "state_unavailable", "The runner credential could not be revoked.", nil)
 			return
 		}
 		writeAPIJSON(writer, http.StatusOK, checkapi.OKResponse{OK: true})
 	default:
-		writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+		switch {
+		case remainder == "":
+			writeAPIMethodError(writer, http.MethodGet+", "+http.MethodPost)
+		case len(parts) == 1 && parts[0] != "" && parts[0] != "by-creation" || len(parts) == 2 && parts[0] == "by-creation" && parts[1] != "":
+			writeAPIMethodError(writer, http.MethodDelete)
+		default:
+			writeAPIError(writer, http.StatusNotFound, "not_found", "The API endpoint does not exist.", nil)
+		}
 	}
 }
 
@@ -325,16 +360,29 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 	if app.refusePreparingAPI(writer, request, repositoryID) {
 		return
 	}
+	parts := strings.Split(remainder, "/")
+	method := ""
+	switch {
+	case remainder == "claim":
+		method = http.MethodPost
+	case len(parts) >= 3 && parts[0] == "jobs" && validAttemptID(parts[1]):
+		switch {
+		case len(parts) == 3 && parts[2] == "source", len(parts) == 5 && parts[2] == "files":
+			method = http.MethodGet
+		case len(parts) == 3 && (parts[2] == "renew" || parts[2] == "start" || parts[2] == "complete" || parts[2] == "unavailable"):
+			method = http.MethodPost
+		}
+	}
+	if method != "" && request.Method != method {
+		writeAPIMethodError(writer, method)
+		return
+	}
 	status := app.checkRuntimeStatus()
 	if !status.Available {
 		writeAPIError(writer, unavailable(request, "configured check runtime", checkrun.ErrRuntimeUnavailable), "check_runtime_unavailable", status.UnavailableReason, map[string]string{"reason": status.UnavailableCode})
 		return
 	}
 	if remainder == "claim" {
-		if request.Method != http.MethodPost {
-			writeAPIMethodError(writer, http.MethodPost)
-			return
-		}
 		var input checkapi.RunnerClaimInput
 		if request.ContentLength != 0 && !decodeAPIJSON(writer, request, &input) {
 			return
@@ -359,28 +407,30 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 		writeAPIJSON(writer, http.StatusOK, checkapi.JobResponse{OK: true, Job: jobJSON(job, checks)})
 		return
 	}
-	parts := strings.Split(remainder, "/")
 	if len(parts) < 2 || parts[0] != "jobs" || !validAttemptID(parts[1]) {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The runner endpoint does not exist.", nil)
 		return
 	}
 	jobID := parts[1]
 	leaseID := request.Header.Get(runnerLeaseHeader)
-	if len(parts) == 3 && parts[2] == "source" && request.Method == http.MethodGet {
+	if len(parts) == 3 && parts[2] == "source" {
 		app.runnerSourceManifest(writer, request, repositoryID, jobID, leaseID, credential)
 		return
 	}
-	if len(parts) == 5 && parts[2] == "files" && request.Method == http.MethodGet {
+	if len(parts) == 5 && parts[2] == "files" {
 		app.runnerSourceBlob(writer, request, repositoryID, jobID, leaseID, parts[3], parts[4], credential)
 		return
 	}
-	if len(parts) != 3 || request.Method != http.MethodPost {
+	if len(parts) != 3 || (parts[2] != "renew" && parts[2] != "start" && parts[2] != "complete" && parts[2] != "unavailable") {
 		writeAPIError(writer, http.StatusNotFound, "not_found", "The runner endpoint does not exist.", nil)
 		return
 	}
 	authority := state.CheckJobCompletionAuthority{JobID: jobID, LeaseID: leaseID, CredentialID: credential.ID, CredentialGeneration: credential.Generation}
 	switch parts[2] {
 	case "renew":
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		job, err := app.Store.RenewCheckJobLease(request.Context(), authority, app.now())
 		if err != nil {
 			writeRunnerError(writer, request, err)
@@ -839,6 +889,8 @@ func writeRunnerError(writer http.ResponseWriter, request *http.Request, err err
 	switch {
 	case errors.Is(err, state.ErrCheckJobNotFound):
 		writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
+	case errors.Is(err, state.ErrInvalidCheckJob):
+		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_request", "The runner request has invalid fields.", nil)
 	case errors.Is(err, state.ErrCheckJobLease):
 		writeAPIError(writer, http.StatusConflict, "check_job_lease", "The configured-check job lease is stale or foreign.", nil)
 	case errors.Is(err, state.ErrCheckJobState), errors.Is(err, state.ErrCheckJobStartReplay):

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -182,6 +183,35 @@ type apiFixture struct {
 	work      string
 	sourceOID string
 	targetOID string
+}
+
+func TestJSONDecoderRequiresOneObject(t *testing.T) {
+	for _, row := range []struct {
+		name, body string
+		status     int
+		code       string
+	}{
+		{"empty object", `{}`, http.StatusOK, ""},
+		{"null", `null`, http.StatusBadRequest, "invalid_json"},
+		{"array", `[]`, http.StatusBadRequest, "invalid_json"},
+		{"number", `1`, http.StatusBadRequest, "invalid_json"},
+		{"string", `"text"`, http.StatusBadRequest, "invalid_json"},
+		{"multiple", `{} {}`, http.StatusBadRequest, "invalid_json"},
+		{"malformed", `{`, http.StatusBadRequest, "invalid_json"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/api/v1", strings.NewReader(row.body))
+			request.Header.Set("Content-Type", "application/json")
+			answer := httptest.NewRecorder()
+			var destination struct{}
+			if ok := decodeAPIJSON(answer, request, &destination); ok != (row.status == http.StatusOK) {
+				t.Fatalf("decoded=%v status=%d", ok, answer.Code)
+			}
+			if row.status != http.StatusOK && (answer.Code != row.status || !strings.Contains(answer.Body.String(), `"code":"`+row.code+`"`)) {
+				t.Fatalf("status=%d body=%s", answer.Code, answer.Body.String())
+			}
+		})
+	}
 }
 
 func newAPIFixture(t *testing.T, protected bool) apiFixture {

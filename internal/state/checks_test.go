@@ -58,6 +58,60 @@ func recordAttemptWithLog(t *testing.T, store *Store, attempt CheckAttempt, log 
 	return task, stored
 }
 
+func TestCheckWritesMeasureUntrimmedFields(t *testing.T) {
+	for _, row := range []struct {
+		name, value string
+		maximum     int
+		valid       bool
+	}{
+		{"name at limit with spaces", " " + strings.Repeat("n", MaximumCheckNameBytes-2) + " ", MaximumCheckNameBytes, true},
+		{"name beyond limit with spaces", " " + strings.Repeat("n", MaximumCheckNameBytes-1) + " ", MaximumCheckNameBytes, false},
+		{"command beyond limit with spaces", " " + strings.Repeat("c", MaximumCheckCommandBytes-1) + " ", MaximumCheckCommandBytes, false},
+		{"newline at edge", "name\n", MaximumCheckNameBytes, false},
+		{"only spaces", "   ", MaximumCheckNameBytes, false},
+		{"invalid UTF-8", "unit\xff", MaximumCheckNameBytes, false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			if got := validCheckText(row.value, row.maximum); got != row.valid {
+				t.Fatalf("valid=%v want %v", got, row.valid)
+			}
+		})
+	}
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	store := fixture.store
+	for _, label := range []string{strings.Repeat(" ", 100) + "x", "runner\n"} {
+		if _, _, _, err := store.IssueCheckRunnerToken(ctx, "project", label, "", now); !errors.Is(err, ErrInvalidCheckJob) {
+			t.Fatalf("runner label %q: %v", label, err)
+		}
+	}
+	credential, _, _, err := store.IssueCheckRunnerToken(ctx, "project", " "+strings.Repeat("r", 98)+" ", "", now)
+	noErr(t, err)
+	if credential.Label != strings.Repeat("r", 98) {
+		t.Fatalf("runner label=%q", credential.Label)
+	}
+	task := newProjectTask(t, store, ctx, now)
+	attempt := attemptFor(task, strings.Repeat("a", 40), now, AttemptPassed)
+	attempt.Checks[0].Name = " " + strings.Repeat("n", MaximumCheckNameBytes-1) + " "
+	if _, _, err := store.RegisterCheckAttempt(ctx, attempt); err == nil || !strings.Contains(err.Error(), "invalid check definition") {
+		t.Fatalf("oversized check registration: %v", err)
+	}
+	attempt.Checks[0].Name = " " + strings.Repeat("n", MaximumCheckNameBytes-2) + " "
+	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
+	noErr(t, err)
+	completion := completionFor(attempt, "")
+	completion.Results[0].Name = " " + strings.Repeat("n", MaximumCheckNameBytes-1) + " "
+	if _, _, err := store.CompleteCheckAttempt(ctx, completion, now); err == nil || !strings.Contains(err.Error(), "invalid check result") {
+		t.Fatalf("oversized check result: %v", err)
+	}
+	completion.Results[0].Name = registered.Checks[0].Name
+	if _, _, err := store.CompleteCheckAttempt(ctx, completion, now); err != nil {
+		t.Fatalf("valid edge-whitespace result: %v", err)
+	}
+}
+
 func TestCorrectionCyclesBelongToTheTaskAcrossRevisions(t *testing.T) {
 	store, ctx, now := newProjectStore(t)
 	task, err := store.CreateTask(ctx, "project", "Fix the build", now)

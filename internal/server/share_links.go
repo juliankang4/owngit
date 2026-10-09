@@ -284,6 +284,9 @@ func (app *App) handleShareLinksAPI(writer http.ResponseWriter, request *http.Re
 	}
 	switch {
 	case revoke:
+		if !decodeAPIAction(writer, request) {
+			return
+		}
 		link, err := app.Store.RevokeShareLink(request.Context(), id, linkID, app.now())
 		switch {
 		case errors.Is(err, state.ErrShareLinkNotFound):

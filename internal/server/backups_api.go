@@ -157,6 +157,9 @@ func writeBackupAPIError(writer http.ResponseWriter, request *http.Request, err 
 }
 
 func (app *App) checkBackup(writer http.ResponseWriter, request *http.Request, id string) {
+	if !decodeAPIAction(writer, request) {
+		return
+	}
 	check, err := app.Backups.StartCheck(request.Context(), id)
 	if err != nil {
 		writeBackupAPIError(writer, request, err, "backup verification start")
@@ -187,6 +190,9 @@ func (app *App) uploadBackup(writer http.ResponseWriter, request *http.Request) 
 }
 
 func (app *App) startBackup(writer http.ResponseWriter, request *http.Request) {
+	if !decodeAPIAction(writer, request) {
+		return
+	}
 	run, err := app.Backups.StartNow()
 	if err != nil {
 		writeBackupAPIError(writer, request, err, "backup start")

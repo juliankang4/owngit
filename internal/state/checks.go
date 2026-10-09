@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Task statuses. A task keeps one identity while its revisions change.
@@ -1322,6 +1323,10 @@ func readAttemptTx(ctx context.Context, tx *sql.Tx, id string) (CheckAttempt, bo
 	return readCheckAttempt(ctx, tx, attemptSelect+` WHERE id=?`, id)
 }
 
+func validCheckText(value string, maximum int) bool {
+	return strings.TrimSpace(value) != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n")
+}
+
 func validateRegistration(attempt CheckAttempt) error {
 	if !validAttemptID(attempt.ID) || attempt.TaskID == "" || attempt.RepositoryID == "" || !validObjectID(attempt.RevisionOID) {
 		return errors.New("invalid check attempt identity")
@@ -1353,7 +1358,7 @@ func validateRegistration(attempt CheckAttempt) error {
 		return errors.New("invalid check configuration count")
 	}
 	for _, check := range attempt.Checks {
-		if !validText(check.Name, MaximumCheckNameBytes) || !validText(check.Command, MaximumCheckCommandBytes) {
+		if !validCheckText(check.Name, MaximumCheckNameBytes) || !validCheckText(check.Command, MaximumCheckCommandBytes) {
 			return errors.New("invalid check definition")
 		}
 	}
@@ -1379,7 +1384,7 @@ func validateCompletion(completion CheckCompletion) error {
 		return errors.New("invalid check result count")
 	}
 	for _, result := range completion.Results {
-		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result, result.Role != "") || result.DurationMS < 0 {
+		if !validCheckText(result.Name, MaximumCheckNameBytes) || !validCheckText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result, result.Role != "") || result.DurationMS < 0 {
 			return errors.New("invalid check result")
 		}
 		if len(result.OutputExcerpt) > MaximumCheckExcerptBytes {

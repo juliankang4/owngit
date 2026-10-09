@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -970,6 +971,164 @@ func TestBrowserAutomaticOriginComesFromTheRecordedJobLink(t *testing.T) {
 	}
 }
 
+func TestActionBodiesRequireJSONObjects(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
+		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, now)
+	noErr(t, err)
+	_, token, _, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
+	noErr(t, err)
+	server := serve(t, fixture.app.Handler())
+	id := strings.Repeat("a", 32)
+	base := server.URL + "/api/v1/repositories/project"
+	routes := []struct{ name, method, path, token string }{
+		{"policy enable", http.MethodPost, base + "/check-policy/enable", ""},
+		{"policy disable", http.MethodPost, base + "/check-policy/disable", ""},
+		{"job cancel", http.MethodPost, base + "/check-jobs/" + id + "/cancel", ""},
+		{"job rerun", http.MethodPost, base + "/check-jobs/" + id + "/rerun", ""},
+		{"runner claim", http.MethodPost, base + "/runner/claim", token},
+		{"runner renew", http.MethodPost, base + "/runner/jobs/" + id + "/renew", token},
+		{"share revoke", http.MethodPost, base + "/share-links/" + id + "/revoke", ""},
+		{"backup run", http.MethodPost, server.URL + "/api/v1/backups/runs", ""},
+		{"backup verify", http.MethodPost, server.URL + "/api/v1/backups/runs/" + id + "/verify", ""},
+		{"runner credential revoke", http.MethodDelete, base + "/runner-credentials/" + id, ""},
+		{"runner creation revoke", http.MethodDelete, base + "/runner-credentials/by-creation/" + id, ""},
+	}
+	for _, route := range routes {
+		for _, body := range []struct {
+			name, contentType, text string
+			status                  int
+			code                    string
+		}{
+			{"non JSON", "text/plain", "broken", http.StatusUnsupportedMediaType, "json_required"},
+			{"malformed", "application/json", "{", http.StatusBadRequest, "invalid_json"},
+			{"null", "application/json", "null", http.StatusBadRequest, "invalid_json"},
+			{"array", "application/json", "[]", http.StatusBadRequest, "invalid_json"},
+			{"unknown", "application/json", `{"extra":true}`, http.StatusBadRequest, "invalid_json"},
+		} {
+			t.Run(route.name+"/"+body.name, func(t *testing.T) {
+				request, err := http.NewRequest(route.method, route.path, strings.NewReader(body.text))
+				noErr(t, err)
+				request.Header.Set("Content-Type", body.contentType)
+				if route.token != "" {
+					request.Header.Set("Authorization", "Bearer "+route.token)
+				} else {
+					request.SetBasicAuth("admin", "admin-password")
+				}
+				response, err := http.DefaultClient.Do(request)
+				noErr(t, err)
+				if status, code := checkStatus(t, response); status != body.status || code != body.code {
+					t.Fatalf("status=%d code=%s, want %d %s", status, code, body.status, body.code)
+				}
+			})
+		}
+		t.Run(route.name+"/legacy empty body", func(t *testing.T) {
+			request, err := http.NewRequest(route.method, route.path, nil)
+			noErr(t, err)
+			if route.token != "" {
+				request.Header.Set("Authorization", "Bearer "+route.token)
+			} else {
+				request.SetBasicAuth("admin", "admin-password")
+			}
+			response, err := http.DefaultClient.Do(request)
+			noErr(t, err)
+			if status, code := checkStatus(t, response); code == "json_required" || code == "invalid_json" || status == http.StatusUnsupportedMediaType {
+				t.Fatalf("legacy empty request: status=%d code=%s", status, code)
+			}
+		})
+	}
+}
+
+func TestRunnerErrorsSeparateInvalidInputFromStaleLeaseAndStorage(t *testing.T) {
+	for _, row := range []struct {
+		name   string
+		err    error
+		status int
+		code   string
+	}{
+		{"invalid input", state.ErrInvalidCheckJob, http.StatusUnprocessableEntity, "invalid_runner_request"},
+		{"stale lease", state.ErrCheckJobLease, http.StatusConflict, "check_job_lease"},
+		{"storage fault", errors.New("private state path"), http.StatusServiceUnavailable, "state_unavailable"},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			answer := httptest.NewRecorder()
+			writeRunnerError(answer, httptest.NewRequest(http.MethodPost, "/runner/jobs/invalid/renew", nil), row.err)
+			if answer.Code != row.status || !strings.Contains(answer.Body.String(), `"code":"`+row.code+`"`) || strings.Contains(answer.Body.String(), "private state path") {
+				t.Fatalf("status=%d body=%s", answer.Code, answer.Body.String())
+			}
+		})
+	}
+}
+
+func TestConfiguredChecksKnownPathsAnswerWrongMethods(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	ctx := context.Background()
+	now := time.Unix(1_900_000_000, 0).UTC()
+	_, err := fixture.store.SetCheckPolicy(ctx, state.CheckPolicyInput{
+		RepositoryID: "project", Executor: state.CheckExecutorExternalRunner,
+		AllowedEvents: []string{"push"}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10,
+		QueueLimit: 4, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+	}, now)
+	noErr(t, err)
+	_, token, _, err := fixture.store.IssueCheckRunnerToken(ctx, "project", "runner", "", now)
+	noErr(t, err)
+	server := serve(t, fixture.app.Handler())
+	id := strings.Repeat("a", 32)
+	base := server.URL + "/api/v1/repositories/project"
+	for _, row := range []struct {
+		path, allow, token, method string
+		status                     int
+	}{
+		{path: base + "/check-policy/enable", allow: "POST"},
+		{path: base + "/check-policy/disable", allow: "POST"},
+		{path: base + "/check-policy/save-and-enable", allow: "POST"},
+		{path: base + "/check-jobs/" + id, allow: "GET"},
+		{path: base + "/check-jobs/" + id + "/log", allow: "GET"},
+		{path: base + "/check-jobs/" + id + "/cancel", allow: "POST"},
+		{path: base + "/check-jobs/" + id + "/rerun", allow: "POST"},
+		{path: base + "/runner-credentials", allow: "GET, POST"},
+		{path: base + "/runner-credentials/" + id, allow: "DELETE"},
+		{path: base + "/runner-credentials/by-creation/" + id, allow: "DELETE"},
+		{path: base + "/runner-credentials/by-creation", method: http.MethodGet, status: http.StatusNotFound},
+		{path: base + "/runner-credentials/by-creation", method: http.MethodDelete, status: http.StatusNotFound},
+		{path: base + "/runner/claim", allow: "POST", token: token},
+		{path: base + "/runner/jobs/" + id + "/source", allow: "GET", token: token},
+		{path: base + "/runner/jobs/" + id + "/files/name/oid", allow: "GET", token: token},
+		{path: base + "/runner/jobs/" + id + "/renew", allow: "POST", token: token},
+		{path: base + "/runner/jobs/" + id + "/start", allow: "POST", token: token},
+		{path: base + "/runner/jobs/" + id + "/complete", allow: "POST", token: token},
+		{path: base + "/runner/jobs/" + id + "/unavailable", allow: "POST", token: token},
+	} {
+		method := row.method
+		if method == "" {
+			method = http.MethodPatch
+		}
+		t.Run(method+" "+strings.TrimPrefix(row.path, base), func(t *testing.T) {
+			request, err := http.NewRequest(method, row.path, nil)
+			noErr(t, err)
+			if row.token != "" {
+				request.Header.Set("Authorization", "Bearer "+row.token)
+			} else {
+				request.SetBasicAuth("admin", "admin-password")
+			}
+			response, err := http.DefaultClient.Do(request)
+			noErr(t, err)
+			wantStatus, wantCode := http.StatusMethodNotAllowed, "method_not_allowed"
+			if row.status == http.StatusNotFound {
+				wantStatus, wantCode = http.StatusNotFound, "not_found"
+			}
+			if status, code := checkStatus(t, response); status != wantStatus || code != wantCode || response.Header.Get("Allow") != row.allow {
+				t.Fatalf("status=%d code=%s allow=%s, want %d %s allow=%s", status, code, response.Header.Get("Allow"), wantStatus, wantCode, row.allow)
+			}
+		})
+	}
+}
+
 // A closed check runtime is reported on the screen, over the policy API and
 // to a runner, and it does not stop ordinary repository work.
 func TestConfiguredChecksClosedRuntimeIsReportedWithoutBlockingGit(t *testing.T) {
@@ -1015,6 +1174,13 @@ func TestConfiguredChecksClosedRuntimeIsReportedWithoutBlockingGit(t *testing.T)
 	fixture.app.handleRunnerAPI(runnerResponse, claim, "project", "claim")
 	if body := runnerResponse.Body.String(); runnerResponse.Code != http.StatusServiceUnavailable || !strings.Contains(body, "check_runtime_unavailable") || !strings.Contains(body, "workspace_unavailable") {
 		t.Fatalf("runner status=%d body=%s", runnerResponse.Code, body)
+	}
+	wrongMethod := httptest.NewRequest(http.MethodPatch, "/api/v1/repositories/project/runner/claim", nil)
+	wrongMethod.Header.Set("Authorization", "Bearer "+token)
+	methodResponse := httptest.NewRecorder()
+	fixture.app.handleRunnerAPI(methodResponse, wrongMethod, "project", "claim")
+	if methodResponse.Code != http.StatusMethodNotAllowed || methodResponse.Header().Get("Allow") != http.MethodPost {
+		t.Fatalf("wrong method with unavailable runtime: status=%d allow=%s", methodResponse.Code, methodResponse.Header().Get("Allow"))
 	}
 }
 
