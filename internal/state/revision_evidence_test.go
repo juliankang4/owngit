@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -135,6 +136,261 @@ func TestRevisionEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTaskRevisionEvidenceOrdersRefusalAndJobInTheSameSecond(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		refuseLast bool
+	}{
+		{name: "queue refusal follows queued job", refuseLast: true},
+		{name: "queued job follows invalid file refusal"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			fixture := newCheckJobFixture(t)
+			fixture.setPolicy(t, func(input *CheckPolicyInput) { input.QueueLimit = 1 })
+			policy := fixture.grantConsent(t)
+			first := pushJobRequest()
+			second := pushJobRequest()
+			second.SourceOID = strings.Repeat("c", 40)
+			second.EventKey = "refs/heads/main@" + second.SourceOID
+			earlier, later := fixture.now.Add(100*time.Millisecond), fixture.now.Add(200*time.Millisecond)
+			expected := ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}
+			var job CheckJob
+			var result CheckEventAdmission
+			var err error
+			if test.refuseLast {
+				job, _, err = fixture.store.AdmitCheckJob(ctx, first, earlier)
+				noErr(t, err)
+				result, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", expected, &second, nil, nil, later)
+				noErr(t, err)
+				if !result.JSONQueueFull {
+					t.Fatalf("expected a full JSON queue: %+v", result)
+				}
+			} else {
+				result, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", expected, nil,
+					&JSONAdmissionRefusal{Request: first, Reason: "Invalid check file"}, nil, earlier)
+				noErr(t, err)
+				job, _, err = fixture.store.AdmitCheckJob(ctx, second, later)
+				noErr(t, err)
+			}
+			evidence, err := fixture.store.TaskRevisionEvidence(ctx, "project", job.TaskID)
+			noErr(t, err)
+			want := second.SourceOID
+			if !test.refuseLast {
+				want = job.SourceOID
+			}
+			if evidence.RevisionOID != want {
+				t.Fatalf("evidence revision=%q want=%q", evidence.RevisionOID, want)
+			}
+		})
+	}
+}
+
+func TestJSONAdmissionRefusalKeepsConfigurationAndRecovery(t *testing.T) {
+	ctx := context.Background()
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	policy := fixture.grantConsent(t)
+	first := pushJobRequest()
+	_, _, err := fixture.store.AdmitCheckJob(ctx, first, fixture.now)
+	noErr(t, err)
+	refused := pushJobRequest()
+	refused.SourceOID = strings.Repeat("c", 40)
+	refused.EventKey = "refs/heads/main@" + refused.SourceOID
+	_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+		&JSONAdmissionRefusal{Request: refused, Reason: "Invalid check file"}, nil, fixture.now.Add(time.Second))
+	noErr(t, err)
+	third := pushJobRequest()
+	third.SourceOID = strings.Repeat("d", 40)
+	third.EventKey = "refs/heads/main@" + third.SourceOID
+	_, _, err = fixture.store.AdmitCheckJob(ctx, third, fixture.now.Add(2*time.Second))
+	noErr(t, err)
+	latest, found, err := fixture.store.LatestCheckConfiguration(ctx, "project")
+	noErr(t, err)
+	if !found || len(latest.Checks) != 1 || latest.Checks[0].Name != "unit" {
+		t.Fatalf("latest configuration after refusal: %+v", latest)
+	}
+	snapshot, err := fixture.store.RecoverySnapshot(ctx)
+	noErr(t, err)
+	noErr(t, ValidateCheckRecovery(snapshot))
+	restored := openTestStore(t)
+	noErr(t, restored.RestoreRecoveryState(ctx, t.TempDir(), snapshot))
+	backed, err := restored.RecoverySnapshot(ctx)
+	noErr(t, err)
+	if len(backed.CheckAttempts) != 1 || backed.CheckAttempts[0].Summary != snapshot.CheckAttempts[0].Summary {
+		t.Fatalf("restored refusal=%+v", backed.CheckAttempts)
+	}
+	plan := stateQueryPlan(t, restored.db, jsonAdmissionRefusalLookup, []any{"project", backed.CheckAttempts[0].TaskID, backed.CheckAttempts[0].LogError})
+	if !strings.Contains(plan, "check_attempts_refusal_event (repository_id=? AND task_id=? AND log_error=?)") {
+		t.Fatalf("restored refusal lookup does not seek the event: %s", plan)
+	}
+	_, err = restored.SetCheckPolicy(ctx, defaultPolicyInput(), fixture.now)
+	noErr(t, err)
+	consent, err := restored.GrantCheckConsent(ctx, "project", fixture.now)
+	noErr(t, err)
+	expected := ExpectedCheckPolicy{Version: consent.Version, Digest: consent.Digest}
+	_, err = restored.AdmitCheckEventWithJSONRefusal(ctx, "project", expected, nil,
+		&JSONAdmissionRefusal{Request: refused, Reason: "Replay after restore"}, nil, fixture.now.Add(3*time.Second))
+	noErr(t, err)
+	otherEvent := refused
+	otherEvent.EventKey += "-distinct"
+	_, err = restored.AdmitCheckEventWithJSONRefusal(ctx, "project", expected, nil,
+		&JSONAdmissionRefusal{Request: otherEvent, Reason: "Different event"}, nil, fixture.now.Add(4*time.Second))
+	noErr(t, err)
+	after, err := restored.CheckAttempts(ctx, "project")
+	noErr(t, err)
+	if len(after) != 2 || after[0].ID != backed.CheckAttempts[0].ID || after[1].ID == after[0].ID {
+		t.Fatalf("restored refusal replay and distinct event: %+v", after)
+	}
+}
+
+func TestInvalidJSONRefusalDoesNotUndoJobAdmission(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		invalid func(*CheckJobRequest)
+	}{
+		{"missing event key", func(request *CheckJobRequest) { request.EventKey = "" }},
+		{"repository mismatch", func(request *CheckJobRequest) { request.RepositoryID = "other" }},
+		{"unselected event", func(request *CheckJobRequest) { request.Trigger = "schedule" }},
+		{"oversized event key", func(request *CheckJobRequest) { request.EventKey = strings.Repeat("a", MaximumCheckEventKeyBytes+1) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			fixture := newCheckJobFixture(t)
+			fixture.setPolicy(t, nil)
+			policy := fixture.grantConsent(t)
+			bad := pushJobRequest()
+			test.invalid(&bad)
+			jobRequest := pushJobRequest()
+			result, err := fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest},
+				&jobRequest, &JSONAdmissionRefusal{Request: bad, Reason: "Invalid check file"}, nil, fixture.now)
+			noErr(t, err)
+			if result.Job == nil {
+				t.Fatal("valid check job was not admitted")
+			}
+			attempts, err := fixture.store.CheckAttempts(ctx, "project")
+			noErr(t, err)
+			if len(attempts) != 0 {
+				t.Fatalf("invalid refusal made attempts: %+v", attempts)
+			}
+		})
+	}
+}
+
+func TestHelperAttemptCannotImitateAdmissionRefusal(t *testing.T) {
+	ctx := context.Background()
+	fixture := newCheckJobFixture(t)
+	fixture.setPolicy(t, nil)
+	policy := fixture.grantConsent(t)
+	job, _, err := fixture.store.AdmitCheckJob(ctx, pushJobRequest(), fixture.now)
+	noErr(t, err)
+	refused := pushJobRequest()
+	refused.SourceOID = strings.Repeat("c", 40)
+	refused.EventKey = "refs/heads/main@" + refused.SourceOID
+	preclaimedID := "adf1a15e89732ad09c6319778ae83aa3"
+	for _, test := range []struct {
+		name, attemptID string
+	}{
+		{name: "ordinary helper identity", attemptID: strings.Repeat("f", 32)},
+		{name: "previous refusal-form identity", attemptID: preclaimedID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, _, err := fixture.store.RegisterCheckAttempt(ctx, CheckAttempt{
+				ID: test.attemptID, TaskID: job.TaskID, RepositoryID: "project", RevisionOID: strings.Repeat("9", 40),
+				WorktreeState: WorktreeUnknown, StartedAt: fixture.now.AddDate(50, 0, 0), CreatedAt: fixture.now.Add(time.Second),
+				CredentialID: "helper", Checks: []CheckDefinition{{Name: "Admission", Command: "Not run"}},
+			})
+			noErr(t, err)
+			_, _, err = fixture.store.CompleteCheckAttempt(ctx, CheckCompletion{
+				AttemptID: test.attemptID, RepositoryID: "project", TaskID: job.TaskID,
+				Results:    []CheckResult{{Name: "Admission", Command: "Not run", Status: AttemptUnavailable}},
+				FinishedAt: fixture.now.Add(time.Second), WorktreeState: WorktreeUnknown,
+			}, fixture.now.Add(time.Second))
+			noErr(t, err)
+		})
+	}
+	_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+		&JSONAdmissionRefusal{Request: refused, Reason: "Invalid check file"}, nil, fixture.now.Add(2*time.Second))
+	noErr(t, err)
+	attempts, err := fixture.store.CheckAttempts(ctx, "project")
+	noErr(t, err)
+	if len(attempts) != 3 {
+		t.Fatalf("helper attempt suppressed refusal: %+v", attempts)
+	}
+	refusal := attempts[2]
+	if refusal.ID == preclaimedID || refusal.CredentialID != jsonAdmissionRefusalCredentialID || refusal.RevisionOID != refused.SourceOID || refusal.Status != AttemptUnavailable || !strings.Contains(refusal.Summary, "Invalid check file") {
+		t.Fatalf("refusal not recorded: %+v", refusal)
+	}
+	_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+		&JSONAdmissionRefusal{Request: refused, Reason: "Repeated event"}, nil, fixture.now.Add(3*time.Second))
+	noErr(t, err)
+	replayed := refused
+	replayed.SourceOID = strings.Repeat("b", 40)
+	_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+		&JSONAdmissionRefusal{Request: replayed, Reason: "Repeated event"}, nil, fixture.now.Add(3*time.Second))
+	noErr(t, err)
+	attempts, err = fixture.store.CheckAttempts(ctx, "project")
+	noErr(t, err)
+	if len(attempts) != 3 || attempts[2].ID != refusal.ID {
+		t.Fatalf("duplicate refusal for the same event: %+v", attempts)
+	}
+	otherEvent := refused
+	otherEvent.EventKey = "refs/heads/other@" + refused.SourceOID
+	_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+		&JSONAdmissionRefusal{Request: otherEvent, Reason: "Other event"}, nil, fixture.now.Add(4*time.Second))
+	noErr(t, err)
+	attempts, err = fixture.store.CheckAttempts(ctx, "project")
+	noErr(t, err)
+	if len(attempts) != 4 || attempts[3].ID == refusal.ID || attempts[3].CredentialID != jsonAdmissionRefusalCredentialID {
+		t.Fatalf("distinct event did not get its own refusal: %+v", attempts)
+	}
+	_, _, err = fixture.store.RegisterCheckAttempt(ctx, CheckAttempt{
+		ID: strings.Repeat("d", 32), TaskID: job.TaskID, RepositoryID: "project", RevisionOID: strings.Repeat("8", 40),
+		WorktreeState: WorktreeUnknown, StartedAt: fixture.now.AddDate(50, 0, 0), CreatedAt: fixture.now.Add(time.Second),
+		CredentialID: jsonAdmissionRefusalCredentialID, Checks: []CheckDefinition{{Name: "Admission", Command: "Not run"}},
+	})
+	if !errors.Is(err, ErrInvalidCheckJob) {
+		t.Fatalf("reserved refusal marker accepted from helper: %v", err)
+	}
+	later := pushJobRequest()
+	later.SourceOID = strings.Repeat("e", 40)
+	later.EventKey = "refs/heads/main@" + later.SourceOID
+	_, _, err = fixture.store.AdmitCheckJob(ctx, later, fixture.now.Add(time.Hour))
+	noErr(t, err)
+	evidence, err := fixture.store.TaskRevisionEvidence(ctx, "project", job.TaskID)
+	noErr(t, err)
+	if evidence.RevisionOID != later.SourceOID {
+		t.Fatalf("helper attempt hides newer job: got %s want %s", evidence.RevisionOID, later.SourceOID)
+	}
+	t.Run("runner attempt with chosen identity", func(t *testing.T) {
+		fixture := newCheckJobFixture(t)
+		fixture.setPolicy(t, nil)
+		policy := fixture.grantConsent(t)
+		fixture.admit(t, pushJobRequest())
+		runner, _ := fixture.issueRunner(t)
+		claimed, found, err := fixture.store.ClaimCheckJob(ctx, "project", runner.ID, fixture.now)
+		noErr(t, err)
+		if !found {
+			t.Fatal("job was not claimed")
+		}
+		start := fixture.startFor(claimed, claimed.LeaseID, runner)
+		start.AttemptID = preclaimedID
+		_, started, err := fixture.store.StartCheckJob(ctx, start, fixture.now)
+		noErr(t, err)
+		if started.ID != preclaimedID {
+			t.Fatalf("runner identity changed: %s", started.ID)
+		}
+		_, err = fixture.store.AdmitCheckEventWithJSONRefusal(ctx, "project", ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, nil,
+			&JSONAdmissionRefusal{Request: refused, Reason: "Invalid check file"}, nil, fixture.now.Add(time.Second))
+		noErr(t, err)
+		attempts, err := fixture.store.CheckAttempts(ctx, "project")
+		noErr(t, err)
+		if len(attempts) != 2 || attempts[1].ID == preclaimedID || !isJSONAdmissionRefusal(attempts[1].CredentialID) {
+			t.Fatalf("runner attempt suppressed refusal: %+v", attempts)
+		}
+	})
 }
 
 func TestPullRequestRevisionEvidence(t *testing.T) {

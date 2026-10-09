@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +39,12 @@ type CheckEventAdmission struct {
 // AdmitCheckEvent gives JSON checks the first queue slot, then admits each file
 // whole in caller-supplied path order, under one policy generation and transaction.
 func (s *Store) AdmitCheckEvent(ctx context.Context, repositoryID string, expected ExpectedCheckPolicy, jsonJob *CheckJobRequest, runs []ActionsRunRequest, now time.Time, acceptedPushSequence ...int64) (CheckEventAdmission, error) {
+	return s.AdmitCheckEventWithJSONRefusal(ctx, repositoryID, expected, jsonJob, nil, runs, now, acceptedPushSequence...)
+}
+
+// AdmitCheckEventWithJSONRefusal commits a refused JSON attempt with the event's
+// Actions runs. A full JSON queue also records a refusal in this transaction.
+func (s *Store) AdmitCheckEventWithJSONRefusal(ctx context.Context, repositoryID string, expected ExpectedCheckPolicy, jsonJob *CheckJobRequest, refusal *JSONAdmissionRefusal, runs []ActionsRunRequest, now time.Time, acceptedPushSequence ...int64) (CheckEventAdmission, error) {
 	if now.IsZero() || len(acceptedPushSequence) > 1 {
 		return CheckEventAdmission{}, ErrInvalidActionsRun
 	}
@@ -133,6 +140,20 @@ func (s *Store) AdmitCheckEvent(ctx context.Context, repositoryID string, expect
 		}
 		result.Runs = append(result.Runs, run)
 		result.Admitted = result.Admitted || !deduped
+	}
+	if result.JSONQueueFull {
+		refusal = &JSONAdmissionRefusal{Request: *jsonJob, Reason: "The check queue is full. Run this revision again after a job ends or raise queue_limit."}
+	}
+	if refusal != nil {
+		if !checkConsentCurrent(policy) || !policyAllowsCheckEvent(policy, refusal.Request.Trigger) {
+			log.Print("configured check admission refusal dropped: event not selected")
+		} else if refusal.Request.RepositoryID != repositoryID {
+			log.Print("configured check admission refusal dropped: repository mismatch")
+		} else if err := s.recordJSONAdmissionRefusalTx(ctx, tx, *refusal, now); errors.Is(err, ErrInvalidCheckJob) {
+			log.Print("configured check admission refusal dropped: invalid event identity")
+		} else if err != nil {
+			return CheckEventAdmission{}, err
+		}
 	}
 	if err := settleActionsRunsTx(ctx, tx, now, ""); err != nil {
 		return CheckEventAdmission{}, err

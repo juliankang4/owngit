@@ -533,6 +533,78 @@ func pushJobOIDs(t *testing.T, fixture *pushFixture) map[string]bool {
 	return oids
 }
 
+func TestJSONAdmissionRefusalsAppearOnTasks(t *testing.T) {
+	for _, test := range []struct {
+		name, event, workflow, reason string
+		queueFull, eventOff           bool
+	}{
+		{name: "queue full", event: checkworkflow.EventPush, workflow: validWorkflow, reason: "queue", queueFull: true},
+		{name: "invalid push file", event: checkworkflow.EventPush, workflow: `{`, reason: "parse"},
+		{name: "invalid pull request file", event: checkworkflow.EventPullRequest, workflow: `{`, reason: "parse"},
+		{name: "event off", event: checkworkflow.EventPush, workflow: `{`, eventOff: true},
+		{name: "branch not selected", event: checkworkflow.EventPush, workflow: `{"version":1,"events":{"push":{"branches":["release/*"]}},"checks":[{"name":"n","command":"exit 0"}]}`, eventOff: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newPushFixture(t, 1)
+			if test.event == checkworkflow.EventPullRequest || test.name == "event off" {
+				_, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{
+					RepositoryID: fixture.repositoryID, Executor: state.CheckExecutorExternalRunner,
+					AllowedEvents: []string{checkworkflow.EventPullRequest}, MaxTimeoutMS: 60_000,
+					MaxOutputLimitBytes: 64 << 10, QueueLimit: 1, MaxActiveJobs: 1, MaxLeaseMS: 60_000,
+				}, time.Now().UTC())
+				noErr(t, err)
+				_, err = fixture.store.GrantCheckConsent(fixture.ctx, fixture.repositoryID, time.Now().UTC())
+				noErr(t, err)
+			}
+			if test.queueFull {
+				first := fixture.pushWorkflow("main", validWorkflow)
+				_, err := fixture.coordinator.AdmitEvent(fixture.ctx, EventRequest{
+					RepositoryID: fixture.repositoryID, Event: checkworkflow.EventPush,
+					EventKey: "refs/heads/main@" + first, SourceOID: first, TriggerRef: "main",
+				})
+				noErr(t, err)
+			}
+			oid := fixture.pushWorkflow("main", test.workflow)
+			event := EventRequest{RepositoryID: fixture.repositoryID, Event: test.event,
+				EventKey: "refs/heads/main@" + oid, SourceOID: oid, TriggerRef: "main"}
+			if test.event == checkworkflow.EventPullRequest {
+				event.EventKey, event.BaseOID, event.PullRequestNumber = "pr/1/"+oid+"/"+oid, oid, 1
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				_, err := fixture.coordinator.AdmitEvent(fixture.ctx, event)
+				if test.name == "event off" {
+					if !errors.Is(err, state.ErrCheckEventNotAllowed) {
+						t.Fatalf("off event error=%v", err)
+					}
+				} else if err != nil && !errors.Is(err, errRevisionRejected) && !errors.Is(err, state.ErrCheckQueueFull) {
+					t.Fatal(err)
+				}
+			}
+			attempts, err := fixture.store.CheckAttempts(fixture.ctx, fixture.repositoryID)
+			noErr(t, err)
+			if test.eventOff {
+				if len(attempts) != 0 {
+					t.Fatalf("off event has attempts: %+v", attempts)
+				}
+				return
+			}
+			if len(attempts) != 1 || attempts[0].RevisionOID != oid || attempts[0].Status != state.AttemptUnavailable || !strings.Contains(strings.ToLower(attempts[0].Summary), test.reason) {
+				t.Fatalf("refusal attempts=%+v, want one unavailable with %q", attempts, test.reason)
+			}
+			tasks, err := fixture.store.Tasks(fixture.ctx, fixture.repositoryID)
+			noErr(t, err)
+			if len(tasks) != 1 || tasks[0].ID != attempts[0].TaskID || tasks[0].Status != state.TaskActive || tasks[0].PendingAttemptID != "" {
+				t.Fatalf("tasks=%+v, attempts=%+v", tasks, attempts)
+			}
+			evidence, err := fixture.store.TaskRevisionEvidence(fixture.ctx, fixture.repositoryID, tasks[0].ID)
+			noErr(t, err)
+			if evidence.RevisionOID != oid || evidence.JSONConclusion != state.AttemptUnavailable {
+				t.Fatalf("task evidence=%+v, want refusal revision %s", evidence, oid)
+			}
+		})
+	}
+}
+
 // The Git handler hands one push's refs to admission and has no result to
 // return. A deletion, a ref outside refs/heads, a revision whose workflow is
 // refused and an event that already has a job are all decided without

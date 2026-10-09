@@ -299,16 +299,41 @@ func (evidence RevisionCheckEvidence) HasStaleEvidence() bool {
 
 // TaskRevisionEvidence also finds queued workflow work before an attempt exists.
 func (s *Store) TaskRevisionEvidence(ctx context.Context, repositoryID, taskID string) (RevisionCheckEvidence, error) {
-	var oid string
-	err := s.db.QueryRowContext(ctx, `SELECT revision_oid FROM (
- SELECT revision_oid, created_at*1000000000 AS observed_at, sequence AS ordinal FROM check_attempts WHERE repository_id=? AND task_id=?
- UNION ALL SELECT source_oid, admitted_at, rowid FROM check_jobs WHERE repository_id=? AND task_id=?
- ) ORDER BY observed_at DESC, ordinal DESC LIMIT 1`, repositoryID, taskID, repositoryID, taskID).Scan(&oid)
-	if errors.Is(err, sql.ErrNoRows) {
-		return RevisionCheckEvidence{Workflows: []ActionsRunSummary{}}, nil
-	}
+	rows, err := s.db.QueryContext(ctx, `SELECT revision_oid,credential_id,started_at,created_at,sequence,id,1 AS kind
+ FROM check_attempts WHERE repository_id=? AND task_id=?
+ UNION ALL SELECT source_oid,'',admitted_at,0,0,id,0 FROM check_jobs WHERE repository_id=? AND task_id=?`,
+		repositoryID, taskID, repositoryID, taskID)
 	if err != nil {
 		return RevisionCheckEvidence{}, err
+	}
+	var oid, newestID string
+	var newestTime, newestSequence int64
+	var newestKind int
+	for rows.Next() {
+		var revision, credentialID, id string
+		var startedAt, createdAt, sequence int64
+		var kind int
+		if err := rows.Scan(&revision, &credentialID, &startedAt, &createdAt, &sequence, &id, &kind); err != nil {
+			rows.Close()
+			return RevisionCheckEvidence{}, err
+		}
+		observedAt := startedAt
+		if kind == 1 && !isJSONAdmissionRefusal(credentialID) {
+			observedAt = createdAt * int64(time.Second)
+		}
+		if oid == "" || observedAt > newestTime ||
+			(observedAt == newestTime && (kind > newestKind ||
+				(kind == newestKind && (sequence > newestSequence || (sequence == newestSequence && id > newestID))))) {
+			oid, newestTime, newestKind, newestSequence, newestID = revision, observedAt, kind, sequence, id
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return RevisionCheckEvidence{}, err
+	}
+	if oid == "" {
+		return RevisionCheckEvidence{Workflows: []ActionsRunSummary{}}, nil
 	}
 	return s.RevisionEvidence(ctx, repositoryID, oid)
 }

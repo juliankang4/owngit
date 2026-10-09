@@ -161,6 +161,7 @@ func TestStateQueryIndexes(t *testing.T) {
 				{"pending repositories", `SELECT repository_id FROM check_jobs WHERE status='pending' GROUP BY repository_id ORDER BY MIN(admitted_at),repository_id`, "check_jobs_pending", "SCAN check_jobs", nil, false},
 				{"import failures", feedQueries[NotifyImportFailed], "import_runs_finished", "SCAN i", []any{int64(1800000000), int64(1800000060)}, true},
 				{"recent jobs", `SELECT * FROM check_jobs WHERE repository_id=? ORDER BY admitted_at DESC,id DESC LIMIT ?`, "check_jobs_recent", "USE TEMP B-TREE FOR ORDER BY", []any{"alpha", 20}, true},
+				{"refusal event", jsonAdmissionRefusalLookup, "check_attempts_refusal_event", "task_id=?", []any{"alpha", "task", "event"}, false},
 			}
 			if before != nil {
 				for _, query := range queries {
@@ -182,6 +183,9 @@ func TestStateQueryIndexes(t *testing.T) {
 					t.Logf("Current plan: %s", plan)
 					if !strings.Contains(plan, query.index) || query.noSort && strings.Contains(plan, "TEMP B-TREE") {
 						t.Fatalf("query plan=%s, want %s", plan, query.index)
+					}
+					if query.name == "refusal event" && !strings.Contains(plan, "(repository_id=? AND task_id=? AND log_error=?)") {
+						t.Fatalf("refusal lookup must seek the event key: %s", plan)
 					}
 				})
 			}

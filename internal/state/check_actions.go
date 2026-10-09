@@ -27,10 +27,10 @@ func validCheckResultStatus(result CheckResult, workflow bool) bool {
 	return validAttemptStatus(result.Status) || result.Status == actions.StatusSkipped || result.Status == actions.StatusNotRun
 }
 
-func checkAttemptOutcome(results []CheckResult, cancelled bool, worktree string, workflow bool) (string, string) {
+func checkAttemptOutcome(results []CheckResult, cancelled bool, worktree string, workflow bool, credentialID string) (string, string) {
 	if !workflow {
 		status := AggregateAttemptStatus(results, cancelled)
-		return status, AttemptSummary(results, worktree, status)
+		return status, AttemptSummary(results, worktree, status, credentialID)
 	}
 	status := AggregateActionsAttemptStatus(results, cancelled)
 	summary := strings.Replace(AttemptSummary(results, worktree, status), "checks", "steps", 1)

@@ -599,6 +599,9 @@ func worseWorktree(before, after string) string {
 // repository-wide sequence before execution. A retransmit with the same content
 // returns the same registration; different content is rejected.
 func (s *Store) RegisterCheckAttempt(ctx context.Context, attempt CheckAttempt) (Task, CheckAttempt, error) {
+	if isJSONAdmissionRefusal(attempt.CredentialID) {
+		return Task{}, CheckAttempt{}, ErrInvalidCheckJob
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Task{}, CheckAttempt{}, err
@@ -927,7 +930,7 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 	}
 
 	worktree := worseWorktree(registered.WorktreeState, completion.WorktreeState)
-	status, summary := checkAttemptOutcome(completion.Results, completion.Cancelled, worktree, workflow)
+	status, summary := checkAttemptOutcome(completion.Results, completion.Cancelled, worktree, workflow, registered.CredentialID)
 	finished := completion.FinishedAt.UTC()
 	// An automatic attempt starts when OwnGit records its start, so its
 	// duration ends when OwnGit receives its completion: both times come
@@ -1145,7 +1148,10 @@ func ensureCheckConfiguration(ctx context.Context, tx *sql.Tx, repositoryID stri
 }
 
 func (s *Store) LatestCheckConfiguration(ctx context.Context, repositoryID string) (CheckConfiguration, bool, error) {
-	return s.checkConfigurationQuery(ctx, s.db, ` WHERE repository_id=? ORDER BY version DESC LIMIT 1`, repositoryID)
+	return s.checkConfigurationQuery(ctx, s.db, ` c WHERE c.repository_id=? AND (
+  EXISTS (SELECT 1 FROM check_jobs j WHERE j.repository_id=c.repository_id AND j.configuration_version=c.version)
+  OR EXISTS (SELECT 1 FROM check_attempts a WHERE a.repository_id=c.repository_id AND a.configuration_version=c.version AND a.credential_id<>?)
+ ) ORDER BY c.version DESC LIMIT 1`, repositoryID, jsonAdmissionRefusalCredentialID)
 }
 
 // CheckConfiguration reads one exact recorded configuration version.
@@ -1477,7 +1483,10 @@ func effectiveCheckStatus(result CheckResult) string {
 }
 
 // AttemptSummary describes the outcome in one durable line.
-func AttemptSummary(results []CheckResult, worktree, status string) string {
+func AttemptSummary(results []CheckResult, worktree, status string, credentialID ...string) string {
+	if len(credentialID) != 0 && isJSONAdmissionRefusal(credentialID[0]) && len(results) != 0 {
+		return "Check unavailable: " + results[0].OutputExcerpt
+	}
 	counts := make(map[string]int)
 	for _, result := range results {
 		counts[effectiveCheckStatus(result)]++
@@ -2033,7 +2042,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 		if len(attemptResults) != len(configuration.Checks) {
 			return errors.New("check attempt does not have one result per configured check")
 		}
-		status, summary := checkAttemptOutcome(attemptResults, attempt.SubmittedCancelled, attempt.EffectiveWorktreeState(), jobs[attempt.JobID].RunID != "")
+		status, summary := checkAttemptOutcome(attemptResults, attempt.SubmittedCancelled, attempt.EffectiveWorktreeState(), jobs[attempt.JobID].RunID != "", attempt.CredentialID)
 		if status != attempt.Status {
 			return errors.New("check attempt status does not describe its results")
 		}

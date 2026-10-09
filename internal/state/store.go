@@ -1623,6 +1623,7 @@ var schemaSteps = []schemaStep{
 		`CREATE INDEX check_attempts_revision ON check_attempts(repository_id,revision_oid,sequence)`,
 		`CREATE INDEX check_attempts_task ON check_attempts(task_id,sequence)`,
 		`CREATE INDEX check_attempts_pending ON check_attempts(task_id,status,sequence)`,
+		`CREATE INDEX check_attempts_refusal_event ON check_attempts(repository_id,task_id,log_error,credential_id)`,
 		`CREATE INDEX check_attempts_job ON check_attempts(job_id) WHERE job_id != ''`,
 		`CREATE TABLE check_results_v17 (
 			attempt_id TEXT NOT NULL,

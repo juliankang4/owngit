@@ -240,6 +240,36 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 	}
 }
 
+func TestAcceptedPushKeepsActionsWhenJSONIsRefused(t *testing.T) {
+	fixture := actionsFixture(t, state.CheckExecutorExternalRunner)
+	oid := pushActionsFiles(fixture, map[string]string{
+		".github/workflows/a-ci.yml": simpleWorkflow,
+		".owngit/checks.json":        `{`,
+	})
+	waiting, err := fixture.coordinator.admitAcceptedPushes(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	if waiting {
+		t.Fatal("accepted push remains pending")
+	}
+	runs, err := fixture.store.ActionsRunsForRevision(fixture.ctx, fixture.repositoryID, oid)
+	noErr(t, err)
+	if len(runs) != 1 {
+		t.Fatalf("Actions runs=%d, want one", len(runs))
+	}
+	attempts, err := fixture.store.CheckAttempts(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	if len(attempts) != 1 || attempts[0].Status != state.AttemptUnavailable {
+		t.Fatalf("refusal attempts=%+v", attempts)
+	}
+	_, err = fixture.coordinator.admitAcceptedPushes(fixture.ctx, fixture.repositoryID)
+	noErr(t, err)
+	again, err := fixture.store.ActionsRunsForRevision(fixture.ctx, fixture.repositoryID, oid)
+	noErr(t, err)
+	if len(again) != 1 {
+		t.Fatalf("accepted push was replayed: %+v", again)
+	}
+}
+
 func TestPullRequestLongHeadAdmission(t *testing.T) {
 	for _, branch := range []string{"feature", strings.Repeat("a", 201), strings.Repeat("a", 100) + "/" + strings.Repeat("b", 154)} {
 		t.Run(fmt.Sprint(len(branch)), func(t *testing.T) {

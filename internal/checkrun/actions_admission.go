@@ -189,8 +189,16 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 			return state.CheckEventAdmission{}, err
 		}
 	}
-	if jsonJob == nil && len(runs) == 0 && request.AcceptedPushSequence == 0 {
-		return state.CheckEventAdmission{}, jsonErr
+	if jsonJob == nil && len(runs) == 0 && request.AcceptedPushSequence == 0 && jsonErr == nil {
+		return state.CheckEventAdmission{}, nil
+	}
+	var refusal *state.JSONAdmissionRefusal
+	if jsonErr != nil {
+		refusal = &state.JSONAdmissionRefusal{Request: state.CheckJobRequest{
+			RepositoryID: request.RepositoryID, Trigger: request.Event, EventKey: jsonCheckEventKey(request),
+			SourceOID: request.SourceOID, TriggerRef: request.TriggerRef,
+			PullRequestNumber: request.PullRequestNumber,
+		}, Reason: jsonErr.Error()}
 	}
 	var result state.CheckEventAdmission
 	if request.Event == state.ActionsEventSchedule {
@@ -198,7 +206,7 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 	}
 	record := func() error {
 		var err error
-		result, err = coordinator.Store.AdmitCheckEvent(ctx, request.RepositoryID, state.ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, jsonJob, runs, time.Now().UTC(), request.AcceptedPushSequence)
+		result, err = coordinator.Store.AdmitCheckEventWithJSONRefusal(ctx, request.RepositoryID, state.ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, jsonJob, refusal, runs, time.Now().UTC(), request.AcceptedPushSequence)
 		return err
 	}
 	if request.Event == state.ActionsEventDispatch {
@@ -228,6 +236,13 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 	return result, nil
 }
 
+func jsonCheckEventKey(event EventRequest) string {
+	if event.Event == checkworkflow.EventPush {
+		return "refs/heads/" + event.TriggerRef + "@" + event.SourceOID
+	}
+	return event.EventKey
+}
+
 func readJSONEvent(ctx context.Context, pinned *repository.PinnedRepository, policy state.CheckPolicy, event EventRequest) (*state.CheckJobRequest, error) {
 	if event.WorkflowPath != "" || event.Event != checkworkflow.EventPush && event.Event != checkworkflow.EventPullRequest {
 		return nil, nil
@@ -253,10 +268,7 @@ func readJSONEvent(ctx context.Context, pinned *repository.PinnedRepository, pol
 		return nil, nil
 	}
 	digest := sha256.Sum256(blob.Content)
-	request := state.CheckJobRequest{RepositoryID: event.RepositoryID, Trigger: event.Event, EventKey: event.EventKey, SourceOID: event.SourceOID, BaseOID: event.BaseOID, TriggerRef: event.TriggerRef, PullRequestNumber: event.PullRequestNumber, WorkflowPath: checkworkflow.Path, WorkflowOID: blob.OID, WorkflowDigest: fmt.Sprintf("%x", digest[:]), TimeoutMS: document.Limits.TimeoutMS, OutputLimitBytes: document.Limits.OutputLimitBytes}
-	if event.Event == checkworkflow.EventPush {
-		request.EventKey = "refs/heads/" + event.TriggerRef + "@" + event.SourceOID
-	}
+	request := state.CheckJobRequest{RepositoryID: event.RepositoryID, Trigger: event.Event, EventKey: jsonCheckEventKey(event), SourceOID: event.SourceOID, BaseOID: event.BaseOID, TriggerRef: event.TriggerRef, PullRequestNumber: event.PullRequestNumber, WorkflowPath: checkworkflow.Path, WorkflowOID: blob.OID, WorkflowDigest: fmt.Sprintf("%x", digest[:]), TimeoutMS: document.Limits.TimeoutMS, OutputLimitBytes: document.Limits.OutputLimitBytes}
 	if len(request.EventKey) > state.MaximumCheckEventKeyBytes || len(request.TriggerRef) > state.MaximumCheckTriggerRefBytes {
 		return nil, fmt.Errorf("%w: JSON check event exceeds its record bound", errRevisionRejected)
 	}
