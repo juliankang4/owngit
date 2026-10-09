@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-10-09
+
+This release fixes security problems rated Medium and Low by building OwnGit with Go 1.27.2. It has no other changes. Upgrading is recommended.
+
+**Upgrading:**
+
+- On macOS 27, a menu bar manager such as Hidden Bar can still hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Keep the menu bar manager expanded to see the icon; a fix is planned for 1.1.8.
+
+### Security
+
+- Medium: anyone who can reach OwnGit's web address, including its public share address while that is on, could make it spend too much processor time without signing in, and could make it use too much memory while access does not need the shared password. Affects 1.1.6 and earlier; upgrade.
+- Low: in rare cases on Windows, OwnGit could create a folder outside its own folders, and an `owngit` command could use too much processor time when the server it connects to over HTTPS misbehaves. Affects 1.1.6 and earlier; upgrade.
+
 ## [1.1.6] - 2026-10-08
 
 This release fixes security problems rated Low, lowers memory use, and makes the dashboard and automatic checks faster with many repositories or branches. Upgrading is recommended.
