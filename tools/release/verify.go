@@ -639,9 +639,6 @@ func verifyBinary(goTool string, expected target, entries []archiveEntry, built 
 	if expected.goos != runtime.GOOS || expected.goarch != runtime.GOARCH {
 		return linked, nil
 	}
-	if !built.Executed {
-		return nil, fmt.Errorf("the manifest does not record the execution this host can perform")
-	}
 	output, err := externalCommand(path, "version").Output()
 	if err != nil {
 		return nil, fmt.Errorf("running %s version: %w", expected.binary, err)

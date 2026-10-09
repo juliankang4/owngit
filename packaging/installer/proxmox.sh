@@ -190,7 +190,7 @@ main() {
 	matches "$releases" 'https://[^[:space:]]+' || fail "OWNGIT_RELEASES must be an https:// address, not $releases"
 
 	[ "$(id -u)" = 0 ] || fail "run this as root on the Proxmox VE host"
-	for tool in pct pveam pvesh pvesm lxc-info; do
+	for tool in pct pveam pvesh pvesm lxc-info curl; do
 		command -v "$tool" >/dev/null || fail "$tool is missing; run this on a Proxmox VE host"
 	done
 	[ -d "/sys/class/net/$bridge/bridge" ] || fail "this host has no bridge $bridge; name one with --bridge"
@@ -222,6 +222,11 @@ main() {
 		case "$storages " in *" $storage "*) ;; *) fail "storage $storage cannot hold container disks here; choose one of:$storages" ;; esac
 	fi
 	[ -z "$folder" ] || check_folder "$folder"
+
+	if [ -n "$version" ]; then script=$releases/download/v$version/install.sh; else script=$releases/latest/download/install.sh; fi
+	/usr/bin/curl --proto "=https" --proto-redir "=https" --tlsv1.2 -fsSL --retry 2 \
+		--connect-timeout 30 --max-time 120 --speed-limit 1 --speed-time 60 -o /dev/null "$script" ||
+		fail "the installer $script is unavailable; nothing was changed"
 
 	# The standard template's download is checked by pveam against
 	# Proxmox's signed template list.
@@ -272,7 +277,6 @@ main() {
 	# runs only inside the container. Its output goes to a file first, so
 	# that pct gives it no terminal and the setup link is shown once, at
 	# the end.
-	if [ -n "$version" ]; then script=$releases/download/v$version/install.sh; else script=$releases/latest/download/install.sh; fi
 	say "Running $script in the container."
 	# shellcheck disable=SC2016 # expanded by the container's shell
 	inside env "OWNGIT_RELEASES=$releases" /bin/sh -c '

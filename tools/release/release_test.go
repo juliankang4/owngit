@@ -247,6 +247,23 @@ func TestBuildVerifyAndCounterexamples(t *testing.T) {
 		t.Error("the packaged skill has no skill name in its front matter")
 	}
 
+	t.Run("cross-built execution record", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		edited, err := readManifest(filepath.Join(copied, "manifest.json"))
+		noErr(t, err)
+		edited.Artifacts[0].Executed, edited.Artifacts[0].ExecutedOutput = false, ""
+		writeManifest(t, copied, edited)
+		noErrf(t, verifyDir(copied, "go"), "verify rejected an archive the builder did not execute")
+	})
+	t.Run("incorrect builder execution output", func(t *testing.T) {
+		copied := copyDist(t, dir)
+		edited, err := readManifest(filepath.Join(copied, "manifest.json"))
+		noErr(t, err)
+		edited.Artifacts[0].ExecutedOutput = "owngit 9.9.9\n"
+		writeManifest(t, copied, edited)
+		expectVerifyError(t, copied, "manifest records execution output")
+	})
+
 	t.Run("corrupted archive byte", func(t *testing.T) {
 		copied := copyDist(t, dir)
 		path := filepath.Join(copied, document.Artifacts[0].Name)
