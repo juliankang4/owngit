@@ -132,7 +132,7 @@ func TestWindowsObservedStatePreservesACLs(t *testing.T) {
 						return nil
 					}
 					visited = true
-					_, err := inspectObjectProtection(dir, file, directory)
+					_, err = inspectObjectProtection(dir, file, directory)
 					noErr(t, err)
 					return RenameOwnFile(held, filepath.Base(file.Name()), statepath.SetupJournal)
 				}))
