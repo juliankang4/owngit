@@ -77,12 +77,12 @@ func requireManagedObject(file *os.File, directory bool) error {
 // ProtectManagedStateFiles protects existing managed entries before Git or
 // other helpers use them. It does not descend into repositories or workspaces.
 func ProtectManagedStateFiles(held *os.File) error {
-	return walkManagedState(held, "", func(file *os.File, directory bool) error {
+	return walkManagedState(held, "", inspectForStart, func(file *os.File, directory bool) error {
 		return protectStateObject(held.Name(), file, directory)
 	})
 }
 
-func walkManagedState(parent *os.File, relative string, visit func(*os.File, bool) error) error {
+func walkManagedState(parent *os.File, relative string, purpose inspectionPurpose, visit func(*os.File, bool) error) error {
 	entries, err := readStateDirectory(parent)
 	if err != nil {
 		return stateProtectionError(parent.Name(), true, err)
@@ -92,7 +92,7 @@ func walkManagedState(parent *os.File, relative string, visit func(*os.File, boo
 		if !statepath.Managed(relative, name) || relative == "" && statepath.DatabaseFile(name) {
 			continue
 		}
-		if err := visitManagedEntry(parent, name, func(file *os.File, directory bool) error {
+		if err := visitManagedEntry(parent, name, purpose, func(file *os.File, directory bool) error {
 			if err := visit(file, directory); err != nil {
 				return err
 			}
@@ -101,7 +101,7 @@ func walkManagedState(parent *os.File, relative string, visit func(*os.File, boo
 				child = relative + "/" + name
 			}
 			if directory && statepath.HasChildren(child) {
-				return walkManagedState(file, child, visit)
+				return walkManagedState(file, child, purpose, visit)
 			}
 			return nil
 		}); err != nil {
@@ -111,7 +111,7 @@ func walkManagedState(parent *os.File, relative string, visit func(*os.File, boo
 	return nil
 }
 
-func visitManagedEntry(parent *os.File, name string, visit func(*os.File, bool) error) error {
+func visitManagedEntry(parent *os.File, name string, purpose inspectionPurpose, visit func(*os.File, bool) error) error {
 	path := filepath.Join(parent.Name(), name)
 	info, err := lookupSourceEntry(parent, path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -125,7 +125,7 @@ func visitManagedEntry(parent *os.File, name string, visit func(*os.File, bool) 
 	}
 	directory := info.IsDir()
 	var file *os.File
-	if directory {
+	if directory || purpose == inspectForReader {
 		file, err = openSourceEntry(parent, path, true)
 	} else {
 		file, err = OpenOwnFile(parent, name, os.O_RDONLY)

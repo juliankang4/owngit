@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"owngit/internal/statepath"
+
 	"golang.org/x/sys/windows"
 )
 
@@ -25,6 +27,7 @@ func TestWindowsObservedStatePreservesACLs(t *testing.T) {
 		rootOther windows.ACCESS_MASK
 		shortRoot bool
 		refused   bool
+		publish   bool
 	}{
 		{name: "extra reader", owner: fileAllAccess, other: windows.GENERIC_READ},
 		{name: "write attributes", owner: fileAllAccess, other: windows.FILE_WRITE_ATTRIBUTES, refused: true},
@@ -34,6 +37,7 @@ func TestWindowsObservedStatePreservesACLs(t *testing.T) {
 		{name: "temporary root delete-child", owner: fileAllAccess, rootOther: 0x40, refused: true},
 		{name: "temporary root attributes", owner: fileAllAccess, rootOther: windows.FILE_WRITE_ATTRIBUTES, refused: true},
 		{name: "short temporary root", owner: fileAllAccess, other: windows.GENERIC_READ, shortRoot: true},
+		{name: "managed temporary publication", owner: fileAllAccess, other: windows.GENERIC_READ, publish: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "state")
@@ -108,6 +112,31 @@ func TestWindowsObservedStatePreservesACLs(t *testing.T) {
 			noErr(t, err)
 			if len(copies) != 0 {
 				t.Fatalf("temporary snapshot remains: %v", copies)
+			}
+			if test.publish {
+				held, err := OpenStateDirectory(dir)
+				noErr(t, err)
+				defer held.Close()
+				temporary, err := os.CreateTemp(dir, statepath.JournalTemporary)
+				noErr(t, err)
+				_, err = temporary.WriteString("kept")
+				noErr(t, err)
+				noErr(t, temporary.Close())
+				visited := false
+				noErr(t, walkManagedState(held, "", inspectForReader, func(file *os.File, directory bool) error {
+					if file.Name() != temporary.Name() {
+						return nil
+					}
+					visited = true
+					_, err := inspectObjectProtection(dir, file, directory)
+					noErr(t, err)
+					return RenameOwnFile(held, filepath.Base(file.Name()), statepath.SetupJournal)
+				}))
+				content, err := os.ReadFile(filepath.Join(dir, statepath.SetupJournal))
+				noErr(t, err)
+				if !visited || string(content) != "kept" {
+					t.Fatalf("publication visited=%v, content=%q", visited, content)
+				}
 			}
 		})
 	}

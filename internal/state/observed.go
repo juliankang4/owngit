@@ -66,7 +66,7 @@ func OpenObserved(ctx context.Context, dir string) (result *Store, err error) {
 			}
 		}
 	}
-	if err := walkManagedState(inspected.dir.handle, "", inspect); err != nil {
+	if err := walkManagedState(inspected.dir.handle, "", inspectForReader, inspect); err != nil {
 		return nil, err
 	}
 	if err := inspected.validateSource(true, true); err != nil {

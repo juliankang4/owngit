@@ -184,9 +184,13 @@ func TestWindowsStateProtectionAtOpen(t *testing.T) {
 				if test.temporaryWithoutList {
 					createCrashedWALFixture(t, path, true, commitBaselineThenChangeVersion(""))
 					root := temporaryRootWithoutListAccess(t, user)
+					rootInfo, err := LstatIdentity(root)
+					noErr(t, err)
 					useHooks(t)
 					hookAt(t, pointCapture, func(stage string) {
-						if !strings.EqualFold(filepath.Dir(stage), root) {
+						stageRoot, err := LstatIdentity(filepath.Dir(stage))
+						noErr(t, err)
+						if !os.SameFile(stageRoot, rootInfo) {
 							t.Fatalf("snapshot root=%q, want %q", filepath.Dir(stage), root)
 						}
 						snapshot = stage
