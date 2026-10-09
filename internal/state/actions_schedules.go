@@ -75,7 +75,7 @@ func (s *Store) RebuildActionsSchedules(ctx context.Context, repositoryID, ref, 
 			}
 		}
 		if len(kept) >= MaximumActionsSchedules {
-			notes = append(notes, actions.Message{Code: "workflow.limit", Path: entry.WorkflowPath, Detail: "Schedules per repository exceed OwnGit's limit of 32."})
+			notes = append(notes, actions.Message{Code: "workflow.limit", Path: entry.WorkflowPath, Detail: "Schedules per repository exceed OwnGit's limit of 32.", Args: map[string]string{"what": "Schedules per repository", "limit": "32"}})
 			continue
 		}
 		kept[key] = true
@@ -167,7 +167,7 @@ func (s *Store) AdmitScheduledActionsRun(ctx context.Context, entry ActionsSched
 		run.Facts.Notes = append(run.Facts.Notes, horizon.Message)
 	}
 	if slot.After(entry.NextDueAt) {
-		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "note.missed", Detail: fmt.Sprintf("Missed schedule times collapsed into the latest slot %s, admitted at %s.", slot.Format(time.RFC3339), now.UTC().Format(time.RFC3339))})
+		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "note.missed", Detail: fmt.Sprintf("Missed schedule times collapsed into the latest slot %s, admitted at %s.", slot.Format(time.RFC3339), now.UTC().Format(time.RFC3339)), Args: map[string]string{"slot": slot.Format(time.RFC3339), "time": now.UTC().Format(time.RFC3339)}})
 	}
 	if cron.Often(now) {
 		run.Facts.Notes = append(run.Facts.Notes, scheduleOftenNote())

@@ -17,8 +17,13 @@ func runBuiltin(step Step, evaluator Evaluator, contexts map[string]any, result 
 	case "actions/checkout":
 		result.Status = StatusPassed
 		note = Message{Code: "note.checkout", Detail: "OwnGit already prepared this commit. The workspace has no .git folder."}
+		if github, ok := contexts["github"].(map[string]any); ok {
+			note.Args = map[string]string{"sha": mask.text(fmt.Sprint(github["sha"]))}
+		}
 	case "actions/setup-go", "actions/setup-node", "actions/setup-python", "actions/setup-java":
 		note = Message{Code: "note.setup", Detail: "OwnGit does not install tools. Provide them on the host or in the executor image."}
+		tool := map[string]string{"actions/setup-go": "Go", "actions/setup-node": "Node.js", "actions/setup-python": "Python", "actions/setup-java": "Java"}[action]
+		var versions []string
 		keys := make([]string, 0, len(step.With))
 		for key := range step.With {
 			if strings.HasSuffix(key, "-version") {
@@ -32,7 +37,9 @@ func runBuiltin(step Step, evaluator Evaluator, contexts map[string]any, result 
 				return err
 			}
 			note.Detail += " " + key + "=" + value + "."
+			versions = append(versions, value)
 		}
+		note.Args = map[string]string{"tool": tool, "version": mask.text(strings.Join(versions, ", "))}
 	case "actions/cache", "actions/cache/restore", "actions/cache/save":
 		note = Message{Code: "note.cache", Detail: "OwnGit does not restore or save this cache."}
 		contexts["step_outputs"] = map[string]string{"cache-hit": "false"}

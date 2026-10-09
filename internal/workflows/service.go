@@ -146,7 +146,8 @@ func (s Service) Discover(ctx context.Context, id, ref string) (Discovery, error
 			}
 		}
 		if !state.ValidActionsWorkflowPath(read.Path) {
-			file.Refusal = &actions.Message{Code: "workflow.limit", Detail: fmt.Sprintf("Workflow filename cannot be stored as a run identity: %q.", read.Path)}
+			refusal := checkrun.WorkflowNameRefusal(read.Path)
+			file.Refusal = &refusal
 		}
 		if w := read.Workflow; w != nil && file.Refusal == nil {
 			file.Name, file.Notes, file.Triggers = w.Name, w.Notes, map[string]Trigger{}
@@ -205,7 +206,7 @@ func (s Service) Discover(ctx context.Context, id, ref string) (Discovery, error
 				}
 				if file.ExpansionKnown && policy.QueueLimit > 0 && file.ExpandedJobs > policy.QueueLimit {
 					file.NeverFits = true
-					file.Notes = append(file.Notes, actions.Message{Code: "workflow.never_fits", Detail: fmt.Sprintf("This workflow needs %d jobs at once, but the check policy's queue holds at most %d. Raise queue_limit, or make the matrix smaller.", file.ExpandedJobs, policy.QueueLimit)})
+					file.Notes = append(file.Notes, actions.Message{Code: "workflow.never_fits", Detail: fmt.Sprintf("This workflow needs %d jobs at once, but the check policy's queue holds at most %d. Raise queue_limit, or make the matrix smaller.", file.ExpandedJobs, policy.QueueLimit), Args: map[string]string{"count": fmt.Sprint(file.ExpandedJobs), "limit": fmt.Sprint(policy.QueueLimit)}})
 				}
 			}
 		}

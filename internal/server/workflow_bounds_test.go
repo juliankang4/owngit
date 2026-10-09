@@ -30,14 +30,14 @@ func TestWorkflowResponseBounds(t *testing.T) {
 		facts.SecretNames = append(facts.SecretNames, secret)
 		secrets = append(secrets, workflowSecretStatus{Name: secret, Set: true})
 	}
-	facts.Notes = []actions.Message{{Code: "workflow.invalid", Path: strings.Repeat("p", 4096), Detail: "x"}}
+	facts.Notes = []actions.Message{{Code: "workflow.invalid", Path: strings.Repeat("p", 4096), Detail: "x", Args: map[string]string{"what": "synthetic workflow", "limit": "64 KiB"}}}
 	encodedFacts, err := json.Marshal(facts)
 	noErr(t, err)
 	facts.Notes[0].Detail = strings.Repeat("\u061c", (state.MaximumActionsJSONBytes-len(encodedFacts))/2)
 	encodedFacts, err = json.Marshal(facts)
 	noErr(t, err)
-	if len(encodedFacts) > state.MaximumActionsJSONBytes {
-		t.Fatal("facts exceeded their durable note budget")
+	if len(encodedFacts) > state.MaximumActionsJSONBytes || len(encodedFacts) < state.MaximumActionsJSONBytes-2 || len(facts.Notes[0].Args) == 0 {
+		t.Fatalf("facts with args did not fill their durable note budget: %d", len(encodedFacts))
 	}
 	inputs := map[string]string{}
 	for i := range 25 {

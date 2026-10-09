@@ -92,7 +92,7 @@ func refuseAcceptedActionsPushTx(ctx context.Context, tx *sql.Tx, repositoryID s
 	if len(original) > 4096 {
 		original = strings.ToValidUTF8(original[:4093], "�") + "..."
 	}
-	note := actions.Message{Code: "workflow.limit", Path: original, Detail: fmt.Sprintf("The accepted push queue holds %d unconsumed updates. This push has no workflow authority. Push the branch again after the queue drains. Original branch: %q", MaximumAcceptedActionsPushes, original)}
+	note := actions.Message{Code: "workflow.limit", Path: original, Detail: fmt.Sprintf("The accepted push queue holds %d unconsumed updates. This push has no workflow authority. Push the branch again after the queue drains. Original branch: %q", MaximumAcceptedActionsPushes, original), Args: map[string]string{"what": "Accepted push queue", "limit": fmt.Sprint(MaximumAcceptedActionsPushes)}}
 	refDigest := sha256.Sum256([]byte(update.Ref))
 	request := ActionsRunRequest{Run: ActionsRun{RepositoryID: repositoryID, WorkflowPath: fmt.Sprintf("%s%x", ActionsRefusedWorkflowPrefix, sha256.Sum256([]byte("accepted-push-limit"))), Event: "push", EventKey: fmt.Sprintf("push/%x/%s", refDigest[:16], update.NewOID), SourceOID: update.NewOID, TriggerRef: branch, Outcome: actions.StatusRefused, Reason: note.Detail, Facts: actions.RunFacts{Notes: []actions.Message{note}}}}
 	_, _, err = admitActionsRunTx(ctx, tx, request, now)

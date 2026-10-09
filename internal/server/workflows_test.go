@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,49 @@ import (
 	"owngit/internal/testfixture"
 	"owngit/internal/workflows"
 )
+
+func TestWorkflowDiscoveryRefusedNames(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	cases := []struct {
+		name, limit, detail string
+	}{
+		{strings.Repeat("a", 97) + ".yml", "100 bytes", "Workflow filename exceeds 100 bytes."},
+	}
+	if runtime.GOOS != "windows" {
+		cases = append(cases, struct{ name, limit, detail string }{"bad\tname.yml", "", "Workflow filename cannot be stored as a run identity."})
+	}
+	for _, tc := range cases {
+		testfixture.WriteWorkflow(t, fixture.work, tc.name, testfixture.SurfaceWorkflow)
+	}
+	apiRunGit(t, fixture.work, "add", ".")
+	apiRunGit(t, fixture.work, "commit", "-m", "synthetic refused workflow names")
+	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/main")
+	result, err := (workflows.Service{Store: fixture.store, Repositories: fixture.app.Repositories}).Discover(context.Background(), "project", "main")
+	noErr(t, err)
+	for _, tc := range cases {
+		path := ".github/workflows/" + tc.name
+		found := false
+		for _, file := range result.Workflows {
+			if file.Path != path {
+				continue
+			}
+			found = true
+			if file.Refusal == nil || file.Refusal.Code != "workflow.limit" || file.Refusal.Detail != tc.detail {
+				t.Fatalf("discovery refusal for %q: %+v", path, file.Refusal)
+			}
+			if tc.limit == "" {
+				if file.Refusal.Args != nil {
+					t.Fatalf("unsupported name has limit args: %+v", file.Refusal)
+				}
+			} else if file.Refusal.Args["what"] != path || file.Refusal.Args["limit"] != tc.limit || len(file.Refusal.Args) != 2 {
+				t.Fatalf("discovery limit args for %q: %+v", path, file.Refusal)
+			}
+		}
+		if !found {
+			t.Fatalf("missing discovery for %q: %+v", path, result.Workflows)
+		}
+	}
+}
 
 func TestWorkflowAPI(t *testing.T) {
 	fixture := newAPIFixture(t, true)

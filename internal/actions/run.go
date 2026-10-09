@@ -186,7 +186,7 @@ func RunJob(ctx context.Context, plan JobPlan, options RunOptions) JobResult {
 		}
 		secrets[name] = value
 		if value == "" {
-			job.Notes = append(job.Notes, Message{Code: "note.secret_unset", Detail: mask.text("Secret " + name + " is not set.")})
+			job.Notes = append(job.Notes, Message{Code: "note.secret_unset", Detail: mask.text("Secret " + name + " is not set."), Args: map[string]string{"name": mask.text(name)}})
 		}
 	}
 	contexts["secrets"] = secrets
@@ -228,6 +228,10 @@ func RunJob(ctx context.Context, plan JobPlan, options RunOptions) JobResult {
 	updates, paths := map[string]string{}, []string{}
 	for _, note := range plan.Notes {
 		note.Detail, note.Path = mask.text(note.Detail), mask.text(note.Path)
+		note.Args = maps.Clone(note.Args)
+		for key, value := range note.Args {
+			note.Args[key] = mask.text(value)
+		}
 		job.Notes = append(job.Notes, note)
 	}
 	failed, stopped := false, false
@@ -328,6 +332,9 @@ func RunJob(ctx context.Context, plan JobPlan, options RunOptions) JobResult {
 	}
 	for index := range job.Notes {
 		job.Notes[index].Detail, job.Notes[index].Path = mask.text(job.Notes[index].Detail), mask.text(job.Notes[index].Path)
+		for key, value := range job.Notes[index].Args {
+			job.Notes[index].Args[key] = mask.text(value)
+		}
 	}
 	return job
 }
@@ -343,6 +350,9 @@ func (step *StepResult) maskMetadata(mask *masker) {
 	for index := range step.Notes {
 		step.Notes[index].Detail = mask.text(step.Notes[index].Detail)
 		step.Notes[index].Path = mask.text(step.Notes[index].Path)
+		for key, value := range step.Notes[index].Args {
+			step.Notes[index].Args[key] = mask.text(value)
+		}
 	}
 }
 
@@ -452,7 +462,7 @@ func executeStep(ctx context.Context, root *os.Root, plan JobPlan, step Step, op
 		if timeout == options.MaxTimeout {
 			detail = fmt.Sprintf("Step reached max_timeout_ms (%d ms). Raise it under Automatic checks, Execution limits (suggested: 600000 for 10 minutes).", options.MaxTimeout.Milliseconds())
 		}
-		result.Notes = append(result.Notes, Message{Code: "workflow.step_timeout", Detail: detail})
+		result.Notes = append(result.Notes, Message{Code: "workflow.step_timeout", Detail: detail, Args: map[string]string{"limit": timeout.String()}})
 	}
 	changes, err := files.read(windows)
 	if err != nil {

@@ -77,7 +77,7 @@ func Parse(filename string, data []byte) (*Workflow, error) {
 		return nil, limitError(filename, MaxWorkflowBytes)
 	}
 	if !utf8.Valid(data) {
-		return nil, refuse("workflow.yaml", filename, 1, "Line 1 is not valid YAML: use UTF-8.")
+		return nil, refuse("workflow.yaml", filename, 1, "Line 1 is not valid YAML: use UTF-8.", map[string]string{"line": "1", "detail": "use UTF-8"})
 	}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var document, second yaml.Node
@@ -161,7 +161,7 @@ func Parse(filename string, data []byte) (*Workflow, error) {
 func expandYAML(n *yaml.Node, key string, depth int, count *int) (*yaml.Node, error) {
 	*count++
 	if depth > MaxYAMLDepth || *count > MaxYAMLNodes {
-		return nil, refuse("workflow.limit", key, n.Line, "YAML expansion is over OwnGit's limit of 100000 nodes or depth 64.")
+		return nil, refuse("workflow.limit", key, n.Line, "YAML expansion is over OwnGit's limit of 100000 nodes or depth 64.", map[string]string{"what": "YAML expansion", "limit": "100000 nodes or depth 64"})
 	}
 	if n.Tag == "!!merge" {
 		return nil, yamlFeature(n, key, "a merge key (<<)")
@@ -326,7 +326,7 @@ func readEnv(n *yaml.Node, key string) (map[string]string, error) {
 	out, total := map[string]string{}, 0
 	for _, name := range sortedKeys(fields) {
 		if !validEnvName(name) {
-			return nil, refuse("workflow.env_name", key+"."+name, fields[name].Line, fmt.Sprintf("Variable name %s is not supported. Use letters, digits and underscores, and do not start with a digit.", name))
+			return nil, refuse("workflow.env_name", key+"."+name, fields[name].Line, fmt.Sprintf("Variable name %s is not supported. Use letters, digits and underscores, and do not start with a digit.", name), map[string]string{"name": name})
 		}
 		text, err := scalar(fields[name], key+"."+name)
 		if err != nil {
@@ -423,7 +423,11 @@ func wrongType(n *yaml.Node, key, expected string) error {
 	if n != nil {
 		line = n.Line
 	}
-	return refuse("workflow.wrong_type", key, line, fmt.Sprintf("%s (line %d) must be %s.", key, line, expected))
+	var args map[string]string
+	if line > 0 {
+		args = map[string]string{"path": key, "line": fmt.Sprint(line), "expected": expected}
+	}
+	return refuse("workflow.wrong_type", key, line, fmt.Sprintf("%s (line %d) must be %s.", key, line, expected), args)
 }
 
 func validateAt(n *yaml.Node, text, key string) ([]string, error) {
@@ -454,19 +458,19 @@ func validEnvName(s string) bool {
 func invalidYAML(key string, err error) error {
 	line := 1
 	_, _ = fmt.Sscanf(err.Error(), "yaml: line %d:", &line)
-	return refuse("workflow.yaml", key, line, fmt.Sprintf("Line %d is not valid YAML: %s", line, err))
+	return refuse("workflow.yaml", key, line, fmt.Sprintf("Line %d is not valid YAML: %s", line, err), map[string]string{"line": fmt.Sprint(line), "detail": err.Error()})
 }
 
 func yamlFeature(n *yaml.Node, key, feature string) error {
-	return refuse("workflow.yaml_feature", key, n.Line, fmt.Sprintf("Line %d uses %s, which OwnGit does not read in workflow files. Write the values out in full.", n.Line, feature))
+	return refuse("workflow.yaml_feature", key, n.Line, fmt.Sprintf("Line %d uses %s, which OwnGit does not read in workflow files. Write the values out in full.", n.Line, feature), map[string]string{"line": fmt.Sprint(n.Line), "feature": feature})
 }
 
 func duplicateKey(first, second *yaml.Node, name, key string) error {
-	return refuse("workflow.duplicate_key", key, second.Line, fmt.Sprintf("`%s` appears twice in `%s` (lines %d and %d). Keep one.", name, key, first.Line, second.Line))
+	return refuse("workflow.duplicate_key", key, second.Line, fmt.Sprintf("`%s` appears twice in `%s` (lines %d and %d). Keep one.", name, key, first.Line, second.Line), map[string]string{"key": name, "path": key, "a": fmt.Sprint(first.Line), "b": fmt.Sprint(second.Line)})
 }
 
 func unknownKey(n *yaml.Node, key string) error {
-	return refuse("workflow.unknown_key", key, n.Line, fmt.Sprintf("`%s` (line %d) is not a workflow key OwnGit knows. Check the spelling against GitHub's workflow syntax, or remove it.", key, n.Line))
+	return refuse("workflow.unknown_key", key, n.Line, fmt.Sprintf("`%s` (line %d) is not a workflow key OwnGit knows. Check the spelling against GitHub's workflow syntax, or remove it.", key, n.Line), map[string]string{"path": key, "line": fmt.Sprint(n.Line)})
 }
 
 func notApplied(key string) Message {
@@ -479,7 +483,7 @@ func notApplied(key string) Message {
 	case "outputs":
 		effect = "OwnGit does not pass outputs between jobs."
 	}
-	return Message{Code: "note.not_applied", Path: key, Detail: key + " is not applied: " + effect}
+	return Message{Code: "note.not_applied", Path: key, Detail: key + " is not applied: " + effect, Args: map[string]string{"key": key, "effect": effect}}
 }
 
 func validateNoted(n *yaml.Node, key string) error {

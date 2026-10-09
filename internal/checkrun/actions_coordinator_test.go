@@ -167,6 +167,16 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 				if !errors.As(err, &refusal) || refusal.Code != code || len(result.Runs) != 0 {
 					t.Fatalf("dispatch admission=%+v err=%v, want %s", result, err, code)
 				}
+				if refusal.Args != nil && test.name != "dispatch branch moved after selection" {
+					t.Fatalf("dispatch refusal without a current commit has args: %+v", refusal.Message)
+				}
+				if test.name == "dispatch branch moved after selection" {
+					_, currentOID, resolveErr := fixture.coordinator.Repositories.ResolveRef(fixture.ctx, fixture.repositoryID, "refs/heads/main")
+					noErr(t, resolveErr)
+					if len(refusal.Args) != 2 || refusal.Args["branch"] != "main" || refusal.Args["oid"] != currentOID {
+						t.Fatalf("moved branch args=%v, want branch main and oid %s", refusal.Args, currentOID)
+					}
+				}
 				return
 			}
 			if !errors.Is(err, test.wantErr) {
@@ -358,18 +368,22 @@ func TestCoordinatorRefusedNames(t *testing.T) {
 	for _, test := range []struct {
 		name, filename, branch string
 		refused                bool
-		entry                  string
+		entry, limit           string
 	}{
-		{"long workflow name", strings.Repeat("a", 97) + ".yml", "main", true, ""},
-		{"near-limit workflow name", strings.Repeat("a", 96) + ".yml", "main", false, ""},
-		{"long branch", "ci.yml", strings.Repeat("b", 201), true, ""},
-		{"near-limit branch", "ci.yml", strings.Repeat("b", 200), false, ""},
-		{"push branch within observation bound", "ci.yml", strings.Repeat("a", 201), true, "push"},
-		{"push branch above observation bound", "ci.yml", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 100), true, "push"},
-		{"head branch within observation bound", "ci.yml", strings.Repeat("a", 201), true, "head"},
-		{"head branch above observation bound", "ci.yml", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 100), true, "head"},
+		{"long workflow name", strings.Repeat("a", 97) + ".yml", "main", true, "", "100 bytes"},
+		{"control character workflow name", "bad\tname.yml", "main", true, "", ""},
+		{"near-limit workflow name", strings.Repeat("a", 96) + ".yml", "main", false, "", ""},
+		{"long branch", "ci.yml", strings.Repeat("b", 201), true, "", "200 bytes"},
+		{"near-limit branch", "ci.yml", strings.Repeat("b", 200), false, "", ""},
+		{"push branch within observation bound", "ci.yml", strings.Repeat("a", 201), true, "push", "200 bytes"},
+		{"push branch above observation bound", "ci.yml", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 100), true, "push", "200 bytes"},
+		{"head branch within observation bound", "ci.yml", strings.Repeat("a", 201), true, "head", "200 bytes"},
+		{"head branch above observation bound", "ci.yml", strings.Repeat("a", 100) + "/" + strings.Repeat("b", 100) + "/" + strings.Repeat("c", 100), true, "head", "200 bytes"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if runtime.GOOS == "windows" && strings.ContainsRune(test.filename, '\t') {
+				t.Skip("Windows cannot create a filename containing a tab")
+			}
 			fixture := actionsFixture(t, state.CheckExecutorExternalRunner)
 			path := ".github/workflows/" + test.filename
 			oid := pushActionsFiles(fixture, map[string]string{path: simpleWorkflow})
@@ -409,6 +423,19 @@ func TestCoordinatorRefusedNames(t *testing.T) {
 			if test.refused {
 				if run.Outcome != "refused" || len(run.Facts.Notes) == 0 || run.Facts.Notes[0].Code != "workflow.limit" || run.WorkflowPath == path && run.TriggerRef == test.branch {
 					t.Fatalf("refusal=%+v", run)
+				}
+				if test.limit == "" {
+					if run.Facts.Notes[0].Args != nil || run.Reason != "Workflow filename cannot be stored as a run identity." {
+						t.Fatalf("unsupported name must use detail: %+v", run)
+					}
+				} else {
+					what := test.branch
+					if len(test.filename) > 100 {
+						what = path
+					}
+					if run.Facts.Notes[0].Args["what"] != what || run.Facts.Notes[0].Args["limit"] != test.limit || len(run.Facts.Notes[0].Args) != 2 {
+						t.Fatalf("limit args=%v, want %q of %s", run.Facts.Notes[0].Args, what, test.limit)
+					}
 				}
 			} else if run.Outcome != "" || run.WorkflowPath != path || run.TriggerRef != test.branch {
 				t.Fatalf("near-limit name changed: %+v", run)

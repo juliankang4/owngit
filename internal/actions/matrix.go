@@ -181,5 +181,5 @@ func sortedKeys[V any](values map[string]V) []string {
 }
 
 func tooManyJobs(count int) error {
-	return refuse("workflow.too_many_jobs", "jobs", 0, fmt.Sprintf("This workflow would start %d jobs; OwnGit starts at most 16 for one run. Make the matrix smaller (an OS axis repeats the same work here), combine jobs, or move jobs to another workflow file.", count))
+	return refuse("workflow.too_many_jobs", "jobs", 0, fmt.Sprintf("This workflow would start %d jobs; OwnGit starts at most 16 for one run. Make the matrix smaller (an OS axis repeats the same work here), combine jobs, or move jobs to another workflow file.", count), map[string]string{"count": fmt.Sprint(count)})
 }

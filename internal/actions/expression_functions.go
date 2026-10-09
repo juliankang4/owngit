@@ -269,8 +269,12 @@ type Refusal struct{ Message }
 
 func (r *Refusal) Error() string { return r.Code + ": " + r.Detail }
 
-func refuse(code, path string, line int, detail string) error {
-	return &Refusal{Message{Code: code, Path: path, Line: line, Detail: detail}}
+func refuse(code, path string, line int, detail string, args ...map[string]string) error {
+	message := Message{Code: code, Path: path, Line: line, Detail: detail}
+	if len(args) != 0 {
+		message.Args = args[0]
+	}
+	return &Refusal{message}
 }
 
 func expressionError(key, expected string) error {
@@ -278,11 +282,11 @@ func expressionError(key, expected string) error {
 }
 
 func limitError(what string, limit int) error {
-	return refuse("workflow.limit", what, 0, fmt.Sprintf("%s is over OwnGit's limit of %d.", what, limit))
+	return refuse("workflow.limit", what, 0, fmt.Sprintf("%s is over OwnGit's limit of %d.", what, limit), map[string]string{"what": what, "limit": fmt.Sprint(limit)})
 }
 
 func contextError(context, key, hint string) error {
-	return refuse("workflow.context", key, 0, fmt.Sprintf("%s is not available in %s in OwnGit workflows. %s", context, key, hint))
+	return refuse("workflow.context", key, 0, fmt.Sprintf("%s is not available in %s in OwnGit workflows. %s", context, key, hint), map[string]string{"context": context, "key": key, "hint": hint})
 }
 
 func secretReferenceError(key string) error {
@@ -290,5 +294,5 @@ func secretReferenceError(key string) error {
 }
 
 func tokenError(expr, key string) error {
-	return refuse("workflow.token", key, 0, fmt.Sprintf("OwnGit gives workflows no GitHub token. Remove %s, or store a token of your own as a repository secret under another name.", expr))
+	return refuse("workflow.token", key, 0, fmt.Sprintf("OwnGit gives workflows no GitHub token. Remove %s, or store a token of your own as a repository secret under another name.", expr), map[string]string{"expr": expr})
 }

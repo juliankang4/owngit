@@ -452,7 +452,7 @@ func (p *expressionParser) validate(e *expression) error {
 			if name == "hashfiles" {
 				hint = "Compute the hash in a run step, for example with sha256sum."
 			}
-			return refuse("workflow.function", p.key, 0, fmt.Sprintf("%s() is not supported. %s", name, hint))
+			return refuse("workflow.function", p.key, 0, fmt.Sprintf("%s() is not supported. %s", name, hint), map[string]string{"function": name, "hint": hint})
 		}
 		if len(e.children) < min || len(e.children) > max {
 			return expressionError(p.key, "the documented function arguments")

@@ -83,7 +83,7 @@ func (files *commandFiles) read(windows bool) (commandChanges, error) {
 		upper := strings.ToUpper(name)
 		if strings.HasPrefix(upper, "GITHUB_") || strings.HasPrefix(upper, "RUNNER_") || upper == "NODE_OPTIONS" {
 			delete(changes.env, name)
-			changes.notes = append(changes.notes, Message{Code: "note.ignored_env", Detail: "Ignored protected environment variable " + name})
+			changes.notes = append(changes.notes, Message{Code: "note.ignored_env", Detail: "Ignored protected environment variable " + name, Args: map[string]string{"name": name}})
 		}
 	}
 	changes.outputs, err = commandPairs(contents["GITHUB_OUTPUT"], false, false)

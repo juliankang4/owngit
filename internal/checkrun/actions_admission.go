@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"owngit/internal/actions"
 	"owngit/internal/checkworkflow"
@@ -133,7 +135,7 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 			return state.CheckEventAdmission{}, err
 		}
 		if currentRef != ref || currentOID != request.SourceOID {
-			return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "workflow.moved", Detail: "The branch moved. Check the new commit and run it again."}}
+			return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "workflow.moved", Detail: "The branch moved. Check the new commit and run it again.", Args: map[string]string{"branch": request.TriggerRef, "oid": currentOID}}}
 		}
 		accepted, err := coordinator.Store.AcceptedActionsScheduleSource(ctx, request.RepositoryID, ref, currentOID)
 		if err != nil {
@@ -275,11 +277,7 @@ func (coordinator *Coordinator) planActionsEvent(ctx context.Context, pinned *re
 	for _, file := range actions.ParseFiles(files) {
 		path := file.Path
 		if !state.ValidActionsWorkflowPath(path) {
-			detail := "Workflow filename cannot be stored as a run identity."
-			if len(strings.TrimPrefix(path, ".github/workflows/")) > 100 {
-				detail = "Workflow filename exceeds 100 bytes."
-			}
-			note := workflowLimit(detail, path)
+			note := WorkflowNameRefusal(path)
 			file.Refusal = &note
 			path = refusedIdentity(state.ActionsRefusedWorkflowPrefix, file.Path)
 		}
@@ -361,7 +359,7 @@ func (coordinator *Coordinator) planActionsEvent(ctx context.Context, pinned *re
 			run.TriggerRef = refusedIdentity(state.ActionsRefusedRefPrefix, event.TriggerRef)
 			run.Outcome, run.Reason = actions.StatusRefused, "Branch name exceeds 200 bytes."
 			run.Facts.Needs = nil
-			run.Facts.Notes = append(run.Facts.Notes, workflowLimit(run.Reason, event.TriggerRef))
+			run.Facts.Notes = append(run.Facts.Notes, workflowLimit(run.Reason, event.TriggerRef, "200 bytes"))
 		}
 		runs = append(runs, state.ActionsRunRequest{Run: run})
 	}
@@ -426,12 +424,30 @@ func refusalMessage(err error) actions.Message {
 func refusedIdentity(prefix, original string) string {
 	return fmt.Sprintf("%s%x", prefix, sha256.Sum256([]byte(original)))
 }
-func workflowLimit(detail, original string) actions.Message {
+
+// WorkflowNameRefusal gives discovery and admission the same refusal for an unsupported workflow filename.
+func WorkflowNameRefusal(path string) actions.Message {
+	name := strings.TrimPrefix(path, ".github/workflows/")
+	if utf8.ValidString(name) && !strings.ContainsFunc(name, unicode.IsControl) && len(name) > 100 {
+		return workflowLimit("Workflow filename exceeds 100 bytes.", path, "100 bytes")
+	}
+	return workflowLimit("Workflow filename cannot be stored as a run identity.", path, "")
+}
+
+func workflowLimit(detail, original, limit string) actions.Message {
+	what := original
+	if len(what) > 4096 {
+		what = strings.ToValidUTF8(what[:4093], "�") + "..."
+	}
 	original = strconv.QuoteToASCII(original)
 	if len(original) > 4096 {
 		original = original[:4080] + " [cut]"
 	}
-	return actions.Message{Code: "workflow.limit", Path: original, Detail: detail}
+	message := actions.Message{Code: "workflow.limit", Path: original, Detail: detail}
+	if limit != "" {
+		message.Args = map[string]string{"what": what, "limit": limit}
+	}
+	return message
 }
 
 func (coordinator *Coordinator) RerunActionsRun(ctx context.Context, repositoryID, originalID string) (state.ActionsRun, bool, error) {

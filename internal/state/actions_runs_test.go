@@ -34,6 +34,44 @@ func workflowStore(t *testing.T) *checkJobFixture {
 	return fixture
 }
 
+func TestActionsMessageArgsBudget(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		notes      []actions.Message
+		refused    []actions.RefusedJob
+		wantFirst  bool
+		wantSecond bool
+	}{
+		{name: "notes keep args when they fit", notes: []actions.Message{{Code: "workflow.limit", Detail: "small", Args: map[string]string{"what": "test", "limit": "10"}}}, wantFirst: true},
+		{name: "drop oversized note args but keep detail", notes: []actions.Message{{Code: "workflow.limit", Detail: "small", Args: map[string]string{"what": strings.Repeat("x", MaximumActionsJSONBytes), "limit": "10"}}}},
+		{name: "drop only first over-budget note", notes: []actions.Message{{Code: "workflow.limit", Detail: "small", Args: map[string]string{"what": strings.Repeat("x", MaximumActionsJSONBytes), "limit": "10"}}, {Code: "note.checkout", Detail: "next", Args: map[string]string{"sha": "abc"}}}, wantSecond: true},
+		{name: "drop refused job args", refused: []actions.RefusedJob{{JobKey: "build", Reason: actions.Message{Code: "workflow.action", Detail: "unsupported", Args: map[string]string{"action": strings.Repeat("x", MaximumActionsJSONBytes)}}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := workflowStore(t)
+			request := workflowRunRequest(t)
+			request.Run.Facts.Notes, request.Run.Facts.RefusedJobs = test.notes, test.refused
+			run, _, err := fixture.store.AdmitActionsRun(context.Background(), request, fixture.now)
+			noErr(t, err)
+			encoded, err := json.Marshal(run.Facts)
+			noErr(t, err)
+			if len(encoded) > MaximumActionsJSONBytes || len(run.Facts.Notes) != len(test.notes) || len(run.Facts.RefusedJobs) != len(test.refused) {
+				t.Fatalf("facts lost or oversized: %d bytes, %+v", len(encoded), run.Facts)
+			}
+			if len(test.notes) != 0 && (len(run.Facts.Notes[0].Args) != 0) != test.wantFirst || len(test.notes) > 1 && (len(run.Facts.Notes[1].Args) != 0) != test.wantSecond {
+				t.Fatalf("wrong note args: %+v", run.Facts.Notes)
+			}
+			if len(test.refused) != 0 && (len(run.Facts.RefusedJobs[0].Reason.Args) != 0 || run.Facts.RefusedJobs[0].Reason.Detail != "unsupported") {
+				t.Fatalf("refused job changed: %+v", run.Facts.RefusedJobs)
+			}
+			read, exists, err := fixture.store.ActionsRun(context.Background(), "project", run.ID)
+			if err != nil || !exists || !reflect.DeepEqual(read.Facts, run.Facts) {
+				t.Fatalf("read changed facts: %+v, %v", read.Facts, err)
+			}
+		})
+	}
+}
+
 func TestWorkflowPolicyDefaults(t *testing.T) {
 	for _, test := range []struct {
 		name      string
@@ -386,6 +424,12 @@ func TestValidateActionsRecovery(t *testing.T) {
 		invalid bool
 	}{
 		{name: "rerun root is a run"},
+		{name: "message without args restores", mutate: func(s *RecoveryState) {
+			s.ActionsRuns[0].Facts.Notes = []actions.Message{{Code: "workflow.limit", Detail: "old message"}}
+		}},
+		{name: "message with args restores", mutate: func(s *RecoveryState) {
+			s.ActionsRuns[0].Facts.Notes = []actions.Message{{Code: "workflow.limit", Detail: "new message", Args: map[string]string{"what": "jobs", "limit": "16"}}}
+		}},
 		{name: "job root is not a run", invalid: true, mutate: func(s *RecoveryState) { s.CheckJobs[1].RerunRoot = s.CheckJobs[0].ID }},
 		{name: "unknown run", invalid: true, mutate: func(s *RecoveryState) { s.CheckJobs[0].RunID = strings.Repeat("c", 32) }},
 		{name: "wrong run generation", invalid: true, mutate: func(s *RecoveryState) { s.CheckJobs[1].RerunGeneration++ }},

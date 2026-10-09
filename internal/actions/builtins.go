@@ -46,7 +46,10 @@ func LookupBuiltin(uses string) (Builtin, error) {
 		case name == "actions/download-artifact":
 			code, detail = "workflow.artifact_download", "actions/download-artifact does not run, because OwnGit keeps no artifacts and later steps would miss the files. Build the files in the same job."
 		}
-		return Builtin{}, refuse(code, "step.uses", 0, detail)
+		if code == "workflow.artifact_download" {
+			return Builtin{}, refuse(code, "step.uses", 0, detail)
+		}
+		return Builtin{}, refuse(code, "step.uses", 0, detail, map[string]string{"action": uses})
 	}
 	builtin := Builtin{Name: name, Status: StatusNotRun}
 	if definition.code == "note.checkout" {
@@ -97,7 +100,7 @@ func EvaluateBuiltin(step Step, ctx EvalContext) (Builtin, []Message, error) {
 				accepted = accepted || strings.EqualFold(text, "false")
 			}
 			if !accepted {
-				return builtin, nil, refuse("workflow.checkout_input", "step.with."+input, 0, fmt.Sprintf("actions/checkout input %s is not supported. OwnGit prepares only the files of commit %v: no other ref or repository, no submodules and no Git LFS content. Remove the input, or fetch what you need in a run step.", input, github["sha"]))
+				return builtin, nil, refuse("workflow.checkout_input", "step.with."+input, 0, fmt.Sprintf("actions/checkout input %s is not supported. OwnGit prepares only the files of commit %v: no other ref or repository, no submodules and no Git LFS content. Remove the input, or fetch what you need in a run step.", input, github["sha"]), map[string]string{"input": input, "sha": fmt.Sprint(github["sha"])})
 			}
 		}
 	}
@@ -106,8 +109,10 @@ func EvaluateBuiltin(step Step, ctx EvalContext) (Builtin, []Message, error) {
 	case "note.checkout":
 		github, _ := ctx.Values["github"].(map[string]any)
 		note.Detail = fmt.Sprintf("Built in: commit %v is in the workspace without a .git folder, so Git commands do not work. Git LFS files are pointer files.", github["sha"])
+		note.Args = map[string]string{"sha": fmt.Sprint(github["sha"])}
 	case "note.setup":
 		note.Detail = fmt.Sprintf("Not run: OwnGit does not install, check or select %s %s. This job uses the %s already on the computer or in the image; a version matrix runs that same tool each time.", definition.tool, strings.Join(versions, ", "), definition.tool)
+		note.Args = map[string]string{"tool": definition.tool, "version": strings.Join(versions, ", ")}
 	case "note.cache":
 		note.Detail = "Not run: OwnGit keeps no cache, so later steps start without restored files."
 	case "note.artifact":

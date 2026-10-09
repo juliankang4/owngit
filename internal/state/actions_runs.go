@@ -153,6 +153,7 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 		run.ConcurrencyGroup, run.CancelInProgress, run.ConcurrencyQueue = concurrency.Group, concurrency.CancelInProgress, concurrency.Queue
 	}
 	run.ConcurrencyGroup = strings.ToLower(run.ConcurrencyGroup)
+	fitActionsMessageArgs(&run.Facts)
 	if err := validateActionsRun(run); err != nil {
 		return ActionsRun{}, false, err
 	}
@@ -205,12 +206,13 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 	if run.Outcome == "" && len(request.Jobs) > policy.QueueLimit {
 		run.Outcome = actions.StatusRefused
 		run.Reason = fmt.Sprintf("This workflow needs %d jobs at once, but the check policy's queue holds at most %d. Raise queue_limit, or make the matrix smaller.", len(request.Jobs), policy.QueueLimit)
-		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.never_fits", Detail: run.Reason})
+		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.never_fits", Detail: run.Reason, Args: map[string]string{"count": fmt.Sprint(len(request.Jobs)), "limit": fmt.Sprint(policy.QueueLimit)}})
 	} else if run.Outcome == "" && unfinished+len(request.Jobs) > policy.QueueLimit {
 		run.Outcome = actions.StatusNotRun
 		run.Reason = fmt.Sprintf("Not run: the queue holds %d of %d jobs and this run needs %d. Rerun it later, or raise queue_limit.", unfinished, policy.QueueLimit, len(request.Jobs))
-		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.not_run_queue", Detail: run.Reason})
+		run.Facts.Notes = append(run.Facts.Notes, actions.Message{Code: "workflow.not_run_queue", Detail: run.Reason, Args: map[string]string{"waiting": fmt.Sprint(unfinished), "limit": fmt.Sprint(policy.QueueLimit), "needed": fmt.Sprint(len(request.Jobs))}})
 	}
+	fitActionsMessageArgs(&run.Facts)
 	if err := validateActionsRun(run); err != nil {
 		return ActionsRun{}, false, err
 	}
@@ -249,6 +251,31 @@ func admitActionsRunTx(ctx context.Context, tx *sql.Tx, request ActionsRunReques
 	}
 	run, _, err = readActionsRunTx(ctx, tx, actionsRunSelect+` WHERE id=?`, run.ID)
 	return run, false, err
+}
+
+func fitActionsMessageArgs(facts *actions.RunFacts) {
+	encoded, err := json.Marshal(facts)
+	if err != nil || len(encoded) <= MaximumActionsJSONBytes {
+		return
+	}
+	for i := range facts.Notes {
+		if len(facts.Notes[i].Args) != 0 {
+			facts.Notes[i].Args = nil
+			encoded, err = json.Marshal(facts)
+			if err == nil && len(encoded) <= MaximumActionsJSONBytes {
+				return
+			}
+		}
+	}
+	for i := range facts.RefusedJobs {
+		if len(facts.RefusedJobs[i].Reason.Args) != 0 {
+			facts.RefusedJobs[i].Reason.Args = nil
+			encoded, err = json.Marshal(facts)
+			if err == nil && len(encoded) <= MaximumActionsJSONBytes {
+				return
+			}
+		}
+	}
 }
 
 func insertActionsRunTx(ctx context.Context, tx *sql.Tx, run ActionsRun) error {

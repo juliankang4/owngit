@@ -12,6 +12,7 @@ import (
 type Cron struct {
 	fields            [5][]bool
 	dayStar, weekStar bool
+	text              string
 }
 
 func ParseCron(text string) (Cron, error) {
@@ -28,6 +29,7 @@ func ParseCron(text string) (Cron, error) {
 		}
 		cron.fields[i] = values
 	}
+	cron.text = text
 	cron.dayStar, cron.weekStar = strings.HasPrefix(parts[2], "*"), strings.HasPrefix(parts[4], "*")
 	if cron.fields[4][7] {
 		cron.fields[4][0] = true
@@ -158,7 +160,7 @@ func (cron Cron) search(at time.Time, backwards bool) (time.Time, error) {
 		}
 		day = day.AddDate(0, 0, direction)
 	}
-	return time.Time{}, refuse("workflow.cron_never", "on.schedule.cron", 0, "This cron has no matching time within five years. Use a possible UTC date.")
+	return time.Time{}, refuse("workflow.cron_never", "on.schedule.cron", 0, "This cron has no matching time within five years. Use a possible UTC date.", map[string]string{"cron": cron.text})
 }
 
 // Often reports whether this cron can request two admissions less than five

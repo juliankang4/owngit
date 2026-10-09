@@ -15,7 +15,7 @@ func eventMessage(name string) Message {
 	if name == "pull_request_target" {
 		return Message{Code: "workflow.event_pr_target", Path: "on." + name, Detail: "pull_request_target does not run. Use pull_request; OwnGit runs a pull request from its own commit."}
 	}
-	return Message{Code: "workflow.event", Path: "on." + name, Detail: fmt.Sprintf("OwnGit does not run workflows on %s. It runs push, pull_request, workflow_dispatch and schedule.", name)}
+	return Message{Code: "workflow.event", Path: "on." + name, Detail: fmt.Sprintf("OwnGit does not run workflows on %s. It runs push, pull_request, workflow_dispatch and schedule.", name), Args: map[string]string{"event": name}}
 }
 
 func readEvents(w *Workflow, n *yaml.Node) error {
@@ -149,7 +149,7 @@ func readSchedules(n *yaml.Node) ([]string, []Message, error) {
 			return nil, nil, err
 		}
 		if i >= 10 {
-			refused = append(refused, Message{Code: "workflow.limit", Path: fmt.Sprintf("on.schedule[%d]", i), Line: entry.Line, Detail: "Schedules per workflow is over OwnGit's limit of 10."})
+			refused = append(refused, Message{Code: "workflow.limit", Path: fmt.Sprintf("on.schedule[%d]", i), Line: entry.Line, Detail: "Schedules per workflow is over OwnGit's limit of 10.", Args: map[string]string{"what": "Schedules per workflow", "limit": "10"}})
 			continue
 		}
 		if fields["timezone"] != nil {
@@ -336,7 +336,7 @@ func readJob(id string, n *yaml.Node) (JobDefinition, error) {
 		return job, wrongType(steps, key+".steps", "a nonempty list of steps")
 	}
 	if len(steps.Content) > MaxSteps && job.Refusal == nil {
-		job.Refusal = &Message{Code: "workflow.limit", Path: key + ".steps", Line: steps.Line, Detail: "Steps per job is over OwnGit's limit of 50."}
+		job.Refusal = &Message{Code: "workflow.limit", Path: key + ".steps", Line: steps.Line, Detail: "Steps per job is over OwnGit's limit of 50.", Args: map[string]string{"what": "Steps per job", "limit": "50"}}
 	}
 	ids := map[string]bool{}
 	for i, n := range steps.Content {
@@ -429,7 +429,13 @@ func refusedFeature(feature, value string) Message {
 	default:
 		code, detail = "workflow.background", fmt.Sprintf("Background and parallel steps (%s) do not run in OwnGit. Start the process and use it inside one run script.", feature)
 	}
-	return Message{Code: code, Detail: detail}
+	message := Message{Code: code, Detail: detail}
+	if code == "workflow.reusable" {
+		message.Args = map[string]string{"workflow": value}
+	} else if code == "workflow.background" {
+		message.Args = map[string]string{"key": feature}
+	}
+	return message
 }
 
 func validateNeeds(jobs []JobDefinition) error {

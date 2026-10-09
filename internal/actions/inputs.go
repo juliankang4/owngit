@@ -142,5 +142,5 @@ func DispatchInputs(definitions map[string]DispatchInput, supplied map[string]an
 }
 
 func dispatchError(name, reason string) error {
-	return refuse("workflow.dispatch_input", "inputs."+name, 0, fmt.Sprintf("Input %s is not valid: %s. The workflow declares its inputs under on.workflow_dispatch.inputs.", name, reason))
+	return refuse("workflow.dispatch_input", "inputs."+name, 0, fmt.Sprintf("Input %s is not valid: %s. The workflow declares its inputs under on.workflow_dispatch.inputs.", name, reason), map[string]string{"input": name, "reason": reason})
 }

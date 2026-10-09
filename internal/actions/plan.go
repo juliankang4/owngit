@@ -105,10 +105,11 @@ type StrategyContext struct {
 }
 
 type Message struct {
-	Code   string `json:"code"`
-	Path   string `json:"path,omitempty"`
-	Line   int    `json:"line,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	Code   string            `json:"code"`
+	Path   string            `json:"path,omitempty"`
+	Line   int               `json:"line,omitempty"`
+	Detail string            `json:"detail,omitempty"`
+	Args   map[string]string `json:"args,omitempty"`
 }
 
 // RunFacts remain portable after job plans are deleted.

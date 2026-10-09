@@ -171,7 +171,7 @@ func MatchEvent(workflow *Workflow, event Event) (FilterDecision, error) {
 		}
 	}
 	if !event.Changed.Complete {
-		message := Message{Code: "note.paths_unknown", Detail: fmt.Sprintf("Not run: OwnGit could not list the changed files (%s), so the paths filter could not be decided. Rerun to run it anyway.", event.Changed.Reason)}
+		message := Message{Code: "note.paths_unknown", Detail: fmt.Sprintf("Not run: OwnGit could not list the changed files (%s), so the paths filter could not be decided. Rerun to run it anyway.", event.Changed.Reason), Args: map[string]string{"reason": event.Changed.Reason}}
 		return FilterDecision{Unknown: true, Note: &message}, nil
 	}
 	return FilterDecision{}, nil
