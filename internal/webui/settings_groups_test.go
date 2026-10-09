@@ -53,9 +53,10 @@ func TestEverySettingsGroupSendsOnlyItsOwnFields(t *testing.T) {
 			section := out[m[0]:]
 			section = section[:strings.Index(section, "</section>")]
 			// The display choices of this browser are not a group: they
-			// apply at once and are never posted.
+			// apply at once and are never posted. A group without a group
+			// form, such as the backup state, saves nothing.
 			start := strings.Index(section, "<form")
-			if start < 0 || !strings.Contains(section, `data-group="`+group+`"`) {
+			if start < 0 || !strings.Contains(section, `data-group="`+group+`"`) || !strings.Contains(section, "data-group-form") {
 				continue
 			}
 			form := section[start : start+strings.Index(section[start:], "</form>")]

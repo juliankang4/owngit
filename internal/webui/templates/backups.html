@@ -7,7 +7,10 @@
      their buttons are ordinary POST forms, which ask for the administrator
      password when a change does (Viewer.AdminAsks). A download answers with
      the file, so the page stays. Nothing here restores: a restore is a
-     command for this computer while OwnGit is stopped. */}}
+     command for this computer while OwnGit is stopped.
+
+     Both sections are groups (data-group), so a schedule saved without
+     leaving the page also shows the state and Back up now as saved. */}}
 {{define "setBackups"}}{{$p := .Page}}{{$lang := .Lang}}{{$b := $p.Backups}}{{$v := .Chrome.Viewer}}
 {{$gn := forAction $p.Group "backups" $p.Notices}}{{$focus := firstError $gn "backup_destination" "backup_interval" "backup_keep" "admin_password"}}
 <section class="grp" id="grp-backups" aria-labelledby="grp-backups-h" data-group="backups"{{if hasError $gn}} data-group-refused{{end}}{{if and $b.Visible (not $b.Configured)}} data-group-open{{end}}>
@@ -60,7 +63,7 @@
 
 {{if $b.Visible}}
 {{$rn := forAction $p.Group "backup_runs" $p.Notices}}{{$rfocus := firstError $rn "admin_password"}}
-<section class="grp" id="grp-backup_runs" aria-labelledby="grp-backup_runs-h">
+<section class="grp" id="grp-backup_runs" aria-labelledby="grp-backup_runs-h" data-group="backup_runs">
   <div class="grp__h"><h2 id="grp-backup_runs-h">{{bi $lang "backup.state_title"}}</h2></div>
   {{template "grpNotes" dict "Lang" $lang "Notices" $rn "Focus" $rfocus}}
   <dl class="kv">

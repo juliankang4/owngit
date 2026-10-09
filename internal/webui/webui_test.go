@@ -1380,6 +1380,12 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsStorage, SubmitURL: "/settings", AccessMode: AccessOpen,
 				Storage: StorageInfo{Visible: true, Path: "/volume1/secret-git"}},
 			markup: []string{"/volume1/secret-git"}},
+		// A schedule saved in place refreshes every group, so the first
+		// saved backup folder turns on Back up now without a reload.
+		screen{name: "the backup state follows a schedule saved in place",
+			page: SettingsPage{Chrome: fullChrome(LangEN), Tab: SettingsStorage, SubmitURL: "/settings", AccessMode: AccessOpen,
+				Backups: BackupsInfo{Visible: true}},
+			markup: []string{`id="grp-backup_runs" aria-labelledby="grp-backup_runs-h" data-group="backup_runs"`}},
 		screen{name: "a plain connection is not reported as encrypted",
 			page: overview(func(c *Chrome) { c.Connection = Connection{Encrypted: false, Host: "owngit.ts.net"} }),
 			want: []MessageCode{MsgConnNoProof}, noMarkup: []string{"conn--secure"}},
