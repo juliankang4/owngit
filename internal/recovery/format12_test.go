@@ -152,7 +152,7 @@ func TestFormat12RoundTrip(t *testing.T) {
 			if !test.waiting {
 				runner, _, _, err := store.IssueCheckRunnerToken(ctx, "project", "synthetic-runner", "", now)
 				noErr(t, err)
-				claimed, found, err := store.ClaimCheckJob(ctx, "project", runner.ID, now)
+				claimed, found, err := store.ClaimCheckJob(ctx, "project", runner.ID, now, state.RunnerFeatureWorkflowsV1)
 				if err != nil || !found {
 					t.Fatalf("claim found=%v err=%v", found, err)
 				}
