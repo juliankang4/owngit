@@ -51,6 +51,8 @@ jobs:
 	apiRunGit(t, fixture.work, "commit", "-m", "synthetic workflows")
 	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/main")
 	oid := apiGitOutput(t, fixture.work, "rev-parse", "HEAD")
+	apiRunGit(t, fixture.work, "push", "origin", "HEAD:refs/heads/imported")
+	noErr(t, fixture.store.RecordAcceptedActionsPushes(ctx, "project", []state.AcceptedActionsPush{{Ref: "refs/heads/main", NewOID: oid}}, time.Now()))
 	policy := state.CheckPolicyInput{RepositoryID: "project", Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{state.ActionsEventDispatch, "pull_request", state.ActionsEventSchedule}, MaxTimeoutMS: 600000, MaxOutputLimitBytes: 65536, QueueLimit: 16, MaxActiveJobs: 1, MaxLeaseMS: 60000}
 	savedPolicy, err := fixture.store.SetCheckPolicy(ctx, policy, time.Now())
 	noErr(t, err)
@@ -101,6 +103,7 @@ jobs:
 		{name: "nothing ran has no raw log", method: "GET", path: "/workflow-runs/" + root + "/jobs/" + job + "/log", password: "shared-password", status: 404, code: "check_log_missing"},
 		{name: "dispatch refuses administrator as shared password", method: "POST", path: "/workflows/dispatch", password: "admin-password", body: dispatch, status: 401},
 		{name: "moved branch", method: "POST", path: "/workflows/dispatch", password: "shared-password", body: workflows.DispatchInput{Path: dispatch.Path, ExpectedOID: strings.Repeat("a", 40)}, status: 409, code: "workflow.moved"},
+		{name: "imported branch with accepted source on another ref", method: "POST", path: "/workflows/dispatch", password: "shared-password", body: workflows.DispatchInput{Path: dispatch.Path, Ref: "imported", ExpectedOID: oid}, status: 409, code: "note.push_required"},
 		{name: "bad input", method: "POST", path: "/workflows/dispatch", password: "shared-password", body: workflows.DispatchInput{Path: dispatch.Path, Inputs: map[string]any{"unknown": "value"}}, status: 422, code: "workflow.dispatch_input"},
 		{name: "unsupported dispatch event", method: "POST", path: "/workflows/dispatch", password: "shared-password", body: workflows.DispatchInput{Path: ".github/workflows/unsupported.yml"}, status: 409, code: "workflow.event_off"},
 		{name: "cancel needs password", method: "POST", path: "/workflow-runs/" + root + "/cancel", body: struct{}{}, status: 401},
@@ -120,6 +123,9 @@ jobs:
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
+			if row.name == "general rerun" {
+				noErr(t, fixture.store.Exec(ctx, `DELETE FROM actions_accepted_pushes WHERE repository_id=?`, "project"))
+			}
 			user := "owngit"
 			if strings.HasPrefix(row.path, "/workflow-secrets") && row.password == "admin-password" {
 				user = "admin"

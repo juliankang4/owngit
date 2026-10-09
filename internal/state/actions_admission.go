@@ -98,6 +98,14 @@ func (s *Store) AdmitCheckEvent(ctx context.Context, repositoryID string, expect
 			if !accepted || request.Run.SourceOID != acceptedPush.NewOID || request.Run.TriggerRef != strings.TrimPrefix(acceptedPush.Ref, "refs/heads/") && !validRefusedActionsIdentity(request.Run.TriggerRef, ActionsRefusedRefPrefix) {
 				continue
 			}
+		case ActionsEventDispatch:
+			authorized, err := acceptedScheduleSourceTx(ctx, tx, repositoryID, "refs/heads/"+request.Run.TriggerRef, request.Run.SourceOID)
+			if err != nil {
+				return CheckEventAdmission{}, err
+			}
+			if !authorized {
+				return CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "note.push_required", Detail: "This branch revision has no retained accepted OwnGit push. Push the branch to OwnGit to run its workflows."}}
+			}
 		case ActionsEventSchedule:
 			authorized, err := acceptedScheduleSourceTx(ctx, tx, repositoryID, "refs/heads/"+request.Run.TriggerRef, request.Run.SourceOID)
 			if err != nil {

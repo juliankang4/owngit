@@ -15,6 +15,7 @@ import (
 
 	"owngit/internal/actions"
 	"owngit/internal/checksource"
+	"owngit/internal/repository"
 	"owngit/internal/state"
 	"owngit/internal/statepath"
 )
@@ -79,6 +80,9 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 		{"push files", "push", "", false, false, true, 3, nil, ""},
 		{"pull request files", "pull_request", "", false, false, false, 3, nil, ""},
 		{"dispatch one file", state.ActionsEventDispatch, ".github/workflows/a-ci.yml", false, false, false, 1, nil, ""},
+		{"dispatch imported head", state.ActionsEventDispatch, ".github/workflows/a-ci.yml", false, false, false, 0, nil, ""},
+		{"dispatch branch moved after selection", state.ActionsEventDispatch, ".github/workflows/a-ci.yml", false, false, false, 0, nil, ""},
+		{"dispatch branch deleted after selection", state.ActionsEventDispatch, ".github/workflows/a-ci.yml", false, false, false, 0, nil, ""},
 		{"scheduled file", state.ActionsEventSchedule, ".github/workflows/a-ci.yml", false, false, false, 1, nil, ""},
 		{"workflows off keeps JSON", "push", "", true, false, true, 0, nil, ""},
 		{"workflows off rejects dispatch", state.ActionsEventDispatch, ".github/workflows/a-ci.yml", true, false, false, 0, state.ErrActionsWorkflowsOff, ""},
@@ -110,7 +114,7 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 			if test.json {
 				files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"unit","command":"echo JSON"}]}`
 			}
-			oid := pushActionsFiles(fixture, files)
+			oid := pushActionsFiles(fixture, files, test.name != "dispatch imported head")
 			if test.off {
 				_, err := fixture.store.SetCheckPolicy(fixture.ctx, state.CheckPolicyInput{RepositoryID: fixture.repositoryID, Executor: state.CheckExecutorExternalRunner, RunWorkflows: new(false), AllowedEvents: []string{"push", "pull_request", state.ActionsEventDispatch, state.ActionsEventSchedule}, MaxTimeoutMS: 60_000, MaxOutputLimitBytes: 64 << 10, QueueLimit: 16, MaxActiveJobs: 4, MaxLeaseMS: 60_000}, time.Now().UTC())
 				noErr(t, err)
@@ -130,12 +134,41 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 			}
 			if test.event == state.ActionsEventDispatch {
 				event.Inputs = map[string]any{"dry_run": true}
+				switch test.name {
+				case "dispatch branch moved after selection":
+					fixture.git("-C", fixture.work, "commit", "--allow-empty", "-m", "Synthetic newer head")
+					fixture.git("-C", fixture.work, "push", fixture.repoPath, "HEAD:refs/heads/main")
+					fixture.noteOwnGitWrite()
+				case "dispatch branch deleted after selection":
+					fixture.git("-C", fixture.repoPath, "update-ref", "-d", "refs/heads/main")
+					fixture.noteOwnGitWrite()
+				}
+				if strings.HasPrefix(test.name, "dispatch branch ") {
+					pinned, err := fixture.coordinator.Repositories.PinRepository(fixture.ctx, fixture.repositoryID, oid, oid)
+					noErr(t, err)
+					called := false
+					err = pinned.WhileRefPresent(fixture.ctx, "refs/heads/main", oid, func() error { called = true; return nil })
+					if !errors.Is(err, repository.ErrPinnedRefMoved) || called {
+						t.Fatalf("final ref guard called=%v err=%v", called, err)
+					}
+				}
 			}
 			if test.event == state.ActionsEventSchedule {
 				when := time.Now().UTC()
 				event.ScheduledFor = &when
 			}
 			result, err := fixture.coordinator.AdmitEvent(fixture.ctx, event)
+			if test.name == "dispatch imported head" || strings.HasPrefix(test.name, "dispatch branch ") {
+				var refusal *actions.Refusal
+				code := "note.push_required"
+				if test.name != "dispatch imported head" {
+					code = "workflow.moved"
+				}
+				if !errors.As(err, &refusal) || refusal.Code != code || len(result.Runs) != 0 {
+					t.Fatalf("dispatch admission=%+v err=%v, want %s", result, err, code)
+				}
+				return
+			}
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("admission=%+v err=%v, want %v", result, err, test.wantErr)
 			}
@@ -178,8 +211,11 @@ func TestCoordinatorAdmitEvent(t *testing.T) {
 					if test.event == state.ActionsEventDispatch && plan.Context.Inputs["dry_run"] != true {
 						t.Fatalf("typed inputs=%v", plan.Context.Inputs)
 					}
-					if test.event == "pull_request" && (plan.Context.GitHub.Event.Action != "opened" || plan.Context.GitHub.HeadRef != "feature") {
+					if test.event == "pull_request" && (plan.Context.GitHub.Event.Action != "opened" || plan.Context.GitHub.HeadRef != "feature" || plan.Context.GitHub.Ref != "refs/pull/1/head" || plan.Context.GitHub.RefName != "1/head" || plan.Context.GitHub.BaseRef != "main") {
 						t.Fatalf("PR context=%+v", plan.Context.GitHub)
+					}
+					if test.event != "pull_request" && (plan.Context.GitHub.Ref != "refs/heads/main" || plan.Context.GitHub.RefName != "main") {
+						t.Fatalf("branch event context=%+v", plan.Context.GitHub)
 					}
 					if job.JobKey == "after" && job.Status != "waiting" {
 						t.Fatalf("dependent=%+v", job)
@@ -260,7 +296,7 @@ func TestCoordinatorRerunActionsRun(t *testing.T) {
 			}
 			plan, err := actions.DecodePlan(encoded, jobs[0].PlanDigest)
 			noErr(t, err)
-			if plan.Context.GitHub.Event.Action != test.action || plan.Context.GitHub.HeadRef != event.HeadRef {
+			if plan.Context.GitHub.Event.Action != test.action || plan.Context.GitHub.HeadRef != event.HeadRef || plan.Context.GitHub.Ref != fmt.Sprintf("refs/pull/%d/head", pr.Number) || plan.Context.GitHub.RefName != fmt.Sprintf("%d/head", pr.Number) {
 				t.Fatalf("rerun PR context=%+v, want action=%s head=%s", plan.Context.GitHub, test.action, event.HeadRef)
 			}
 		})
@@ -473,6 +509,7 @@ func TestCoordinatorHostActions(t *testing.T) {
 		{"step outputs", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - id: source\n        run: echo 'answer=ready' >> \"$GITHUB_OUTPUT\"\n      - env:\n          ANSWER: ${{ steps.source.outputs.answer }}\n        run: test \"$ANSWER\" = ready && echo OUTPUT_READY\n", "passed", "OUTPUT_READY", 1, false, false, ""},
 		{"tracked source change before builtin", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo changed > .github/workflows/ci.yml\n          echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, false, ""},
 		{"all skipped", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: false\n        run: echo MUST_NOT_RUN\n", "skipped", "", 1, false, false, ""},
+		{"pull request ref and guarded step", "on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.ref == 'refs/heads/main'\n        run: echo MUST_NOT_RUN\n      - run: printenv GITHUB_REF\n", "passed", "refs/pull/7/head", 1, false, false, ""},
 		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false, false, ""},
 		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true, false, ""},
 		{"control character source", simpleWorkflow, "unavailable", "", 2, false, false, "unsafe/bell\a.txt"},
@@ -535,7 +572,12 @@ func TestCoordinatorHostActions(t *testing.T) {
 				files[".github/workflows/extra.yml"] = simpleWorkflow
 			}
 			oid := pushActionsFiles(fixture, files)
-			result, err := fixture.coordinator.AdmitEvent(fixture.ctx, EventRequest{RepositoryID: fixture.repositoryID, Event: "push", SourceOID: oid, TriggerRef: "main"})
+			event := EventRequest{RepositoryID: fixture.repositoryID, Event: "push", SourceOID: oid, TriggerRef: "main"}
+			if test.name == "pull request ref and guarded step" {
+				event.Event, event.BaseOID, event.PullRequestNumber, event.HeadRef, event.Action = "pull_request", oid, 7, "feature", "opened"
+				event.EventKey = fmt.Sprintf("pr/7/%s/%s", oid, oid)
+			}
+			result, err := fixture.coordinator.AdmitEvent(fixture.ctx, event)
 			noErr(t, err)
 			workspace, err := checksource.AcquireWorkspaceRoot(filepath.Join(t.TempDir(), "jobs"))
 			noErr(t, err)

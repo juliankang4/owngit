@@ -83,18 +83,20 @@ func TestActionsPullRequestAction(t *testing.T) {
 
 func TestAdmitCheckEvent(t *testing.T) {
 	for _, test := range []struct {
-		name, event  string
-		queue        int
-		json         bool
-		stale, fault bool
-		outcomes     []string
-		mutate       func(*ActionsRunRequest)
-		note         bool
-		authority    bool
+		name, event                 string
+		queue                       int
+		json                        bool
+		stale, fault, dropAuthority bool
+		outcomes                    []string
+		mutate                      func(*ActionsRunRequest)
+		note                        bool
+		authority                   bool
 	}{
 		{name: "push", event: "push", queue: 4, json: true, outcomes: []string{"", ""}},
 		{name: "pull request", event: "pull_request", queue: 4, outcomes: []string{"", ""}},
 		{name: "dispatch", event: ActionsEventDispatch, queue: 4, outcomes: []string{"", ""}},
+		{name: "dispatch authority removed before transaction", event: ActionsEventDispatch, queue: 4, dropAuthority: true},
+		{name: "dispatch authority on different ref", event: ActionsEventDispatch, queue: 4, dropAuthority: true},
 		{name: "schedule", event: ActionsEventSchedule, queue: 4, outcomes: []string{"", ""}},
 		{name: "JSON gets first queue slot", event: "push", queue: 2, json: true, outcomes: []string{"", "not_run"}},
 		{name: "never fits", event: "push", queue: 1, outcomes: []string{"refused", ""}},
@@ -156,8 +158,20 @@ func TestAdmitCheckEvent(t *testing.T) {
 			noErr(t, fixture.store.RecordAcceptedActionsPushes(ctx, "project", []AcceptedActionsPush{{Ref: "refs/heads/main", NewOID: first.Run.SourceOID}}, fixture.now))
 			pushes, err := fixture.store.PendingAcceptedActionsPushes(ctx, "project", 1)
 			noErr(t, err)
+			if test.dropAuthority {
+				noErr(t, fixture.store.Exec(ctx, `DELETE FROM actions_accepted_pushes WHERE repository_id=?`, "project"))
+				if test.name == "dispatch authority on different ref" {
+					noErr(t, fixture.store.RecordAcceptedActionsPushes(ctx, "project", []AcceptedActionsPush{{Ref: "refs/heads/other", NewOID: first.Run.SourceOID}}, fixture.now))
+				}
+			}
 			result, err := fixture.store.AdmitCheckEvent(ctx, "project", expected, jsonRequest, []ActionsRunRequest{first, second}, fixture.now, pushes[0].Sequence)
-			if test.stale || test.fault || test.authority {
+			if test.stale || test.fault || test.authority || test.dropAuthority {
+				if test.dropAuthority {
+					var refusal *actions.Refusal
+					if !errors.As(err, &refusal) || refusal.Code != "note.push_required" || len(result.Runs) != 0 {
+						t.Fatalf("dispatch without exact authority: result=%+v err=%v", result, err)
+					}
+				}
 				if err == nil {
 					t.Fatal("invalid event was accepted")
 				}

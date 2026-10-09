@@ -16,6 +16,7 @@ var (
 	ErrPinnedObjectUnavailable = errors.New("pinned Git object is unavailable")
 	ErrPinnedRepositoryChanged = errors.New("pinned repository storage changed")
 	ErrPinnedRepositoryBusy    = errors.New("pinned repository is busy")
+	ErrPinnedRefMoved          = errors.New("pinned repository ref moved or was deleted")
 	ErrPinnedOutputLimit       = errors.New("pinned Git output exceeded its limit")
 	// ErrPinnedBlobTooLarge reports that this server cannot read the exact
 	// object without a Git process that may not fit in the memory it gives
@@ -470,10 +471,40 @@ func (p *PinnedRepository) oid(side PinnedSide) (string, error) {
 // cleanup already removed its source. record must not take the repository
 // lock.
 func (p *PinnedRepository) WhilePresent(ctx context.Context, record func() error) error {
+	return p.whilePresent(ctx, "", "", record)
+}
+
+// WhileRefPresent verifies an exact full branch ref under the same read lock
+// that protects the admission callback from OwnGit repository writers.
+func (p *PinnedRepository) WhileRefPresent(ctx context.Context, ref, oid string, record func() error) error {
+	if !strings.HasPrefix(ref, "refs/heads/") || !isOID(oid) || oid != p.headOID {
+		return ErrPinnedRefMoved
+	}
+	return p.whilePresent(ctx, ref, oid, record)
+}
+
+func (p *PinnedRepository) whilePresent(ctx context.Context, ref, oid string, record func() error) error {
 	return p.withReadLock(ctx, func(repositoryPath string) error {
-		for _, oid := range []string{p.baseOID, p.headOID} {
-			if err := verifyPinnedCommit(ctx, p.manager.Git, repositoryPath, oid); err != nil {
+		for _, pinnedOID := range []string{p.baseOID, p.headOID} {
+			if err := verifyPinnedCommit(ctx, p.manager.Git, repositoryPath, pinnedOID); err != nil {
 				return fmt.Errorf("verify pinned commit: %w", err)
+			}
+		}
+		if ref != "" {
+			result, err := p.manager.Git.Run(ctx, repositoryPath, nil, "--git-dir", ".", "for-each-ref", "--format=%(refname)%00%(objectname)", ref)
+			if err != nil {
+				return fmt.Errorf("verify pinned ref: %w", err)
+			}
+			matched := false
+			for _, line := range strings.Split(strings.TrimSuffix(string(result.Stdout), "\n"), "\n") {
+				name, currentOID, ok := strings.Cut(line, "\x00")
+				if name == ref {
+					matched = ok && currentOID == oid
+					break
+				}
+			}
+			if !matched {
+				return ErrPinnedRefMoved
 			}
 		}
 		return record()

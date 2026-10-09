@@ -33,6 +33,8 @@ func workflowCLIFixture(t *testing.T) (*configuredCheckCLIFixture, []string) {
 	runPRGit(t, work, "commit", "-m", "synthetic workflow")
 	runPRGit(t, work, "push", filepath.Join(fixture.root, "repositories", fixture.repository.ID+".git"), "HEAD:refs/heads/main")
 	fixture.sourceOID = prGitOutput(t, work, "rev-parse", "HEAD")
+	runPRGit(t, work, "push", filepath.Join(fixture.root, "repositories", fixture.repository.ID+".git"), "HEAD:refs/heads/imported")
+	noErr(t, fixture.store.RecordAcceptedActionsPushes(context.Background(), fixture.repository.ID, []state.AcceptedActionsPush{{Ref: "refs/heads/main", NewOID: fixture.sourceOID}}, time.Now()))
 	input := checkapi.PolicyInput{Executor: state.CheckExecutorExternalRunner, AllowedEvents: []string{state.ActionsEventDispatch}, MaxTimeoutMS: 600000, MaxOutputLimitBytes: 65536, QueueLimit: 16, MaxActiveJobs: 1, MaxLeaseMS: 60000, RunWorkflows: new(true)}
 	content, err := json.Marshal(input)
 	noErr(t, err)
@@ -70,6 +72,7 @@ func TestWorkflowCLI(t *testing.T) {
 		{name: "missing raw log", command: workflowRunCommand, args: []string{"log", "--run", admitted.Run.ID, "--job", admitted.Jobs[0].Job.ID}, code: "check_log_missing"},
 		{name: "unknown run", command: workflowRunCommand, args: []string{"show", "--run", strings.Repeat("0", 32)}, code: "workflow.run_not_found"},
 		{name: "moved dispatch", command: workflowCommand, args: []string{"dispatch", "--path", ".github/workflows/ci.yml", "--expected-oid", strings.Repeat("a", 40)}, code: "workflow.moved"},
+		{name: "imported dispatch", command: workflowCommand, args: []string{"dispatch", "--path", ".github/workflows/ci.yml", "--ref", "imported", "--expected-oid", fixture.sourceOID}, code: "note.push_required"},
 		{name: "unknown input", command: workflowCommand, args: []string{"dispatch", "--path", ".github/workflows/ci.yml", "--input", "unknown=value"}, code: "workflow.dispatch_input"},
 		{name: "duplicate input", command: workflowCommand, args: []string{"dispatch", "--path", ".github/workflows/ci.yml", "--input", "enabled=true", "--input", "enabled=false"}, code: "invalid_arguments"},
 		{name: "cancel", command: workflowRunCommand, args: []string{"cancel", "--run", admitted.Run.ID}, contains: "cancelled"},
@@ -169,6 +172,7 @@ func TestWorkflowMCP(t *testing.T) {
 		{tool: "workflow_job_log", arguments: map[string]any{"run": admitted.Run.ID, "job": admitted.Jobs[0].Job.ID}, code: "check_log_missing"},
 		{tool: "workflow_run_show", arguments: map[string]any{"run": strings.Repeat("0", 32)}, code: "workflow.run_not_found"},
 		{tool: "workflow_dispatch", arguments: map[string]any{"path": ".github/workflows/ci.yml", "expected_oid": strings.Repeat("a", 40)}, code: "workflow.moved"},
+		{tool: "workflow_dispatch", arguments: map[string]any{"path": ".github/workflows/ci.yml", "ref": "imported", "expected_oid": fixture.sourceOID}, code: "note.push_required"},
 		{tool: "workflow_dispatch", arguments: map[string]any{"path": ".github/workflows/ci.yml", "inputs": map[string]any{"unknown": "value"}}, code: "workflow.dispatch_input"},
 		{tool: "workflow_list", arguments: map[string]any{"run": admitted.Run.ID}, code: "invalid_arguments"},
 		{tool: "workflow_run_cancel", arguments: map[string]any{"run": admitted.Run.ID}, contains: "cancelled"},

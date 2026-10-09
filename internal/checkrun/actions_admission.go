@@ -123,6 +123,26 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 	if !contains(policy.AllowedEvents, request.Event) {
 		return state.CheckEventAdmission{}, nil
 	}
+	if request.Event == state.ActionsEventDispatch {
+		ref := "refs/heads/" + request.TriggerRef
+		currentRef, currentOID, err := coordinator.Repositories.ResolveRef(ctx, request.RepositoryID, ref)
+		if errors.Is(err, repository.ErrNotFound) {
+			return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "workflow.moved", Detail: "The branch moved. Check the new commit and run it again."}}
+		}
+		if err != nil {
+			return state.CheckEventAdmission{}, err
+		}
+		if currentRef != ref || currentOID != request.SourceOID {
+			return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "workflow.moved", Detail: "The branch moved. Check the new commit and run it again."}}
+		}
+		accepted, err := coordinator.Store.AcceptedActionsScheduleSource(ctx, request.RepositoryID, ref, currentOID)
+		if err != nil {
+			return state.CheckEventAdmission{}, err
+		}
+		if !accepted {
+			return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "note.push_required", Detail: "This branch revision has no retained accepted OwnGit push. Push the branch to OwnGit to run its workflows."}}
+		}
+	}
 	pinned, err := coordinator.Repositories.PinRepository(ctx, request.RepositoryID, request.SourceOID, request.SourceOID)
 	if err != nil {
 		return state.CheckEventAdmission{}, fmt.Errorf("pin check event source: %w", err)
@@ -174,11 +194,19 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 	if request.Event == state.ActionsEventSchedule {
 		return coordinator.admitPlannedSchedule(ctx, policy, request, runs)
 	}
-	err = pinned.WhilePresent(ctx, func() error {
+	record := func() error {
 		var err error
 		result, err = coordinator.Store.AdmitCheckEvent(ctx, request.RepositoryID, state.ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, jsonJob, runs, time.Now().UTC(), request.AcceptedPushSequence)
 		return err
-	})
+	}
+	if request.Event == state.ActionsEventDispatch {
+		err = pinned.WhileRefPresent(ctx, "refs/heads/"+request.TriggerRef, request.SourceOID, record)
+	} else {
+		err = pinned.WhilePresent(ctx, record)
+	}
+	if errors.Is(err, repository.ErrPinnedRefMoved) {
+		return state.CheckEventAdmission{}, &actions.Refusal{Message: actions.Message{Code: "workflow.moved", Detail: "The branch moved. Check the new commit and run it again."}}
+	}
 	if err != nil {
 		return result, err
 	}
@@ -363,6 +391,8 @@ func eventPlanContext(event EventRequest, workflow *actions.Workflow) (actions.P
 	github := actions.GitHubContext{SHA: event.SourceOID, Ref: "refs/heads/" + event.TriggerRef, RefName: event.TriggerRef, RefType: "branch", EventName: event.Event, Repository: event.RepositoryID, Actor: event.Actor.Kind, TriggeringActor: event.Actor.Kind}
 	context := actions.PlanContext{GitHub: github}
 	if event.Event == checkworkflow.EventPullRequest {
+		context.GitHub.Ref = fmt.Sprintf("refs/pull/%d/head", event.PullRequestNumber)
+		context.GitHub.RefName = fmt.Sprintf("%d/head", event.PullRequestNumber)
 		context.GitHub.HeadRef, context.GitHub.BaseRef = event.HeadRef, event.TriggerRef
 		context.GitHub.Event = actions.GitHubEvent{Action: event.Action, Number: event.PullRequestNumber, PullRequest: &actions.PullRequestContext{Number: event.PullRequestNumber, Head: actions.RefContext{Ref: event.HeadRef, SHA: event.SourceOID}, Base: actions.RefContext{Ref: event.TriggerRef, SHA: event.BaseOID}}}
 	}
