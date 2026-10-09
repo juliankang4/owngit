@@ -15,6 +15,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 		Chrome:  chrome,
 		Repo:    basePage.Repo,
 		Tabs:    repositoryTabs(basePage, webui.RepoTabChecks),
+		Nav:     checksNav(stored.Address, webui.ChecksSectionTasks),
 		ListURL: basePage.TasksURL,
 	}
 	// Both links are offered to every viewer. The routes they open are
@@ -56,7 +57,7 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 				return
 			}
 			detail := &webui.TaskDetail{Task: browserTaskSummary(stored.Address, task), AttemptsTruncated: more}
-			detail.Task.Evidence = &evidence
+			detail.Task.Evidence = app.browserEvidenceLanes(request.Context(), stored.ID, stored.Address, evidence)
 			for _, attempt := range attempts {
 				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(request.Context(), attempt))
 			}
@@ -96,7 +97,7 @@ func (app *App) browserTaskSummaries(ctx context.Context, views []taskView) []we
 	summaries := make([]webui.TaskSummary, 0, len(views))
 	for _, view := range views {
 		summary := browserTaskSummary(view.address, view.task)
-		summary.Evidence = &view.evidence
+		summary.Evidence = app.browserEvidenceLanes(ctx, view.task.RepositoryID, view.address, view.evidence)
 		if view.hasLatest {
 			summary.Latest = app.browserAttemptRecord(ctx, view.latest)
 		}

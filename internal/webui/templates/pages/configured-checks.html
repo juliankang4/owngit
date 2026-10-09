@@ -152,10 +152,24 @@
             <ul class="ccinline">
               {{if $policy.AllowsPush}}<li>{{bi $lang "cc.state.event_push"}}</li>{{end}}
               {{if $policy.AllowsPullRequest}}<li>{{bi $lang "cc.state.event_pull_request"}}</li>{{end}}
+              {{if $policy.AllowsDispatch}}<li>{{bi $lang "cc.state.event_dispatch"}}</li>{{end}}
+              {{if $policy.AllowsSchedule}}<li>{{bi $lang "cc.state.event_schedule"}}</li>{{end}}
             </ul>
           {{else}}<span class="ccstatus__none">{{bi $lang "cc.state.not_chosen"}}</span>{{end}}
         </dd>
       </div>
+      {{if $policy.Saved}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "cc.state.workflows"}}</dt>
+        <dd>{{if $policy.RunWorkflows}}{{bi $lang "cc.value.on"}}{{else}}{{bi $lang "cc.value.off"}}{{end}}{{with $p.WorkflowsURL}} <a class="ccstatus__sub wflink" href="{{.}}">{{bi $lang "wf.files.title"}}</a>{{end}}</dd>
+      </div>
+      {{end}}
+      {{with $p.SecretsURL}}
+      <div class="ccstatus__row">
+        <dt>{{bi $lang "wf.secrets.title"}}</dt>
+        <dd><a class="wflink" href="{{.}}">{{bi $lang "wf.secrets.open"}}</a></dd>
+      </div>
+      {{end}}
       {{with $p.CheckFile}}{{if .State}}
       <div class="ccstatus__row">
         <dt>{{bi $lang "cc.state.file"}}</dt>
@@ -326,6 +340,15 @@
             <input type="checkbox" name="event_pull_request" value="1"{{if $f.PullRequestSelected}} checked{{end}}>
             <span class="check__t">{{bi $lang "cc.policy.events.pull_request"}}</span>
           </label>
+          <label class="check ccworkflow-event">
+            <input type="checkbox" name="event_workflow_dispatch" value="1"{{if $f.DispatchSelected}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.events.dispatch"}}</span>
+          </label>
+          <label class="check ccworkflow-event">
+            <input type="checkbox" name="event_schedule" value="1"{{if $f.ScheduleSelected}} checked{{end}}>
+            <span class="check__t">{{bi $lang "cc.policy.events.schedule"}}</span>
+          </label>
+          <p class="f__help">{{bi $lang "cc.policy.events.workflow_help"}}</p>
           <p class="f__help">{{bi $lang "cc.policy.events.help"}}</p>
         </fieldset>
       </section>

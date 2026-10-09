@@ -114,6 +114,10 @@ func triggerName(trigger string) MessageCode {
 		return MsgCCTriggerPush
 	case CheckEventPullRequest:
 		return MsgCCTriggerPR
+	case CheckEventDispatch:
+		return "cc.state.event_dispatch"
+	case CheckEventSchedule:
+		return "cc.state.event_schedule"
 	default:
 		return MsgEvidenceUnknownState
 	}

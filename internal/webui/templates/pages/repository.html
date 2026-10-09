@@ -47,8 +47,9 @@
     <div class="facts__i">
       <dt>{{bi $lang "repo.overview.default_check"}}</dt>
       <dd>{{if not $o.DefaultCheckKnown}}{{icon "slash"}}<span class="facts__sub">{{bi $lang "repo.overview.unreadable"}}</span>
-          {{else if $o.HasDefaultCheck}}{{template "stateChip" dict "Lang" $lang "S" (recordState $o.DefaultCheck)}}
-            {{if $p.TasksURL}}<a class="mono facts__sub" href="{{$p.TasksURL}}">{{$o.DefaultCheck.RevisionShortOID}}</a>{{else}}<span class="mono facts__sub">{{$o.DefaultCheck.RevisionShortOID}}</span>{{end}}
+          {{else if $o.Evidence.Recorded}}{{template "stateChip" dict "Lang" $lang "S" (workflowState $o.Evidence.Conclusion)}}
+            {{if $p.TasksURL}}<a class="mono facts__sub" href="{{$p.TasksURL}}">{{$o.Evidence.RevisionShortOID}}</a>{{else}}<span class="mono facts__sub">{{$o.Evidence.RevisionShortOID}}</span>{{end}}
+            {{if $o.Evidence.WorkflowsTotal}}{{if and $p.TasksURL $o.RunsURL}}<a class="facts__sub wflink" href="{{$o.RunsURL}}">{{biCount $lang "workflow" $o.Evidence.WorkflowsTotal}}</a>{{else}}<span class="facts__sub">{{biCount $lang "workflow" $o.Evidence.WorkflowsTotal}}</span>{{end}}{{end}}
           {{else}}{{template "stateChip" dict "Lang" $lang "S" (attemptState "absent")}}{{end}}</dd>
     </div>
     {{end}}

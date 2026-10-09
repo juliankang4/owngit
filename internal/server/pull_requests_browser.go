@@ -101,7 +101,7 @@ func (app *App) pullRequestRow(address string, view *pullrequest.View) webui.Pul
 		State:     view.State,
 		Source:    browserRevision(view.Source),
 		Target:    browserRevision(view.Target),
-		Checks:    browserCheckEvidence(address, view.Checks),
+		Checks:    browserCheckEvidence(address, view.Checks, func(string) string { return "" }),
 		Review:    browserReviewEvidence(view.Review, view.Source, view.Target),
 		CreatedAt: view.CreatedAt,
 		UpdatedAt: view.UpdatedAt,
@@ -394,7 +394,7 @@ func (app *App) renderPullRequest(writer http.ResponseWriter, request *http.Requ
 		State:     view.State,
 		Source:    browserRevision(view.Source),
 		Target:    browserRevision(view.Target),
-		Checks:    browserCheckEvidence(stored.Address, view.Checks),
+		Checks:    browserCheckEvidence(stored.Address, view.Checks, app.staleRunOID(request.Context(), stored.ID)),
 		Review:    browserReviewEvidence(view.Review, view.Source, view.Target),
 		Merge:     browserMergeAvailability(view.MergeEligibility),
 		SelfURL:   self,
@@ -567,13 +567,12 @@ func browserRevision(revision pullrequest.Revision) webui.RevisionState {
 	}
 }
 
-func browserCheckEvidence(address string, checks pullrequest.Checks) webui.CheckEvidence {
-	revisionEvidence := checks.Evidence
+func browserCheckEvidence(address string, checks pullrequest.Checks, staleOID func(runID string) string) webui.CheckEvidence {
+	revisionEvidence, admission := checks.Evidence, checks.AdmissionNote
 	if checks.DisplayChecks != nil {
 		checks = *checks.DisplayChecks
 	}
 	evidence := webui.CheckEvidence{
-		Evidence:             revisionEvidence,
 		Status:               checks.Status,
 		Configured:           checks.Configured,
 		Passed:               checks.Passed,
@@ -606,6 +605,16 @@ func browserCheckEvidence(address string, checks pullrequest.Checks) webui.Check
 	evidence.CredentialProvenance = browserProvenance(checks.JobID, checks.CredentialID, checks.ExecutionScope)
 	if checks.TaskID != "" {
 		evidence.AttemptURL = tasksURL(address, checks.TaskID)
+	}
+	if revisionEvidence != nil {
+		evidence.Evidence = evidenceLanes(address, *revisionEvidence, staleOID)
+	}
+	if admission != nil {
+		if evidence.Evidence == nil {
+			evidence.Evidence = &webui.EvidenceLanes{}
+		}
+		note := workflowMessage(*admission)
+		evidence.Evidence.AdmissionNote = &note
 	}
 	return evidence
 }

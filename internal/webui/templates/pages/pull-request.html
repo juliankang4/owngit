@@ -91,9 +91,9 @@
   <div class="evsum">
     {{template "evidenceRow" dict "Lang" $lang
         "Key" "evidence.checks.title"
-        "State" (checkState $p.Checks)
-        "Relevance" (checkRelevance $p.Checks)
-        "Summary" (prCheckSummary $p.Checks)}}
+        "State" (prChecksState $p.Checks)
+        "Relevance" (prChecksRelevance $p.Checks)
+        "Summary" (prChecksSummary $p.Checks)}}
 
     {{/* "Review" rather than "human review". OwnGit records who a reviewer
          says they are, not that a person wrote it, and the notes under the
@@ -120,6 +120,12 @@
         {{template "checkEvidence" dict "Lang" $lang "E" $p.Checks "Now" $now}}
         {{template "reviewEvidence" dict "Lang" $lang "E" $p.Review}}
       </div>
+      {{with $p.Checks.Evidence}}{{if or .HasWorkflows .AdmissionNote}}
+      <section class="ev" {{biAttr $lang "aria-label" "wf.nav.workflows"}}>
+        <h3 class="ev__h">{{bi $lang "wf.nav.workflows"}}</h3>
+        {{template "evidenceLanes" dict "Lang" $lang "E" .}}
+      </section>
+      {{end}}{{end}}
     </div>
   </details>
 

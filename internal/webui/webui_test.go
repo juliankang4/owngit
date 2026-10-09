@@ -691,6 +691,9 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 			SubmitURL: "/repositories/r1/share-links", Form: ShareLinkForm{Scope: "browse", Expiry: ShareExpiryDefault},
 			Links: []ShareLinkRow{{ID: "link1", ShortID: "link1", Label: "Review", Scope: "browse", State: "active", CreatedAt: testNow}}}
 		pages["share-password"] = SharePasswordPage{Chrome: Chrome{Lang: lang, Now: testNow, CurrentURL: "/setup", CSRF: "csrf-token-value"}, SubmitURL: "/share/link1/"}
+		for name, page := range workflowPages(c) {
+			pages[name] = page
+		}
 		for name, page := range pages {
 			seen[page.page()] = true
 			t.Run(string(lang)+"/"+name, func(t *testing.T) {

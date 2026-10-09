@@ -7,6 +7,7 @@
 </div>
 
 <div class="rpane">
+{{template "checksNav" dict "Lang" $lang "N" $p.Nav}}
 {{if $p.Detail}}
   {{/* One opened task. Its budget belongs to the task rather than to any
        revision, so moving to new code does not buy more attempts. */}}
@@ -46,6 +47,16 @@
       <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "tasks.exhausted_help"}}</span></p>
     {{end}}
   </div>
+
+  {{with .Task.Evidence}}
+  <section class="sec">
+    <div class="sec__bar">
+      <h2>{{bi $lang "wf.task.evidence"}}{{with .RevisionShortOID}} <span class="mono">{{.}}</span>{{end}}</h2>
+      {{if .Recorded}}{{template "stateChip" dict "Lang" $lang "S" (workflowState .Conclusion)}}{{end}}
+    </div>
+    {{template "evidenceLanes" dict "Lang" $lang "E" .}}
+  </section>
+  {{end}}
 
   <section class="sec">
     <div class="sec__bar">
@@ -129,7 +140,15 @@
             {{/* A task with no run yet shows the absence rather than an
                  empty slot that could be read as a pass. */}}
             <span class="taskrow__e">
-              {{if .HasAttempt}}
+              {{if .Evidence}}
+                {{if .Evidence.Recorded}}
+                  {{template "stateChip" dict "Lang" $lang "S" (workflowState .Evidence.Conclusion)}}
+                  <span class="mono">{{.Evidence.RevisionShortOID}}</span>
+                  {{if .Evidence.WorkflowsTotal}}<span>{{biCount $lang "workflow" .Evidence.WorkflowsTotal}}</span>{{end}}
+                {{else}}
+                  {{template "stateChip" dict "Lang" $lang "S" (attemptState "absent")}}
+                {{end}}
+              {{else if .HasAttempt}}
                 {{template "stateChip" dict "Lang" $lang "S" (recordState .Latest)}}
                 <span class="mono">{{.Latest.RevisionShortOID}}</span>
               {{else}}

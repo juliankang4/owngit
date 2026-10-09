@@ -93,6 +93,10 @@ func sidebarOf(page Page) Sidebar {
 		return inRepo(p.Repo, p.Tabs)
 	case TasksPage:
 		return inRepo(p.Repo, p.Tabs)
+	case WorkflowsPage:
+		return inRepo(p.Repo, p.Tabs)
+	case WorkflowSecretsPage:
+		return inRepo(p.Repo, p.Tabs)
 	case HelperCredentialsPage:
 		return inRepo(p.Repo, p.Tabs)
 	case ConfiguredChecksPage:

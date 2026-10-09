@@ -37,6 +37,8 @@ var pageHelpers = map[string][]string{
 	"new-pull-request":    {"diff", "evidence"},
 	"pull-request":        {"diff", "evidence"},
 	"tasks":               {"evidence"},
+	"workflows":           {"evidence"},
+	"workflow-secrets":    nil,
 	"helper-credentials":  nil,
 	"configured-checks":   {"configured-checks", "evidence"},
 	"runner-credentials":  nil,
@@ -320,6 +322,10 @@ func documentTitle(page Page, lang Lang) string {
 		section = pullRequestTitle(p)
 	case TasksPage:
 		section = scopedTitle(lang, MsgTasksTitle, p.Repo.Name)
+	case WorkflowsPage:
+		section = scopedTitle(lang, workflowsTitle(p.View), p.Repo.Name)
+	case WorkflowSecretsPage:
+		section = scopedTitle(lang, "wf.secrets.title", p.Repo.Name)
 	case HelperCredentialsPage:
 		section = scopedTitle(lang, MsgHelperTitle, p.Repo.Name)
 	case ConfiguredChecksPage:
@@ -392,6 +398,10 @@ func canonicalURL(page Page, chrome Chrome) string {
 		return firstURL(p.SelfURL, chrome.CurrentURL)
 	case ImportPage:
 		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case WorkflowsPage:
+		return firstURL(p.SelfURL, chrome.CurrentURL)
+	case WorkflowSecretsPage:
+		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	case NewImportPage:
 		return firstURL(p.SubmitURL, chrome.CurrentURL)
 	// Both administrator screens answer their forms on the POST route.

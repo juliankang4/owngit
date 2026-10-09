@@ -184,6 +184,15 @@ func templateFuncs() template.FuncMap {
 		"hasPrefix":              strings.HasPrefix,
 		"add":                    func(a, b int) int { return a + b },
 		"sub":                    func(a, b int) int { return a - b },
+		"workflowState":          workflowState,
+		"verdictState":           verdictState,
+		"switchState":            switchState,
+		"wfMessage":              biWorkflowMessage,
+		"wfCode":                 workflowCode,
+		"forSecret":              forSecret,
+		"prChecksState":          prChecksState,
+		"prChecksRelevance":      prChecksRelevance,
+		"prChecksSummary":        prChecksSummary,
 	}
 }
 
@@ -643,6 +652,10 @@ var countedNouns = map[string]countedForms{
 	"entry":      {one: "%s entry", many: "%s entries", korean: "항목 %s개"},
 	"finding":    {one: "%s finding", many: "%s findings", korean: "지적 %s건"},
 	"request":    {one: "%s request", many: "%s requests", korean: "요청 %s회"},
+	"step":       {one: "%s step", many: "%s steps", korean: "단계 %s개"},
+	"job":        {one: "%s job", many: "%s jobs", korean: "작업 %s개"},
+	"run":        {one: "%s run", many: "%s runs", korean: "실행 %s회"},
+	"workflow":   {one: "%s workflow", many: "%s workflows", korean: "워크플로 %s개"},
 }
 
 // countedNoun reports the stated forms for a noun. A template that counts

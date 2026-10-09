@@ -44,6 +44,7 @@ func PolicyChanges(before, after CheckPolicyView) []PolicyChange {
 	facts := []fact{
 		{MsgCCStateWhere, false, func(p CheckPolicyView) BiValue { return biCode(executorName(p.Executor)) }},
 		{MsgCCStateWhen, false, eventsValue},
+		{"cc.state.workflows", false, func(p CheckPolicyView) BiValue { return switchValue(p.RunWorkflows) }},
 	}
 	for _, limit := range policyLimitFields {
 		field := limit.Field
@@ -95,6 +96,12 @@ func eventsValue(p CheckPolicyView) BiValue {
 	}
 	if p.AllowsPullRequest() {
 		labels = append(labels, MsgCCStateEventPR)
+	}
+	if p.AllowsDispatch() {
+		labels = append(labels, "cc.state.event_dispatch")
+	}
+	if p.AllowsSchedule() {
+		labels = append(labels, "cc.state.event_schedule")
 	}
 	return joinCodes(labels)
 }

@@ -365,3 +365,43 @@
   <p class="ev__note">{{bi $lang (code .Empty)}}</p>
 {{end}}
 {{end}}
+
+{{define "checksNav"}}
+{{$lang := .Lang}}{{$n := .N}}
+{{if $n.WorkflowsURL}}
+<nav class="seg checksnav" {{biAttr $lang "aria-label" "wf.nav.label"}}>
+  <a class="seg__btn" href="{{$n.TasksURL}}"{{if eq $n.Active "tasks"}} aria-current="page"{{end}}>{{bi $lang "wf.nav.tasks"}}</a>
+  <a class="seg__btn" href="{{$n.WorkflowsURL}}"{{if eq $n.Active "workflows"}} aria-current="page"{{end}}>{{bi $lang "wf.nav.workflows"}}</a>
+  <a class="seg__btn" href="{{$n.RunsURL}}"{{if eq $n.Active "runs"}} aria-current="page"{{end}}>{{bi $lang "wf.nav.runs"}}</a>
+</nav>
+{{end}}
+{{end}}
+
+{{define "evidenceLanes"}}
+{{$lang := .Lang}}{{$e := .E}}
+<div class="lanes">
+  {{with $e.AdmissionNote}}<p class="ev__note">{{wfMessage $lang .}}</p>{{end}}
+  {{if not $e.Recorded}}
+    <p class="ev__note">{{bi $lang "wf.lanes.none"}}</p>
+  {{end}}
+  {{with $e.JSON}}
+  <div class="lane">
+    <span class="lane__k">{{bi $lang "wf.lanes.json"}}</span>
+    {{template "stateChip" dict "Lang" $lang "S" (workflowState .Conclusion)}}
+    {{if .URL}}<a class="lane__oid mono wflink" href="{{.URL}}">{{.ShortOID}}</a>{{else}}<span class="lane__oid mono">{{.ShortOID}}</span>{{end}}
+    {{if .Stale}}<span class="lane__stale">{{icon "clock"}}{{bi $lang "wf.lanes.stale"}}</span>{{end}}
+  </div>
+  {{end}}
+  {{range $e.Workflows}}
+  <div class="lane">
+    <a class="lane__k mono wflink" href="{{.URL}}" dir="auto">{{.WorkflowPath}}</a>
+    {{template "stateChip" dict "Lang" $lang "S" (workflowState .Conclusion)}}
+    <span class="lane__oid mono">{{.ShortOID}}</span>
+    {{if .Stale}}<span class="lane__stale">{{icon "clock"}}{{bi $lang "wf.lanes.stale"}}</span>{{end}}
+  </div>
+  {{end}}
+  {{if $e.WorkflowsTruncated}}
+    <p class="ev__note">{{biF $lang "wf.lanes.truncated" (printf "%d" (len $e.Workflows)) (printf "%d" $e.WorkflowsTotal)}}</p>
+  {{end}}
+</div>
+{{end}}

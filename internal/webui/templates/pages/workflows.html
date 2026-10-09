@@ -1,0 +1,451 @@
+{{define "body"}}
+{{$p := .Page}}{{$lang := .Lang}}
+
+<div class="rhead">
+  <h1 class="rhead__name">{{$p.Repo.Name}}</h1>
+  {{with $p.Repo.Description}}<p class="rhead__desc" dir="auto">{{.}}</p>{{end}}
+</div>
+
+<div class="rpane wfpane">
+  {{template "checksNav" dict "Lang" $lang "N" $p.Nav}}
+
+  {{with $p.Problem}}
+    <p class="ev__warn wfproblem" role="alert" tabindex="-1" autofocus>{{icon "warning"}}<span>{{wfMessage $lang .}}{{if and (eq .Code "wf.error.busy") $p.SelfURL}} <a class="wflink" href="{{$p.SelfURL}}">{{bi $lang "wf.retry"}}</a>{{end}}</span></p>
+  {{end}}
+
+  {{if $p.Unavailable}}
+    <p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "wf.unavailable"}}</span></p>
+  {{else if $p.NotFound}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "wf.not_found"}}</p>
+      <a class="btn" href="{{$p.Nav.RunsURL}}">{{bi $lang "wf.runs.back"}}</a>
+    </div>
+  {{else if and (eq $p.View "files") $p.Files}}{{template "wfFiles" .}}
+  {{else if and (eq $p.View "runs") $p.Runs}}{{template "wfRuns" .}}
+  {{else if and (eq $p.View "run") $p.Run}}{{template "wfRun" .}}
+  {{else if and (eq $p.View "job") $p.Job}}{{template "wfJob" .}}
+  {{else if and (eq $p.View "dispatch") $p.Dispatch}}{{template "wfDispatch" .}}
+  {{end}}
+</div>
+{{end}}
+
+{{define "wfFiles"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$v := $p.Files}}{{$n := .Chrome.Notices}}{{$csrf := .Chrome.CSRF}}
+<div class="phead">
+  <h1>{{bi $lang "wf.files.title"}}</h1>
+  <p>{{bi $lang "wf.files.intro"}}</p>
+</div>
+
+{{if $v.NoCommits}}
+  <div class="empty"><p class="empty__lead">{{bi $lang "wf.files.no_commits"}}</p></div>
+{{else}}
+<form class="wfbranch" method="get" action="{{$p.SelfURL}}">
+  <label for="wf-branch">{{bi $lang "wf.branch"}}</label>
+  <select id="wf-branch" name="ref">
+    {{range $v.Branches}}<option value="{{.}}"{{if eq . $v.Branch}} selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  <button type="submit" class="btn btn--sm">{{bi $lang "wf.branch.show"}}</button>
+  <span class="wfbranch__oid">{{bi $lang "wf.commit"}} <span class="mono">{{$v.ShortOID}}</span></span>
+</form>
+
+{{with $v.Status}}
+<section class="card wfstatus" aria-labelledby="wf-status-h" id="wf-status">
+  <div class="ev__head">
+    <h2 class="setblock__h" id="wf-status-h">{{bi $lang "wf.status.title"}}</h2>
+    {{template "stateChip" dict "Lang" $lang "S" (switchState .)}}
+  </div>
+  <ul class="wfevents" {{biAttr $lang "aria-label" "wf.status.events"}}>
+    {{range .Events}}
+      <li class="wfevent{{if not .Allowed}} wfevent--off{{end}}">{{if .Allowed}}{{icon "check"}}{{else}}{{icon "minus"}}{{end}}<span class="mono">{{.Event}}</span><span class="wfevent__s">{{if .Allowed}}{{bi $lang "wf.event.allowed"}}{{else}}{{bi $lang "wf.event.not_allowed"}}{{end}}</span></li>
+    {{end}}
+  </ul>
+  {{if .On}}
+    <p class="ev__note">{{bi $lang "wf.status.on_help"}}</p>
+  {{else}}
+    <p class="ev__warn">{{icon "warning"}}<span>{{wfMessage $lang (wfCode "workflow.off")}}</span></p>
+  {{end}}
+  <p class="wflinks">
+    {{with $v.AutomaticChecksURL}}<a href="{{.}}">{{bi $lang "cc.open"}}{{template "adminLock" dict "Lang" $lang "Locked" $.Chrome.Viewer.AdminAsks}}</a>{{end}}
+    {{with $v.SecretsURL}}<a href="{{.}}">{{bi $lang "wf.secrets.open"}}{{template "adminLock" dict "Lang" $lang "Locked" $.Chrome.Viewer.AdminAsks}}</a>{{end}}
+  </p>
+
+  {{with .Review}}
+  <div class="ccreview wfreview" role="region" aria-labelledby="wf-review-h">
+    <h3 class="ccmode__h" id="wf-review-h">{{bi $lang "wf.turnon.title"}}</h3>
+    {{if $v.Status.PolicySaved}}
+      <p>{{bi $lang "wf.turnon.saved_policy"}}</p>
+    {{else}}
+      <p>{{bi $lang "wf.turnon.first_policy"}}</p>
+    {{end}}
+    <dl class="kv">
+      <div><dt>{{bi $lang "cc.state.where"}}</dt><dd>{{bi $lang (executorName .Executor)}}</dd></div>
+      <div><dt>{{bi $lang "cc.state.when"}}</dt><dd class="mono">{{range $i, $e := .Events}}{{if $i}}, {{end}}{{$e}}{{end}}</dd></div>
+      <div><dt>{{bi $lang "wf.turnon.queue"}}</dt><dd>{{.QueueLimit}}</dd></div>
+      <div><dt>{{bi $lang "wf.turnon.workflows"}}</dt><dd>{{bi $lang "wf.status.on"}}</dd></div>
+    </dl>
+    <p class="ev__note">{{biF $lang "wf.turnon.counts" (printf "%d" .Run) (printf "%d" .Noted) (printf "%d" .Partial) (printf "%d" .Refused) (printf "%d" .NeverFits) (printf "%d" .Unknown)}}</p>
+    <p class="ev__note">{{bi $lang "wf.turnon.json_too"}}</p>
+    {{$act := "turn_on"}}
+    <form class="form form--inline" method="post" action="{{$p.SubmitURL}}">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <input type="hidden" name="action" value="turn_on">
+      <input type="hidden" name="review_digest" value="{{.Digest}}">
+      <input type="hidden" name="base_version" value="{{.BaseVersion}}">
+      <input type="hidden" name="base_digest" value="{{.BaseDigest}}">
+      <input type="hidden" name="ref" value="{{$v.Branch}}">
+      {{template "adminField" dict "Lang" $lang "Viewer" $.Chrome.Viewer "Notices" $n "Scope" $act "ID" "wf-turnon-password"}}
+      <button type="submit" class="btn btn--primary">{{bi $lang "wf.turnon.button"}}</button>
+    </form>
+  </div>
+  {{end}}
+</section>
+{{end}}
+
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "wf.files.list"}}</h2>
+    <span class="sec__n">{{biCount $lang "file" (len $v.Files)}}</span>
+  </div>
+  {{if $v.Files}}
+    <div class="wffiles">
+      {{range $v.Files}}{{template "wfFile" dict "Lang" $lang "F" .}}{{end}}
+    </div>
+  {{else}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "wf.files.none"}}</p>
+      <p>{{bi $lang "wf.files.none_help"}}</p>
+    </div>
+  {{end}}
+</section>
+{{end}}
+{{end}}
+
+{{define "wfFile"}}
+{{$lang := .Lang}}{{$f := .F}}
+<article class="card wffile">
+  <div class="ev__head">
+    <h3 class="setblock__h wfname" dir="auto">{{if $f.Name}}{{$f.Name}}{{else}}{{$f.Path}}{{end}}</h3>
+    {{template "stateChip" dict "Lang" $lang "S" (verdictState $f.Verdict)}}
+  </div>
+  <p class="wffile__path"><span class="mono" dir="auto">{{$f.Path}}</span>{{with $f.ShortOID}} <span class="mono wffile__oid">{{.}}</span>{{end}}</p>
+
+  {{with $f.Refusal}}<p class="ev__warn">{{icon "warning"}}<span>{{wfMessage $lang .}}</span></p>{{end}}
+  {{if $f.Notes}}<ul class="ev__notes">{{range $f.Notes}}<li>{{wfMessage $lang .}}</li>{{end}}</ul>{{end}}
+
+  {{if $f.Triggers}}
+  <div class="wfsub">
+    <h4 class="wfsub__h">{{bi $lang "wf.file.triggers"}}</h4>
+    <ul class="wftriggers">
+      {{range $f.Triggers}}
+      <li>
+        <span class="mono wftrigger__e">{{.Event}}</span>
+        {{if not .Allowed}}<span class="lane__stale">{{icon "minus"}}{{bi $lang "wf.event.not_allowed"}}</span>{{end}}
+        {{range .Filters}}<span class="wftrigger__f">{{bi $lang .Label}} <span class="mono" dir="auto">{{range $i, $v := .Values}}{{if $i}}, {{end}}{{$v}}{{end}}</span></span>{{end}}
+        {{range .Notes}}<span class="wftrigger__n">{{wfMessage $lang .}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  {{if $f.Schedules}}
+  <div class="wfsub">
+    <h4 class="wfsub__h">{{bi $lang "wf.file.schedules"}}</h4>
+    <ul class="wfsched">
+      {{range $f.Schedules}}
+      <li>
+        <span class="mono">{{.Cron}}</span>
+        {{if .Paused}}<span class="lane__stale">{{icon "stop"}}{{bi $lang "wf.schedule.paused"}}</span>
+        {{else}}<span>{{bi $lang "wf.schedule.next"}} {{biDateTime $lang .NextDueAt}} UTC</span>{{end}}
+        {{if notZero .LastAdmittedAt}}<span class="ev__sub">{{bi $lang "wf.schedule.last"}} {{if .LastRunURL}}<a class="wflink" href="{{.LastRunURL}}">{{biDateTime $lang .LastAdmittedAt}}</a>{{else}}{{biDateTime $lang .LastAdmittedAt}}{{end}}</span>{{end}}
+        {{range .Notes}}<span class="wftrigger__n">{{wfMessage $lang .}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  {{if $f.Inputs}}
+  <div class="wfsub">
+    <h4 class="wfsub__h">{{bi $lang "wf.file.inputs"}}</h4>
+    <ul class="wftriggers">
+      {{range $f.Inputs}}
+      <li>
+        <span class="mono wftrigger__e wfname">{{.Name}}</span>
+        <span class="mono wftrigger__f">{{.Type}}{{with .Options}} ({{range $i, $o := .}}{{if $i}}, {{end}}{{$o}}{{end}}){{end}}</span>
+        {{if .Required}}<span>{{bi $lang "wf.input.required"}}</span>{{end}}
+        {{if .Default}}<span class="wftrigger__f">{{bi $lang "wf.input.default"}} <span class="mono" dir="auto">{{.Default}}</span></span>{{end}}
+        {{with .Description}}<span class="wftrigger__n wfname" dir="auto">{{.}}</span>{{end}}
+      </li>
+      {{end}}
+    </ul>
+  </div>
+  {{end}}
+
+  {{if $f.Jobs}}
+  <div class="wfsub">
+    <h4 class="wfsub__h">{{bi $lang "wf.file.jobs"}}{{if $f.ExpansionKnown}} <span class="sec__n">{{biF $lang "wf.file.expanded" (printf "%d" $f.ExpandedJobs)}}</span>{{end}}</h4>
+    <div class="wfjobs">
+      {{range $f.Jobs}}
+      <div class="wfjob">
+        <div class="result__head">
+          {{template "stateChip" dict "Lang" $lang "S" (verdictState .Verdict)}}
+          <span class="result__n mono wfname" dir="auto">{{.Key}}</span>
+          {{with .Name}}<span class="result__x wfname" dir="auto">{{.}}</span>{{end}}
+        </div>
+        {{with .Refusal}}<p class="ev__warn">{{icon "warning"}}<span>{{wfMessage $lang .}}</span></p>{{end}}
+        <p class="wfjob__facts wfname">
+          {{with .RunsOn}}<span>{{bi $lang "wf.job.runs_on"}} <span class="mono" dir="auto">{{range $i, $r := .}}{{if $i}}, {{end}}{{$r}}{{end}}</span></span>{{end}}
+          {{with .Needs}}<span>{{bi $lang "wf.job.needs"}} <span class="mono" dir="auto">{{range $i, $r := .}}{{if $i}}, {{end}}{{$r}}{{end}}</span></span>{{end}}
+        </p>
+        {{if .Steps}}
+        <details class="disc">
+          <summary>{{biCount $lang "step" (len .Steps)}}</summary>
+          <ol class="wfsteps">
+            {{range .Steps}}<li><span class="result__n wfname" dir="auto">{{.Name}}</span>{{if .Command}} <span class="result__cmd mono" dir="auto">{{.Command}}</span>{{end}}</li>{{end}}
+          </ol>
+        </details>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  {{with $f.DispatchURL}}<p class="actions"><a class="btn" href="{{.}}">{{icon "terminal"}}{{bi $lang "wf.dispatch.open"}}</a></p>{{end}}
+</article>
+{{end}}
+
+{{define "wfRuns"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$now := .Chrome.Now}}{{$v := $p.Runs}}
+<div class="phead">
+  <h1>{{bi $lang "wf.runs.title"}}</h1>
+  <p>{{bi $lang "wf.runs.intro"}}</p>
+</div>
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "wf.runs.list"}}</h2>
+    {{if not $v.Truncated}}<span class="sec__n">{{biCount $lang "run" (len $v.Runs)}}</span>{{end}}
+  </div>
+  {{if $v.Runs}}
+    <div class="tasklist">
+      {{range $v.Runs}}
+      <a class="taskrow" href="{{.URL}}">
+        <span class="taskrow__t mono wfname" dir="auto">{{.WorkflowPath}}</span>
+        <span class="taskrow__s">{{template "stateChip" dict "Lang" $lang "S" (workflowState .Conclusion)}}</span>
+        <span class="taskrow__e"><span class="mono">{{.Event}}</span><span class="mono">{{.ShortOID}}</span></span>
+        <span class="taskrow__b">{{template "wfCounts" dict "Lang" $lang "C" .Counts}}</span>
+        <span class="taskrow__w">{{biRelative $lang $now .CreatedAt}}</span>
+      </a>
+      {{end}}
+    </div>
+    {{if $v.Truncated}}<p class="hm__warn">{{icon "warning"}}<span>{{biF $lang "wf.runs.truncated" (printf "%d" $v.Limit)}}</span></p>{{end}}
+  {{else}}
+    <div class="empty">
+      <p class="empty__lead">{{bi $lang "wf.runs.none"}}</p>
+      <p>{{bi $lang "wf.runs.none_help"}}</p>
+    </div>
+  {{end}}
+</section>
+{{end}}
+
+{{define "wfCounts"}}{{$lang := .Lang}}{{$c := .C}}{{biCount $lang "job" $c.Total}}{{if $c.Passed}}, {{biF $lang "wf.counts.passed" (printf "%d" $c.Passed)}}{{end}}{{if $c.Failed}}, {{biF $lang "wf.counts.failed" (printf "%d" $c.Failed)}}{{end}}{{if $c.Running}}, {{biF $lang "wf.counts.running" (printf "%d" $c.Running)}}{{end}}{{if or $c.Queued $c.Waiting}}, {{biF $lang "wf.counts.queued" (printf "%d" (add $c.Queued $c.Waiting))}}{{end}}{{if $c.Cancelled}}, {{biF $lang "wf.counts.cancelled" (printf "%d" $c.Cancelled)}}{{end}}{{if $c.Skipped}}, {{biF $lang "wf.counts.skipped" (printf "%d" $c.Skipped)}}{{end}}{{if $c.Incomplete}}, {{biF $lang "wf.counts.incomplete" (printf "%d" $c.Incomplete)}}{{end}}{{if $c.Refused}}, {{biF $lang "wf.counts.refused" (printf "%d" $c.Refused)}}{{end}}{{end}}
+
+{{define "wfRun"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$r := $p.Run}}{{$csrf := .Chrome.CSRF}}
+<p class="backline"><a class="back" href="{{$p.Nav.RunsURL}}">{{icon "back"}}{{bi $lang "wf.runs.back"}}</a></p>
+<div class="card">
+  <div class="ev__head">
+    <h2 class="setblock__h wfname"><span class="mono" dir="auto">{{$r.WorkflowPath}}</span> #{{$r.Number}}</h2>
+    {{template "stateChip" dict "Lang" $lang "S" (workflowState $r.Conclusion)}}
+  </div>
+  {{with $r.WorkflowName}}<p class="ev__note wfname" dir="auto">{{.}}</p>{{end}}
+  {{if $r.CancelRequested}}<p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "wf.run.cancel_requested"}}</span></p>{{end}}
+  <dl class="kv">
+    <div><dt>{{bi $lang "wf.run.event"}}</dt><dd class="mono">{{$r.Event}}</dd></div>
+    {{with $r.Branch}}<div><dt>{{bi $lang "wf.branch"}}</dt><dd class="mono" dir="auto">{{.}}</dd></div>{{end}}
+    <div><dt>{{bi $lang "wf.commit"}}</dt><dd class="mono" title="{{$r.SourceOID}}">{{$r.ShortOID}}</dd></div>
+    <div><dt>{{bi $lang "wf.run.created"}}</dt><dd>{{biDateTime $lang $r.CreatedAt}}</dd></div>
+    {{if notZero $r.ScheduledFor}}<div><dt>{{bi $lang "wf.run.scheduled"}}</dt><dd>{{biDateTime $lang $r.ScheduledFor}} UTC</dd></div>{{end}}
+    {{if $r.RerunGeneration}}<div><dt>{{bi $lang "wf.run.rerun"}}</dt><dd>{{$r.RerunGeneration}}</dd></div>{{end}}
+    {{with $r.PullRequestURL}}<div><dt>{{bi $lang "wf.run.pull_request"}}</dt><dd><a class="wflink" href="{{.}}">#{{$r.PullRequest}}</a></dd></div>{{end}}
+    {{range $r.Inputs}}<div><dt class="wfname">{{bi $lang "wf.run.input"}} <span class="mono">{{.Name}}</span></dt><dd class="mono" dir="auto">{{.Value}}</dd></div>{{end}}
+  </dl>
+  {{if $r.Notes}}<ul class="ev__notes">{{range $r.Notes}}<li>{{wfMessage $lang .}}</li>{{end}}</ul>{{end}}
+
+  {{if or $r.Cancellable $r.Rerunnable}}
+  <div class="actions wfactions">
+    {{if $r.Cancellable}}
+    <form method="post" action="{{$p.SubmitURL}}/cancel">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <button type="submit" class="btn btn--danger">{{icon "stop"}}{{bi $lang "wf.run.cancel"}}</button>
+    </form>
+    {{end}}
+    {{if $r.Rerunnable}}
+    <form method="post" action="{{$p.SubmitURL}}/rerun">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <button type="submit" class="btn">{{bi $lang "wf.run.rerun_button"}}</button>
+    </form>
+    <span class="f__help">{{bi $lang "wf.run.rerun_help"}}</span>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+{{if $r.Secrets}}
+<section class="sec">
+  <div class="sec__bar"><h2>{{bi $lang "wf.run.secrets"}}</h2></div>
+  {{if not $r.SecretsKnown}}<p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "wf.run.secrets_unknown"}}</span></p>{{end}}
+  <ul class="wfevents">
+    {{range $r.Secrets}}
+      <li class="wfevent">{{if not $r.SecretsKnown}}{{icon "slash"}}{{else if .Set}}{{icon "check"}}{{else}}{{icon "minus"}}{{end}}<span class="mono wfname">{{.Name}}</span>{{if $r.SecretsKnown}}<span class="wfevent__s">{{if .Set}}{{bi $lang "wf.secret.set"}}{{else}}{{bi $lang "wf.secret.not_set"}}{{end}}</span>{{end}}</li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+
+<section class="sec">
+  <div class="sec__bar">
+    <h2>{{bi $lang "wf.run.jobs"}}</h2>
+    <span class="sec__n">{{biCount $lang "job" (len $r.Jobs)}}</span>
+  </div>
+  {{if $r.Refused}}
+    <ul class="ev__notes">
+      {{range $r.Refused}}<li class="wfname"><span class="mono">{{.Key}}</span> {{bi $lang "wf.state.refused"}}: {{wfMessage $lang .Reason}}</li>{{end}}
+    </ul>
+  {{end}}
+  {{if $r.Jobs}}
+    <div class="attempts">
+      {{range $r.Jobs}}{{template "wfJobRow" dict "Lang" $lang "J" . "Detail" false}}{{end}}
+    </div>
+  {{else if not $r.Refused}}
+    <p class="empty">{{bi $lang "wf.run.no_jobs"}}</p>
+  {{end}}
+</section>
+{{end}}
+
+{{define "wfJobRow"}}
+{{$lang := .Lang}}{{$j := .J}}{{$detail := .Detail}}
+<article class="attempt wfjobrow">
+  <div class="attempt__head">
+    {{template "stateChip" dict "Lang" $lang "S" (workflowState $j.Status)}}
+    {{if $detail}}<span class="result__n mono wfname" dir="auto">{{$j.Key}}{{if $j.MatrixIndex}} ({{$j.MatrixIndex}}){{end}}</span>
+    {{else}}<a class="result__n mono wfname wfjobrow__link" href="{{$j.URL}}" dir="auto">{{$j.Key}}{{if $j.MatrixIndex}} ({{$j.MatrixIndex}}){{end}}</a>{{end}}
+    {{if notZero $j.FinishedAt}}<span class="attempt__when">{{biDateTime $lang $j.FinishedAt}}</span>{{end}}
+  </div>
+  {{if $j.CancelRequested}}<p class="ev__note">{{bi $lang "wf.run.cancel_requested"}}</p>{{end}}
+  {{if $j.Tolerated}}<p class="ev__note">{{wfMessage $lang (wfCode "note.tolerated")}}</p>{{end}}
+  {{with $j.Summary}}<p class="attempt__sum wfname" dir="auto">{{.}}</p>{{end}}
+  {{if $j.Steps}}
+  <div class="results">
+    <p class="results__h">{{bi $lang "wf.job.steps"}}</p>
+    {{range $j.Steps}}
+    <div class="result">
+      <div class="result__head">
+        {{if .Status}}{{template "stateChip" dict "Lang" $lang "S" (workflowState .Status)}}{{else}}{{template "stateChip" dict "Lang" $lang "S" (workflowState "not_run")}}{{end}}
+        <span class="result__n wfname" dir="auto">{{.Name}}</span>
+        {{if eq .Role "builtin"}}<span class="result__x">{{bi $lang "wf.step.builtin"}}</span>{{end}}
+        {{if and (eq .Role "tolerated") (ne .Status "passed")}}<span class="result__x">{{wfMessage $lang (wfCode "note.tolerated")}}</span>{{end}}
+        {{with .ExitCode}}<span class="result__x">{{bi $lang "tasks.attempts.exit_code"}} <span class="mono">{{.}}</span></span>{{end}}
+        {{if .Status}}<span class="result__t">{{biText $lang (duration "en" .DurationMS) (duration "ko" .DurationMS)}}</span>{{end}}
+      </div>
+      {{if $detail}}
+        {{with .Command}}<p class="result__cmd mono" dir="auto">{{.}}</p>{{end}}
+        {{if .Excerpt}}
+          <div class="codebox codebox--short" tabindex="0" role="region" aria-label="{{.Name}}">
+            <pre class="result__out">{{.Excerpt}}</pre>
+          </div>
+          {{if .Truncated}}<p class="ev__note">{{bi $lang "evidence.log.output_truncated"}}</p>{{end}}
+        {{else if .Status}}
+          <p class="ev__note">{{bi $lang "tasks.attempts.no_output"}}</p>
+        {{end}}
+        {{with .CleanupError}}<p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "evidence.checks.cleanup_row"}} <span class="ev__sub mono">{{.}}</span></span></p>{{end}}
+      {{else if .CleanupFailed}}
+        <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "evidence.checks.cleanup_failed"}}</span></p>
+      {{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</article>
+{{end}}
+
+{{define "wfJob"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$v := $p.Job}}
+<p class="backline"><a class="back wfname" href="{{$v.RunURL}}">{{icon "back"}}{{bi $lang "wf.job.back"}} <span class="mono" dir="auto">{{$v.WorkflowPath}}</span> #{{$v.RunNumber}}</a></p>
+{{if $v.Unreadable}}<p class="ev__warn" role="alert">{{icon "warning"}}<span>{{bi $lang "cc.job.attempt_unreadable"}}</span></p>{{end}}
+{{template "wfJobRow" dict "Lang" $lang "J" $v.Job "Detail" true}}
+<section class="sec">
+  <div class="sec__bar"><h2>{{bi $lang "cc.job.log"}}</h2></div>
+  {{if $v.LogStatus}}
+  <p class="ev__note">{{bi $lang (logState $v.LogStatus)}}</p>
+  {{if notZero $v.LogExpiresAt}}<p class="ev__sub">{{bi $lang "evidence.log.expires_at"}} {{biDateTime $lang $v.LogExpiresAt}}</p>{{end}}
+  {{else}}
+  <p class="ev__note">{{bi $lang "cc.job.no_attempt"}}</p>
+  {{end}}
+  {{with $v.LogURL}}<p class="actions"><a class="btn" href="{{.}}">{{icon "file"}}{{bi $lang "wf.job.open_log"}}</a></p>{{end}}
+  {{if $v.LogTruncated}}<p class="ev__note">{{bi $lang "evidence.log.output_truncated"}}</p>{{end}}
+  <p class="f__help">{{bi $lang "wf.job.log_help"}}</p>
+</section>
+{{end}}
+
+{{define "wfDispatch"}}
+{{$p := .Page}}{{$lang := .Lang}}{{$v := $p.Dispatch}}{{$csrf := .Chrome.CSRF}}
+<p class="backline"><a class="back" href="{{$v.BackURL}}">{{icon "back"}}{{bi $lang "wf.dispatch.back"}}</a></p>
+<div class="phead">
+  <h1>{{bi $lang "wf.dispatch.title"}}</h1>
+  <p class="mono wfname" dir="auto">{{$v.Path}}</p>
+</div>
+{{if eq (print $.Chrome.Viewer.AccessMode) "open"}}
+  <p class="ev__warn">{{icon "warning"}}<span>{{wfMessage $lang (wfCode "note.open_dispatch")}}</span></p>
+{{end}}
+{{with $v.Blocked}}<p class="ev__warn">{{icon "warning"}}<span>{{wfMessage $lang .}}</span></p>{{end}}
+
+<div class="card">
+  <form class="wfbranch" method="get" action="{{$p.SelfURL}}">
+    <input type="hidden" name="path" value="{{$v.Path}}">
+    <label for="wf-run-branch">{{bi $lang "wf.branch"}}</label>
+    <select id="wf-run-branch" name="ref">
+      {{range $v.Branches}}<option value="{{.}}"{{if eq . $v.Branch}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+    <button type="submit" class="btn btn--sm">{{bi $lang "wf.dispatch.change_branch"}}</button>
+  </form>
+
+  <form class="form" method="post" action="{{$p.SubmitURL}}">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <input type="hidden" name="path" value="{{$v.Path}}">
+    <input type="hidden" name="ref" value="{{$v.Branch}}">
+    <input type="hidden" name="expected_oid" value="{{$v.SourceOID}}">
+    <p class="wfcommit wfname">{{bi $lang "wf.dispatch.commit"}} <span class="mono" title="{{$v.SourceOID}}">{{$v.ShortOID}}</span> <span class="mono" dir="auto">{{$v.Branch}}</span></p>
+    {{range $v.Inputs}}
+      {{$id := printf "wf-input-%s" .Name}}
+      {{if eq .Type "boolean"}}
+        <input type="hidden" name="input.{{.Name}}" value="false">
+        <label class="check">
+          <input type="checkbox" name="input.{{.Name}}" value="true"{{if .Checked}} checked{{end}}>
+          <span class="check__t mono wfname">{{.Name}}</span>
+          {{with .Description}}<span class="choice__d" dir="auto">{{.}}</span>{{end}}
+        </label>
+      {{else}}
+      <div class="f">
+        <label for="{{$id}}" class="wfname"><span class="mono">{{.Name}}</span>{{if .Required}} <span class="ev__sub">{{bi $lang "wf.input.required_mark"}}</span>{{end}}</label>
+        {{if eq .Type "choice"}}
+          <select id="{{$id}}" name="input.{{.Name}}"{{if .Required}} required{{end}}>
+            {{if not .Required}}<option value=""></option>{{end}}
+            {{$value := .Value}}{{range .Options}}<option value="{{.}}"{{if eq . $value}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        {{else if eq .Type "number"}}
+          <input id="{{$id}}" name="input.{{.Name}}" type="text" inputmode="decimal" class="mono" value="{{.Value}}"{{if .Required}} required{{end}} autocomplete="off">
+        {{else}}
+          <input id="{{$id}}" name="input.{{.Name}}" type="text" value="{{.Value}}"{{if .Required}} required{{end}} autocomplete="off" spellcheck="false">
+        {{end}}
+        {{with .Description}}<p class="f__help" dir="auto">{{.}}</p>{{end}}
+      </div>
+      {{end}}
+    {{end}}
+    <div class="actions">
+      <button type="submit" class="btn btn--primary"{{if $v.Blocked}} disabled{{end}}>{{bi $lang "wf.dispatch.button"}}</button>
+    </div>
+  </form>
+</div>
+{{end}}

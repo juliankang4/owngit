@@ -416,6 +416,14 @@ func (app *App) handleRepositoryRoute(writer http.ResponseWriter, request *http.
 			}
 		}
 	}
+	if len(parts) >= 2 && (parts[1] == "workflows" || parts[1] == "workflow-runs") {
+		app.handleWorkflowPages(writer, request, stored, summary, chrome, parts[1:])
+		return
+	}
+	if len(parts) == 2 && parts[1] == "workflow-secrets" {
+		app.handleWorkflowSecretsPage(writer, request, stored, summary)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "tasks" && request.Method == http.MethodGet {
 		app.handleTasksGet(writer, request, stored, summary, chrome)
 		return
@@ -596,7 +604,7 @@ func (app *App) renderRepositoryReadFailure(writer http.ResponseWriter, request 
 // session for every change and keeps administrator data out of other views.
 func administratorRepositoryScreen(segment string) bool {
 	switch segment {
-	case "helper-credentials", "configured-checks", "runner-tokens", "settings", "delete", "share-links":
+	case "helper-credentials", "configured-checks", "runner-tokens", "workflow-secrets", "settings", "delete", "share-links":
 		return true
 	default:
 		return false
@@ -907,17 +915,9 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 		logFailure(request, "default branch revision evidence read", err)
 		return
 	}
-	page.Overview.Evidence = &evidence
-	attempt, exists, err := app.Store.LatestCheckAttemptForRevision(request.Context(), page.Repo.ID, summary.DefaultOID)
-	if err != nil {
-		logFailure(request, "default branch check read", err)
-		return
-	}
+	page.Overview.Evidence = app.browserEvidenceLanes(request.Context(), page.Repo.ID, page.Repo.Address, evidence)
+	page.Overview.RunsURL = workflowRunsURL(page.Repo.Address)
 	page.Overview.DefaultCheckKnown = true
-	if exists {
-		page.Overview.HasDefaultCheck = true
-		page.Overview.DefaultCheck = app.browserAttemptRecord(request.Context(), attempt)
-	}
 }
 
 // sortRefLinesNewestFirst orders rows by the tip date the row displays, so the

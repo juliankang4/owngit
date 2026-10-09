@@ -172,11 +172,11 @@ func TestOverviewSummaryStatesEachFigure(t *testing.T) {
 		t.Errorf("overview order graph=%d facts=%d columns=%d", graph, facts, cols)
 	}
 
-	page.Overview.HasDefaultCheck = true
-	page.Overview.DefaultCheck = AttemptRecord{Status: CheckPassed, RevisionShortOID: "a41c9e2"}
+	page.Overview.Evidence = &EvidenceLanes{Conclusion: "failed", RevisionShortOID: "a41c9e2", WorkflowsTotal: 3}
+	page.Overview.RunsURL = "/repositories/r1/workflow-runs"
 	out = render(t, r, page)
-	if !strings.Contains(out, Text(LangEN, MsgCheckStatePassed)) || !strings.Contains(out, `href="/repositories/r1/tasks">a41c9e2</a>`) {
-		t.Error("a recorded check is not shown with its revision")
+	if !strings.Contains(out, Text(LangEN, "wf.state.failed")) || !strings.Contains(out, `href="/repositories/r1/tasks">a41c9e2</a>`) || !strings.Contains(out, `href="/repositories/r1/workflow-runs"`) || !strings.Contains(out, "3 workflows") {
+		t.Error("the default branch evidence is not shown with its revision and workflow count")
 	}
 
 	// An unreadable figure says so rather than showing zero or "no check".

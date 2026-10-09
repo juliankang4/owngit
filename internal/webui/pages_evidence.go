@@ -298,6 +298,7 @@ type TasksPage struct {
 	Chrome Chrome
 	Repo   RepositoryHeader
 	Tabs   RepoTabs
+	Nav    ChecksNav
 
 	// Tasks are the repository's tasks, newest activity first.
 	Tasks []TaskSummary

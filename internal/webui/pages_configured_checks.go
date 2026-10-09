@@ -65,6 +65,8 @@ const (
 const (
 	CheckEventPush        = "push"
 	CheckEventPullRequest = "pull_request"
+	CheckEventDispatch    = "workflow_dispatch"
+	CheckEventSchedule    = "schedule"
 )
 
 // Container network choices. Named means a Docker network the owner created,
@@ -121,6 +123,8 @@ type ConfiguredChecksPage struct {
 	// TasksURL opens the recorded check history, and RunnerTokensURL the
 	// runner tokens. Empty renders no link.
 	TasksURL        string
+	WorkflowsURL    string
+	SecretsURL      string
 	RunnerTokensURL string
 
 	// Policy is what is stored right now, including whether anything is.
@@ -188,6 +192,7 @@ type CheckPolicyView struct {
 	Executor    string
 	// AllowedEvents is the stored event set, already ordered by the backend.
 	AllowedEvents       []string
+	RunWorkflows        bool
 	MaxTimeoutMS        int64
 	MaxOutputLimitBytes int64
 	QueueLimit          int
@@ -210,6 +215,14 @@ func (p CheckPolicyView) AllowsPush() bool { return containsEvent(p.AllowedEvent
 
 func (p CheckPolicyView) AllowsPullRequest() bool {
 	return containsEvent(p.AllowedEvents, CheckEventPullRequest)
+}
+
+func (p CheckPolicyView) AllowsDispatch() bool {
+	return containsEvent(p.AllowedEvents, CheckEventDispatch)
+}
+
+func (p CheckPolicyView) AllowsSchedule() bool {
+	return containsEvent(p.AllowedEvents, CheckEventSchedule)
 }
 
 // UsesContainer reports whether the stored container settings apply.
@@ -316,6 +329,8 @@ type CheckPolicyForm struct {
 	Executor            string
 	PushSelected        bool
 	PullRequestSelected bool
+	DispatchSelected    bool
+	ScheduleSelected    bool
 
 	// Limits holds every numeric field by its backend name, as an amount and
 	// a unit. See PolicyLimitFields for the list.

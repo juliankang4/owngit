@@ -441,6 +441,8 @@ func (app *App) renderConfiguredChecks(writer http.ResponseWriter, request *http
 		SubmitURL:       self,
 		TasksURL:        basePage.TasksURL,
 		RunnerTokensURL: runnerTokensURL(stored.Address),
+		WorkflowsURL:    workflowFilesURL(stored.Address),
+		SecretsURL:      workflowSecretsURL(stored.Address),
 		Runtime:         browserRuntimeView(app.checkRuntimeStatus()),
 		PendingAction:   result.action,
 	}
@@ -726,6 +728,7 @@ func browserCheckPolicy(policy state.CheckPolicy, exists bool) webui.CheckPolicy
 		ShortDigest:         shortOpaqueID(policy.Digest),
 		Executor:            policy.Executor,
 		AllowedEvents:       policy.AllowedEvents,
+		RunWorkflows:        policy.RunWorkflows,
 		MaxTimeoutMS:        policy.MaxTimeoutMS,
 		MaxOutputLimitBytes: policy.MaxOutputLimitBytes,
 		QueueLimit:          policy.QueueLimit,
@@ -917,6 +920,8 @@ func policyFormFrom(policy webui.CheckPolicyView) webui.CheckPolicyForm {
 			Executor:            policy.Executor,
 			PushSelected:        policy.AllowsPush(),
 			PullRequestSelected: policy.AllowsPullRequest(),
+			DispatchSelected:    policy.AllowsDispatch(),
+			ScheduleSelected:    policy.AllowsSchedule(),
 			ContainerImage:      policy.Container.Image,
 			ContainerNetwork:    policy.Container.Network,
 
@@ -946,6 +951,8 @@ func submittedPolicyForm(request *http.Request) webui.CheckPolicyForm {
 		Executor:             postValue(request, "executor"),
 		PushSelected:         formChecked(postValue(request, "event_push")),
 		PullRequestSelected:  formChecked(postValue(request, "event_pull_request")),
+		DispatchSelected:     formChecked(postValue(request, "event_workflow_dispatch")),
+		ScheduleSelected:     formChecked(postValue(request, "event_schedule")),
 		ContainerImage:       strings.TrimSpace(postValue(request, "container_image")),
 		ContainerNetwork:     postValue(request, "container_network"),
 		ContainerNetworkName: strings.TrimSpace(postValue(request, "container_network_name")),
@@ -1020,6 +1027,12 @@ func policyInputFrom(repositoryID string, form webui.CheckPolicyForm) (state.Che
 	}
 	if form.PullRequestSelected {
 		input.AllowedEvents = append(input.AllowedEvents, webui.CheckEventPullRequest)
+	}
+	if form.DispatchSelected {
+		input.AllowedEvents = append(input.AllowedEvents, webui.CheckEventDispatch)
+	}
+	if form.ScheduleSelected {
+		input.AllowedEvents = append(input.AllowedEvents, webui.CheckEventSchedule)
 	}
 
 	input.MaxTimeoutMS = value(state.FieldMaxTimeoutMS)
