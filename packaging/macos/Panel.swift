@@ -177,6 +177,7 @@ final class PanelViewController: NSViewController {
     private let perform: (PanelAction) -> Void
     private var stack = NSStackView()
     private var rendered: PanelModel?
+    private var pushTimeUpdates: [(Date) -> Void] = []
     private weak var firstControl: NSView?
     private let scroll = NSScrollView()
     private let content = FlippedView()
@@ -304,16 +305,16 @@ final class PanelViewController: NSViewController {
         }
     }
 
-    /// render shows model. An unchanged model is not drawn again, so the
-    /// periodic refresh does not move keyboard focus.
-    func render(_ model: PanelModel) {
+    func render(_ model: PanelModel, relativeTo now: Date = Date()) {
         if model == rendered {
+            pushTimeUpdates.forEach { $0(now) }
             return
         }
         let focused = view.window?.firstResponder
         let focusWasInside = focused is NSView
         let focusedName = (focused as? NSView)?.identifier?.rawValue
         rendered = model
+        pushTimeUpdates.removeAll()
         size = model.size
         // Each state is built in a new stack, measured before it joins the
         // panel: a view already in the panel measures as the panel's size.
@@ -330,6 +331,7 @@ final class PanelViewController: NSViewController {
         } else {
             buildPanel(model)
         }
+        pushTimeUpdates.forEach { $0(now) }
         contentHeight = stack.fittingSize.height
         view.subviews.forEach { $0.removeFromSuperview() }
         content.subviews.forEach { $0.removeFromSuperview() }
@@ -554,8 +556,8 @@ final class PanelViewController: NSViewController {
             let repository = line(push.repository, weight: .medium)
             let ref = line(push.branch.isEmpty ? push.ref : push.branch, secondary: true)
             ref.font = .monospacedSystemFont(ofSize: small, weight: .regular)
-            let when = parsePushTime(push.pushed_at).map { relative.localizedString(for: $0, relativeTo: Date()) } ?? push.pushed_at
-            let time = line(when, secondary: true, size: small)
+            let pushedAt = parsePushTime(push.pushed_at)
+            let time = line("", secondary: true, size: small)
             time.setContentCompressionResistancePriority(.required, for: .horizontal)
             let row = NSStackView(views: [repository, ref])
             row.spacing = 8 * scale
@@ -563,7 +565,11 @@ final class PanelViewController: NSViewController {
             row.widthAnchor.constraint(equalToConstant: inner).isActive = true
             row.setAccessibilityElement(true)
             row.setAccessibilityRole(.staticText)
-            row.setAccessibilityLabel("\(push.repository), \(push.branch.isEmpty ? push.ref : push.branch), \(when), \(push.actor_label)")
+            pushTimeUpdates.append { now in
+                let when = pushedAt.map { relative.localizedString(for: $0, relativeTo: now) } ?? push.pushed_at
+                time.stringValue = when
+                row.setAccessibilityLabel("\(push.repository), \(push.branch.isEmpty ? push.ref : push.branch), \(when), \(push.actor_label)")
+            }
             return row
         }
         let list = NSStackView(views: rows)

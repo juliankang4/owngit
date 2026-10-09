@@ -1088,6 +1088,18 @@ panel.render(model)
 let window = NSWindow(contentRect: NSRect(origin: .zero, size: panel.preferredContentSize), styleMask: [.borderless], backing: .buffered, defer: true)
 window.contentView = panel.view
 
+let pushedAt = parsePushTime(status.pushes[0].pushed_at)!
+let pushRow = controls(panel.view).compactMap { $0 as? NSStackView }.first { $0.accessibilityRole() == .staticText }!
+let pushTime = pushRow.arrangedSubviews.last as! NSTextField
+let copyControl = control("copy-clone-address")!
+require(window.makeFirstResponder(copyControl), "cannot focus Copy")
+for (elapsed, expected) in [(3.0, "3 seconds ago"), (120.0, "2 minutes ago")] {
+    panel.render(model, relativeTo: pushedAt.addingTimeInterval(elapsed))
+    require(pushTime.stringValue == expected, "push age did not advance to \(expected)")
+    require(pushRow.accessibilityLabel() == "notes, main, \(expected), Sample", "accessible push age did not advance")
+    require(control("copy-clone-address") === copyControl && window.firstResponder === copyControl, "refresh replaced Copy or moved focus")
+}
+
 // keepsFocus focuses the control named name, changes the panel's size and
 // requires the focus on the redrawn control of that name.
 func keepsFocus(_ name: String, to size: PanelSize) {
@@ -1110,6 +1122,9 @@ keepsFocus("copy-clone-address", to: .larger)
 keepsFocus("open-dashboard", to: .standard)
 model.showingSettings = true
 panel.render(model)
+let sizeControl = control("panel-size")!
+panel.render(model, relativeTo: pushedAt.addingTimeInterval(3600))
+require(control("panel-size") === sizeControl && model.showingSettings, "age refresh rebuilt or closed Settings")
 keepsFocus("panel-size", to: .larger)
 keepsFocus("notify-push", to: .large)
 keepsFocus("quit", to: .standard)
