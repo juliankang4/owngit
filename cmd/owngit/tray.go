@@ -66,13 +66,13 @@ func trayCommand(arguments []string) error {
 	}
 	switch {
 	case operation == "notifications" && len(operands) != 1 && len(operands) != 3:
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray notifications takes nothing, or a setting and on or off"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("tray notifications takes nothing, or a setting and on or off"))
 	case operation != "notifications" && len(operands) > 1,
 		!slices.Contains([]string{"on", "off", "status", "icon", "read", "open", "notifications"}, operation):
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open, notifications or nothing"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("tray takes on, off, status, icon, read, open, notifications or nothing"))
 	}
 	if *embedding && !*activate || *register && (*activate || operation != "icon" || *asJSON) || *activate && operation != "open" {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("Windows notification flags need tray icon for registration or tray open for activation"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("Windows notification flags need tray icon for registration or tray open for activation"))
 	}
 	if *register {
 		return tray.RegisterNotifications()
@@ -89,7 +89,7 @@ func trayCommand(arguments []string) error {
 	case "read", "open":
 		language, ok := webui.ParseLang(*lang)
 		if !ok {
-			return jsonFailure(*asJSON, "invalid_arguments", errors.New("--lang is en or ko"))
+			return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("--lang is en or ko"))
 		}
 		return trayPanelCommand(operation, filepath.Clean(mustAbs(*stateDir)), language, *asJSON)
 	}
@@ -105,7 +105,7 @@ func trayCommand(arguments []string) error {
 	dir := filepath.Clean(mustAbs(*stateDir))
 	if !trayAvailable(dir) {
 		if operation != "status" {
-			return jsonFailure(*asJSON, "tray_unavailable", errTrayUnavailable)
+			return jsonFailure(jsonRequested(arguments), "tray_unavailable", errTrayUnavailable)
 		}
 		if *asJSON {
 			return writeJSONValue(report{StateDir: dir})
@@ -114,11 +114,11 @@ func trayCommand(arguments []string) error {
 		return nil
 	}
 	if err := state.RequireExisting(dir); err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	held, err := state.OpenStateDirectory(dir)
 	if err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	defer held.Close()
 	if operation == "notifications" {
@@ -126,12 +126,12 @@ func trayCommand(arguments []string) error {
 	}
 	if operation != "status" {
 		if err := state.SetTrayHidden(held, operation == "off"); err != nil {
-			return jsonFailure(*asJSON, "state_unavailable", err)
+			return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 		}
 	}
 	hidden, err := state.TrayHidden(held)
 	if err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	desktop := probeEnvironment().Desktop()
 	problem := tray.IconProblem()

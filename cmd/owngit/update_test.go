@@ -51,15 +51,47 @@ func TestUpdateCommandPrintsTheCommandAndRunsNothing(t *testing.T) {
 		t.Fatalf("output:\n%s", output)
 	}
 
-	tag = "v" + version.Version
-	output, err = captureStdout(func() error { return run([]string{"update"}) })
-	if err != nil || output != "OwnGit "+version.Version+" is the latest release.\n" {
-		t.Fatalf("up to date: %q, %v", output, err)
+	for _, tc := range []struct {
+		tag, message string
+		older        bool
+	}{
+		{"v" + version.Version, "OwnGit " + version.Version + " is the latest release.\n", false},
+		{"v0.0.1", "The update source reports OwnGit 0.0.1, older than this OwnGit " + version.Version + ". No downgrade is offered.\n", true},
+	} {
+		tag = tc.tag
+		output, err = captureStdout(func() error { return run([]string{"update"}) })
+		if err != nil || output != tc.message {
+			t.Errorf("%s: %q, %v", tc.tag, output, err)
+		}
+		output, err = captureStdout(func() error { return run([]string{"update", "--json"}) })
+		noErr(t, err)
+		var result struct {
+			Current, Reported, Latest, Command string
+			Newer                              bool
+			SourceOlder                        bool `json:"source_older"`
+		}
+		noErr(t, json.Unmarshal([]byte(output), &result))
+		if result.Current != version.Version || result.Reported != tc.tag[1:] || result.SourceOlder != tc.older || result.Newer || result.Command != "" || tc.older && result.Latest != "" || !tc.older && result.Latest != version.Version {
+			t.Errorf("%s: JSON result %+v", tc.tag, result)
+		}
 	}
 
 	releaseCheckEndpoint = "http://127.0.0.1:0/owngit-tests-never-contact-github"
 	if _, err := captureStdout(func() error { return run([]string{"update"}) }); err == nil || !strings.Contains(err.Error(), "could not ask GitHub") {
 		t.Fatalf("failed check: %v", err)
+	}
+	for _, tc := range []struct {
+		args []string
+		code string
+	}{
+		{[]string{"--json", "--qa-unknown"}, "invalid_arguments"},
+		{[]string{"unexpected", "--json"}, "invalid_arguments"},
+		{[]string{"--json"}, "release_check_failed"},
+	} {
+		err := run(append([]string{"update"}, tc.args...))
+		if errorCode(err) != tc.code {
+			t.Errorf("update %v: error %v, want %s", tc.args, err, tc.code)
+		}
 	}
 }
 

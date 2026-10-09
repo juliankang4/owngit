@@ -40,15 +40,15 @@ func doctorCommand(arguments []string) error {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("doctor takes no positional arguments"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("doctor takes no positional arguments"))
 	}
 	dir, err := filepath.Abs(*stateDir)
 	if err != nil {
-		return jsonFailure(*asJSON, "invalid_arguments", err)
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 	}
 	subject, err := commandSubject(dir)
 	if err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	findings := diagnose(context.Background(), subject)
 	running := subject.server == doctor.ServerRunning

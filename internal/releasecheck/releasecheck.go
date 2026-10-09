@@ -42,7 +42,7 @@ const (
 	maxResponseBytes = 256 << 10
 )
 
-// Release is a published version newer than the running one.
+// Release is a published version reported by the release source.
 type Release struct {
 	// Version is "X.Y.Z" without the leading "v".
 	Version string
@@ -69,12 +69,13 @@ type Checker struct {
 	// Logf receives at most one line per failure streak.
 	Logf func(string, ...any)
 
-	mu      sync.Mutex
-	newer   Release
-	found   bool
-	failing bool
-	wake    chan struct{}
-	once    sync.Once
+	mu       sync.Mutex
+	reported Release
+	newer    Release
+	found    bool
+	failing  bool
+	wake     chan struct{}
+	once     sync.Once
 }
 
 // Newer returns the latest known release when it is newer than Current.
@@ -82,6 +83,14 @@ func (checker *Checker) Newer() (Release, bool) {
 	checker.mu.Lock()
 	defer checker.mu.Unlock()
 	return checker.newer, checker.found
+}
+
+// Reported returns the last valid source answer, including equal or older versions.
+// A failed check retains the previous answer; callers must check Check's error.
+func (checker *Checker) Reported() (Release, bool) {
+	checker.mu.Lock()
+	defer checker.mu.Unlock()
+	return checker.reported, checker.reported.Version != ""
 }
 
 // Wake asks a running checker to check soon. It never blocks.
@@ -147,7 +156,11 @@ func (checker *Checker) Check(ctx context.Context) error {
 		return err
 	}
 	checker.failing = false
-	checker.newer, checker.found = release, newer
+	checker.reported = release
+	checker.newer, checker.found = Release{}, false
+	if newer {
+		checker.newer, checker.found = release, true
+	}
 	return nil
 }
 
@@ -206,11 +219,8 @@ func (checker *Checker) fetch(ctx context.Context) (Release, bool, error) {
 	if err != nil {
 		return Release{}, false, fmt.Errorf("tag %q: %w", answer.TagName, err)
 	}
-	if !latest.after(current) {
-		return Release{}, false, nil
-	}
 	name := latest.String()
-	return Release{Version: name, NotesURL: releasePageBase + "v" + name}, true, nil
+	return Release{Version: name, NotesURL: releasePageBase + "v" + name}, latest.after(current), nil
 }
 
 var errTooLarge = fmt.Errorf("answer is larger than %d bytes", maxResponseBytes)

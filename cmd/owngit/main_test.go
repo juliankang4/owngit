@@ -158,7 +158,12 @@ func TestResetAdminPreservesRepositoryDataAndRevokesSession(t *testing.T) {
 	passwordFile := filepath.Join(root, "new-password")
 	noErr(t, os.WriteFile(passwordFile, []byte("new-admin-password\n"), 0o600))
 	noErr(t, state.ProtectPrivatePath(passwordFile, false))
-	noErr(t, resetAdmin([]string{"--state-dir", stateDir, "--password-file", passwordFile}))
+	result := commandJSON(t, func() error {
+		return run([]string{"reset-admin", "--state-dir", stateDir, "--password-file", passwordFile, "--json"})
+	})
+	if result["ok"] != true || result["sessions_revoked"] != true || result["repository_data_changed"] != false {
+		t.Fatalf("reset-admin JSON result: %v", result)
+	}
 	store, err = state.Open(context.Background(), stateDir)
 	noErr(t, err)
 	defer store.Close()

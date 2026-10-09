@@ -235,7 +235,7 @@ func networkShow(arguments []string) error {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("network show accepts no positional arguments"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("network show accepts no positional arguments"))
 	}
 	// Before the first start nothing is saved: the report shows the
 	// defaults and creates nothing.
@@ -247,10 +247,10 @@ func networkShow(arguments []string) error {
 		report = server.NewNetworkReport(state.NetworkSettings{}, nil, nil)
 		report.SetServer(state.RunningObservation{Server: state.ServerNotRunning})
 	case err != nil:
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	default:
 		if report, err = savedNetworkReport(*stateDir); err != nil {
-			return jsonFailure(*asJSON, "state_unavailable", err)
+			return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 		}
 	}
 	if *asJSON {
@@ -387,8 +387,8 @@ func networkSet(arguments []string) error {
 	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
-	invalid := func(err error) error { return jsonFailure(*asJSON, "invalid_arguments", err) }
-	unavailable := func(err error) error { return jsonFailure(*asJSON, "state_unavailable", err) }
+	invalid := func(err error) error { return jsonFailure(jsonRequested(arguments), "invalid_arguments", err) }
+	unavailable := func(err error) error { return jsonFailure(jsonRequested(arguments), "state_unavailable", err) }
 	if flags.NArg() != 0 {
 		return invalid(errors.New("network set accepts no positional arguments"))
 	}
@@ -477,7 +477,7 @@ func networkSet(arguments []string) error {
 	}
 	if server.PlainHTTPAcknowledgementNeeded(update.Settings, settings.InsecureHTTPAccepted) {
 		if !*acceptPlain {
-			return jsonFailure(*asJSON, "acknowledgement_required", fmt.Errorf("%s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or use a loopback listen address and an https address", server.PlainHTTPAddress(update.Settings)))
+			return jsonFailure(jsonRequested(arguments), "acknowledgement_required", fmt.Errorf("%s lets other computers reach OwnGit over plain HTTP, which is not encrypted. Nothing was saved. Run the command again with --accept-insecure-http to accept that, or use a loopback listen address and an https address", server.PlainHTTPAddress(update.Settings)))
 		}
 		update.AcknowledgeInsecureHTTP = true
 	}
@@ -616,9 +616,9 @@ func networkReset(arguments []string) error {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("network reset accepts no positional arguments"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("network reset accepts no positional arguments"))
 	}
-	unavailable := func(err error) error { return jsonFailure(*asJSON, "state_unavailable", err) }
+	unavailable := func(err error) error { return jsonFailure(jsonRequested(arguments), "state_unavailable", err) }
 	if err := state.RequireExisting(*stateDir); err != nil {
 		return unavailable(err)
 	}

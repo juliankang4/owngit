@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"io"
 	"os"
@@ -73,7 +74,12 @@ func TestApproveHostAcceptsOptionsAfterTheHost(t *testing.T) {
 	noErr(t, store.Close())
 
 	noErr(t, runCommand("approve-host", []string{"after.test", "--state-dir", stateDir}))
-	noErr(t, runCommand("approve-host", []string{"--state-dir", stateDir, "before.test"}))
+	result := commandJSON(t, func() error {
+		return run([]string{"approve-host", "before.test", "--state-dir", stateDir, "--json"})
+	})
+	if result["ok"] != true || result["host"] != "before.test" || result["restart_required"] != true {
+		t.Fatalf("approve-host JSON result: %v", result)
+	}
 	for _, arguments := range [][]string{
 		{"one.test", "--state-dir", stateDir, "two.test"},
 		{"--state-dir", stateDir},
@@ -96,6 +102,47 @@ func TestApproveHostAcceptsOptionsAfterTheHost(t *testing.T) {
 	}
 }
 
+func TestJSONErrorsRespectRawFlagOrder(t *testing.T) {
+	isolateDefaultState(t)
+	for _, command := range [][]string{
+		{"network", "show"}, {"network", "set"}, {"network", "reset"},
+		{"tailscale", "status"}, {"tailscale", "on"}, {"tailscale", "off"},
+		{"backup"}, {"restore"}, {"doctor"}, {"update"},
+		{"forget-check-container"}, {"reset-admin"}, {"approve-host", "host.test"}, {"setup-link"},
+	} {
+		for _, tc := range []struct {
+			arguments []string
+			json      bool
+		}{
+			{[]string{"extra", "--json"}, true},
+			{[]string{"--json", "extra"}, true},
+			{[]string{"--json", "extra", "--json=false"}, false},
+			{[]string{"--json=1", "extra", "--json=false"}, false},
+			{[]string{"extra", "--", "--json"}, false},
+			{[]string{"--unknown", "--json"}, true},
+		} {
+			arguments := append(append([]string{}, command...), tc.arguments...)
+			err := run(arguments)
+			if err == nil || (errorCode(err) != "") != tc.json || tc.json && errorCode(err) != "invalid_arguments" {
+				t.Errorf("%v: error %v, JSON=%v", arguments, err, tc.json)
+			}
+			if tc.json {
+				output, captureErr := captureStdout(func() error { reportError(os.Stdout, err); return nil })
+				noErr(t, captureErr)
+				var result struct {
+					OK    bool `json:"ok"`
+					Error struct {
+						Code string `json:"code"`
+					} `json:"error"`
+				}
+				if json.Unmarshal([]byte(output), &result) != nil || result.OK || result.Error.Code != "invalid_arguments" {
+					t.Errorf("%v: invalid JSON error %q", arguments, output)
+				}
+			}
+		}
+	}
+}
+
 // setup-link and reset-admin take no operands. A stray operand used to end
 // option parsing silently, so options after it, including --state-dir, were
 // ignored and the command used the default state directory.
@@ -112,6 +159,18 @@ func TestStateCommandsRefuseOperands(t *testing.T) {
 		err := runCommand(command, arguments)
 		if err == nil || !strings.Contains(err.Error(), "takes no positional arguments") {
 			t.Errorf("%s %q: err=%v, want the operand refusal", command, arguments, err)
+		}
+	}
+	for _, tc := range []struct {
+		command string
+		args    []string
+	}{
+		{"setup-link", []string{"--state-dir", passwordFile, "--json"}},
+		{"reset-admin", []string{"--state-dir", passwordFile, "--password-file", passwordFile, "--json"}},
+		{"approve-host", []string{"host.test", "--state-dir", passwordFile, "--json"}},
+	} {
+		if err := runCommand(tc.command, tc.args); errorCode(err) != "state_unavailable" {
+			t.Errorf("%s %v: error %v, want state_unavailable", tc.command, tc.args, err)
 		}
 	}
 	for _, path := range []string{stateDir, defaultState} {

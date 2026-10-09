@@ -167,7 +167,7 @@ func importAdd(arguments []string) error {
 	if *tokenFile != "" || *basicFile != "" {
 		form, username, password, token, err := readImportCredential(*tokenFile, *basicFile)
 		if err != nil {
-			return jsonFailure(*asJSON, "invalid_arguments", err)
+			return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 		}
 		body["credential_form"] = form
 		body["username"] = username
@@ -591,7 +591,7 @@ func importCredentials(arguments []string) error {
 		if *tokenFile != "" || *basicFile != "" || *caFile == "" {
 			form, username, password, token, err := readImportCredential(*tokenFile, *basicFile)
 			if err != nil {
-				return jsonFailure(*asJSON, "invalid_arguments", err)
+				return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 			}
 			body = map[string]any{"form": form, "username": username, "password": password, "token": token}
 		}

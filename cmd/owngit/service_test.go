@@ -184,6 +184,17 @@ func TestSetupLinkShowsTheLinkOnlyOnATerminal(t *testing.T) {
 	if want := "  http://gitbox.test:7654/setup#" + setupFileCapability(t, stateDir) + "\n"; !strings.Contains(output, want) {
 		t.Fatalf("setup-link --base-url printed %q, want %q", output, want)
 	}
+	result := commandJSON(t, func() error {
+		return run([]string{"setup-link", "--state-dir", stateDir, "--no-open", "--json"})
+	})
+	if result["ok"] != true || result["setup_file"] != filepath.Join(canonicalStateDir(t, stateDir), "owner-setup.html") {
+		t.Fatalf("setup-link JSON result: %v", result)
+	}
+	for _, value := range result {
+		if text, ok := value.(string); ok && (strings.Contains(text, "/setup#") || strings.Contains(text, setupFileCapability(t, stateDir))) {
+			t.Fatalf("setup link leaked in JSON: %v", result)
+		}
+	}
 }
 
 // Listening on every address shows the link for this computer's

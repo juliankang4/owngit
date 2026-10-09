@@ -34,31 +34,46 @@ func setupLink(arguments []string) error {
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	baseURL := flags.String("base-url", "", "owner-facing HTTP origin of the link (default: the addresses the running server listens on)")
 	noOpen := flags.Bool("no-open", false, "do not open the private setup file")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print the setup file path as JSON without the link")
+	fail := func(code string, err error) error { return jsonFailure(jsonRequested(arguments), code, err) }
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("setup-link takes no positional arguments")
+		return fail("invalid_arguments", errors.New("setup-link takes no positional arguments"))
 	}
 	ctx := context.Background()
 	store, err := openLiveState(ctx, *stateDir)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	defer store.Close()
 	settings, err := store.Settings(ctx)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	if settings.Initialized {
-		return errors.New("setup is already complete")
+		return fail("setup_complete", errors.New("setup is already complete"))
 	}
-	path, err := issueAndShowSetupLink(ctx, store, *baseURL, os.Stdout, stdoutIsTerminal())
+	out, terminal := io.Writer(os.Stdout), stdoutIsTerminal()
+	if *asJSON {
+		out, terminal = io.Discard, false
+	}
+	path, err := issueAndShowSetupLink(ctx, store, *baseURL, out, terminal)
 	if err != nil {
-		return err
+		return fail("setup_failed", err)
 	}
-	if !*noOpen && probeEnvironment().ShowsBrowser() {
-		return bootstrap.Open(path)
+	if !*noOpen && !*asJSON && probeEnvironment().ShowsBrowser() {
+		if err := bootstrap.Open(path); err != nil {
+			return fail("open_failed", err)
+		}
+	}
+	if *asJSON {
+		return printJSON(struct {
+			OK        bool   `json:"ok"`
+			SetupFile string `json:"setup_file"`
+			Note      string `json:"note"`
+		}{true, path, "Read the owner setup link in this private file or run owngit setup-link in a terminal."})
 	}
 	return nil
 }

@@ -29,21 +29,23 @@ func updateCommand(arguments []string) error {
 	flags := flag.NewFlagSet("update", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	asJSON := flags.Bool("json", false, "print JSON")
-	if err := parseFlags(flags, arguments); err != nil {
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("update takes no arguments")
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("update takes no arguments"))
 	}
 	install, err := detectInstall()
 	if err != nil {
-		return err
+		return jsonFailure(jsonRequested(arguments), "install_unavailable", err)
 	}
 	checker := &releasecheck.Checker{Current: version.Version, URL: releaseCheckEndpoint}
 	if err := checker.Check(context.Background()); err != nil {
-		return fmt.Errorf("could not ask GitHub for the latest release: %w", err)
+		return jsonFailure(jsonRequested(arguments), "release_check_failed", fmt.Errorf("could not ask GitHub for the latest release: %w", err))
 	}
-	release, newer := checker.Newer()
+	release, _ := checker.Reported()
+	_, newer := checker.Newer()
+	older := !newer && release.Version != version.Version
 	runs := serviceFor(install)
 	platform := updatePlatform(install, runs)
 	command, start := "", ""
@@ -52,18 +54,28 @@ func updateCommand(arguments []string) error {
 		start = install.StartAfterUpdate(release.Version, platform)
 	}
 	if *asJSON {
+		latest := release.Version
+		if older {
+			latest = ""
+		}
 		return printJSON(struct {
-			Current  string `json:"current"`
-			Latest   string `json:"latest,omitempty"`
-			Newer    bool   `json:"newer"`
-			Route    string `json:"route"`
-			Program  string `json:"program"`
-			Command  string `json:"command,omitempty"`
-			Start    string `json:"start,omitempty"`
-			NotesURL string `json:"notes_url,omitempty"`
-		}{version.Version, release.Version, newer, string(install.Route), install.Executable, command, start, release.NotesURL})
+			Current     string `json:"current"`
+			Reported    string `json:"reported"`
+			Latest      string `json:"latest,omitempty"`
+			Newer       bool   `json:"newer"`
+			SourceOlder bool   `json:"source_older"`
+			Route       string `json:"route"`
+			Program     string `json:"program"`
+			Command     string `json:"command,omitempty"`
+			Start       string `json:"start,omitempty"`
+			NotesURL    string `json:"notes_url,omitempty"`
+		}{version.Version, release.Version, latest, newer, older, string(install.Route), install.Executable, command, start, release.NotesURL})
 	}
 	out := os.Stdout
+	if older {
+		fmt.Fprintf(out, "The update source reports OwnGit %s, older than this OwnGit %s. No downgrade is offered.\n", release.Version, version.Version)
+		return nil
+	}
 	if !newer {
 		fmt.Fprintf(out, "OwnGit %s is the latest release.\n", version.Version)
 		return nil

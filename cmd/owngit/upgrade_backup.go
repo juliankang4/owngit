@@ -284,24 +284,24 @@ func upgradeBackupCommand(arguments []string) error {
 		return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 	}
 	if len(operands) > 1 || (len(operands) == 1 && operands[0] != "on" && operands[0] != "off") {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("upgrade-backup takes on, off or nothing"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("upgrade-backup takes on, off or nothing"))
 	}
 	if err := state.RequireExisting(*stateDir); err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	held, err := state.OpenStateDirectory(*stateDir)
 	if err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	defer held.Close()
 	if len(operands) == 1 {
 		if err := state.SetUpgradeBackup(held, operands[0] == "on"); err != nil {
-			return jsonFailure(*asJSON, "state_unavailable", err)
+			return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 		}
 	}
 	enabled, err := state.UpgradeBackupEnabled(held)
 	if err != nil {
-		return jsonFailure(*asJSON, "state_unavailable", err)
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	folder := state.UpgradeBackupFolder(held.Name())
 	if *asJSON {

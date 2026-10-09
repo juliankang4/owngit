@@ -98,7 +98,7 @@ type loggedError struct{ error }
 
 func (err loggedError) Unwrap() error { return err.error }
 
-func run(arguments []string) error {
+func run(arguments []string) (result error) {
 	// Global help must be handled before command dispatch: the flag package
 	// treats -h/--help as a request for help, and without this check those
 	// flags fall into "serve" and make it exit with a flag error.
@@ -118,6 +118,7 @@ func run(arguments []string) error {
 	if len(arguments) != 0 && !strings.HasPrefix(arguments[0], "-") {
 		command, arguments = arguments[0], arguments[1:]
 	}
+	defer func() { result = commandJSONError(arguments, result) }()
 	// backup verify reads only the backup it is given, and the backup
 	// commands of a running server talk to it, so they run as the account
 	// that starts them, like any command without a state.
@@ -148,6 +149,18 @@ func run(arguments []string) error {
 		return nil
 	}
 	return runAsOwnerHint(err, command, arguments)
+}
+
+// commandJSONError applies the last raw JSON flag choice to every command
+// failure, including failures from a parser that stopped at an operand.
+func commandJSONError(arguments []string, err error) error {
+	if err == nil || errors.Is(err, errUsageShown) {
+		return err
+	}
+	if jsonRequested(arguments) {
+		return jsonFailure(true, "invalid_arguments", err)
+	}
+	return err
 }
 
 // runAsOwnerHint completes a refusal of another account's state directory
@@ -1107,49 +1120,58 @@ func resetAdmin(arguments []string) error {
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
 	passwordFile := flags.String("password-file", "", "owner-readable file containing the new password")
-	if err := parseFlags(flags, arguments); err != nil {
+	asJSON := flags.Bool("json", false, "print JSON")
+	fail := func(code string, err error) error { return jsonFailure(jsonRequested(arguments), code, err) }
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("reset-admin takes no positional arguments")
+		return fail("invalid_arguments", errors.New("reset-admin takes no positional arguments"))
 	}
 	if *passwordFile == "" {
-		return errors.New("--password-file is required; passwords are never accepted as command arguments")
+		return fail("invalid_arguments", errors.New("--password-file is required; passwords are never accepted as command arguments"))
 	}
 	password, err := readPrivatePassword(*passwordFile)
 	if err != nil {
-		return err
+		return fail("password_unavailable", err)
 	}
 	// Root reads its own password file first, then acts as the account that
 	// owns the state directory; see actAsStateOwner.
 	if _, err := actAsStateOwner(*stateDir); err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	encoded, err := auth.HashPassword(password)
 	if err != nil {
-		return err
+		return fail("reset_failed", err)
 	}
 	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	defer store.Close()
 	settings, err := store.Settings(context.Background())
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	if !settings.Initialized {
-		return errors.New("setup is not complete")
+		return fail("setup_incomplete", errors.New("setup is not complete"))
 	}
 	accessHash, err := store.PasswordHash(context.Background(), "access")
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	if accessHash != "" && auth.CheckPassword(accessHash, password) {
-		return errors.New("administrator password must differ from the shared access password")
+		return fail("invalid_arguments", errors.New("administrator password must differ from the shared access password"))
 	}
 	if err := store.SetAdminPassword(context.Background(), encoded); err != nil {
-		return err
+		return fail("reset_failed", err)
+	}
+	if *asJSON {
+		return printJSON(struct {
+			OK                    bool `json:"ok"`
+			SessionsRevoked       bool `json:"sessions_revoked"`
+			RepositoryDataChanged bool `json:"repository_data_changed"`
+		}{true, true, false})
 	}
 	fmt.Println("Administrator password reset. Repository data was not changed; existing administrator sessions were revoked.")
 	return nil
@@ -1159,25 +1181,34 @@ func approveHost(arguments []string) error {
 	flags := flag.NewFlagSet("approve-host", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	stateDir := flags.String("state-dir", defaultStateDir(), "host-local state directory")
+	asJSON := flags.Bool("json", false, "print JSON")
+	fail := func(code string, err error) error { return jsonFailure(jsonRequested(arguments), code, err) }
 	operands, err := parseFlagsAndOperands(flags, arguments)
 	if err != nil {
-		return err
+		return fail("invalid_arguments", err)
 	}
 	if len(operands) != 1 {
-		return errors.New("approve-host requires exactly one host name")
+		return fail("invalid_arguments", errors.New("approve-host requires exactly one host name"))
 	}
 	host := operands[0]
 	policy := server.NewHostPolicy()
 	if err := policy.Add(host); err != nil {
-		return err
+		return fail("invalid_arguments", err)
 	}
 	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
-		return err
+		return fail("state_unavailable", err)
 	}
 	defer store.Close()
 	if err := store.AddTrustedHost(context.Background(), host); err != nil {
-		return err
+		return fail("state_unavailable", err)
+	}
+	if *asJSON {
+		return printJSON(struct {
+			OK              bool   `json:"ok"`
+			Host            string `json:"host"`
+			RestartRequired bool   `json:"restart_required"`
+		}{true, host, true})
 	}
 	fmt.Println("Host approved. Restart the server to load the change.")
 	return nil
@@ -1197,26 +1228,26 @@ func forgetCheckContainer(arguments []string) error {
 	jobID := flags.String("job", "", "configured-check job identifier")
 	confirmed := flags.Bool("confirm-container-removed", false, "confirm that the job's container was removed or its Docker daemon no longer exists")
 	asJSON := flags.Bool("json", false, "print JSON")
-	if err := parseFlags(flags, arguments); err != nil {
+	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
-		return errors.New("forget-check-container takes no positional arguments")
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("forget-check-container takes no positional arguments"))
 	}
 	if !validHexID(*jobID) {
-		return errors.New("--job must be a valid job identifier")
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("--job must be a valid job identifier"))
 	}
 	if !*confirmed {
-		return errors.New("--confirm-container-removed is required: first remove any container labeled com.owngit.check-job=" + *jobID + " on the Docker daemon that ran it, or make sure that daemon no longer exists")
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("--confirm-container-removed is required: first remove any container labeled com.owngit.check-job="+*jobID+" on the Docker daemon that ran it, or make sure that daemon no longer exists"))
 	}
 	store, err := openLiveState(context.Background(), *stateDir)
 	if err != nil {
-		return err
+		return jsonFailure(jsonRequested(arguments), "state_unavailable", err)
 	}
 	defer store.Close()
 	forgotten, err := (&checkrun.Coordinator{Store: store}).ForgetForeignContainer(context.Background(), *jobID)
 	if err != nil {
-		return err
+		return jsonFailure(jsonRequested(arguments), "forget_failed", err)
 	}
 	record := forgotten.Record
 	dockerUnavailable := ""
@@ -1264,7 +1295,7 @@ func backupState(arguments []string) error {
 	if err := parseFlagsJSON(flags, arguments); err != nil {
 		return err
 	}
-	fail := func(code string, err error) error { return jsonFailure(*asJSON, code, err) }
+	fail := func(code string, err error) error { return jsonFailure(jsonRequested(arguments), code, err) }
 	if flags.NArg() != 0 || *output == "" {
 		return fail("invalid_arguments", errors.New("backup requires --output and accepts no positional arguments"))
 	}
@@ -1359,7 +1390,7 @@ func restoreState(arguments []string) error {
 	// interrupted step keeps the interruption, so it still exits 130, and a
 	// verification that ran is the error's details.
 	fail := func(code string, err error) error {
-		if !*asJSON {
+		if !jsonRequested(arguments) {
 			return err
 		}
 		problem := &apiclient.Error{Code: code, Message: err.Error(), Cause: err}

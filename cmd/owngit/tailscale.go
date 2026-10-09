@@ -67,20 +67,22 @@ func printTailscaleUsage(writer io.Writer) {
 
 // tailscaleFlags are the options every tailscale command takes.
 type tailscaleFlags struct {
-	flags    *flag.FlagSet
-	stateDir *string
-	command  *string
-	asJSON   *bool
+	flags     *flag.FlagSet
+	stateDir  *string
+	command   *string
+	asJSON    *bool
+	arguments []string
 }
 
-func newTailscaleFlags(name string) tailscaleFlags {
+func newTailscaleFlags(name string, arguments ...string) tailscaleFlags {
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	return tailscaleFlags{
-		flags:    flags,
-		stateDir: flags.String("state-dir", defaultStateDir(), "host-local state directory"),
-		command:  flags.String("tailscale", "", "tailscale command `path`; found automatically when empty"),
-		asJSON:   flags.Bool("json", false, "print JSON"),
+		flags:     flags,
+		stateDir:  flags.String("state-dir", defaultStateDir(), "host-local state directory"),
+		command:   flags.String("tailscale", "", "tailscale command `path`; found automatically when empty"),
+		asJSON:    flags.Bool("json", false, "print JSON"),
+		arguments: arguments,
 	}
 }
 
@@ -124,7 +126,7 @@ func (options tailscaleFlags) failure(code string, err error) error {
 	case errors.Is(err, state.ErrNotExist):
 		code, err = "state_missing", missingStateError(*options.stateDir)
 	}
-	return jsonFailure(*options.asJSON, code, err)
+	return jsonFailure(jsonRequested(options.arguments), code, err)
 }
 
 // missingStateError explains a state directory without OwnGit's state, as
@@ -175,7 +177,7 @@ func jsonRequested(arguments []string) bool {
 }
 
 func tailscaleStatus(arguments []string) error {
-	options := newTailscaleFlags("tailscale status")
+	options := newTailscaleFlags("tailscale status", arguments...)
 	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}
@@ -215,7 +217,7 @@ func tailscaleStatus(arguments []string) error {
 }
 
 func tailscaleOn(arguments []string) error {
-	options := newTailscaleFlags("tailscale on")
+	options := newTailscaleFlags("tailscale on", arguments...)
 	homeNetwork := options.flags.Bool("home-network", false, "also let devices on the home network connect over plain HTTP; --home-network=false keeps OwnGit on this computer only. Without it the listen address stays as it is when Tailscale can reach it")
 	httpsPort := options.flags.Int("https-port", 0, "the HTTPS `port` Tailscale answers on; without it OwnGit uses 443, or 8443 or 10000 when something else is on 443, and keeps the port sharing uses now. Another port moves sharing that is on")
 	replace := options.flags.String("replace-endpoint", "", "replace what another service has on --https-port with OwnGit's address: the `digest` \"owngit tailscale status\" or a refusal showed for that port. Nothing is replaced when anything Tailscale serves changed since")
@@ -325,7 +327,7 @@ func printRunningServerNote(server string) {
 }
 
 func tailscaleOff(arguments []string) error {
-	options := newTailscaleFlags("tailscale off")
+	options := newTailscaleFlags("tailscale off", arguments...)
 	if err := parseFlagsJSON(options.flags, arguments); err != nil {
 		return err
 	}

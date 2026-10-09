@@ -68,8 +68,15 @@ func TestVersionComparisonAndStrictTags(t *testing.T) {
 		if newer != tc.newer {
 			t.Errorf("%q: newer %v, want %v", tc.tag, newer, tc.newer)
 		}
-		if newer && (release.Version != tc.tag[1:] || release.NotesURL != "https://github.com/juliankang4/owngit/releases/tag/"+tc.tag) {
-			t.Errorf("%q: release %+v; the notes link must be built from the tag, not the answer", tc.tag, release)
+		reported, found := checker.Reported()
+		if !tc.fails && (!found || reported.Version != tc.tag[1:] || reported.NotesURL != "https://github.com/juliankang4/owngit/releases/tag/"+tc.tag) {
+			t.Errorf("%q: source answer %+v, found=%v", tc.tag, reported, found)
+		}
+		if !newer && release.Version != "" {
+			t.Errorf("%q: equal or older release produced a notice: %+v", tc.tag, release)
+		}
+		if newer && release != reported {
+			t.Errorf("%q: newer release %+v differs from source answer %+v", tc.tag, release, reported)
 		}
 	}
 }
@@ -132,6 +139,9 @@ func TestFailuresAreSilentAndLoggedOncePerStreak(t *testing.T) {
 		// A failed check keeps the earlier answer.
 		if release, newer := checker.Newer(); !newer || release.Version != "1.0.3" {
 			t.Errorf("status %d: earlier result lost: %+v %v", failure.code, release, newer)
+		}
+		if reported, ok := checker.Reported(); !ok || reported.Version != "1.0.3" {
+			t.Errorf("status %d: earlier source answer lost: %+v %v", failure.code, reported, ok)
 		}
 	}
 	mu.Lock()

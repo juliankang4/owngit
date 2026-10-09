@@ -32,7 +32,7 @@ func verifyBackup(arguments []string) error {
 		return jsonFailure(jsonRequested(arguments), "invalid_arguments", err)
 	}
 	if len(operands) != 1 {
-		return jsonFailure(*asJSON, "invalid_arguments", errors.New("backup verify takes one backup folder"))
+		return jsonFailure(jsonRequested(arguments), "invalid_arguments", errors.New("backup verify takes one backup folder"))
 	}
 	// An interrupt stops the rehearsal, which then removes its folder.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
