@@ -6,15 +6,19 @@ This package installs OwnGit {{.Version}} and the `owngit` command. It supports 
 
 ```sh
 npm install -g owngit
-owngit serve
+owngit service install
 ```
 
-The host also needs Git with an executable `git-http-backend`.
+Open the setup link that the command prints. After setup, choose a backup folder under Settings, Storage & recovery, Backups and turn scheduled backups on. Keep that folder outside the state and repository folders. OwnGit starts the first backup when you save.
+
+To run OwnGit in a terminal instead of as a service, use `owngit serve`.
+
+The host also needs Git on PATH with an executable `git-http-backend`. Pull request merging needs Git 2.38 or newer. On Windows, install this package from Command Prompt if PowerShell blocks npm scripts.
 
 The OwnGit executable comes from a platform package that npm installs as an optional dependency, such as `{{.Example}}`. If npm left it out, for example with `--omit=optional` in a project install, or if your platform has no package, the `owngit` command reports this and lists the supported platforms.
 
 Node.js {{.Node}} is needed to install this package and to start the `owngit` command, a small launcher that runs the OwnGit executable with the same arguments. OwnGit itself does not use Node. The other installation routes, such as Homebrew or the portable archives, need no Node.
 
-Two limits apply to the launcher. A server started with `nohup owngit serve &` still stops when the terminal or SSH session closes. A `SIGINT` sent only to the launcher, for example Ctrl+C in `docker run` without `-t`, does not stop the server; `SIGTERM` does. To keep a server running, use a service manager such as launchd or systemd, install with Homebrew and use `brew services`, or run the executable from the platform package or a release archive directly.
+Two limits apply to the launcher. A server started with `nohup owngit serve &` still stops when the terminal or SSH session closes. A `SIGINT` sent only to the launcher, for example Ctrl+C in `docker run` without `-t`, does not stop the server; `SIGTERM` does. Use `owngit service install` to keep OwnGit running after the terminal closes. You can also run the executable from the platform package or a release archive directly.
 
 See the [project README]({{.Homepage}}) for setup, access, and the other installation routes.

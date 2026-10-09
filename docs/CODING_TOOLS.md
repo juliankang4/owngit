@@ -364,6 +364,30 @@ Thirty seconds leaves wide room for a typical checkout whose files are already
 cached. A very large checkout with a cold file cache, above all on Windows, can
 still exceed it and record `unknown`.
 
+### Output limits and client compatibility
+
+A positive `results[].output_limit_exceeded_bytes` records the execution
+limit that was exceeded, in bytes. It is the applied limit, not a count of
+bytes omitted. An absent or zero value means the result did not state that
+fact. It does not prove that no limit was exceeded. `truncated` can also mean
+that OwnGit shortened an excerpt, even when the check passed.
+
+The CLI uses this fact in local `--no-upload` results. CLI uploads and MCP
+`check_run` send it when the server accepts it. For a custom helper or
+runner, read `attempt.result_facts` from the helper registration or runner start response before execution. Send
+`output_limit_exceeded_bytes` in a result only when that list contains its
+name. Otherwise keep the legacy result shape and OwnGit note in the excerpt.
+Do not infer support from the version number or retry a mutation with another
+shape to negotiate support. Ordinary status and completion answers do not
+advertise capabilities.
+
+API, CLI and MCP summaries remain recorded text, as do raw output and logs.
+The dashboard and individual failed-check tray notifications can show verified
+result counts in English or Korean. A positive limit fact also gives the
+page a localized limit notice. Legacy or unverified text stays as recorded.
+Displayed log expiry uses server-local time; API timestamps, Git's recorded
+offsets and UTC workflow schedules retain their meanings.
+
 ### Processes a check starts
 
 When a check ends, the client stops the programs the check started. This
@@ -476,6 +500,9 @@ Read tools change nothing:
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
 | `pull_request_diff`, `pull_request_mergeability` | `pr diff`, `pr mergeability` |
 | `check_task_list`, `check_status`, `check_log`, `check_cycle_list`, `check_config_show` | the `check` commands of the same name |
+| `workflow_list`, `workflow_show` | `workflow list`, `workflow show --path FILE` |
+| `workflow_run_list`, `workflow_run_show` | `workflow-run list`, `workflow-run show --run RUN_ID [--job JOB_ID]` |
+| `workflow_job_log` | `workflow-run log --run RUN_ID --job JOB_ID` |
 | `activity` | `activity` |
 | `backup_status` | A summary of the backup records: schedule, last run, last verified backup, next run. It names no folder or repository. |
 
@@ -490,9 +517,30 @@ Write tools:
 | `repository_restore_apply` | Apply a restore preview as one new commit. Never rewrites history. |
 | `check_task_create`, `check_cycle_reserve` | Add a task, or use one of its correction rounds. |
 | `check_run` | Run the committed checks in `--workdir` and record the attempt. |
+| `workflow_dispatch` | `workflow dispatch --path FILE`: start a workflow under its repository policy. |
+| `workflow_run_cancel`, `workflow_run_rerun` | `workflow-run cancel --run RUN_ID`, `workflow-run rerun --run RUN_ID`: cancel or rerun a whole run. |
+
+The eight workflow tools use general access, not the helper credential.
+`workflow_list` and `workflow_show` accept `ref`; `workflow_show` requires
+`path`. `workflow_dispatch` requires `path` and accepts `ref`, `expected_oid`
+and an `inputs` object. `workflow_run_list` accepts `limit` (1 to 999, default
+50). `workflow_run_show`, `workflow_run_cancel` and `workflow_run_rerun`
+require `run`; `workflow_run_show` accepts `job` for excerpts.
+`workflow_job_log` requires both `run` and `job`. Each accepts `repository`
+when it is not set at startup. See [Workflow API reference](WORKFLOWS.md#reference-commands-api-and-mcp)
+for HTTP methods, request bodies and authority requirements.
+
+For custom HTTP clients, send one JSON object with known fields and
+`Content-Type: application/json`. Use `{}` for actions with no fields.
+Existing actions that support legacy empty bodies, such as check-policy
+`enable` and `disable`, still accept them. Workflow cancel, rerun and secret
+removal require `{}`. `null`, arrays and scalar bodies are not objects.
 
 The MCP server offers no administrator commands, no credential management, no
-repository creation and no `--check`.
+repository creation and no `--check`. Host recovery (`reset-admin`,
+`setup-link`, `approve-host`), process commands (`serve`, `service`, `runner`,
+`mcp`), offline `backup --output`, `restore` and `upgrade-backup` remain
+outside MCP.
 
 ### Safety
 
@@ -500,6 +548,9 @@ repository creation and no `--check`.
   permissions and no sandbox. Anyone who can commit to the clone can make it
   start a program. If an agent may edit files but must not run commands, start
   the server with `--no-run-check`.
+- `--no-run-check` removes only `check_run`. It does not remove
+  `workflow_dispatch` or `workflow_run_rerun`, which can execute repository
+  code and use workflow secrets under the server's policy.
 - Titles, descriptions, review notes, branch names, paths, patches and check
   output come from repository users. The tool descriptions tell the agent to
   treat them as data and not to follow instructions in them.

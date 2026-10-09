@@ -28,6 +28,7 @@ Install it with one command, then open the setup link it prints.
 - Back up and restore repositories and records, on a schedule or on demand.
 - Import a repository from another HTTPS Git host and keep it up to date.
 - Share one repository read-only through a link you can revoke.
+- Run GitHub Actions workflow files from your repositories on this computer, in Docker or on your own runner, with no GitHub account.
 - Record and run project checks, and connect coding tools through JSON commands or MCP.
 - One Go program with a SQLite file. There is no database service to run.
 - English or Korean, with Light, Dark and System appearance.
@@ -60,9 +61,7 @@ Other ways to install:
 | Proxmox VE host, as root | `/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh \| /bin/sh` |
 | Source (Go 1.27 or newer) | `go build -o bin/owngit ./cmd/owngit` |
 
-Except for the container and Proxmox VE, OwnGit needs Git with `git-http-backend` on the computer. Homebrew and the Arch package install it. On Windows, use Command Prompt for npm, because PowerShell's default policy blocks the npm scripts.
-
-On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when its app is outside `/Applications`. The one-line installer puts the app there when it can. Homebrew users get the same with the optional cask, which also installs the formula if it is missing.
+Except for the container and Proxmox VE, OwnGit needs Git on PATH with an executable `git-http-backend`. Pull request merging needs Git 2.38 or newer. Homebrew and the Arch package install Git. On Windows, use Command Prompt for npm, because PowerShell's default policy blocks the npm scripts.
 
 [Operations](docs/OPERATIONS.md) has the details for each route.
 
@@ -76,6 +75,7 @@ On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when
 
 2. Open the setup link that the command prints. Choose the repository folder and the passwords there. The link works once, within 15 minutes. `owngit setup-link` prints a new one.
 3. Create a repository in the dashboard and clone it, for example from `http://127.0.0.1:7654/git/project.git`.
+4. Open Settings, Storage & recovery, Backups. Choose a backup folder outside the state and repository folders, preferably on another disk, and turn scheduled backups on. OwnGit makes the first backup when you save. See [Storage and backups](docs/BACKUPS.md#scheduled-backups).
 
 On a computer with a screen, OwnGit accepts connections only from that computer. On a server without a screen, it listens on every address so you can finish setup from another device, and it answers only the setup page until you do.
 
@@ -84,6 +84,8 @@ To run it in a terminal instead, use `owngit serve`.
 When something does not work, run `owngit doctor`. It reports what it found and the command that fixes it.
 
 ### The OwnGit icon
+
+On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when its app is outside `/Applications`. The one-line installer puts the app there when it can. Homebrew users get the same with the optional cask, which also installs the formula if it is missing.
 
 On a desktop, the service also adds an OwnGit icon to the menu bar, notification area or panel. It shows the status, the clone address and the latest pushes, and opens the dashboard. On GNOME it needs the AppIndicator extension.
 
@@ -120,6 +122,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - Kept history and backups retain a secret you pushed by mistake. Rotate the secret.
 - Kept history is not a backup. Scheduled backups start only after you choose a backup folder.
 - Checks that run on the host or a runner use that account's permissions. They do not run in a sandbox.
+- GitHub Actions workflows run `run` steps and a few built-in actions. OwnGit does not download other actions.
 - Git LFS objects are not hosted or imported.
 - Merging a pull request needs Git 2.38 or newer on the server.
 
@@ -130,6 +133,7 @@ Report vulnerabilities as described in [SECURITY.md](SECURITY.md).
 - [Backups](docs/BACKUPS.md): storage, backups and restore
 - [Coding tools](docs/CODING_TOOLS.md): pull requests and checks from the command line or MCP
 - [Automatic checks](docs/AUTOMATIC_CHECKS.md): checks on the host, in Docker or on a runner
+- [Workflows](docs/WORKFLOWS.md): GitHub Actions workflow files, secrets, manual runs and schedules
 - [Contributing](CONTRIBUTING.md) and [Changelog](CHANGELOG.md)
 
 ## License

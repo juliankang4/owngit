@@ -7,8 +7,9 @@ pushes or updates a pull request. This guide is for the server owner.
 
 To turn them on:
 
-1. Commit a [check file](#check-file), `.owngit/checks.json`, to the
-   repository.
+1. Commit a [check file](#check-file), `.owngit/checks.json`, or a GitHub
+   Actions workflow file in `.github/workflows/` to the repository. For
+   workflow files, see [Workflows](WORKFLOWS.md).
 2. Choose [where checks run](#where-checks-run) and save a
    [policy](#policy-and-turning-checks-on).
 3. Turn checks on for that policy.
@@ -75,7 +76,13 @@ On the command line, write the policy to a file:
 `queue_limit` is how many jobs may wait, `max_active_jobs` how many run at
 once, and `max_lease_ms` how long a claimed job may go without a sign of life
 before its claim ends. `max_timeout_ms` and `max_output_limit_bytes` are the
-most a check file may ask for.
+most a check file may ask for; for workflows they limit each step.
+
+`allowed_events` may also hold `workflow_dispatch` and `schedule`, which only
+workflow files use. `run_workflows` turns workflow files on or off. A policy
+saved for the first time has it on unless the file says `false`; a policy
+saved before OwnGit 1.1.8 keeps it off until you turn it on. See
+[Turn workflows on](WORKFLOWS.md#turn-workflows-on).
 
 Then save it and turn checks on in one step:
 
@@ -92,7 +99,8 @@ owngit check-policy set --enable \
 
 - Turning checks on approves exactly the saved policy. Saving a different
   policy turns checks off until you turn them on again.
-- Nothing runs without both a matching check file and an approved policy.
+- Nothing runs without both a matching check file or workflow file and an
+  approved policy.
 - `check-policy show` also says whether this computer can run checks now. If
   it reports `workspace_unavailable` or `restart_reconciliation_unavailable`,
   fix the cause it names and restart OwnGit. Git and merges keep working.
@@ -141,20 +149,27 @@ containers. A remote Docker is refused, so do not set `DOCKER_HOST`,
 ```
 
 The values shown for CPU, memory, processes and scratch space are the
-defaults. The network is `none` or `bridge`.
+defaults. By default, the image must be pinned by digest and the network is
+`none` or `bridge`. The administrator can allow tags or select a Docker
+network they created; see [Container options](#container-options).
 
-Each check runs:
+By default, each check runs:
 
-- as OwnGit's own non-root user, never the image's user;
+- on Linux and macOS, with the OwnGit process's UID and GID when it is not
+  root; a root service and Windows use the fixed nonroot identity
+  `65532:65532`, never the image's user;
 - with a read-only root filesystem, all Linux capabilities dropped and
   `no-new-privileges`;
 - with CPU, memory and process limits and no swap;
-- with only the job's files mounted at `/workspace`, and a size-limited
-  `/tmp`.
+- with the job's copied source mounted at `/workspace` and a size-limited
+  `/tmp`. Workflow jobs also mount their own scripts, command files and
+  temporary folders, not the server's state or repositories.
 
-There is no privileged mode, no host network, no Docker socket and no host
-mount. OwnGit refuses an image that declares volumes, and a Docker that cannot
-enforce the limits.
+There is no privileged mode, host network, Docker socket or arbitrary host
+mount. On Windows, Docker must be able to mount the job's local folders and
+let `65532:65532` use them. By default, OwnGit refuses images that declare
+volumes and Docker setups that cannot enforce the limits. The options below
+state the exceptions the administrator can allow.
 
 #### Container options
 
@@ -211,6 +226,9 @@ certificate authority.
   The server keeps only a hash of each token.
 - After a repository is renamed, restart the runner with the new
   `--repository` within 90 days.
+- A runner from OwnGit 1.1.7 or earlier runs only `.owngit/checks.json`
+  jobs. Workflow jobs wait until a current runner takes them; see
+  [Old runners](WORKFLOWS.md#old-runners).
 - The read limits described under [What a check sees](#what-a-check-sees)
   belong to the computer that runs OwnGit. Before the runner downloads any
   file, OwnGit checks each file's size and the memory needed to rebuild it.
@@ -287,6 +305,9 @@ error and does not add the note for it.
 These rules only choose the variables a check sees. They are not a sandbox: a
 check can still read and change everything its account can.
 
+Workflow jobs on the host get the same list, plus the `GITHUB_*` variables
+and the workflow's `env` (see [What the job has](WORKFLOWS.md#what-the-job-has)).
+
 Container checks do not use this list. A command in the container gets the
 variables its image defines, plus fixed values from OwnGit: `HOME`, `TMPDIR`,
 `TMP`, `TEMP` and `GOTMPDIR` set to `/tmp`, `XDG_CACHE_HOME` set to
@@ -296,6 +317,22 @@ lower-case forms to empty values, so proxy settings from the image or from the
 server's Docker client configuration do not reach the command. OwnGit's own
 `docker` commands still use the server's environment, which is why the Docker
 variables under [Container](#container) matter.
+
+Workflow jobs in a container get the same proxy variables, but `HOME`, the
+temporary folders and the caches point to the job's own folder, which keeps
+its changes from one step to the next (see
+[What the job has](WORKFLOWS.md#what-the-job-has)).
+
+## Results and output limits
+
+A result may record a positive `output_limit_exceeded_bytes`: the applied
+execution limit that was exceeded. Zero or absence means not stated;
+`truncated` alone can mean excerpt clipping. The dashboard shows verified
+result counts and positive-limit notices in English or Korean. API summaries,
+raw output and logs remain recorded text. Log expiry on pages uses
+server-local time; API instants, Git's recorded offsets and UTC schedules do
+not change. Custom helper and runner clients must follow the
+[capability and upload rules](CODING_TOOLS.md#output-limits-and-client-compatibility).
 
 ## Jobs
 
@@ -307,10 +344,17 @@ check file. Git never waits for checks.
 - At each start, OwnGit queues matching branch heads that never got a job.
 - A job goes from `pending` to `claimed` and `started`, and ends as `passed`,
   `failed`, `error`, `cancelled`, `incomplete`, `unavailable`, `ambiguous` or
-  `interrupted`.
+  `interrupted`. A workflow job can also wait as `waiting` for the jobs it
+  needs, and end as `skipped`.
 - OwnGit never requeues a job that started, because its commands may already
   have run. Run it again yourself.
 - A check that changes a tracked file does not get a clean result.
+
+Some `.owngit/checks.json` admission refusals are kept as an unavailable
+attempt with an Admission result and the reason, even though no command ran.
+For example, an invalid check file or a full queue can leave this evidence.
+It uses no execution or queue slot and is not a passing check. Read it under Checks, Tasks or through the task API, CLI or MCP. Other
+workflow files from the same event can still run.
 
 Work with jobs on the Automatic checks screen or on the command line:
 
@@ -326,6 +370,11 @@ owngit check-job rerun  ... --job JOB_ID
 rerun checks the same commit with the same commands, under the current
 policy's maximums. Raw logs are kept as set under
 [Raw check logs](#raw-check-logs).
+
+Workflow jobs belong to runs. Cancel or rerun them as a whole run with
+`owngit workflow-run`, which needs only general access; `check-job rerun`
+refuses a single workflow job. See
+[Runs, cancel and rerun](WORKFLOWS.md#runs-cancel-and-rerun).
 
 ## What a check sees
 
@@ -380,9 +429,13 @@ expires.
 
 ## Backup and restore
 
-Backups keep policies, jobs and results, but not runner tokens. After a
-restore:
+Backups keep policies, jobs, workflow runs and results. They do not keep
+runner tokens, workflow secrets, workflow schedules or the records of which
+pushes OwnGit accepted. After a restore:
 
 - checks are off until you turn them on again;
 - runner tokens must be issued again;
-- jobs that had not finished are marked `interrupted`.
+- workflow secrets must be entered again;
+- jobs that had not finished are marked `interrupted`;
+- schedules start again from the workflow files once checks are on, and they
+  wait for the next accepted push to the default branch.

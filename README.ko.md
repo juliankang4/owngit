@@ -28,6 +28,7 @@ OwnGit은 혼자 또는 작은 그룹이 쓰는 셀프 호스팅 Git 서버(self
 - 저장소와 OwnGit 기록을 예약에 따라 또는 원할 때 백업하고 복원합니다.
 - 다른 HTTPS Git 호스트의 저장소를 가져와 최신으로 유지합니다.
 - 저장소 하나를 읽기 전용 링크로 공유합니다. 링크는 언제든 폐기할 수 있습니다.
+- 저장소의 GitHub Actions 워크플로 파일을 이 컴퓨터나 Docker, 내 러너에서 실행합니다. GitHub 계정은 필요 없습니다.
 - 프로젝트 체크를 기록하고 실행합니다. JSON 명령이나 MCP로 코딩 도구도 연결합니다.
 - Go 프로그램 하나와 SQLite 파일 하나로 동작합니다. 따로 돌릴 데이터베이스 서비스가 없습니다.
 - 영어와 한국어 화면, 라이트, 다크, 시스템 화면 모드를 지원합니다.
@@ -60,9 +61,7 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 | Proxmox VE 호스트(root로) | `/usr/bin/curl --proto '=https' --proto-redir '=https' -fsSL https://owngit.app/proxmox.sh \| /bin/sh` |
 | 소스(Go 1.27 이상) | `go build -o bin/owngit ./cmd/owngit` |
 
-컨테이너와 Proxmox VE를 빼면, 컴퓨터에 `git-http-backend`가 들어 있는 Git이 있어야 합니다. Homebrew와 Arch 패키지는 Git을 함께 설치합니다. Windows에서 npm으로 설치할 때는 명령 프롬프트를 쓰세요. PowerShell의 기본 정책이 npm 스크립트를 막습니다.
-
-macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 OwnGit 아이콘을 가릴 수 있습니다. 한 줄 설치는 가능하면 앱을 `/Applications`에 넣습니다. Homebrew 사용자는 선택 사항인 cask로 같은 효과를 얻습니다. cask는 formula가 없으면 함께 설치합니다.
+컨테이너와 Proxmox VE를 빼면, PATH에 Git이 있고 `git-http-backend`를 실행할 수 있어야 합니다. 풀 리퀘스트 병합에는 Git 2.38 이상이 필요합니다. Homebrew와 Arch 패키지는 Git을 함께 설치합니다. Windows에서 npm으로 설치할 때는 명령 프롬프트를 쓰세요. PowerShell의 기본 정책이 npm 스크립트를 막습니다.
 
 방법별 자세한 내용은 [운영 안내](docs/OPERATIONS.ko.md)에 있습니다.
 
@@ -76,6 +75,7 @@ macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 
 
 2. 명령이 출력한 설정 링크를 엽니다. 여기서 저장소 폴더와 비밀번호를 정합니다. 링크는 15분 안에 한 번만 쓸 수 있습니다. 새 링크는 `owngit setup-link`로 받습니다.
 3. 대시보드에서 저장소를 만들고 클론합니다. 주소는 예를 들어 `http://127.0.0.1:7654/git/project.git`입니다.
+4. 설정의 보관과 복구 탭에서 백업을 엽니다. 상태 폴더와 저장소 폴더 밖에 백업 폴더를 정하고 예약 백업을 켭니다. 가능하면 다른 디스크를 쓰세요. 저장하면 첫 백업이 시작됩니다. [저장 공간과 백업](docs/BACKUPS.ko.md#예약-백업)을 보세요.
 
 화면이 있는 컴퓨터에서는 OwnGit이 그 컴퓨터에서 오는 연결만 받습니다. 화면이 없는 서버에서는 다른 기기에서 설정을 마칠 수 있도록 모든 주소에서 연결을 받습니다. 설정을 마칠 때까지는 설정 페이지만 보여 줍니다.
 
@@ -84,6 +84,8 @@ macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 
 잘 안 되면 `owngit doctor`를 실행하세요. 찾은 문제와 고치는 명령을 알려 줍니다.
 
 ### OwnGit 아이콘
+
+macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 OwnGit 아이콘을 가릴 수 있습니다. 한 줄 설치는 가능하면 앱을 `/Applications`에 넣습니다. Homebrew 사용자는 선택 사항인 cask로 같은 효과를 얻습니다. cask는 formula가 없으면 함께 설치합니다.
 
 데스크톱에서는 서비스가 메뉴 막대, 알림 영역, 패널에 OwnGit 아이콘도 띄웁니다. 아이콘에서 상태, 클론 주소, 최근 푸시를 보고 대시보드를 엽니다. GNOME에서는 AppIndicator 확장이 있어야 보입니다.
 
@@ -120,6 +122,7 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 - 실수로 푸시한 비밀값은 보관된 기록과 백업에 남습니다. 그 비밀값은 새것으로 바꾸세요.
 - 보관된 기록은 백업이 아닙니다. 예약 백업은 백업 폴더를 정해야 시작됩니다.
 - 호스트나 러너에서 실행하는 체크는 그 계정의 권한으로 샌드박스 없이 돌아갑니다.
+- GitHub Actions 워크플로는 `run` 단계와 몇 가지 기본 제공 액션만 실행합니다. 그 밖의 액션은 내려받지 않습니다.
 - Git LFS 객체는 호스팅하지도 가져오지도 않습니다.
 - 풀 리퀘스트를 병합하려면 서버에 Git 2.38 이상이 있어야 합니다.
 
@@ -130,6 +133,7 @@ OwnGit은 스스로 업데이트하지 않습니다. 새 릴리스가 나오면 
 - [백업](docs/BACKUPS.ko.md): 저장 공간, 백업, 복원
 - [코딩 도구](docs/CODING_TOOLS.ko.md): 명령줄과 MCP로 다루는 풀 리퀘스트와 체크
 - [자동 체크](docs/AUTOMATIC_CHECKS.ko.md): 호스트, Docker, 러너에서 돌리는 체크
+- [워크플로](docs/WORKFLOWS.ko.md): GitHub Actions 워크플로 파일, 시크릿, 직접 실행, 예약 실행
 - [기여 안내](CONTRIBUTING.md)와 [변경 기록](CHANGELOG.md)
 
 ## 라이선스

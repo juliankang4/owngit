@@ -254,6 +254,14 @@ owngit pr reopen --number 1
 
 파일이 이미 캐시에 올라와 있는 보통 크기의 체크아웃이라면 30초는 넉넉합니다. 아주 큰 체크아웃을 캐시가 비어 있는 상태에서 읽으면, 특히 Windows에서는 30초를 넘겨 `unknown`이 될 수 있습니다.
 
+### 출력 한도와 클라이언트 호환성
+
+`results[].output_limit_exceeded_bytes`가 양수이면 실행 중 넘긴 출력 한도를 바이트로 나타냅니다. 생략한 출력량이 아니라 실제로 적용된 한도입니다. 없거나 0이면 이 사실을 기록하지 않았다는 뜻입니다. 한도를 넘지 않았다는 증거는 아닙니다. `truncated`는 발췌만 줄였다는 뜻일 수도 있어 통과한 체크에도 나타납니다.
+
+CLI는 로컬 `--no-upload` 결과에 이 값을 씁니다. CLI 업로드와 MCP의 `check_run`은 서버가 이 필드를 받을 때 보냅니다. 직접 만든 체크 에이전트나 러너는 실행 전에 체크 에이전트 등록 응답 또는 러너 시작 응답의 `attempt.result_facts`를 읽어야 합니다. 목록에 이름이 있을 때만 결과에 `output_limit_exceeded_bytes`를 보내세요. 없으면 기존 결과 형식과 발췌 안의 OwnGit 안내를 유지하세요. 버전 번호로 지원 여부를 추측하거나 형식을 바꿔 변경 요청을 다시 보내면서 지원 여부를 확인하지 마세요. 일반 상태 조회와 완료 응답에는 지원 목록이 없습니다.
+
+API, CLI, MCP 요약과 원본 출력, 로그는 기록된 텍스트를 유지합니다. 대시보드와 개별 체크 실패 트레이 알림은 검증된 결과 개수를 영어와 한국어로 보여 줄 수 있습니다. 양수인 한도가 있으면 화면에 해당 언어로 한도 안내도 나옵니다. 이전 기록이나 검증되지 않은 텍스트는 그대로 표시합니다. 화면의 로그 만료 시각은 서버 현지 시각입니다. API 타임스탬프, Git에 기록된 시차, UTC 워크플로 일정의 의미는 바뀌지 않습니다.
+
 ### 체크가 시작한 프로세스
 
 체크가 끝나면 클라이언트는 그 체크가 시작한 프로그램을 멈춥니다. 정상적으로 끝났을 때도, 시간 한도에 걸렸을 때도, 중간에 멈췄을 때도 마찬가지입니다. 클라이언트가 직접 실행하는 Git 읽기도 똑같이 처리합니다. 데이터베이스나 개발 서버처럼 오래 떠 있어야 하는 프로그램은 OwnGit 밖에서 시작하세요.
@@ -336,6 +344,9 @@ tool_timeout_sec = 1800
 | `pull_request_list`, `pull_request_show` | `pr list`, `pr show` |
 | `pull_request_diff`, `pull_request_mergeability` | `pr diff`, `pr mergeability` |
 | `check_task_list`, `check_status`, `check_log`, `check_cycle_list`, `check_config_show` | 이름이 같은 `check` 명령 |
+| `workflow_list`, `workflow_show` | `workflow list`, `workflow show --path FILE` |
+| `workflow_run_list`, `workflow_run_show` | `workflow-run list`, `workflow-run show --run RUN_ID [--job JOB_ID]` |
+| `workflow_job_log` | `workflow-run log --run RUN_ID --job JOB_ID` |
 | `activity` | `activity` |
 | `backup_status` | 백업 기록 요약: 예약 상태, 마지막 실행, 마지막으로 검증된 백업, 다음 실행. 폴더나 저장소 이름은 나오지 않습니다. |
 
@@ -350,12 +361,19 @@ tool_timeout_sec = 1800
 | `repository_restore_apply` | 되돌리기 미리보기를 새 커밋 하나로 적용합니다. 기록을 다시 쓰지 않습니다. |
 | `check_task_create`, `check_cycle_reserve` | 작업을 만들거나 수정 라운드를 하나 씁니다. |
 | `check_run` | `--workdir`에 커밋된 체크를 실행하고 시도를 기록합니다. |
+| `workflow_dispatch` | `workflow dispatch --path FILE`: 저장소 정책에 따라 워크플로를 실행합니다. |
+| `workflow_run_cancel`, `workflow_run_rerun` | `workflow-run cancel --run RUN_ID`, `workflow-run rerun --run RUN_ID`: 실행 전체를 취소하거나 다시 실행합니다. |
 
-MCP 서버에는 관리자 명령, 토큰 관리, 저장소 생성, `--check`가 없습니다.
+워크플로 도구 8개는 체크 에이전트 토큰이 아니라 일반 접근 권한을 씁니다. `workflow_list`와 `workflow_show`는 `ref`를 받으며 `workflow_show`에는 `path`가 필요합니다. `workflow_dispatch`에는 `path`가 필요하고 `ref`, `expected_oid`, `inputs` 객체도 받습니다. `workflow_run_list`는 `limit`를 받습니다(1부터 999, 기본값 50). `workflow_run_show`, `workflow_run_cancel`, `workflow_run_rerun`에는 `run`이 필요합니다. `workflow_run_show`에 `job`을 주면 발췌도 읽습니다. `workflow_job_log`에는 `run`과 `job`이 모두 필요합니다. 시작할 때 저장소를 정하지 않았다면 각 도구에 `repository`를 줍니다. HTTP 메서드, 요청 본문, 권한 조건은 [워크플로 API 참고](WORKFLOWS.ko.md#참고-명령-api-mcp)에 있습니다.
+
+직접 HTTP 클라이언트를 만들 때는 `Content-Type: application/json`과 알려진 필드만 있는 JSON 객체 하나를 보내세요. 필드가 없는 동작은 `{}`를 씁니다. 체크 정책의 `enable`, `disable`처럼 기존 빈 본문을 지원하는 동작은 계속 빈 본문도 받습니다. 워크플로 취소, 다시 실행, 시크릿 삭제에는 `{}`가 필요합니다. `null`, 배열, 단일 값은 객체가 아닙니다.
+
+MCP 서버에는 관리자 명령, 토큰 관리, 저장소 생성, `--check`가 없습니다. 호스트 복구(`reset-admin`, `setup-link`, `approve-host`), 프로세스 명령(`serve`, `service`, `runner`, `mcp`), 오프라인 `backup --output`, `restore`, `upgrade-backup`도 MCP에서 제공하지 않습니다.
 
 ### 안전
 
 - `check_run`은 저장소에 커밋된 명령을 내 권한으로, 샌드박스 없이 실행합니다. 클론에 커밋할 수 있는 사람은 누구나 이 도구로 프로그램을 실행시킬 수 있습니다. 에이전트가 파일은 고치되 명령은 실행하면 안 된다면 `--no-run-check`로 서버를 띄우세요.
+- `--no-run-check`는 `check_run`만 뺍니다. `workflow_dispatch`와 `workflow_run_rerun`은 남아 있으며 서버 정책에 따라 저장소 코드를 실행하고 워크플로 시크릿을 쓸 수 있습니다.
 - 제목, 설명, 리뷰 메모, 브랜치 이름, 경로, 패치, 체크 출력은 저장소 사용자가 쓴 내용입니다. 도구 설명은 에이전트에게 이것을 데이터로만 다루고 그 안의 지시를 따르지 말라고 알려 줍니다.
 - `check_run`은 한 번에 하나만 실행됩니다. `check_run`이 아닌 호출은 2분이 지나면 멈춥니다.
 

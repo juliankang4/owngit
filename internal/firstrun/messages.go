@@ -87,7 +87,7 @@ var phrases = map[string]phrase{
 	"dev_enc":      {"Tailscale encrypts the connection between devices, but OwnGit still reports plain HTTP because it cannot see that protection.", "Tailscale이 기기 사이의 연결을 암호화하지만, OwnGit은 그 보호를 확인할 수 없어 계속 일반 HTTP로 표시합니다."},
 	"dev_docs":     {`See "Reaching the server from another device" in the OwnGit docs.`, `OwnGit 문서의 "다른 기기에서 서버에 접속하기"를 보세요.`},
 	"dev_cmd":      {"Command that saves the settings (one line, copy all of it):", "설정을 저장하는 명령 (한 줄 전체를 복사하세요):"},
-	"dev_service":  {`Saved settings also apply when OwnGit runs as a background service. Leave --listen and --base-url out of the service definition, because an option there replaces the saved value. See "Options for a background service" in the OwnGit docs.`, `OwnGit을 백그라운드 서비스로 실행해도 저장된 설정이 적용됩니다. 서비스 정의에 --listen이나 --base-url 옵션이 있으면 저장된 값 대신 옵션 값을 쓰므로 빼 두세요. OwnGit 문서의 "백그라운드 서비스의 옵션"을 보세요.`},
+	"dev_service":  {`Saved settings also apply when OwnGit runs as a background service. Leave --listen and --base-url out of the service definition, because an option there replaces the saved value. See "Network settings" in docs/OPERATIONS.md.`, `OwnGit을 백그라운드 서비스로 실행해도 저장된 설정이 적용됩니다. 서비스 정의에 --listen이나 --base-url 옵션이 있으면 저장된 값 대신 옵션 값을 쓰므로 빼 두세요. docs/OPERATIONS.ko.md의 "네트워크 설정"을 보세요.`},
 	"dev_continue": {"Press Enter to continue", "계속하려면 Enter를 누르세요"},
 
 	"stop_title":  {"Setup stopped", "설정을 멈췄습니다"},

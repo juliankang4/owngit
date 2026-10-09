@@ -29,7 +29,7 @@ Every change keeps these rules.
 - Git names keep their exact bytes. Every Git command on hosted repositories gets `core.precomposeUnicode=false` at command scope. Commands that read the owner's own working copy follow the owner's Git configuration.
 - OwnGit owns the hooks of hosted repositories and restores them at every start.
 - A new repository folder is made private to the OwnGit account before content is written. Existing folders are never changed; `owngit doctor` reports unsafe ones with a repair command.
-- Browser restore previews every change, adds a commit without rewriting a branch, and refuses if the branch moved after the preview. Repository paths and symbolic links are data, never host paths.
+- Browser restore previews every change and refuses if the branch moved after the preview. Restoring onto an existing branch adds a commit without rewriting history. Restoring a missing branch points it at the source commit without adding a commit. Repository paths and symbolic links are data, never host paths.
 - A backup holds every ref and reachable object, repository metadata, access mode, password hashes and the durable pull request, task, check and import records. Machine-local state is not restored. `recovery.RestoreNotes` is the one list `owngit restore` reports; keep it in step with what restore leaves out.
 
 ### Access and administration
@@ -39,7 +39,7 @@ Every change keeps these rules.
 - A share link opens one repository read-only until it expires or is revoked. It never allows a push or shows owner pages.
 - A separate administrator password protects settings. The dashboard asks for it as the owner chooses under Settings, Access. The API and the command line always ask for it, for reads as well.
 - Every owner task is available in the dashboard and on the command line, and the command prints JSON (by default or with `--json`). Add an MCP tool when a coding tool would use the task. Exceptions:
-  - Command line only: `reset-admin`, `setup-link` and `approve-host` (they recover access), `uninstall`, `restore`, and `backup --output`.
+  - Command line only: `reset-admin`, `setup-link` and `approve-host` (they recover access), `uninstall`, `restore`, `backup --output`, and `upgrade-backup` (the host-local upgrade backup setting).
   - `serve`, `service`, `runner` and `mcp` control processes.
   - Accepting the plain-HTTP warning is dashboard only.
   - Check tasks, correction rounds and attempts are recorded by coding tools and only shown in the dashboard.
@@ -58,7 +58,7 @@ Every change keeps these rules.
 ### Imports
 
 - Never write to the source, and never let imported code grant check consent.
-- Publish only branches and tags. Never remove a local ref because the source deleted it. Treat replaced history as a push does.
+- By default, publish branches and tags, preserve refs deleted at the source and leave locally diverged refs alone. The owner may choose extra ref namespaces, overwrite diverged refs or follow upstream deletions. These choices never permit rewriting a protected default branch, deleting the branch HEAD points to or deleting refs when the source lists none of the selected refs. Branches and tags keep replaced history according to the repository's kept-history setting; extra namespaces have no kept history. See [Refresh choices](REPOSITORIES.md#refresh-choices).
 - Never report an unconfirmed publication as complete.
 - Do not host Git LFS objects. Ask for Git-only consent when pointers are found.
 
@@ -70,8 +70,8 @@ Every change keeps these rules.
 - Check a JSON request with `jsoninput.Valid` before decoding it.
 - Git subprocesses on hosted repositories use an app-owned HOME, empty global and system config, and `commandConfig` in `internal/gitexec/runner.go`. Never bring back inherited hooks, credential helpers, filters or client environment variables.
 - Pass repository paths to Git as literal pathspecs. Never resolve them on the host.
-- Store only hashes of helper and runner tokens. Issuing or revoking one needs administrator confirmation. Deliver a new token only through an owner-only file created exclusively.
-- API and command output never contain tokens, passwords, CA PEM or credential file paths.
+- Store only hashes of helper and runner tokens. Issuing or revoking one needs administrator authority. The authorized issuance API returns a new token once; the CLI saves it in a new owner-only file created exclusively. Ordinary reads never return token values.
+- Ordinary API and command output and logs contain no tokens, passwords or CA PEM. Authorized token issuance and share-link creation are intentional secret-delivery responses, not ordinary reads. CLI token issuance may report the destination file path, but never the token value. Do not echo credentials in errors or logs.
 - An accepted raw check log is never replaced. Backup files stay owner-readable.
 - Smart HTTP serves only the Git protocol paths.
 - SHA-256 backup hashes detect corruption. They are not authentication.
@@ -81,7 +81,7 @@ Every change keeps these rules.
 Git refs and objects are the repository data. SQLite (`owngit.sqlite` in the state directory) holds pull request, review, task, check and import records. OwnGit's own refs live under `refs/owngit/`, hidden from clients and closed to pushes.
 
 - The schema version is `currentSchemaVersion` in `internal/state/store.go`. A schema change needs a migration from each accepted earlier catalog. OwnGit refuses unknown, altered or newer databases without changing them. When a release writes a new schema, add its dump to `internal/state/testdata/released`.
-- The backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to backup and restore validation, raise the version, keep released versions readable, and reject newer versions before decoding. A backup without new records is written in the previous format (`format11Content`). Backup and restore share `manifestLimit`.
+- The backup format version is `backupVersion` in `internal/recovery/recovery.go`. When you add durable records, add them to backup and restore validation, raise the version, keep released versions readable, and reject newer versions before decoding. Select the format from both content and encoded manifest size. Format 12 carries workflow facts or a positive `output_limit_exceeded_bytes`. Without those, format 10 is used only when `format11Content` finds no newer records and the encoded manifest is at most 64 MiB; otherwise use format 11. An upgrade backup is readable by an earlier release only if that release supports its format and records. Backup and restore share `manifestLimit`.
 - Credentials, consent, schedules and sessions are never exported or restored.
 
 ## Documentation
@@ -97,6 +97,7 @@ Before merging, the maintainers update the documentation in English and Korean, 
 | `docs/BACKUPS.md` | storage, backups and restore |
 | `docs/CODING_TOOLS.md` | pull requests and checks from coding tools |
 | `docs/AUTOMATIC_CHECKS.md` | configured checks and runners |
+| `docs/WORKFLOWS.md` | GitHub Actions workflows, secrets, dispatch and schedules |
 | `CHANGELOG.md` | changes per version, in [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format |
 
 Each of these, except `CHANGELOG.md`, has a Korean `.ko.md` version with the same facts. `CONTRIBUTING.md` and this file are English only.

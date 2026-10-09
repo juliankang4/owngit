@@ -8,7 +8,7 @@ Kept history protects against force pushes and deleted branches, but it is not a
 
 | Place | What is in it | Default location |
 | --- | --- | --- |
-| State directory | `owngit.sqlite` (password hashes, pull requests, checks, imports, settings) and the import credentials in `import-credentials/` | `owngit` in the system's config folder: `~/.config/owngit` on Linux, `~/Library/Application Support/owngit` on macOS, `%AppData%\owngit` on Windows. A Linux system service uses `/var/lib/owngit/state`. |
+| State directory | `owngit.sqlite` (password hashes, pull requests, checks, imports, settings), the import credentials in `import-credentials/` and the workflow secrets in `workflow-secrets/` | `owngit` in the system's config folder: `~/.config/owngit` on Linux, `~/Library/Application Support/owngit` on macOS, `%AppData%\owngit` on Windows. A Linux system service uses `/var/lib/owngit/state`. |
 | Repository folder | One bare Git repository per project, named `NAME.git` | The folder you chose during setup |
 
 Both stay when you uninstall OwnGit. Delete them yourself when you no longer need them.
@@ -16,7 +16,7 @@ Both stay when you uninstall OwnGit. Delete them yourself when you no longer nee
 ### State directory
 
 - Keep it on a local disk. OwnGit refuses a state directory on a network share, a FUSE or 9P file system, or a virtual machine's shared folder. This includes a Windows drive seen from WSL, such as `/mnt/c`, and a Docker Desktop bind mount. Use a folder in WSL's own file system or a Docker named volume instead.
-- Protect it like a password. Import credentials are stored there without encryption, readable only by the account that runs OwnGit.
+- Protect it like a password. Import credentials and workflow secrets are stored there without encryption, readable only by the account that runs OwnGit.
 - On macOS and Linux, OwnGit refuses a state directory that another account could replace. Run the `chmod` command it prints, or choose another place.
 
 ### Repository folder
@@ -146,16 +146,29 @@ This command refuses with `offline_required` while an OwnGit runs with that stat
 A backup is a folder with a `manifest.json` and one Git bundle per repository. It holds:
 
 - every branch, tag and other ref, kept history, and each repository's HEAD and own settings;
-- pull requests, reviews, tasks, checks, check policies and import sources;
+- pull requests, reviews, tasks, checks, workflow runs, check policies and import sources;
 - the access mode and the password hashes.
 
 A backup holds only the commits that a ref or HEAD reaches. With kept history off, a commit overwritten by a force push is not in later backups.
 
-A backup does not hold sign-ins, network settings, helper credentials, runner tokens, import credentials and schedules, share links, consent to run checks, raw check logs, the backup schedule and history, or the server-wide settings. [After a restore](#after-a-restore) says how to set them up again.
+A backup does not hold sign-ins, network settings, helper credentials, runner tokens, import credentials and schedules, share links, consent to run checks, workflow secrets and schedules, the records of which pushes OwnGit accepted, raw check logs, the backup schedule and history, or the server-wide settings. [After a restore](#after-a-restore) says how to set them up again.
 
 An alias branch (a branch that points to another branch, a Git symbolic ref) is saved as an ordinary branch. The backup's message lists each alias with the `git symbolic-ref` command that reconnects it after a restore. Keep that message: the backup itself does not record the targets.
 
 A backup is refused for a repository that borrows objects from another repository (`objects/info/alternates`) or is a partial clone. The message names the repository.
+
+### Backup format compatibility
+
+The format depends on both the records and the encoded manifest size.
+Format 10 is used only when no newer record type is needed and the manifest
+is at most 64 MiB. Otherwise, format 11 needs OwnGit 1.1.3 or later.
+
+Format 12 needs OwnGit 1.1.8 or later. It is required by workflow records,
+a policy with workflows on or `workflow_dispatch` or `schedule` allowed,
+or a positive `output_limit_exceeded_bytes` result fact. A zero or absent
+result fact remains not stated after restore; restore does not infer it
+from old output.
+See [Backup versions](OPERATIONS.md#backup-versions).
 
 ### Pushed secrets
 
@@ -174,6 +187,8 @@ The command rehearses a full restore in a private folder in the system's tempora
 - Exit status 0 means verified, 1 means not verified, 130 means you stopped it with Ctrl+C.
 - The temporary folder's disk needs room for the repositories. Use `--temp-dir DIR` to rehearse elsewhere.
 - `--json` prints the result as JSON.
+- Verification proves a restore on the filesystem used for that check, not
+  on every target filesystem. See [Ref-name portability](#ref-name-portability).
 
 The hashes detect damage. They cannot detect a backup that someone replaced together with its manifest, so keep backups where others cannot write.
 
@@ -233,6 +248,7 @@ Start OwnGit with the restored folders before you use them in any other way. The
 - Network settings, Tailscale sharing and share links.
 - Helper credentials and runner tokens: the old ones are refused, so create new ones.
 - Consent to run automatic checks.
+- Workflow secrets: enter them again on each repository's Workflow secrets page or with `owngit workflow-secret set`. Workflow schedules start again from the workflow files once checks are on, and they wait for the next accepted push to the default branch ([Schedules](WORKFLOWS.md#schedules)).
 - Import credentials, each source's connection choices, and import schedules.
 - The backup schedule. Earlier backups are no longer listed, but their folders stay and `owngit restore` still reads them.
 - Backup before an upgrade is turned on again. Turn it off again if you had turned it off.
@@ -257,6 +273,19 @@ A backup that stopped is recorded as `interrupted` and is never a finished backu
 - Backups work on exFAT, FAT and NFS. Restoring repositories onto those file systems does not: `owngit restore` stops, names the file system and changes nothing. Restore the repositories to another disk. The dashboard warns under Current state when the backup folder is on such a disk.
 - The restored state directory must be on a local disk, as every state directory must.
 
+### Ref-name portability
+
+Refs that differ only in letter case, such as `refs/heads/Topic` and
+`refs/heads/topic`, can coexist on a case-sensitive volume. They cannot be
+restored as distinct refs on a case-insensitive target volume, including
+common Windows and default macOS volumes. The limit depends on the volume,
+not just the operating system. Tags and other refs can have the same problem.
+
+A successful `backup verify` on a case-sensitive source does not promise a
+restore on a case-insensitive target. Rehearse on the intended target
+filesystem with `backup verify --temp-dir DIR`. Keep such repositories on a
+case-sensitive target if their exact ref names must be preserved.
+
 ## Backup before an upgrade
 
 When a newer OwnGit starts on an older state, it first backs up the state and all repositories, then upgrades. It upgrades only after that backup is complete.
@@ -264,7 +293,7 @@ When a newer OwnGit starts on an older state, it first backs up the state and al
 - The backup goes into a folder beside the state directory named after it with `-backups`, for example `~/.config/owngit-backups`. That disk needs room for every repository.
 - The server log says where the backup is and prints the command that restores it. The file `owngit-upgrade-backup.txt` in the backup says the same.
 - When the backup fails, for example on a full disk, OwnGit does not upgrade and stops with the reason. The earlier version can still use the state. Fix the cause and start again.
-- An earlier OwnGit refuses a state that a newer one upgraded. To go back, stop OwnGit, move the state directory aside, and run the printed restore command with the earlier version.
+- An earlier OwnGit refuses a state that a newer one upgraded. To go back, first confirm that the earlier version supports the backup's format and records. Manifest size can require a newer format even without new record types. Stop OwnGit, move the state directory aside, and use the printed restore command with a compatible version.
 
 To upgrade without this backup, for example when you back up another way:
 
@@ -272,7 +301,7 @@ To upgrade without this backup, for example when you back up another way:
 owngit upgrade-backup off
 ```
 
-`owngit upgrade-backup on` turns it back on, and `owngit upgrade-backup` shows the setting. With it off, make a backup yourself before you install a newer version.
+`owngit upgrade-backup on` turns it back on, and `owngit upgrade-backup` shows the setting. This host-local setting is command-line only; there is no dashboard or MCP switch. With it off, make a backup yourself before you install a newer version.
 
 ## Who can see backups
 

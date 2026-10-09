@@ -294,6 +294,8 @@ OwnGit never runs a listed fix itself, and the checkup changes no files or permi
 
 For a container, see [Run in a container](#run-in-a-container).
 
+If you use [external runners](AUTOMATIC_CHECKS.md#external-runner), update `owngit` on their computers too. A runner from 1.1.7 or earlier keeps running `.owngit/checks.json` jobs but cannot run workflow jobs ([Old runners](WORKFLOWS.md#old-runners)).
+
 When a service under your account runs this program, the printed command also runs `owngit service install`, which restarts the service with the new version. Without a service, restart OwnGit yourself.
 
 With Homebrew, `owngit service install` after `brew upgrade owngit` hands the restart to `brew services restart owngit` without opening the state first, so the new version backs up the state and then upgrades it.
@@ -311,10 +313,13 @@ Until the two have the same version, OwnGit uses the app in Homebrew's own folde
 
 ### Backup versions
 
+When moving a backup between filesystems, also check [ref-name portability](BACKUPS.md#ref-name-portability). A successful verification on a case-sensitive volume does not promise a restore on a case-insensitive one.
+
 Check this before you restore a backup with an older OwnGit, for example to go back after an upgrade. The restore steps are in [Backups](BACKUPS.md).
 
-- OwnGit restores backup versions 1, 2, 9, 10 and 11, and refuses any other version.
+- OwnGit restores backup versions 1, 2, 9, 10, 11 and 12, and refuses any other version.
 - A new backup is version 10, which OwnGit 1.0.3 to 1.1.2 can restore. It is version 11, which needs 1.1.3 or later, when its OwnGit records exceed 64 MiB or when it holds records that version 10 cannot hold, such as pull requests and reviews created or edited with OwnGit 1.1.3 or later, repository names after a rename, a repository's own ref settings, import refresh choices or check container options.
+- A backup is version 12, which needs 1.1.8 or later, when it holds workflow records or a positive `output_limit_exceeded_bytes` result fact. Workflow records include runs and their jobs and results, or a check policy that has workflows on or allows `workflow_dispatch` or `schedule`. A check policy first saved with 1.1.8 or later enables workflows by default, unless explicitly disabled. While workflows are enabled, that policy requires version 12 even before any workflow runs.
 - OwnGit 1.1.3 refuses a backup that holds a branch or tag name with a Unicode space character, a record of a refused or stopped merge that differs from the pull request's later merge, or check records in a time order it does not accept (this can happen after the computer's clock was set back). Restore such a backup with 1.1.4 or later.
 
 ## Run in a container
@@ -406,7 +411,7 @@ Each part has its own Save. Save asks for the administrator password unless this
 
 ### Settings on the command line
 
-`owngit settings` changes the General, Access, Repositories and Storage & recovery settings through the administrator API. Each command needs `--server` and a `--password-file` with the administrator password, and prints JSON.
+`owngit settings` changes the General, Access and Repositories settings, plus maintenance and raw-log settings under Storage & recovery, through the administrator API. Backups use `owngit backup`, including `backup schedule set` for the destination and schedule. Each command needs `--server` and a `--password-file` with the administrator password, and prints JSON.
 
 ```sh
 owngit settings show --server http://127.0.0.1:7654 --accept-insecure-http --password-file /path/to/admin-password
@@ -419,6 +424,8 @@ owngit settings set --server http://127.0.0.1:7654 --accept-insecure-http --pass
 - `--accept-insecure-http` accepts plain HTTP for that one command. Leave it out for an `https://` address.
 
 The network settings, the tailnet sharing and the icon have their own commands, run on the installation host: `owngit network`, `owngit tailscale` and `owngit tray`.
+
+`owngit upgrade-backup` is command-line only on the installation host. It shows or changes whether OwnGit backs up before a state upgrade; there is no dashboard or MCP switch. See [Backup before an upgrade](BACKUPS.md#backup-before-an-upgrade).
 
 Settings that `settings set` and `settings confirmation` change belong to this host and are not in backups; a restored installation starts with the defaults. The access mode and both passwords are in backups.
 
@@ -803,4 +810,5 @@ Check ceilings are this computer's upper bounds for what a repository's [check p
 
 - A policy above a ceiling cannot be saved. After you lower a ceiling, a saved policy above it queues no new check until you raise the ceiling or lower the policy; "Check ceilings" lists those repositories. Checks already queued keep their limits.
 - A check that prints more than its output limit is stopped and ends as `incomplete`.
+- For [workflow](WORKFLOWS.md) jobs, the time and output limits apply to each step.
 - Ceilings belong to this computer and are not in backups.

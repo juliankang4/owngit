@@ -132,6 +132,23 @@ command exit code is visible. Output beyond the check's output limit makes the
 result `incomplete`; a shortened excerpt or log is marked as truncated and does
 not change the status. An empty configured set is `unavailable`, never `passed`.
 
+## Output-limit facts and compatibility
+
+Report a positive `results[].output_limit_exceeded_bytes` as the applied
+execution limit that was exceeded, not as the number of omitted bytes. Zero
+or absence means not stated. Never infer overflow from `truncated`, which
+can mean excerpt clipping, or from `incomplete`, which can mean a timeout.
+Stored summaries and raw logs are recorded text, not a localization contract.
+
+The CLI uses the fact in local `--no-upload` results. CLI uploads and MCP
+`check_run` share the capability check below.
+For a custom upload client, use only `attempt.result_facts` in the helper
+registration or runner start response to decide whether to send the field.
+Send it only when `output_limit_exceeded_bytes` is advertised. Otherwise
+retain the legacy upload shape and OwnGit note in the excerpt. Status and
+completion answers do not advertise support. Do not guess from versions or
+retry a mutation with another shape to negotiate support.
+
 ## Limits
 
 - Checks are advisory. They do not block a merge, and a passing check is not
