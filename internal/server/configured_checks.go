@@ -124,7 +124,7 @@ func (app *App) handleCheckPolicy(writer http.ResponseWriter, request *http.Requ
 
 func statePolicyInput(repositoryID string, input checkapi.PolicyInput) state.CheckPolicyInput {
 	return state.CheckPolicyInput{
-		RepositoryID: repositoryID, Executor: input.Executor, AllowedEvents: input.AllowedEvents,
+		RepositoryID: repositoryID, Executor: input.Executor, AllowedEvents: input.AllowedEvents, RunWorkflows: input.RunWorkflows,
 		MaxTimeoutMS: input.MaxTimeoutMS, MaxOutputLimitBytes: input.MaxOutputLimitBytes,
 		QueueLimit: input.QueueLimit, MaxActiveJobs: input.MaxActiveJobs, MaxLeaseMS: input.MaxLeaseMS,
 		Execution: input.Execution,
@@ -707,7 +707,7 @@ func (app *App) checkRuntimeStatus() checkapi.RuntimeStatus {
 func policyJSON(policy state.CheckPolicy) *checkapi.Policy {
 	return &checkapi.Policy{
 		RepositoryID: policy.RepositoryID, Version: policy.Version, Digest: policy.Digest, Executor: policy.Executor,
-		AllowedEvents: policy.AllowedEvents, MaxTimeoutMS: policy.MaxTimeoutMS, MaxOutputLimitBytes: policy.MaxOutputLimitBytes,
+		AllowedEvents: policy.AllowedEvents, RunWorkflows: policy.RunWorkflows, MaxTimeoutMS: policy.MaxTimeoutMS, MaxOutputLimitBytes: policy.MaxOutputLimitBytes,
 		QueueLimit: policy.QueueLimit, MaxActiveJobs: policy.MaxActiveJobs, MaxLeaseMS: policy.MaxLeaseMS,
 		Execution: policy.Execution, ConsentVersion: policy.ConsentVersion, ConsentActive: policy.ConsentActive,
 		RunnerGeneration: policy.RunnerGeneration, CreatedAt: policy.CreatedAt, UpdatedAt: policy.UpdatedAt,

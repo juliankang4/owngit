@@ -902,6 +902,12 @@ func (app *App) fillOverviewEvidence(request *http.Request, page *webui.Reposito
 		return
 	}
 	page.Overview.DefaultCheckRev = summary.DefaultOID
+	evidence, err := app.Store.RevisionEvidence(request.Context(), page.Repo.ID, summary.DefaultOID)
+	if err != nil {
+		logFailure(request, "default branch revision evidence read", err)
+		return
+	}
+	page.Overview.Evidence = &evidence
 	attempt, exists, err := app.Store.LatestCheckAttemptForRevision(request.Context(), page.Repo.ID, summary.DefaultOID)
 	if err != nil {
 		logFailure(request, "default branch check read", err)

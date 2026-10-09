@@ -920,6 +920,7 @@ type RefOption struct {
 
 // RepositoryOverview is the repository landing panel.
 type RepositoryOverview struct {
+	Evidence *RevisionEvidence
 	// Head is the latest commit on the selected ref. Zero when empty.
 	Head CommitSummary
 	// Recent are the newest commits on the selected ref, Head first. The

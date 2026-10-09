@@ -998,7 +998,7 @@ func (service *Service) summaryForHeads(ctx context.Context, repositoryPath stri
 // for other branches is never shown. Checks are advisory: they never block a
 // merge, and an advisory read failure is reported as unavailable instead of
 // failing the caller.
-func (service *Service) checksForRevision(ctx context.Context, repositoryPath string, record state.PullRequest, source branchHead) Checks {
+func (service *Service) attemptChecksForRevision(ctx context.Context, repositoryPath string, record state.PullRequest, source branchHead, jsonOnly bool) Checks {
 	repositoryID := record.RepositoryID
 	checks := Checks{Status: "absent", Advisory: true}
 	_, configured, err := service.Store.LatestCheckConfiguration(ctx, repositoryID)
@@ -1013,14 +1013,22 @@ func (service *Service) checksForRevision(ctx context.Context, repositoryPath st
 	if source.Status != "commit" {
 		return checks
 	}
-	attempt, exists, err := service.Store.LatestCheckAttemptForRevision(ctx, repositoryID, source.OID)
+	readCurrent := service.Store.LatestCheckAttemptForRevision
+	if jsonOnly {
+		readCurrent = service.Store.LatestJSONCheckAttemptForRevision
+	}
+	attempt, exists, err := readCurrent(ctx, repositoryID, source.OID)
 	if err != nil {
 		checks.Status = ""
 		checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckEvidence}
 		return checks
 	}
 	if !exists {
-		latest, hasLatest, err := service.Store.LatestCheckAttemptForPullRequestHistory(ctx, repositoryID, record.Number)
+		readHistory := service.Store.LatestCheckAttemptForPullRequestHistory
+		if jsonOnly {
+			readHistory = service.Store.LatestJSONCheckAttemptForPullRequestHistory
+		}
+		latest, hasLatest, err := readHistory(ctx, repositoryID, record.Number)
 		if err != nil {
 			checks.Status = ""
 			checks.ReadFailure = &ReadFailure{Code: ReadFailureCheckEvidence}

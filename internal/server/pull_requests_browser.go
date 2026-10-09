@@ -568,7 +568,12 @@ func browserRevision(revision pullrequest.Revision) webui.RevisionState {
 }
 
 func browserCheckEvidence(address string, checks pullrequest.Checks) webui.CheckEvidence {
+	revisionEvidence := checks.Evidence
+	if checks.DisplayChecks != nil {
+		checks = *checks.DisplayChecks
+	}
 	evidence := webui.CheckEvidence{
+		Evidence:             revisionEvidence,
 		Status:               checks.Status,
 		Configured:           checks.Configured,
 		Passed:               checks.Passed,

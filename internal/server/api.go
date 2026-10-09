@@ -45,7 +45,7 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 		}
 		if !importHistoryQueryAllowed(request, repositoryRoute, resource, remainder) &&
 			!pullRequestDiffQueryAllowed(request) && !pullRequestListQueryAllowed(request) && !helperTaskListQueryAllowed(request) && !archiveQueryAllowed(request, repositoryRoute, resource, remainder) && !activityQueryAllowed(request) &&
-			!taskViewQueryAllowed(request) {
+			!taskViewQueryAllowed(request) && !workflowQueryAllowed(request, resource, remainder) {
 			writeAPIError(writer, http.StatusBadRequest, "invalid_request", "This API endpoint does not accept query parameters.", nil)
 			return
 		}
@@ -85,6 +85,12 @@ func (app *App) handleAPI(writer http.ResponseWriter, request *http.Request, set
 	repositoryID := address.id
 	if repositoryRoute {
 		switch resource {
+		case "workflows", "workflow-runs":
+			app.handleWorkflowAPI(writer, request, settings, repositoryID, resource, remainder)
+			return
+		case "workflow-secrets":
+			app.handleWorkflowSecrets(writer, request, repositoryID, remainder)
+			return
 		case "runner":
 			app.handleRunnerAPI(writer, request, repositoryID, remainder)
 			return

@@ -410,7 +410,8 @@ type EvidenceReadFailure struct {
 // stale, not a result for the revision on screen. A dirty or unknown tree is
 // never shown as a tested commit, whatever TestedCommit says.
 type CheckEvidence struct {
-	Status string
+	Evidence *RevisionEvidence
+	Status   string
 	// Configured is false when the repository has no recorded check
 	// configuration at all.
 	Configured bool
@@ -753,6 +754,7 @@ func (a AttemptRecord) TestedCommit() bool {
 // TaskSummary is one durable task. Its correction budget belongs to the task,
 // not to each revision.
 type TaskSummary struct {
+	Evidence   *RevisionEvidence
 	ID         string
 	ShortID    string
 	Title      string

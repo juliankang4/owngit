@@ -541,7 +541,7 @@ func (server *mcpServer) buildTools() []mcpTool {
 			})
 		}
 	}
-	return tools
+	return append(tools, server.workflowTools()...)
 }
 
 // reviewMarkTool requests a review (action "request") or records that review

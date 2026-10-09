@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"owngit/internal/actions"
 	"owngit/internal/repository"
 	"owngit/internal/state"
 )
@@ -184,6 +185,9 @@ type ReviewNote struct {
 }
 
 type Checks struct {
+	Evidence      *state.RevisionCheckEvidence `json:"evidence,omitempty"`
+	AdmissionNote *actions.Message             `json:"admission_note,omitempty"`
+	DisplayChecks *Checks                      `json:"-"`
 	// Status is absent when no evidence exists, stale when only an older
 	// revision has evidence, or the real attempt status otherwise. It is never
 	// a reused success for a different revision.

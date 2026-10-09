@@ -121,7 +121,12 @@ func (app *App) listTasks(writer http.ResponseWriter, request *http.Request, rep
 	}
 	response := checkapi.TaskListResponse{OK: true, Tasks: make([]*checkapi.Task, 0, len(tasks))}
 	for _, task := range tasks {
-		response.Tasks = append(response.Tasks, taskJSON(task))
+		item, err := app.taskEvidenceJSON(request, task)
+		if err != nil {
+			writeAPIError(writer, unavailable(request, "task evidence read", err), "state_unavailable", "Task evidence could not be read.", nil)
+			return
+		}
+		response.Tasks = append(response.Tasks, item)
 	}
 	if more {
 		response.Next = tasks[len(tasks)-1].Cursor().String()
@@ -139,7 +144,12 @@ func (app *App) showTask(writer http.ResponseWriter, request *http.Request, repo
 		writeAPIError(writer, http.StatusNotFound, "task_not_found", "The task does not exist.", nil)
 		return
 	}
-	response := checkapi.TaskResponse{OK: true, Task: taskJSON(task)}
+	item, err := app.taskEvidenceJSON(request, task)
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "task evidence read", err), "state_unavailable", "Task evidence could not be read.", nil)
+		return
+	}
+	response := checkapi.TaskResponse{OK: true, Task: item}
 	attempt, hasAttempt, err := app.Store.LatestCheckAttemptForTask(request.Context(), repositoryID, taskID)
 	if err != nil {
 		writeAPIError(writer, unavailable(request, "latest attempt read", err), "state_unavailable", "The latest attempt could not be read.", nil)
@@ -609,6 +619,16 @@ func validOID(value string) bool {
 		}
 	}
 	return true
+}
+
+func (app *App) taskEvidenceJSON(request *http.Request, task state.Task) (*checkapi.Task, error) {
+	evidence, err := app.Store.TaskRevisionEvidence(request.Context(), task.RepositoryID, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	item := taskJSON(task)
+	item.Evidence = &evidence
+	return item, nil
 }
 
 func taskJSON(task state.Task) *checkapi.Task {

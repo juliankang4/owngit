@@ -50,7 +50,13 @@ func (app *App) handleTasksGet(writer http.ResponseWriter, request *http.Request
 				answerUnavailable("task attempt read", err)
 				return
 			}
+			evidence, err := app.Store.TaskRevisionEvidence(request.Context(), stored.ID, task.ID)
+			if err != nil {
+				answerUnavailable("task evidence read", err)
+				return
+			}
 			detail := &webui.TaskDetail{Task: browserTaskSummary(stored.Address, task), AttemptsTruncated: more}
+			detail.Task.Evidence = &evidence
 			for _, attempt := range attempts {
 				detail.Attempts = append(detail.Attempts, app.browserAttemptRecord(request.Context(), attempt))
 			}
@@ -90,6 +96,7 @@ func (app *App) browserTaskSummaries(ctx context.Context, views []taskView) []we
 	summaries := make([]webui.TaskSummary, 0, len(views))
 	for _, view := range views {
 		summary := browserTaskSummary(view.address, view.task)
+		summary.Evidence = &view.evidence
 		if view.hasLatest {
 			summary.Latest = app.browserAttemptRecord(ctx, view.latest)
 		}

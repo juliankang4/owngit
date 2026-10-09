@@ -17,6 +17,10 @@ func (s *Store) LatestCheckAttemptForPullRequestHistory(ctx context.Context, rep
 	) ORDER BY sequence DESC LIMIT 1`, repositoryID, repositoryID, number)
 }
 
+func (s *Store) LatestJSONCheckAttemptForPullRequestHistory(ctx context.Context, repositoryID string, number int64) (CheckAttempt, bool, error) {
+	return s.latestCheckAttempt(ctx, attemptSelect+` WHERE repository_id=? AND `+jsonAttemptCondition+` AND revision_oid IN (SELECT source_oid FROM pull_request_revisions WHERE repository_id=? AND pull_request_number=?) ORDER BY sequence DESC LIMIT 1`, repositoryID, repositoryID, number)
+}
+
 // RecentCheckAttemptsForTask returns at most limit attempts of one task,
 // newest first, with their results, and reports whether older attempts exist.
 // A display reads only what it shows, however long the task's history grows.

@@ -61,12 +61,13 @@ type CheckDefinition struct {
 }
 
 type Task struct {
-	ID                        string `json:"id"`
-	RepositoryID              string `json:"repository_id"`
-	Title                     string `json:"title"`
-	Status                    string `json:"status"`
-	CorrectionCyclesUsed      int    `json:"correction_cycles_used"`
-	CorrectionCyclesRemaining int    `json:"correction_cycles_remaining"`
+	Evidence                  *state.RevisionCheckEvidence `json:"evidence,omitempty"`
+	ID                        string                       `json:"id"`
+	RepositoryID              string                       `json:"repository_id"`
+	Title                     string                       `json:"title"`
+	Status                    string                       `json:"status"`
+	CorrectionCyclesUsed      int                          `json:"correction_cycles_used"`
+	CorrectionCyclesRemaining int                          `json:"correction_cycles_remaining"`
 	// CorrectionCycleLimit is the task-scoped budget, so a client does not
 	// maintain its own copy of the value.
 	CorrectionCycleLimit int       `json:"correction_cycle_limit"`
@@ -266,6 +267,7 @@ type OKResponse struct {
 // PolicyInput is the owner-selected configured-check policy. Generation,
 // consent and authority are always server-owned.
 type PolicyInput struct {
+	RunWorkflows        *bool                        `json:"run_workflows,omitempty"`
 	Executor            string                       `json:"executor"`
 	AllowedEvents       []string                     `json:"allowed_events"`
 	MaxTimeoutMS        int64                        `json:"max_timeout_ms"`
@@ -293,6 +295,7 @@ type ExpectedPolicy struct {
 }
 
 type Policy struct {
+	RunWorkflows        bool                         `json:"run_workflows"`
 	RepositoryID        string                       `json:"repository_id"`
 	Version             int64                        `json:"version"`
 	Digest              string                       `json:"digest"`

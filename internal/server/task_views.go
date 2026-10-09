@@ -40,6 +40,7 @@ type taskView struct {
 	address   string
 	latest    state.CheckAttempt
 	hasLatest bool
+	evidence  state.RevisionCheckEvidence
 }
 
 // taskPageInput is the paging of one repository task list.
@@ -126,7 +127,11 @@ func (app *App) withLatestAttempts(ctx context.Context, tasks []state.Task, addr
 		if err != nil {
 			return nil, err
 		}
-		views = append(views, taskView{task: task, address: addresses[task.RepositoryID], latest: latest, hasLatest: exists})
+		evidence, err := app.Store.TaskRevisionEvidence(ctx, task.RepositoryID, task.ID)
+		if err != nil {
+			return nil, err
+		}
+		views = append(views, taskView{task: task, address: addresses[task.RepositoryID], latest: latest, hasLatest: exists, evidence: evidence})
 	}
 	return views, nil
 }
@@ -162,6 +167,7 @@ func (app *App) taskViewsJSON(request *http.Request, views []taskView) []taskVie
 	items := make([]taskViewJSON, 0, len(views))
 	for _, view := range views {
 		item := taskViewJSON{Task: taskJSON(view.task), RepositoryAddress: view.address}
+		item.Evidence = &view.evidence
 		if view.hasLatest {
 			item.LatestAttempt = app.attemptJSON(request, view.latest)
 		}
@@ -276,7 +282,12 @@ func (app *App) handleTaskViewAPI(writer http.ResponseWriter, request *http.Requ
 		writeAPIError(writer, unavailable(request, "task attempt read", err), "state_unavailable", "The task's attempts could not be read.", nil)
 		return
 	}
-	response := taskDetailResponse{OK: true, Task: taskJSON(task), Attempts: []*checkapi.Attempt{}, AttemptsTruncated: more}
+	item, err := app.taskEvidenceJSON(request, task)
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "task evidence read", err), "state_unavailable", "Task evidence could not be read.", nil)
+		return
+	}
+	response := taskDetailResponse{OK: true, Task: item, Attempts: []*checkapi.Attempt{}, AttemptsTruncated: more}
 	for _, attempt := range attempts {
 		response.Attempts = append(response.Attempts, app.attemptJSON(request, attempt))
 	}
