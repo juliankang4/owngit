@@ -28,6 +28,7 @@ const (
 	maximumObservedRefs     = 64
 	maximumObservedPRs      = 64
 	maximumAutomaticLogSize = checkexec.KeptOutputBytes
+	sourceUnavailableReason = "Exact check source is unavailable or workspace ownership is uncertain: "
 
 	// maximumPendingPushes bounds the branch updates one repository retains
 	// between passes, like the bounded observation set. A repository that
@@ -1036,7 +1037,7 @@ func (coordinator *Coordinator) executeLocal(parent context.Context, job state.C
 	workspace, materialization, err := coordinator.materialize(jobContext, job)
 	if err != nil {
 		_ = stopWatcher()
-		return coordinator.recordNotRun(parent, job, authority, "Exact configured-check source is unavailable or workspace ownership is uncertain: ", err)
+		return coordinator.recordNotRun(parent, job, authority, sourceUnavailableReason, err)
 	}
 
 	cleanupWorkspace := func(results []checkexec.Result) []checkexec.Result {

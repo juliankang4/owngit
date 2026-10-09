@@ -466,22 +466,31 @@ func TestCoordinatorHostActions(t *testing.T) {
 		name, workflow, status, output string
 		count                          int
 		json, container                bool
+		sourcePath                     string
 	}{
-		{"two files and needs", eventWorkflow, "passed", "after", 3, false, false},
-		{"multi-line display", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo first\n          echo second\n", "passed", "second", 1, false, false},
-		{"step outputs", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - id: source\n        run: echo 'answer=ready' >> \"$GITHUB_OUTPUT\"\n      - env:\n          ANSWER: ${{ steps.source.outputs.answer }}\n        run: test \"$ANSWER\" = ready && echo OUTPUT_READY\n", "passed", "OUTPUT_READY", 1, false, false},
-		{"tracked source change before builtin", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo changed > .github/workflows/ci.yml\n          echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, false},
-		{"all skipped", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: false\n        run: echo MUST_NOT_RUN\n", "skipped", "", 1, false, false},
-		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false, false},
-		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true, false},
-		{"container passes", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - run: test \"$GITHUB_WORKSPACE\" = /workspace; test \"$RUNNER_OS\" = Linux; echo state > \"$HOME/job-state\"\n      - run: test -f \"$HOME/job-state\"; echo CONTAINER_PASSED\n", "passed", "CONTAINER_PASSED", 1, false, true},
-		{"container step failure", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - shell: sh\n        run: echo STEP_FAILED; exit 7\n      - run: echo MUST_NOT_RUN\n", "failed", "STEP_FAILED", 1, false, true},
-		{"container masks secret", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          TOKEN: ${{ secrets.TOKEN }}\n        run: test -n \"$TOKEN\" && test -z \"$OTHER\" && printf 'token:%s:end\\n' \"$TOKEN\"\n", "passed", "[redacted]", 1, false, true},
-		{"container tracked source", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo changed > .github/workflows/ci.yml; echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, true},
-		{"container early timeout", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 0.000000001\n    steps:\n      - run: echo MUST_NOT_RUN\n", "incomplete", "note.stopped", 1, false, true},
-		{"container engine unavailable", simpleWorkflow, "unavailable", "", 1, false, true},
+		{"two files and needs", eventWorkflow, "passed", "after", 3, false, false, ""},
+		{"multi-line display", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo first\n          echo second\n", "passed", "second", 1, false, false, ""},
+		{"step outputs", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - id: source\n        run: echo 'answer=ready' >> \"$GITHUB_OUTPUT\"\n      - env:\n          ANSWER: ${{ steps.source.outputs.answer }}\n        run: test \"$ANSWER\" = ready && echo OUTPUT_READY\n", "passed", "OUTPUT_READY", 1, false, false, ""},
+		{"tracked source change before builtin", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: |\n          echo changed > .github/workflows/ci.yml\n          echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, false, ""},
+		{"all skipped", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: false\n        run: echo MUST_NOT_RUN\n", "skipped", "", 1, false, false, ""},
+		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false, false, ""},
+		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true, false, ""},
+		{"control character source", simpleWorkflow, "unavailable", "", 2, false, false, "unsafe/bell\a.txt"},
+		{"invalid UTF-8 source", simpleWorkflow, "unavailable", "", 2, false, false, "unsafe/invalid\xff.txt"},
+		{"container passes", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - run: test \"$GITHUB_WORKSPACE\" = /workspace; test \"$RUNNER_OS\" = Linux; echo state > \"$HOME/job-state\"\n      - run: test -f \"$HOME/job-state\"; echo CONTAINER_PASSED\n", "passed", "CONTAINER_PASSED", 1, false, true, ""},
+		{"container step failure", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - shell: sh\n        run: echo STEP_FAILED; exit 7\n      - run: echo MUST_NOT_RUN\n", "failed", "STEP_FAILED", 1, false, true, ""},
+		{"container masks secret", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - env:\n          TOKEN: ${{ secrets.TOKEN }}\n        run: test -n \"$TOKEN\" && test -z \"$OTHER\" && printf 'token:%s:end\\n' \"$TOKEN\"\n", "passed", "[redacted]", 1, false, true, ""},
+		{"container tracked source", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo changed > .github/workflows/ci.yml; echo TRACKED_CHANGED\n      - uses: actions/checkout@v4\n", "incomplete", "TRACKED_CHANGED", 1, false, true, ""},
+		{"container early timeout", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    timeout-minutes: 0.000000001\n    steps:\n      - run: echo MUST_NOT_RUN\n", "incomplete", "note.stopped", 1, false, true, ""},
+		{"container engine unavailable", simpleWorkflow, "unavailable", "", 1, false, true, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			if test.sourcePath != "" && os.PathSeparator == '\\' {
+				t.Skip("Unsupported Git filenames are exercised on Unix filesystems")
+			}
+			if !utf8.ValidString(test.sourcePath) && runtime.GOOS != "linux" {
+				t.Skip("Linux covers Git paths that contain invalid UTF-8")
+			}
 			executor := state.CheckExecutorHost
 			if test.container {
 				if runtime.GOOS != "linux" || testing.Short() || os.Getenv("OWNGIT_REAL_DOCKER_TEST") != "1" {
@@ -513,7 +522,11 @@ func TestCoordinatorHostActions(t *testing.T) {
 				}
 			}
 			files := map[string]string{}
-			if test.json {
+			if test.sourcePath != "" {
+				files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"json","command":"echo MUST_NOT_RUN"}]}`
+				files[".github/workflows/ci.yml"] = test.workflow
+				files[test.sourcePath] = "unsupported source name"
+			} else if test.json {
 				files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"fail","command":"exit 1"},{"name":"later","command":"echo JSON_CONTINUED"}]}`
 			} else {
 				files[".github/workflows/ci.yml"] = test.workflow
@@ -537,6 +550,7 @@ func TestCoordinatorHostActions(t *testing.T) {
 				t.Fatalf("jobs=%+v", jobs)
 			}
 			seenOutput := test.output == ""
+			sourceSummary := ""
 			for _, job := range jobs {
 				if job.Status != test.status || (job.StartedAt == nil) != (test.status == "unavailable") {
 					for _, item := range jobs {
@@ -567,6 +581,16 @@ func TestCoordinatorHostActions(t *testing.T) {
 				if strings.Contains(log, secret) || strings.Contains(log, "synthetic-not-delivered") {
 					t.Fatalf("unexpected output: %q", log)
 				}
+				if test.sourcePath != "" {
+					if !strings.Contains(job.Summary, strconv.Quote(test.sourcePath)) || len(job.Summary) > 500 {
+						t.Fatalf("source refusal did not name the bounded escaped path: %q", job.Summary)
+					}
+					if sourceSummary == "" {
+						sourceSummary = job.Summary
+					} else if job.Summary != sourceSummary {
+						t.Fatalf("source refusals differ: %q != %q", job.Summary, sourceSummary)
+					}
+				}
 				seenOutput = seenOutput || strings.Contains(log, test.output)
 				if !test.json {
 					if _, exists, err := fixture.store.ActionsJobPlan(fixture.ctx, fixture.repositoryID, job.ID); err != nil || exists {
@@ -579,6 +603,9 @@ func TestCoordinatorHostActions(t *testing.T) {
 			}
 			if test.count == 3 && len(result.Runs) != 2 {
 				t.Fatalf("per-file runs=%+v", result.Runs)
+			}
+			if test.sourcePath != "" && len(result.Runs) != 1 {
+				t.Fatalf("source refusal runs=%+v", result.Runs)
 			}
 			snapshot, err := fixture.store.RecoverySnapshot(fixture.ctx)
 			noErr(t, err)

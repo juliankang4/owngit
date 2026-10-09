@@ -223,6 +223,7 @@ func TestMaterializeRefusesUnsafePaths(t *testing.T) {
 		"dot component":      "a/./b.txt",
 		"control character":  "a/\u0007bell.txt",
 		"format character":   "a/zero\u200bwidth.txt",
+		"invalid UTF-8":      "a/invalid\xff.txt",
 	} {
 		t.Run(name, func(t *testing.T) {
 			source := newFakeSource(t, map[string]string{"keep.txt": "keep"}, nil)

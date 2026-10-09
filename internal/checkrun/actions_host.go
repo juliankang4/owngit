@@ -67,7 +67,8 @@ func (coordinator *Coordinator) executeLocalActions(parent context.Context, job 
 	}
 	workspace, materialization, err := coordinator.materialize(ctx, job)
 	if err != nil {
-		return failBeforeStart("workflow.source", "The exact workflow source or private workspace is unavailable, so this job did not start.")
+		_ = stopWatcher()
+		return coordinator.recordNotRun(parent, job, authority, sourceUnavailableReason, err)
 	}
 	protection := state.ProtectionHost
 	var executor *ActionsContainer

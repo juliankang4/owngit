@@ -505,6 +505,9 @@ func validateEntryPath(entryPath string, limits Limits) error {
 			return &EntryError{Path: entryPath, Err: ErrLimitExceeded,
 				Detail: fmt.Sprintf("a name exceeds the %d-byte limit", limits.MaxNameBytes)}
 		}
+		if !utf8.ValidString(component) {
+			return unsafe("a name is not valid UTF-8")
+		}
 		if hasHiddenRune(component) {
 			return unsafe("a name contains a control or invisible formatting character")
 		}
@@ -518,19 +521,11 @@ func validateEntryPath(entryPath string, limits Limits) error {
 	return nil
 }
 
-// hasHiddenRune reports control and format characters. Invalid UTF-8 bytes are
-// left to the destination filesystem, which accepts them or fails visibly.
 func hasHiddenRune(component string) bool {
-	for index := 0; index < len(component); {
-		value, size := utf8.DecodeRuneInString(component[index:])
-		if value == utf8.RuneError && size == 1 {
-			index++
-			continue
-		}
+	for _, value := range component {
 		if unicode.IsControl(value) || unicode.Is(unicode.Cf, value) {
 			return true
 		}
-		index += size
 	}
 	return false
 }
