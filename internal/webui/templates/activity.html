@@ -68,12 +68,12 @@
                   <div class="hm__cellwrap" role="gridcell">
                     {{if .Day.URL}}
                       <a class="hm__cell" href="{{.Day.URL}}" data-day data-index="{{.Day.Date.YearDay}}"
-                         data-l="{{.Level}}"
+                         data-l="{{.Level}}" data-future="{{.Day.Future}}"
                          {{if and (not $g.SelectedDate.IsZero) (eq .Day.Date.YearDay $g.SelectedDate.YearDay)}}aria-current="true"{{end}}
                          {{biAttrText $lang "aria-label" .LabelEN .LabelKO}}></a>
                     {{else}}
                       <span class="hm__cell" data-day data-index="{{.Day.Date.YearDay}}"
-                            data-l="{{.Level}}"
+                            data-l="{{.Level}}" data-future="{{.Day.Future}}"
                             {{if and (not $g.SelectedDate.IsZero) (eq .Day.Date.YearDay $g.SelectedDate.YearDay)}}aria-current="true"{{end}}
                             {{biAttrText $lang "aria-label" .LabelEN .LabelKO}}></span>
                     {{end}}

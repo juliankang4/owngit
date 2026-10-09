@@ -263,7 +263,9 @@
    * the year without loading a page per day. */
 
   all('[data-graph]').forEach(function (graph) {
-    var cells = all('[data-day]', graph);
+    var cells = all('[data-day]', graph).sort(function (a, b) {
+      return Number(a.getAttribute('data-index')) - Number(b.getAttribute('data-index'));
+    });
     if (!cells.length) { return; }
 
     var readout = graph.querySelector('[data-graph-readout]');
@@ -274,9 +276,19 @@
       cell.setAttribute('tabindex', '-1');
     });
 
-    var initial = graph.querySelector('[data-day][aria-current="true"]') || cells[cells.length - 1];
+    var elapsed = cells.filter(function (cell) { return cell.getAttribute('data-future') !== 'true'; });
+    var initial = graph.querySelector('[data-day][aria-current="true"]') || elapsed[elapsed.length - 1] || cells[0];
     initial.setAttribute('tabindex', '0');
     focused = initial;
+
+    var scroll = graph.querySelector('.hm__scroll');
+    if (scroll && scroll.scrollWidth > scroll.clientWidth) {
+      var viewport = scroll.getBoundingClientRect();
+      var day = initial.getBoundingClientRect();
+      if (day.left < viewport.left || day.right > viewport.right) {
+        scroll.scrollLeft += (day.left + day.right - viewport.left - viewport.right) / 2;
+      }
+    }
 
     function focusCell(cell) {
       if (!cell) { return; }
@@ -906,6 +918,7 @@
       setSideOpen(!sidebar.classList.contains('is-open'));
     });
     sidebar.addEventListener('keydown', function (event) {
+      if (event.isComposing || event.keyCode === 229) { return; }
       if (event.key !== 'Escape' || !sidebar.classList.contains('is-open')) { return; }
       if (sideToggle.offsetParent === null) { return; } // wide window: nothing is folded
       setSideOpen(false);
