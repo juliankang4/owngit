@@ -1694,6 +1694,8 @@ var schemaSteps = []schemaStep{
 		`CREATE INDEX check_jobs_group ON check_jobs(repository_id,concurrency_group) WHERE concurrency_group != '' AND status IN ('claimed','started')`,
 		`CREATE INDEX check_jobs_live_leases ON check_jobs(lease_expires_at) WHERE status IN ('claimed','started')`,
 		`CREATE INDEX check_jobs_pending ON check_jobs(repository_id,admitted_at,id) WHERE status='pending'`,
+		`CREATE INDEX check_jobs_recent ON check_jobs(repository_id,admitted_at DESC,id DESC)`,
+		`CREATE INDEX import_runs_finished ON import_runs(finished_at,id)`,
 		`ALTER TABLE check_policies ADD COLUMN run_workflows INTEGER NOT NULL DEFAULT 0 CHECK (run_workflows IN (0,1))`,
 		`CREATE TABLE actions_runs (
 			id TEXT PRIMARY KEY,

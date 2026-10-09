@@ -139,7 +139,7 @@ func schemaTableRecords(t *testing.T, db queryRower, columns map[string][]string
 	return columns, records
 }
 
-func TestCheckJobPollingIndexes(t *testing.T) {
+func TestStateQueryIndexes(t *testing.T) {
 	for _, origin := range []string{"fresh", "released schema 16"} {
 		t.Run(origin, func(t *testing.T) {
 			var store *Store
@@ -153,17 +153,20 @@ func TestCheckJobPollingIndexes(t *testing.T) {
 				before = openSchemaDatabase(t, filepath.Join(directory, databaseName))
 			}
 			queries := []struct {
-				name, query, index string
-				args               []any
+				name, query, index, baseline string
+				args                         []any
+				noSort                       bool
 			}{
-				{"live leases", `UPDATE check_jobs SET status='ambiguous',lease_lost_at=lease_expires_at WHERE status IN ('claimed','started') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?`, "check_jobs_live_leases", []any{int64(1800000000000000000)}},
-				{"pending repositories", `SELECT repository_id FROM check_jobs WHERE status='pending' GROUP BY repository_id ORDER BY MIN(admitted_at),repository_id`, "check_jobs_pending", nil},
+				{"live leases", `UPDATE check_jobs SET status='ambiguous',lease_lost_at=lease_expires_at WHERE status IN ('claimed','started') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?`, "check_jobs_live_leases", "SCAN check_jobs", []any{int64(1800000000000000000)}, false},
+				{"pending repositories", `SELECT repository_id FROM check_jobs WHERE status='pending' GROUP BY repository_id ORDER BY MIN(admitted_at),repository_id`, "check_jobs_pending", "SCAN check_jobs", nil, false},
+				{"import failures", feedQueries[NotifyImportFailed], "import_runs_finished", "SCAN i", []any{int64(1800000000), int64(1800000060)}, true},
+				{"recent jobs", `SELECT * FROM check_jobs WHERE repository_id=? ORDER BY admitted_at DESC,id DESC LIMIT ?`, "check_jobs_recent", "USE TEMP B-TREE FOR ORDER BY", []any{"alpha", 20}, true},
 			}
 			if before != nil {
 				for _, query := range queries {
-					plan := checkJobQueryPlan(t, before, query.query, query.args)
+					plan := stateQueryPlan(t, before, query.query, query.args)
 					t.Logf("Before migration %s: %s", query.name, plan)
-					if !strings.Contains(plan, "SCAN check_jobs") || strings.Contains(plan, query.index) {
+					if !strings.Contains(plan, query.baseline) || strings.Contains(plan, query.index) {
 						t.Fatalf("baseline plan=%s", plan)
 					}
 				}
@@ -175,9 +178,9 @@ func TestCheckJobPollingIndexes(t *testing.T) {
 			}
 			for _, query := range queries {
 				t.Run(query.name, func(t *testing.T) {
-					plan := checkJobQueryPlan(t, store.db, query.query, query.args)
+					plan := stateQueryPlan(t, store.db, query.query, query.args)
 					t.Logf("Current plan: %s", plan)
-					if !strings.Contains(plan, query.index) {
+					if !strings.Contains(plan, query.index) || query.noSort && strings.Contains(plan, "TEMP B-TREE") {
 						t.Fatalf("query plan=%s, want %s", plan, query.index)
 					}
 				})
@@ -186,7 +189,7 @@ func TestCheckJobPollingIndexes(t *testing.T) {
 	}
 }
 
-func checkJobQueryPlan(t *testing.T, db queryRower, query string, args []any) string {
+func stateQueryPlan(t *testing.T, db queryRower, query string, args []any) string {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), "EXPLAIN QUERY PLAN "+query, args...)
 	noErr(t, err)
