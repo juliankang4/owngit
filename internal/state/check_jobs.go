@@ -446,6 +446,9 @@ func (s *Store) writeCheckPolicy(ctx context.Context, input CheckPolicyInput, ba
 			executionJSON, candidate.UpdatedAt.Unix(), boolInt(candidate.RunWorkflows), candidate.RepositoryID); err != nil {
 			return CheckPolicy{}, err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM actions_schedules WHERE repository_id=?`, input.RepositoryID); err != nil {
+			return CheckPolicy{}, err
+		}
 		if err := interruptStalePendingCheckJobsTx(ctx, tx, candidate, now); err != nil {
 			return CheckPolicy{}, err
 		}
@@ -622,6 +625,9 @@ func grantCheckConsentTx(ctx context.Context, tx *sql.Tx, repositoryID string, e
 	if policy.ConsentActive && policy.ConsentDigest == policy.Digest && policy.ConsentVersion > 0 {
 		return policy, nil
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM actions_schedules WHERE repository_id=?`, repositoryID); err != nil {
+		return CheckPolicy{}, err
+	}
 	policy.ConsentVersion++
 	policy.ConsentDigest = policy.Digest
 	policy.ConsentActive = true
@@ -668,6 +674,9 @@ func (s *Store) RevokeCheckConsent(ctx context.Context, repositoryID string, now
 			return CheckPolicy{}, err
 		}
 		return policy, nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM actions_schedules WHERE repository_id=?`, repositoryID); err != nil {
+		return CheckPolicy{}, err
 	}
 	policy.ConsentActive = false
 	policy.UpdatedAt = now.UTC()

@@ -86,6 +86,12 @@ func TestParse(t *testing.T) {
 		{name: "conflicting branches", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  push:\n    branches: [main]\n    branches-ignore: [docs]", 1), code: "workflow.wrong_type"},
 		{name: "conflicting paths", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  push:\n    paths: ['**']\n    paths-ignore: [docs]", 1), code: "workflow.wrong_type"},
 		{name: "negative only", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  push:\n    branches: ['!main']", 1), code: "workflow.wrong_type"},
+		{name: "impossible cron keeps other entries", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  push:\n  schedule:\n    - cron: '0 0 31 FEB *'\n    - cron: '0 0 * * *'", 1), check: func(t *testing.T, w *Workflow) {
+			trigger := w.Events["schedule"]
+			if len(trigger.Schedules) != 1 || len(trigger.RefusedSchedules) != 1 || trigger.RefusedSchedules[0].Code != "workflow.cron_never" {
+				t.Fatalf("schedule=%+v", trigger)
+			}
+		}},
 		{name: "timezone", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  schedule:\n    - cron: '0 0 * * *'\n      timezone: Asia/Seoul", 1), code: "workflow.timezone"},
 		{name: "schedule entries", source: strings.Replace(minimalWorkflow, "on: push", "on:\n  push:\n  schedule:\n"+strings.Repeat("    - cron: '0 0 * * *'\n", 11), 1), check: func(t *testing.T, w *Workflow) {
 			trigger := w.Events["schedule"]

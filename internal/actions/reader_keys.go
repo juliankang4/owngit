@@ -159,8 +159,11 @@ func readSchedules(n *yaml.Node) ([]string, []Message, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		if len(strings.Fields(cron)) != 5 {
-			return nil, nil, wrongType(entry, "on.schedule.cron", "a five-field UTC cron expression")
+		if _, err := ParseCron(cron); err != nil {
+			note := err.(*Refusal).Message
+			note.Line = entry.Line
+			refused = append(refused, note)
+			continue
 		}
 		schedules = append(schedules, cron)
 	}

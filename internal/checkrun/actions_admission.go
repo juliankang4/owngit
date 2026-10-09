@@ -33,6 +33,8 @@ type EventRequest struct {
 	Actor                state.Actor
 	BypassPaths          bool
 	AcceptedPushSequence int64
+	schedule             *state.ActionsSchedule
+	admissionTime        time.Time
 }
 
 // AdmitEvent is shared by pushes, pull requests, dispatches and scheduled slots.
@@ -146,6 +148,12 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 		if accepted {
 			request.AcceptedPushSequence, request.PreviousOID = push.Sequence, push.OldOID
 		}
+	} else if request.Event == state.ActionsEventSchedule {
+		accepted, err := coordinator.Store.AcceptedActionsScheduleSource(ctx, request.RepositoryID, "refs/heads/"+request.TriggerRef, request.SourceOID)
+		if err != nil {
+			return state.CheckEventAdmission{}, err
+		}
+		actionsAllowed = actionsAllowed && accepted
 	} else if request.Event == checkworkflow.EventPullRequest {
 		note, noteErr := coordinator.Store.ActionsPullRequestAdmissionNote(ctx, request.RepositoryID, request.SourceOID)
 		if noteErr != nil {
@@ -163,6 +171,9 @@ func (coordinator *Coordinator) admitEvent(ctx context.Context, policy state.Che
 		return state.CheckEventAdmission{}, jsonErr
 	}
 	var result state.CheckEventAdmission
+	if request.Event == state.ActionsEventSchedule {
+		return coordinator.admitPlannedSchedule(ctx, policy, request, runs)
+	}
 	err = pinned.WhilePresent(ctx, func() error {
 		var err error
 		result, err = coordinator.Store.AdmitCheckEvent(ctx, request.RepositoryID, state.ExpectedCheckPolicy{Version: policy.Version, Digest: policy.Digest}, jsonJob, runs, time.Now().UTC(), request.AcceptedPushSequence)
@@ -226,33 +237,9 @@ func readJSONEvent(ctx context.Context, pinned *repository.PinnedRepository, pol
 }
 
 func (coordinator *Coordinator) planActionsEvent(ctx context.Context, pinned *repository.PinnedRepository, policy state.CheckPolicy, event EventRequest) ([]state.ActionsRunRequest, error) {
-	entries, err := pinned.ListTree(ctx, repository.PinnedHead, ".github/workflows", policy.Execution.Source.MetadataLimit)
-	if errors.Is(err, repository.ErrPinnedPathNotFound) {
-		return nil, nil
-	}
+	files, oids, err := ReadActionsWorkflows(ctx, pinned, policy.Execution.Source.MetadataLimit)
 	if err != nil {
 		return nil, err
-	}
-	var files []actions.WorkflowFile
-	oids := map[string]string{}
-	var total int64
-	for _, entry := range entries {
-		if entry.Type == "tree" || !(strings.HasSuffix(entry.Name, ".yml") || strings.HasSuffix(entry.Name, ".yaml")) {
-			continue
-		}
-		file := actions.WorkflowFile{Path: entry.Path, Mode: entry.Mode, Size: entry.Size}
-		oids[file.Path] = entry.OID
-		if len(files) < 32 && len(entry.Name) <= 100 && entry.Size >= 0 && entry.Size <= actions.MaxWorkflowBytes && entry.Size <= (1<<20)-total && (entry.Mode == "100644" || entry.Mode == "100755") {
-			blob, err := pinned.ReadBlob(ctx, repository.PinnedHead, entry.Path, 0, policy.Execution.Source.MetadataLimit, actions.MaxWorkflowBytes+1, actions.MaxWorkflowBytes+1)
-			if err != nil {
-				return nil, err
-			}
-			file.Data = blob.Content
-		}
-		if entry.Size >= 0 && entry.Size <= actions.MaxWorkflowBytes {
-			total += entry.Size
-		}
-		files = append(files, file)
 	}
 	filter := actions.Event{Name: event.Event, RefName: event.TriggerRef, RefType: "branch", BaseRef: event.TriggerRef, Action: event.Action, BypassPaths: event.BypassPaths}
 	changedRead := false

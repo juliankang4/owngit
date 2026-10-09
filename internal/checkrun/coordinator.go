@@ -126,6 +126,7 @@ type Coordinator struct {
 	pushChecked       map[string]bool
 	pushScans         map[string]pushScan
 	pullRequestCursor map[string]int64
+	scheduleHeads     map[string]scheduleHead
 	// pendingPushes holds the branch updates of accepted pushes that no
 	// attempt has admitted or refused yet, oldest first per repository. The
 	// Git handler writes it and the admission goroutine drains it, so mu
@@ -512,29 +513,27 @@ func (coordinator *Coordinator) keepUndecided(repositoryID string, undecided []p
 	return true
 }
 
-// admissionLoop decides retained push events while the reconciliation loop
-// executes jobs, so a push made during a local job becomes a job during that
-// run instead of after it. It is the only drainer of the retained set. An
-// event a repository could not decide is attempted again at the reconciliation
-// cadence, never in a busy loop, and the loop ends with the coordinator.
 func (coordinator *Coordinator) admissionLoop(ctx context.Context, admits <-chan struct{}, done chan<- struct{}) {
 	defer close(done)
-	for {
+	interval := coordinator.Interval
+	if interval <= 0 {
+		interval = admissionRetryWait
+	}
+	for ctx.Err() == nil {
+		coordinator.admitPendingPushes(ctx)
+		due := coordinator.admitSchedules(ctx, time.Now().UTC())
+		wait := interval
+		if !due.IsZero() && time.Until(due) > 0 {
+			wait = min(wait, time.Until(due))
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
 		case <-admits:
-		}
-		for ctx.Err() == nil && coordinator.admitPendingPushes(ctx) {
-			timer := time.NewTimer(admissionRetryWait)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return
-			case <-admits:
-				timer.Stop()
-			case <-timer.C:
-			}
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 }

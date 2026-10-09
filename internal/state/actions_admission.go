@@ -98,6 +98,14 @@ func (s *Store) AdmitCheckEvent(ctx context.Context, repositoryID string, expect
 			if !accepted || request.Run.SourceOID != acceptedPush.NewOID || request.Run.TriggerRef != strings.TrimPrefix(acceptedPush.Ref, "refs/heads/") && !validRefusedActionsIdentity(request.Run.TriggerRef, ActionsRefusedRefPrefix) {
 				continue
 			}
+		case ActionsEventSchedule:
+			authorized, err := acceptedScheduleSourceTx(ctx, tx, repositoryID, "refs/heads/"+request.Run.TriggerRef, request.Run.SourceOID)
+			if err != nil {
+				return CheckEventAdmission{}, err
+			}
+			if !authorized {
+				continue
+			}
 		case "pull_request":
 			authorized, err := acceptedActionsSourceTx(ctx, tx, repositoryID, request.Run.SourceOID)
 			if err != nil {
