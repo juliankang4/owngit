@@ -35,6 +35,7 @@ type preparedContainer struct {
 	// the policy accepts.
 	unenforced []string
 	pulled     bool
+	mounts     []containerMount
 }
 
 // header states what the job actually ran with when it differs from what
@@ -205,8 +206,6 @@ func pullContainerImage(ctx context.Context, docker, dockerHost, envelope, image
 }
 
 func (coordinator *Coordinator) runContainerChecks(ctx context.Context, job state.CheckJob, prepared preparedContainer, workspace string, definitions []checkexec.Definition) ([]checkexec.Result, bool) {
-	docker, dockerHost, daemonID := prepared.docker, prepared.dockerHost, prepared.daemonID
-	authority := checkJobAuthority(job)
 	results := make([]checkexec.Result, 0, len(definitions))
 	cancelled := false
 	for index, definition := range definitions {
@@ -221,61 +220,10 @@ func (coordinator *Coordinator) runContainerChecks(ctx context.Context, job stat
 			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusUnavailable, Output: argumentsErr.Error()})
 			continue
 		}
-		if err := coordinator.Store.PlanCheckContainer(ctx, authority, name, daemonID, time.Now().UTC()); err != nil {
-			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusError, Output: boundedSummary("record container plan: " + err.Error())})
-			break
-		}
-		created, createErr := runDockerControl(ctx, docker, dockerHost, arguments...)
-		if createErr != nil {
-			status := checkexec.StatusError
-			if strings.Contains(createErr.Error(), "No such image") || strings.Contains(createErr.Error(), "not found") {
-				status = checkexec.StatusUnavailable
-			}
-			cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, name, "", daemonID)
-			output, truncated := clipContainerOutput(errors.Join(createErr, cleanupErr).Error(), job.Limits.OutputLimitBytes)
-			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: status, Output: output, Truncated: truncated})
-			if cleanupErr != nil {
-				break
-			}
-			continue
-		}
-		containerID := strings.TrimSpace(created)
-		if !validContainerID(containerID) {
-			cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, name, "", daemonID)
-			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusError, Output: "Docker returned an invalid container identity.", CleanupError: boundedError(cleanupErr)})
-			break
-		}
-		if err := coordinator.confirmCreatedContainer(ctx, job, prepared, containerID); err != nil {
-			cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, containerID, "", daemonID)
-			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusError,
-				CleanupError: boundedSummary(errors.Join(err, cleanupErr).Error())})
-			break
-		}
-		if err := coordinator.Store.ConfirmCheckContainer(ctx, job.ID, name, containerID, daemonID); err != nil {
-			cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, containerID, "", daemonID)
-			results = append(results, checkexec.Result{Name: definition.Name, Command: definition.Command, Status: checkexec.StatusError,
-				CleanupError: boundedSummary(errors.Join(fmt.Errorf("confirm container ownership: %w", err), cleanupErr).Error())})
-			break
-		}
-		direct := checkexec.Definition{
-			Name: definition.Name, Command: definition.Command, Executable: docker,
-			Arguments: []string{"--host", dockerHost, "start", "--attach", containerID},
-		}
-		runResults, runCancelled := checkexec.Run(ctx, []checkexec.Definition{direct}, checkexec.Options{
-			Timeout:     time.Duration(job.Limits.TimeoutMS) * time.Millisecond,
-			OutputLimit: job.Limits.OutputLimitBytes, Env: os.Environ(),
-		})
-		result := runResults[0]
-		if runCancelled {
-			cancelled = true
-		}
-		cleanupErr := coordinator.cleanupRecordedContainer(context.WithoutCancel(ctx), docker, dockerHost, job.ID, containerID, containerID, daemonID)
-		if cleanupErr != nil {
-			result.Status = checkexec.StatusError
-			result.CleanupError = boundedSummary("container cleanup is uncertain: " + cleanupErr.Error())
-		}
+		result, runCancelled, stopped := coordinator.runContainerStep(ctx, job, prepared, name, definition, arguments, nil)
+		cancelled = cancelled || runCancelled
 		results = append(results, result)
-		if cleanupErr != nil {
+		if stopped {
 			break
 		}
 	}
@@ -339,6 +287,13 @@ func (coordinator *Coordinator) containerCreateArguments(job state.CheckJob, pre
 	}
 	for _, volume := range prepared.volumes {
 		arguments = append(arguments, "--tmpfs", volume+":rw,exec,nosuid,nodev,size="+strconv.FormatInt(settings.ContainerScratchBytes, 10))
+	}
+	for _, mount := range prepared.mounts {
+		value := "type=bind,src=" + filepath.Clean(mount.source) + ",dst=" + mount.target
+		if mount.readOnly {
+			value += ",readonly"
+		}
+		arguments = append(arguments, "--mount", value)
 	}
 	if prepared.imageID == "" {
 		return nil, errors.New("container image was not resolved")
@@ -538,7 +493,11 @@ func (coordinator *Coordinator) confirmCreatedContainer(ctx context.Context, job
 		return fmt.Errorf("decode container mounts: %w", err)
 	}
 	for _, mount := range mounts {
-		if mount.Type != "bind" || mount.Destination != "/workspace" {
+		allowed := mount.Destination == "/workspace"
+		for _, expected := range prepared.mounts {
+			allowed = allowed || mount.Destination == expected.target
+		}
+		if mount.Type != "bind" || !allowed {
 			return fmt.Errorf("Docker added a %s mount at %s; image volumes could not be kept disposable", mount.Type, mount.Destination)
 		}
 	}
