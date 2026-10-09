@@ -178,6 +178,51 @@ func TestStateFailuresBehindAPIsAndPagesAreLogged(t *testing.T) {
 	}
 }
 
+func TestUnavailablePagesPreservePreferencesAndTransport(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	server := serve(t, fixture.app.Handler())
+	client, jar := newBrowserClient(t)
+	browserGET(t, client, server.URL+"/")
+	parsed, _ := url.Parse(server.URL)
+	for _, table := range []string{"metadata", "sessions", "repositories"} {
+		restore := hideTable(t, fixture.store, table)
+		for _, path := range []string{"/", "/settings", "/repositories/new", "/login", "/share/synthetic-opening-secret", "/repositories/project/raw", "/repositories/project/archive", "/repositories/project/workflow-runs/run/jobs/job/log", "/api/v1/repositories", "/git/project.git/info/refs?service=git-upload-pack"} {
+			if (table != "metadata" && (path == "/login" || strings.HasPrefix(path, "/share/") || strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/git/"))) || (table == "repositories" && strings.HasPrefix(path, "/repositories/project/")) {
+				continue
+			}
+			for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+				jar.SetCookies(parsed, []*http.Cookie{{Name: languageCookie + "_http", Value: string(lang)}, {Name: appearanceCookie + "_http", Value: "dark"}})
+				page := browserGET(t, client, server.URL+path)
+				if page.status != http.StatusServiceUnavailable || page.header.Get("Location") != "" || page.header.Get("WWW-Authenticate") != "" {
+					t.Fatalf("%s %s status=%d, authority must fail closed", table, path, page.status)
+				}
+				shared := strings.HasPrefix(path, "/share/")
+				pageRoute := path == "/" || path == "/settings" || path == "/repositories/new" || path == "/login" || shared
+				if shared && (strings.Contains(page.body, "synthetic-opening-secret") || strings.Contains(page.body, `href="/"`) || strings.Contains(page.body, `href="/settings"`)) {
+					t.Fatal("share failure escaped its restricted frame")
+				}
+				if pageRoute {
+					if !strings.HasPrefix(page.header.Get("Content-Type"), "text/html") || !strings.Contains(page.body, `<html lang="`+string(lang)+`"`) ||
+						!strings.Contains(page.body, "theme-dark") || !strings.Contains(page.body, webui.Text(lang, webui.MsgErrUnavailable)) || (!shared && !strings.Contains(page.body, `href="/"`)) {
+						t.Fatalf("%s %s: missing localized safe error page", table, path)
+					}
+				} else if strings.HasPrefix(page.header.Get("Content-Type"), "text/html") {
+					t.Fatalf("%s %s: non-page transport received HTML", table, path)
+				}
+				if strings.HasPrefix(path, "/api/") && !strings.Contains(page.body, `"code":"state_unavailable"`) {
+					t.Fatal("API error contract changed")
+				}
+				for _, private := range []string{"no such table", "general-session", "admin-session", "project.git", `name="csrf"`} {
+					if strings.Contains(page.body, private) {
+						t.Fatalf("%s %s discloses %q", table, path, private)
+					}
+				}
+			}
+		}
+		restore()
+	}
+}
+
 // A fault in OwnGit is answered as internal and a run that could not be
 // completed now, including an unclassified pull request or import error, as
 // unavailable; both log their cause once. An unclassified import error is

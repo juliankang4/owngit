@@ -387,8 +387,6 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	if err != nil {
 		return webui.Chrome{}, fmt.Errorf("settings read: %w", err)
 	}
-	lang := app.language(writer, request)
-	appearance := app.appearance(writer, request)
 	general, generalOK, err := app.cookieSession(request, "general", generalCookie)
 	if err != nil {
 		return webui.Chrome{}, fmt.Errorf("session read: %w", err)
@@ -418,7 +416,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 	}
 	info := requestctx.Of(request)
 	chrome := webui.Chrome{
-		Lang: lang, Appearance: appearance, Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
+		Now: app.now(), CurrentURL: request.URL.RequestURI(), CSRF: csrf, Version: app.Version,
 		Viewer: webui.Viewer{
 			AccessMode: accessMode, GeneralUnlocked: settings.AccessMode == "open" || generalOK,
 			SetupComplete: settings.Initialized,
@@ -457,12 +455,14 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
 			nav.Repositories = append(nav.Repositories, item)
 		}
-		// The dates come from snapshots already read, so building the sidebar
-		// starts no Git process. The dashboard puts its own list in the same
-		// order (see handleOverview).
-		webui.OrderNav(nav.Repositories, nav.Order, lang)
 		chrome.Nav = nav
 	}
+	chrome.Lang = app.language(writer, request)
+	chrome.Appearance = app.appearance(writer, request)
+	// The dates come from snapshots already read, so building the sidebar
+	// starts no Git process. The dashboard puts its own list in the same
+	// order (see handleOverview).
+	webui.OrderNav(chrome.Nav.Repositories, chrome.Nav.Order, chrome.Lang)
 	fillAdminViewer(&chrome, authority)
 	chrome.Notices = noticeFor(app.resultNotice(writer, request))
 	return chrome, nil

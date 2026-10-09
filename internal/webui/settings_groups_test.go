@@ -1,10 +1,13 @@
 package webui
 
 import (
+	"context"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Each Settings group is one form that sends only its own fields, so saving
@@ -152,6 +155,68 @@ func TestSettingsGroupsAskForThePasswordOnlyWhenAChangeNeedsIt(t *testing.T) {
 	}
 }
 
+func TestSettingsDraftOutcome(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the settings draft check")
+	}
+	script := scriptSource(t)
+	helpers := section(t, script, "  function groupForm(", "  /* groupSave is") +
+		section(t, script, "  function clearSettingsNotes(", "  function samePage(") +
+		section(t, script, "  function saveGroup(", "  // The change is saved.")
+	const check = `
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+function node(attrs = {}) {
+  return {getAttribute:n=>attrs[n] ?? null, hasAttribute:n=>n in attrs,
+    setAttribute:(n,v)=>{attrs[n]=v;}, removeAttribute:n=>{delete attrs[n];}, closest:()=>null};
+}
+const context = {all:(s,n)=>n.querySelectorAll(s), syncLeave(){},
+  settingsPanel:{querySelector:selector=>({cloneNode:()=>({...node(), selector, focus(){this.focused=true;}})})}};
+vm.createContext(context); vm.runInContext(process.argv[1], context);
+context.saveGroup({getAttribute:()=> 'true', querySelector(){assert.fail('a pending save was submitted again');}}).then(saved=>assert.equal(saved,false));
+for (const type of ['text', 'checkbox']) {
+  for (const outcome of ['refresh-failed', 'failed']) {
+    const field = {...node({'data-saved':type==='checkbox'?'on':'original'}), name:'setting', type, value:'draft', checked:false};
+    const token = {...node(), name:'csrf', type:'hidden', get value(){assert.fail('token was read');}};
+    const form = {elements:[field,token], querySelectorAll:()=>[]};
+    const mark = {}, title = {}, bar = {};
+    let note = null;
+    const group = {...node({'data-group-attempt':'current', 'data-group-outcome':'[data-settings-'+outcome+']'}),
+      classList:{toggle:(n,v)=>{group.dirty=v;}},
+      querySelector:s=>s==='[data-group-form]'?form:s==='[data-settings-note]'?note:null,
+      querySelectorAll:s=>s==='[data-group-mark]'?[mark]:s==='[data-group-bar-title]'?[title]:s==='[data-group-bar]'?[bar]:s.startsWith('[data-settings-note]')&&note?[note]:[],
+      appendChild(n){note=n;n.parentNode=this;}, removeChild(){note=null;}};
+    context.showSettingsNote(group, '[data-settings-'+outcome+']');
+    assert.equal(group.dirty,true); assert.equal(mark.hidden,true); assert.equal(note.focused,true);
+    const original = type==='checkbox'?'on':'original';
+    field.value=original;field.checked=true;
+    context.editSettingsDraft(group); context.syncGroup(group);
+    assert.equal(context.currentValue(field),context.savedValue(field));
+    assert.equal(group.dirty,true,'an old page value cannot establish current server state');
+    assert.equal(mark.hidden,false); assert.equal(title.hidden,false); assert.equal(bar.hidden,false);
+    assert.equal(note.selector,outcome==='refresh-failed'?'[data-settings-edited-saved]':'[data-settings-edited-unconfirmed]');
+    assert.equal(note.focused,undefined,'editing must keep focus in the field');
+    const editedNote=note;context.editSettingsDraft(group);
+    assert.equal(note,editedNote,'do not announce the same outcome for every keystroke');
+    field.value='later';field.checked=false;
+    context.discardGroup(group);
+    assert.equal(context.currentValue(field),original);
+    assert.equal(group.dirty,true);assert.equal(bar.hidden,false);assert.equal(note,editedNote);
+    group.removeAttribute('data-group-attempt');group.removeAttribute('data-group-outcome');
+    context.clearSettingsNotes(group);context.syncGroup(group);
+    assert.equal(group.dirty,false);assert.equal(bar.hidden,true);
+  }
+}
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, "-e", check, helpers).CombinedOutput()
+	if err != nil {
+		t.Fatalf("settings draft outcome: %v\n%s", err, output)
+	}
+}
+
 // Every Settings tab carries the leave dialog, closed. Its fields belong to
 // no form, so without the script they are never sent; the script attaches
 // them to one group's form only for Save and leave.
@@ -176,7 +241,9 @@ func TestTheLeaveDialogBelongsToNoForm(t *testing.T) {
 			t.Errorf("%s: the dialog sits inside a form", name)
 		}
 		for _, want := range []string{`name="admin_password" type="password"`, `name="leave_to"`, "data-leave-save", "data-leave-discard", "data-leave-stay",
-			Text(LangKO, MsgLeaveSave), Text(LangKO, MsgLeaveDiscard), Text(LangKO, MsgLeaveStay), Text(LangEN, MsgLeaveStay)} {
+			Text(LangKO, MsgLeaveSave), Text(LangKO, MsgLeaveDiscard), Text(LangKO, MsgLeaveStay), Text(LangEN, MsgLeaveStay),
+			`data-leave-unverified hidden`, Text(LangEN, MsgLeaveUnverifiedTitle), Text(LangKO, MsgLeaveUnverifiedTitle),
+			Text(LangEN, MsgLeaveUnverifiedLead), Text(LangKO, MsgLeaveUnverifiedLead)} {
 			if !strings.Contains(dialog, want) {
 				t.Errorf("%s: the dialog lacks %q", name, want)
 			}

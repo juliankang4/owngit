@@ -17,21 +17,24 @@ const (
 	MsgSettingsLeadRepositories MessageCode = "settings.lead.repositories"
 	MsgSettingsLeadStorage      MessageCode = "settings.lead.storage"
 
-	MsgSettingsSave         MessageCode = "settings.save"
-	MsgSettingsUnsaved      MessageCode = "settings.unsaved"
-	MsgSettingsUnsavedBar   MessageCode = "settings.unsaved_changes"
-	MsgSettingsNothing      MessageCode = "settings.nothing_changed"
-	MsgSettingsSendFailed   MessageCode = "settings.send_failed"
-	MsgSettingsUnexpected   MessageCode = "settings.unexpected_answer"
-	MsgSettingsRisk         MessageCode = "settings.risk"
-	MsgSettingsOn           MessageCode = "settings.on"
-	MsgSettingsOff          MessageCode = "settings.off"
-	MsgSettingsDisplayTitle MessageCode = "settings.display.title"
-	MsgSettingsDisplayScope MessageCode = "settings.display.scope"
-	MsgSettingsDisplayOrder MessageCode = "settings.display.order"
-	MsgSettingsLight        MessageCode = "settings.display.light"
-	MsgSettingsDark         MessageCode = "settings.display.dark"
-	MsgSettingsSystem       MessageCode = "settings.display.system"
+	MsgSettingsSave              MessageCode = "settings.save"
+	MsgSettingsUnsaved           MessageCode = "settings.unsaved"
+	MsgSettingsUnsavedBar        MessageCode = "settings.unsaved_changes"
+	MsgSettingsNothing           MessageCode = "settings.nothing_changed"
+	MsgSettingsRefreshFailed     MessageCode = "settings.refresh_failed"
+	MsgSettingsSendFailed        MessageCode = "settings.send_failed"
+	MsgSettingsUnexpected        MessageCode = "settings.unexpected_answer"
+	MsgSettingsEditedSaved       MessageCode = "settings.edited_saved"
+	MsgSettingsEditedUnconfirmed MessageCode = "settings.edited_unconfirmed"
+	MsgSettingsRisk              MessageCode = "settings.risk"
+	MsgSettingsOn                MessageCode = "settings.on"
+	MsgSettingsOff               MessageCode = "settings.off"
+	MsgSettingsDisplayTitle      MessageCode = "settings.display.title"
+	MsgSettingsDisplayScope      MessageCode = "settings.display.scope"
+	MsgSettingsDisplayOrder      MessageCode = "settings.display.order"
+	MsgSettingsLight             MessageCode = "settings.display.light"
+	MsgSettingsDark              MessageCode = "settings.display.dark"
+	MsgSettingsSystem            MessageCode = "settings.display.system"
 
 	MsgSettingsUpdateSwitch MessageCode = "settings.update.switch"
 	MsgSettingsUpdateScope  MessageCode = "settings.update.scope"
@@ -66,18 +69,20 @@ const (
 	MsgSettingsReposNoneHelp  MessageCode = "settings.repositories.none"
 
 	// The dialog shown when leaving Settings with unsaved changes.
-	MsgLeaveTitle        MessageCode = "leave.title"
-	MsgLeaveLead         MessageCode = "leave.lead"
-	MsgLeaveSave         MessageCode = "leave.save"
-	MsgLeaveDiscard      MessageCode = "leave.discard"
-	MsgLeaveStay         MessageCode = "leave.stay"
-	MsgLeaveEntered      MessageCode = "leave.entered"
-	MsgLeaveEmpty        MessageCode = "leave.empty"
-	MsgLeavePasswordHelp MessageCode = "leave.password_help"
-	MsgLeaveApartTag     MessageCode = "leave.apart_tag"
-	MsgLeaveApart        MessageCode = "leave.apart"
-	MsgLeaveSaving       MessageCode = "leave.saving"
-	MsgLeavePartial      MessageCode = "leave.partial"
+	MsgLeaveTitle           MessageCode = "leave.title"
+	MsgLeaveLead            MessageCode = "leave.lead"
+	MsgLeaveSave            MessageCode = "leave.save"
+	MsgLeaveDiscard         MessageCode = "leave.discard"
+	MsgLeaveStay            MessageCode = "leave.stay"
+	MsgLeaveEntered         MessageCode = "leave.entered"
+	MsgLeaveEmpty           MessageCode = "leave.empty"
+	MsgLeavePasswordHelp    MessageCode = "leave.password_help"
+	MsgLeaveApartTag        MessageCode = "leave.apart_tag"
+	MsgLeaveApart           MessageCode = "leave.apart"
+	MsgLeaveSaving          MessageCode = "leave.saving"
+	MsgLeavePartial         MessageCode = "leave.partial"
+	MsgLeaveUnverifiedTitle MessageCode = "leave.unverified_title"
+	MsgLeaveUnverifiedLead  MessageCode = "leave.unverified_lead"
 )
 
 var settingsCatalog = map[MessageCode]message{
@@ -117,12 +122,24 @@ var settingsCatalog = map[MessageCode]message{
 		ko: "바뀐 내용이 없어 저장하지 않았습니다.",
 	},
 	MsgSettingsSendFailed: {
-		en: "The change could not be sent, so it was not saved. Check the connection to OwnGit and save again.",
-		ko: "변경 내용을 보내지 못해 저장하지 않았습니다. OwnGit에 연결되어 있는지 확인하고 다시 저장하세요.",
+		en: "The save could not be confirmed. Your entries are still here. Check the connection, then retry or check the current settings in another tab.",
+		ko: "저장 결과를 확인하지 못했습니다. 입력한 내용은 유지됩니다. 연결을 확인한 뒤 다시 저장하거나 다른 탭에서 현재 설정을 확인하세요.",
 	},
 	MsgSettingsUnexpected: {
-		en: "OwnGit answered in a way this page does not expect. Reload the page to see the current settings.",
-		ko: "OwnGit이 이 페이지가 예상하지 못한 응답을 보냈습니다. 페이지를 새로 고쳐 현재 설정을 확인하세요.",
+		en: "The save could not be confirmed from this response. Your entries are still here. Check the current settings and sign-in status in another tab before retrying.",
+		ko: "응답에서 저장 결과를 확인하지 못했습니다. 입력한 내용은 유지됩니다. 다른 탭에서 현재 설정과 로그인 상태를 확인한 뒤 다시 저장하세요.",
+	},
+	MsgSettingsRefreshFailed: {
+		en: "OwnGit saved the change, but this page could not refresh. Your entries are still here. Check the current settings in another tab before making more changes.",
+		ko: "OwnGit이 변경 내용을 저장했지만 이 화면을 갱신하지 못했습니다. 입력한 내용은 유지됩니다. 다른 탭에서 현재 설정을 확인한 뒤 추가로 변경하세요.",
+	},
+	MsgSettingsEditedSaved: {
+		en: "OwnGit saved the earlier entries, not these later edits. Check the current settings before saving again. Cancel restores this page’s original entries; it does not undo a saved change.",
+		ko: "OwnGit이 저장한 것은 이전 입력 내용이며, 그 뒤 편집한 내용은 아직 저장하지 않았습니다. 다시 저장하기 전에 현재 설정을 확인하세요. 취소는 이 페이지의 처음 입력값만 복원하며, 이미 저장한 변경은 되돌리지 않습니다.",
+	},
+	MsgSettingsEditedUnconfirmed: {
+		en: "The earlier save is still unconfirmed, and these entries have changed since that attempt. Check the current settings before saving again. Cancel restores this page’s original entries; it does not undo a saved change.",
+		ko: "이전 저장 결과는 아직 확인되지 않았으며, 그 뒤 입력 내용을 편집했습니다. 다시 저장하기 전에 현재 설정을 확인하세요. 취소는 이 페이지의 처음 입력값만 복원하며, 이미 저장한 변경은 되돌리지 않습니다.",
 	},
 	MsgSettingsRisk: {en: "Risk:", ko: "위험:"},
 	MsgSettingsOn:   {en: "On", ko: "켜짐"},
@@ -211,8 +228,13 @@ var settingsCatalog = map[MessageCode]message{
 		ko: "아직 저장소가 없습니다. 저장소를 만들면 저장소마다 설정 페이지가 생깁니다.",
 	},
 
-	MsgLeaveTitle:   {en: "You have unsaved changes", ko: "저장하지 않은 변경 사항이 있습니다"},
-	MsgLeaveLead:    {en: "If you leave now, these changes are lost:", ko: "이대로 나가면 아래 변경 사항이 사라집니다."},
+	MsgLeaveTitle:           {en: "You have unsaved changes", ko: "저장하지 않은 변경 사항이 있습니다"},
+	MsgLeaveLead:            {en: "If you leave now, these changes are lost:", ko: "이대로 나가면 아래 변경 사항이 사라집니다."},
+	MsgLeaveUnverifiedTitle: {en: "Check these entries before leaving", ko: "나가기 전에 입력 내용을 확인하세요"},
+	MsgLeaveUnverifiedLead: {
+		en: "The server may already hold an earlier save. The entries below have not been checked against its current settings. Discard only drops local edits; it does not undo a saved change.",
+		ko: "이전 저장이 서버에 반영되었을 수 있습니다. 아래 입력값이 현재 서버 설정과 일치하는지는 확인되지 않았습니다. 저장하지 않고 나가기는 이 페이지의 편집 내용만 버리며, 이미 저장한 변경은 되돌리지 않습니다.",
+	},
 	MsgLeaveSave:    {en: "Save and leave", ko: "저장하고 나가기"},
 	MsgLeaveDiscard: {en: "Discard and leave", ko: "저장하지 않고 나가기"},
 	MsgLeaveStay:    {en: "Stay", ko: "계속 편집"},
@@ -232,8 +254,8 @@ var settingsCatalog = map[MessageCode]message{
 	},
 	MsgLeaveSaving: {en: "Saving…", ko: "저장하는 중…"},
 	MsgLeavePartial: {
-		en: "Not everything could be saved, so you are still on this page. Saved groups say so; the others keep your changes.",
-		ko: "모두 저장하지 못해 이 페이지에 그대로 있습니다. 저장한 항목에는 저장했다는 안내가 보이고 나머지 항목에는 입력한 내용이 남아 있습니다.",
+		en: "Save and leave stopped, so you are still on this page. Check each group’s notice for its save status.",
+		ko: "저장하고 나가기를 중단하여 이 페이지에 그대로 있습니다. 각 항목의 안내에서 저장 상태를 확인하세요.",
 	},
 }
 

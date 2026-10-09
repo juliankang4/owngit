@@ -49,6 +49,67 @@ func TestRefreshPeekReadsOnlyWhatTheFormNeeds(t *testing.T) {
 	}
 	const form = "application/x-www-form-urlencoded"
 
+	t.Run("settings error transport", func(t *testing.T) {
+		app := newConfiguredApp(t)
+		readErr := errors.New("body unavailable")
+		for _, test := range []struct {
+			name, method, path, content, media string
+			parsed                             url.Values
+			declared                           bool
+			err                                error
+			plain                              bool
+		}{
+			{name: "download", content: "action=backup_download", plain: true},
+			{name: "download without run", path: "/settings", content: "action=backup_download", plain: true},
+			{name: "ordinary save with run", content: "action=save_initial_branch"},
+			{name: "query action is not body action", path: "/settings/storage?run=synthetic&action=backup_download", content: "action=save_initial_branch"},
+			{name: "get with run", method: http.MethodGet, content: "action=backup_download"},
+			{name: "parsed download", parsed: url.Values{"action": {"backup_download"}}, plain: true},
+			{name: "parsed ordinary", parsed: url.Values{"action": {"save_initial_branch"}}, content: "action=backup_download"},
+			{name: "parsed empty", parsed: url.Values{}, content: "action=backup_download"},
+			{name: "malformed", content: "action=backup_download&broken=%zz"},
+			{name: "oversized chunked", content: "action=backup_download&pad=" + strings.Repeat("x", maxRefreshFormBytes)},
+			{name: "oversized declared", content: "action=backup_download&pad=" + strings.Repeat("x", maxRefreshFormBytes), declared: true},
+			{name: "not a form", content: "action=backup_download", media: "text/plain"},
+			{name: "read error", content: "action=backup_download", err: readErr},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				media := test.media
+				if media == "" {
+					media = form
+				}
+				body := &countingBody{reader: io.MultiReader(strings.NewReader(test.content), failedReader{test.err})}
+				if test.err == nil {
+					body.reader = strings.NewReader(test.content)
+				}
+				request := refreshRequest(body, -1, media)
+				request.URL, _ = url.Parse("/settings/storage?run=synthetic")
+				if test.path != "" {
+					request.URL, _ = url.Parse(test.path)
+				}
+				if test.method != "" {
+					request.Method = test.method
+				}
+				if test.declared {
+					request.ContentLength = int64(len(test.content))
+				}
+				request.PostForm = test.parsed
+				response := httptest.NewRecorder()
+				app.answerUnavailable(response, request, "settings read", errors.New("unavailable"))
+				if response.Code != http.StatusServiceUnavailable || strings.HasPrefix(response.Header().Get("Content-Type"), "text/plain") != test.plain {
+					t.Fatalf("status=%d type=%s", response.Code, response.Header().Get("Content-Type"))
+				}
+				if body.read > maxRefreshFormBytes+1 || ((test.parsed != nil || test.declared || test.media != "" || test.method == http.MethodGet) && body.read != 0) {
+					t.Fatalf("unexpected peek read: %d bytes", body.read)
+				}
+				content, err := io.ReadAll(request.Body)
+				if string(content) != test.content || !errors.Is(err, test.err) {
+					t.Fatalf("body or error was not replayed: %q %v", content, err)
+				}
+			})
+		}
+	})
+
 	t.Run("valid refresh form", func(t *testing.T) {
 		body := &countingBody{reader: strings.NewReader(largest)}
 		request := refreshRequest(body, -1, form)

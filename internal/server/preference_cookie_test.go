@@ -44,6 +44,37 @@ func TestPreferencesKeepSeparateSchemeChoicesAndUpgradeValues(t *testing.T) {
 				if cookie.Value != scheme.choice || cookie.Secure != scheme.secure || cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" {
 					t.Fatalf("preference cookie attributes: %+v", cookie)
 				}
+				if pref.parameter != "order" {
+					for _, table := range []string{"", "metadata", "sessions", "repositories"} {
+						restore := func() {}
+						if table != "" {
+							restore = hideTable(t, app.Store, table)
+						}
+						path := "/not-found"
+						if table == "metadata" {
+							path = "/settings"
+						}
+						page := browserGET(t, client, scheme.address+path+"?"+pref.parameter+"="+scheme.choice)
+						restore()
+						count := 0
+						for _, cookie := range (&http.Response{Header: page.header}).Cookies() {
+							if cookie.Name != scheme.name {
+								continue
+							}
+							count++
+							if cookie.Value != scheme.choice || cookie.Secure != scheme.secure || cookie.HttpOnly || cookie.Path != "/" || cookie.Domain != "" || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge <= 0 || cookie.Expires.IsZero() {
+								t.Fatalf("%s error preference attributes: %+v", table, cookie)
+							}
+						}
+						status := http.StatusNotFound
+						if table == "metadata" {
+							status = http.StatusServiceUnavailable
+						}
+						if count != 1 || page.status != status || !strings.Contains(page.body, strings.Replace(pref.marker, "%s", scheme.choice, 1)) {
+							t.Fatalf("%s error preference count=%d status=%d", table, count, page.status)
+						}
+					}
+				}
 				if page := browserGET(t, client, scheme.address+"/"); !strings.Contains(page.body, strings.Replace(pref.marker, "%s", scheme.choice, 1)) {
 					t.Fatal("the new preference was not kept on reload")
 				}

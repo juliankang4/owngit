@@ -520,16 +520,24 @@ func (app *App) render(writer http.ResponseWriter, request *http.Request, status
 	}
 }
 
-// renderError answers with an error page. A page frame that cannot be read
-// is left out and logged, and the page is shown without it.
-func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string) {
+func (app *App) renderError(writer http.ResponseWriter, request *http.Request, status int, code webui.MessageCode, detail string, frame ...webui.Chrome) {
 	if strings.HasPrefix(request.URL.Path, sharePrefix) {
 		app.renderShareError(writer, request, status, code, detail)
 		return
 	}
-	chrome, err := app.chrome(writer, request, webui.SectionNone, "", "")
-	if err != nil {
-		logFailure(request, "page frame read", err)
+	var chrome webui.Chrome
+	if len(frame) != 0 {
+		chrome = frame[0]
+	} else {
+		var err error
+		chrome, err = app.chrome(writer, request, webui.SectionNone, "", "")
+		if err != nil {
+			logFailure(request, "page frame read", err)
+		}
+	}
+	if chrome.Lang == "" {
+		chrome.Lang = app.language(writer, request)
+		chrome.Appearance = app.appearance(writer, request)
 	}
 	app.render(writer, request, status, webui.ErrorPage{Chrome: chrome, Status: status, Code: code, Detail: detail, RetryURL: "/"})
 }
@@ -541,15 +549,28 @@ func unavailable(request *http.Request, step string, err error) int {
 	return http.StatusServiceUnavailable
 }
 
-// answerUnavailable answers a request that step could not complete now,
-// through unavailable: an API request with its JSON error, any other with
-// plain text. A page answers this way when its frame, or a read that decides
-// the request, such as its session, fails; a failed read that may have
-// allowed the request is neither refused nor sent to sign in.
 func (app *App) answerUnavailable(writer http.ResponseWriter, request *http.Request, step string, err error) {
 	status := unavailable(request, step, err)
 	if strings.HasPrefix(request.URL.Path, "/api/") {
 		writeAPIError(writer, status, "state_unavailable", "OwnGit state is unavailable.", nil)
+		return
+	}
+	path := request.URL.Path
+	parts := strings.Split(strings.TrimPrefix(path, "/repositories/"), "/")
+	jobLog := strings.HasPrefix(path, "/repositories/") && len(parts) == 6 && parts[1] == "workflow-runs" && parts[3] == "jobs" && parts[5] == "log"
+	_, sharedPage, shared := sharePage(path)
+	download := false
+	if isSettingsPath(path) && request.Method == http.MethodPost {
+		action := postValue(request, "action")
+		if request.PostForm == nil {
+			action = peekFormAction(request)
+		}
+		download = action == webui.ActionBackupDownload
+	}
+	if (dashboardPage(path) && !jobLog && !download) || (shared && sharedPage != "raw") || path == sharePrefix || path == "/share/open" ||
+		path == "/setup" || path == "/setup/redeem" || (path == "/setup/approval" && request.Method == http.MethodPost) ||
+		path == "/repositories" || path == "/logout" || path == "/admin/logout" || path == codingToolsPath {
+		app.renderError(writer, request, status, failureText(status), "", webui.Chrome{})
 		return
 	}
 	app.writePlainError(writer, status)

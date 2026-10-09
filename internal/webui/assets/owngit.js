@@ -1190,9 +1190,7 @@
     });
   }
 
-  /* Settings groups. settings.html describes the markup. A group holds a
-   * change while one of its setting controls differs from its saved value;
-   * only then its "Not saved" mark and its save bar are shown.
+  /* Settings groups. settings.html describes the markup.
    *
    * A group whose form has no password field is saved without leaving the
    * page (see groupSave below and settings.go): a saved change comes back
@@ -1242,9 +1240,9 @@
 
   function groupDirty(group) {
     var form = groupForm(group);
-    return !!form && settingControls(form).some(function (control) {
+    return !!form && (group.hasAttribute('data-group-attempt') || settingControls(form).some(function (control) {
       return currentValue(control) !== savedValue(control);
-    });
+    }));
   }
 
   // What the named field of form sends now: "on" or "off" for a switch.
@@ -1264,8 +1262,9 @@
     var dirty = groupDirty(group);
     var open = dirty || group.hasAttribute('data-group-refused') || group.hasAttribute('data-group-open');
     group.classList.toggle('is-dirty', dirty);
-    all('[data-group-mark]', group).forEach(function (node) { node.hidden = !dirty; });
-    all('[data-group-bar-title]', group).forEach(function (node) { node.hidden = !dirty; });
+    var showDirty = dirty && (!group.querySelector('[data-settings-note]') || group.getAttribute('data-group-attempt') === 'edited');
+    all('[data-group-mark]', group).forEach(function (node) { node.hidden = !showDirty; });
+    all('[data-group-bar-title]', group).forEach(function (node) { node.hidden = !showDirty; });
     all('[data-group-bar]', group).forEach(function (node) { node.hidden = !open; });
     syncLeave(false);
   }
@@ -1286,7 +1285,7 @@
       }
     });
     all('details[data-group-details]', group).forEach(function (details) { details.open = false; });
-    all('[data-settings-note]', group).forEach(function (note) { note.parentNode.removeChild(note); });
+    editSettingsDraft(group);
     syncGroup(group);
   }
 
@@ -1302,7 +1301,7 @@
    * token of the fetched page into this page's forms, because a saved
    * change can end the session that token belongs to. It stores nothing. */
   var groupSave = (function groupSave() {
-    if (!window.fetch || !window.DOMParser || !window.FormData || !window.URLSearchParams) { return null; }
+    if (!window.fetch || !window.AbortController || !window.DOMParser || !window.FormData || !window.URLSearchParams) { return null; }
 
     // The address, on this site only, or null.
     function onThisSite(address) {
@@ -1319,29 +1318,39 @@
       return !holdsPassword(form) && !!onThisSite(formAddress(form));
     }
 
-    // Send the form. Rejects, sending nothing, when the form may not be
-    // sent this way.
+    function receiveWithin30Seconds(start) {
+      var controller = new AbortController();
+      var timer = window.setTimeout(function () { controller.abort(); }, 30000);
+      return Promise.resolve().then(function () { return start(controller.signal); }).then(function (response) {
+        return response.text().then(function (html) { return { response: response, html: html }; });
+      }).finally(function () { window.clearTimeout(timer); });
+    }
+
     function send(form, name) {
       var target = onThisSite(formAddress(form));
       if (holdsPassword(form) || !target) { return Promise.reject(new Error('not sent')); }
-      return window.fetch(target.href, {
-        method: 'POST',
-        body: new URLSearchParams(new FormData(form)),
-        credentials: 'same-origin',
-        cache: 'no-store',
-        redirect: 'manual',
-        headers: { 'X-OwnGit-Group': name }
+      return receiveWithin30Seconds(function (signal) {
+        return window.fetch(target.href, {
+          method: 'POST',
+          body: new URLSearchParams(new FormData(form)),
+          credentials: 'same-origin',
+          cache: 'no-store',
+          redirect: 'manual',
+          signal: signal,
+          headers: { 'X-OwnGit-Group': name }
+        });
       });
     }
 
     function read(address) {
       var target = onThisSite(address);
       if (!target) { return Promise.reject(new Error('not read')); }
-      return window.fetch(target.href, { method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'manual' })
-        .then(function (response) {
-          if (response.status !== 200) { throw new Error('not read'); }
-          return response.text();
-        });
+      return receiveWithin30Seconds(function (signal) {
+        return window.fetch(target.href, { method: 'GET', credentials: 'same-origin', cache: 'no-store', redirect: 'manual', signal: signal });
+      }).then(function (result) {
+        if (result.response.status !== 200) { throw new Error('not read'); }
+        return result.html;
+      });
     }
 
     function copyToken(doc) {
@@ -1407,17 +1416,34 @@
     }
   }
 
-  function showSettingsNote(group, selector) {
+  function clearSettingsNotes(group) {
+    all('[data-settings-note], [data-group-note].notice--success, [data-group-note].notice--warning', group).forEach(function (note) { note.parentNode.removeChild(note); });
+  }
+
+  function editSettingsDraft(group) {
+    if (group.getAttribute('data-group-attempt') === 'edited') { return; }
+    clearSettingsNotes(group);
+    if (!group.hasAttribute('data-group-attempt')) { return; }
+    group.setAttribute('data-group-attempt', 'edited');
+    var outcome = group.getAttribute('data-group-outcome');
+    if (outcome) { showSettingsNote(group, outcome, false); }
+  }
+
+  function showSettingsNote(group, selector, focus) {
+    if (group.getAttribute('data-group-attempt') === 'edited') {
+      selector = selector === '[data-settings-refresh-failed]' ? '[data-settings-edited-saved]' : '[data-settings-edited-unconfirmed]';
+    }
     var template = settingsPanel.querySelector(selector);
     if (!template) { return; }
-    all('[data-settings-note]', group).forEach(function (note) { note.parentNode.removeChild(note); });
+    clearSettingsNotes(group);
     var note = template.cloneNode(true);
     note.removeAttribute(selector.slice(1, -1));
     note.setAttribute('data-settings-note', '');
     note.hidden = false;
     var bar = group.querySelector('[data-group-bar]');
     if (bar) { bar.parentNode.insertBefore(note, bar); } else { group.appendChild(note); }
-    note.focus();
+    syncGroup(group);
+    if (focus !== false) { note.focus(); }
   }
 
   function samePage(target) {
@@ -1447,9 +1473,9 @@
     unguard(next);
   }
 
-  // Say in the group that its change was not saved, and stay on the page.
   function notSaved(group, selector) {
     group.removeAttribute('aria-busy');
+    group.setAttribute('data-group-outcome', selector);
     showSettingsNote(group, selector);
     return false;
   }
@@ -1460,10 +1486,8 @@
     return !!form && !!groupSave && groupSave.eligible(form) && !form.hasAttribute('data-group-native');
   }
 
-  // stay is true while leaving the page (see the leave dialog below): an
-  // answer that is neither saved nor refused then says so in the group
-  // instead of sending the page, so the other groups keep their changes.
   function saveGroup(group, stay) {
+    if (group.getAttribute('aria-busy') === 'true') { return Promise.resolve(false); }
     var form = groupForm(group);
     var name = group.getAttribute('data-group');
     // A form this script does not send is submitted by the browser, which
@@ -1474,27 +1498,26 @@
       return Promise.resolve(false);
     }
     group.setAttribute('aria-busy', 'true');
-    return groupSave.send(form, name).then(function (response) {
+    group.setAttribute('data-group-attempt', 'current');
+    group.removeAttribute('data-group-outcome');
+    clearSettingsNotes(group);
+    return groupSave.send(form, name).then(function (result) {
+      var response = result.response;
       var type = response.headers.get('Content-Type') || '';
       if (response.status === 200 && type.indexOf('application/json') === 0) {
-        return response.json().then(function (answer) { return showSaved(group, name, answer && answer.location); });
+        var answer = JSON.parse(result.html);
+        return showSaved(group, name, answer && answer.location);
       }
-      // Anything but a saved change or this tab with the group showing why
-      // nothing was saved, such as a redirect to sign in, is left to the
-      // page submission.
       if (response.type === 'opaqueredirect' || type.indexOf('text/html') !== 0) {
-        return stay ? notSaved(group, '[data-settings-unexpected]') : submitPage(group);
+        return notSaved(group, '[data-settings-unexpected]');
       }
-      return response.text().then(function (html) {
-        var fresh = parsePage(html).querySelector('[data-group="' + name + '"]');
-        if (!fresh) { return stay ? notSaved(group, '[data-settings-unexpected]') : submitPage(group); }
-        var node = replaceGroup(group, fresh);
-        focusFirst(node, ['[aria-invalid="true"]', '[role="alert"]', '[data-group-note]', '[data-group-save]']);
-        return false;
-      });
-    }, function () {
-      // Not sent: the page submission sends it.
-      return stay ? notSaved(group, '[data-settings-failed]') : submitPage(group);
+      var fresh = parsePage(result.html).querySelector('[data-group="' + name + '"]');
+      if (!fresh || group.getAttribute('data-group-attempt') === 'edited') { return notSaved(group, '[data-settings-unexpected]'); }
+      var node = replaceGroup(group, fresh);
+      focusFirst(node, ['[aria-invalid="true"]', '[role="alert"]', '[data-group-note]', '[data-group-save]']);
+      return false;
+    }).catch(function () {
+      return notSaved(group, '[data-settings-failed]');
     });
   }
 
@@ -1503,24 +1526,22 @@
   // followed.
   function showSaved(group, name, location) {
     var target = typeof location === 'string' && location !== '' ? groupSave.onThisSite(location) : null;
-    if (!target) {
-      group.removeAttribute('aria-busy');
-      showSettingsNote(group, '[data-settings-unexpected]');
-      return true;
+    if (!target) { return notSaved(group, '[data-settings-unexpected]'); }
+    if (group.getAttribute('data-group-attempt') === 'edited') {
+      return notSaved(group, '[data-settings-refresh-failed]');
     }
     if (!samePage(target)) {
       replacePage(group, function () { window.location.assign(target.href); });
       return true;
     }
     return groupSave.read(target.href).then(function (html) {
+      if (group.getAttribute('data-group-attempt') === 'edited') { return notSaved(group, '[data-settings-refresh-failed]'); }
       var node = takeGroups(parsePage(html), name);
       if (!node) { throw new Error('settings group'); }
       focusFirst(node, ['[data-group-note]', 'h2']);
       return true;
     }).catch(function () {
-      // Saved, but this page could not show it: load the page that does.
-      replacePage(group, function () { window.location.assign(target.href); });
-      return true;
+      return notSaved(group, '[data-settings-refresh-failed]');
     });
   }
 
@@ -1831,7 +1852,7 @@
 
   // One change: its label, the saved value and the new one. A password
   // field only says that something was entered.
-  function changeRow(control) {
+  function changeRow(control, unverified) {
     var row = document.createElement('li');
     row.appendChild(controlLabel(control));
     row.appendChild(document.createTextNode(': '));
@@ -1839,8 +1860,10 @@
       row.appendChild(leaveWord('entered'));
       return row;
     }
-    row.appendChild(shownValue(control, savedValue(control)));
-    row.appendChild(document.createTextNode(' \u2192 '));
+    if (!unverified) {
+      row.appendChild(shownValue(control, savedValue(control)));
+      row.appendChild(document.createTextNode(' \u2192 '));
+    }
     row.appendChild(shownValue(control, currentValue(control)));
     return row;
   }
@@ -1876,6 +1899,9 @@
     leaving.canSave = paged.length === 0 || pageLast;
     leaving.gate = pageLast ? passwordGate(paged[0]) : null;
 
+    var unverified = groups.some(function (group) { return group.hasAttribute('data-group-attempt'); });
+    all('[data-leave-ordinary]', leaveDialog).forEach(function (node) { node.hidden = unverified; });
+    all('[data-leave-unverified]', leaveDialog).forEach(function (node) { node.hidden = !unverified; });
     var list = leaveDialog.querySelector('[data-leave-list]');
     while (list.firstChild) { list.removeChild(list.firstChild); }
     groups.forEach(function (group) {
@@ -1883,8 +1909,9 @@
       item.appendChild(copyChildren(group.querySelector('.grp__h h2'), document.createElement('b')));
       if (!leaving.canSave && paged.indexOf(group) >= 0) { item.appendChild(leaveWord('apart')); }
       var changes = document.createElement('ul');
+      var pending = group.hasAttribute('data-group-attempt');
       settingControls(groupForm(group)).forEach(function (control) {
-        if (currentValue(control) !== savedValue(control)) { changes.appendChild(changeRow(control)); }
+        if (pending || currentValue(control) !== savedValue(control)) { changes.appendChild(changeRow(control, pending)); }
       });
       item.appendChild(changes);
       list.appendChild(item);
@@ -1987,7 +2014,6 @@
     finishLeave();
   }
 
-  // Save and leave stopped at a group that was not saved.
   function stopLeaving(savedSome, failed) {
     var group = failed && groupNamed(failed);
     stay();
@@ -2176,6 +2202,8 @@
       if (!group) { return; }
       // A change after a way out that did not happen asks again.
       if (!leaveUnguarding) { leaveAllowed = false; }
+      var form = groupForm(group);
+      if (form && settingControls(form).indexOf(control) >= 0) { editSettingsDraft(group); }
       syncGroup(group);
       syncLeave(true);
     };

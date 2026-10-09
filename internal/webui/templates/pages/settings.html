@@ -57,7 +57,10 @@
   {{end}}
   {{/* What the script says when a save gets no usable answer. */}}
   <p class="notice notice--error" role="alert" tabindex="-1" data-settings-failed hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.send_failed"}}</span></p>
+  <p class="notice notice--error" role="alert" tabindex="-1" data-settings-refresh-failed hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.refresh_failed"}}</span></p>
   <p class="notice notice--error" role="alert" tabindex="-1" data-settings-unexpected hidden>{{statusIcon "error"}}<span>{{bi $lang "settings.unexpected_answer"}}</span></p>
+  <p class="notice notice--warning" role="alert" tabindex="-1" data-settings-edited-saved hidden>{{statusIcon "warning"}}<span>{{bi $lang "settings.edited_saved"}}</span></p>
+  <p class="notice notice--warning" role="alert" tabindex="-1" data-settings-edited-unconfirmed hidden>{{statusIcon "warning"}}<span>{{bi $lang "settings.edited_unconfirmed"}}</span></p>
   {{/* What the script says when Save and leave saved only some groups. */}}
   <p class="notice notice--warning" role="status" tabindex="-1" data-leave-partial hidden>{{statusIcon "warning"}}<span>{{bi $lang "leave.partial"}}</span></p>
 </div>
@@ -81,8 +84,8 @@
      saved. Otherwise such groups are marked to be saved separately. */}}
 {{define "leaveDialog"}}{{$lang := .Lang}}
 <dialog class="leave" aria-labelledby="leave-h" aria-describedby="leave-d" data-leave>
-  <h2 id="leave-h">{{bi $lang "leave.title"}}</h2>
-  <p id="leave-d">{{bi $lang "leave.lead"}}</p>
+  <h2 id="leave-h"><span data-leave-ordinary>{{bi $lang "leave.title"}}</span><span data-leave-unverified hidden>{{bi $lang "leave.unverified_title"}}</span></h2>
+  <p id="leave-d"><span data-leave-ordinary>{{bi $lang "leave.lead"}}</span><span data-leave-unverified hidden>{{bi $lang "leave.unverified_lead"}}</span></p>
   <ul class="leave__list" data-leave-list></ul>
   <p class="wn" id="leave-apart" data-leave-apart hidden>{{icon "info"}}<span>{{bi $lang "leave.apart"}}</span></p>
   <div class="f leave__pw" data-leave-password-field hidden>

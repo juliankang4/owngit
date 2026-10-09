@@ -192,7 +192,21 @@ func TestRepositoryAPICreationFailureCanRetryAndPreservesUnknownFolders(t *testi
 	if response.StatusCode != http.StatusServiceUnavailable || apiErrorCode(t, response) != "repository_create_failed" {
 		t.Fatalf("recording failure status=%d", response.StatusCode)
 	}
+	client, jar := newBrowserClient(t)
+	browserGET(t, client, server.URL+"/repositories/new")
+	values := url.Values{"csrf": {cookieValue(t, jar, server.URL, generalCookie)}, "name": {"browser-draft"}, "description": {"A <draft> description"}, "password": {"must-not-echo"}}
+	for _, lang := range []webui.Lang{webui.LangEN, webui.LangKO} {
+		page := browserForm(t, client, server.URL+"/repositories?lang="+string(lang), values, server.URL)
+		if page.status != http.StatusServiceUnavailable || !strings.Contains(page.body, `value="browser-draft"`) ||
+			!strings.Contains(page.body, "A &lt;draft&gt; description") || !strings.Contains(page.body, webui.Text(lang, webui.MsgRepoCreateFail)) ||
+			strings.Contains(page.body, "must-not-echo") || strings.Contains(page.body, "recording refused") {
+			t.Fatalf("creation recovery in %s: status=%d, draft or safe notice missing", lang, page.status)
+		}
+	}
 	noErr(t, fixture.store.Exec(ctx, `DROP TRIGGER refuse_creation`))
+	if page := browserForm(t, client, server.URL+"/repositories", values, server.URL); page.status != http.StatusSeeOther || page.header.Get("Location") != "/repositories/browser-draft?notice=repository_created" {
+		t.Fatalf("explicit creation retry status=%d location=%q", page.status, page.header.Get("Location"))
+	}
 	decodeRepositoryResponse(t, apiRequest(t, http.MethodPost, collection, map[string]string{"name": "fresh"}, "", ""), http.StatusCreated)
 	unknown := filepath.Join(fixture.app.Repositories.RepositoryRoot(), "unknown.git")
 	noErr(t, os.Mkdir(unknown, 0o700))

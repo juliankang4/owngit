@@ -210,24 +210,34 @@ func (app *App) handleNewRepositoryGet(writer http.ResponseWriter, request *http
 		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
-	chrome.Notices = notices
 	status := http.StatusOK
 	if len(notices) != 0 {
 		status = http.StatusUnprocessableEntity
 	}
+	app.renderNewRepository(writer, request, chrome, name, description, notices, status)
+}
+
+func (app *App) renderNewRepository(writer http.ResponseWriter, request *http.Request, chrome webui.Chrome, name, description string, notices []webui.Notice, status int) {
+	chrome.Notices = notices
 	app.render(writer, request, status, webui.NewRepositoryPage{
 		Chrome: chrome, SubmitURL: "/repositories", Name: name, Description: description, NameRules: webui.MsgRepoNameRules,
 	})
 }
 
 func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http.Request, settings state.Settings) {
-	if _, ok := app.requireGeneral(writer, request, settings); !ok {
+	session, ok := app.requireGeneral(writer, request, settings)
+	if !ok {
 		return
 	}
 	if !app.parseForm(writer, request) {
 		return
 	}
 	if !app.requireCSRF(writer, request) {
+		return
+	}
+	chrome, err := app.chrome(writer, request, webui.SectionOverview, "", session.CSRF)
+	if err != nil {
+		app.answerUnavailable(writer, request, "page frame read", err)
 		return
 	}
 	name := strings.TrimSpace(postValue(request, "name"))
@@ -257,7 +267,7 @@ func (app *App) handleCreateRepository(writer http.ResponseWriter, request *http
 			logFailure(request, "repository creation", err)
 			app.renderError(writer, request, http.StatusConflict, webui.MsgBranchUnreadableCreate, "")
 		default:
-			app.renderError(writer, request, unavailable(request, "repository creation", err), webui.MsgRepoCreateFail, "")
+			app.renderNewRepository(writer, request, chrome, name, description, []webui.Notice{webui.Error("", webui.MsgRepoCreateFail)}, unavailable(request, "repository creation", err))
 		}
 		return
 	}
