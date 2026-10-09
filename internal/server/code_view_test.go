@@ -481,29 +481,73 @@ func TestUnavailableHelperIsNamedOnThePage(t *testing.T) {
 
 func TestRawFilesAnswerHeadAndRefuseLargeFilesInWords(t *testing.T) {
 	app := newConfiguredApp(t)
-	seedRepository(t, app, "raw-sizes", map[string]string{
-		"small.txt": "small\n",
-		"big.bin":   strings.Repeat("\x00\x01", int(state.DefaultBrowseLimits.RawBytes)/2+1),
-	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	files := map[string]string{
+		"small.txt":     "small\n",
+		"empty.bin":     "",
+		"limit.bin":     strings.Repeat("x", int(state.DefaultBrowseLimits.RawBytes)),
+		"big.bin":       strings.Repeat("\x00\x01", int(state.DefaultBrowseLimits.RawBytes)/2+1),
+		"docs/file.txt": "nested\n",
+	}
+	seedRepository(t, app, "raw-sizes", files, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	var started func() []string
+	if runtime.GOOS != "windows" {
+		started = countGit(t, app)
+	}
 	server := serve(t, app.Handler())
 	client := &http.Client{}
-	raw := server.URL + "/repositories/raw-sizes/raw?ref=refs%2Fheads%2Fmain&path="
-
-	head, err := http.NewRequest(http.MethodHead, raw+"small.txt", nil)
-	noErr(t, err)
-	result := browserRequest(t, client, head)
-	if result.status != http.StatusOK || result.body != "" || result.header.Get("Content-Length") != "6" ||
-		!strings.HasPrefix(result.header.Get("Content-Disposition"), "attachment") || !strings.Contains(result.header.Get("Content-Security-Policy"), "sandbox") {
-		t.Errorf("HEAD status=%d body=%q headers=%v", result.status, result.body, result.header)
-	}
-
-	big := browserGET(t, client, raw+"big.bin")
-	if big.status != http.StatusForbidden || !strings.Contains(big.body, "larger than the raw file download limit") || !strings.Contains(big.body, "원본 파일 내려받기 한도") {
-		t.Errorf("a file over the limit got status %d without the explanation", big.status)
-	}
-	missing := browserGET(t, client, raw+"nothing.txt")
-	if missing.status != http.StatusNotFound || !strings.Contains(missing.header.Get("Content-Type"), "text/html") {
-		t.Errorf("a missing file got status %d, %s", missing.status, missing.header.Get("Content-Type"))
+	raw := server.URL + "/repositories/raw-sizes/raw?path="
+	for _, row := range []struct {
+		path   string
+		status int
+	}{
+		{"small.txt", http.StatusOK},
+		{"empty.bin", http.StatusOK},
+		{"limit.bin", http.StatusOK},
+		{"big.bin", http.StatusForbidden},
+		{"nothing.txt", http.StatusNotFound},
+		{"docs", http.StatusNotFound},
+		{"..%2Fescape", http.StatusNotFound},
+		{"small.txt&ref=missing", http.StatusNotFound},
+	} {
+		t.Run(row.path, func(t *testing.T) {
+			if started != nil {
+				started()
+			}
+			head, err := http.NewRequest(http.MethodHead, raw+row.path, nil)
+			noErr(t, err)
+			result := browserRequest(t, client, head)
+			if result.status != row.status || result.body != "" {
+				t.Fatalf("HEAD status=%d body=%q, want %d and no body", result.status, result.body, row.status)
+			}
+			if started != nil {
+				for _, command := range started() {
+					if strings.Contains(command, " cat-file blob ") {
+						t.Errorf("HEAD read blob content: %s", command)
+					}
+				}
+			}
+			get := browserGET(t, client, raw+row.path)
+			if get.status != result.status || get.header.Get("Content-Type") != result.header.Get("Content-Type") {
+				t.Fatalf("GET status=%d headers=%v differ from HEAD status=%d headers=%v", get.status, get.header, result.status, result.header)
+			}
+			if row.status == http.StatusOK {
+				if get.body != files[row.path] {
+					t.Fatalf("GET returned %d bytes, want %d", len(get.body), len(files[row.path]))
+				}
+				for _, name := range []string{"Content-Length", "Content-Disposition", "X-Content-Type-Options", "Content-Security-Policy", "Cache-Control"} {
+					if result.header.Get(name) != get.header.Get(name) {
+						t.Errorf("HEAD %s=%q, GET=%q", name, result.header.Get(name), get.header.Get(name))
+					}
+				}
+				if !strings.HasPrefix(result.header.Get("Content-Disposition"), "attachment") || !strings.Contains(result.header.Get("Content-Security-Policy"), "sandbox") {
+					t.Errorf("HEAD lacks download protections: %v", result.header)
+				}
+			} else if row.status == http.StatusForbidden && (!strings.Contains(get.body, "larger than the raw file download limit") || !strings.Contains(get.body, "원본 파일 내려받기 한도")) {
+				t.Error("the size refusal has no bilingual explanation")
+			} else if row.status == http.StatusNotFound && !strings.Contains(get.header.Get("Content-Type"), "text/html") {
+				t.Error("a missing file did not get an HTML error")
+			}
+		})
 	}
 	view, _ := dashboardGET(t, client, server.URL+"/repositories/raw-sizes/code?ref=refs%2Fheads%2Fmain&path=big.bin")
 	if strings.Contains(view, "/raw?") || !strings.Contains(view, "larger than the raw file download limit") {

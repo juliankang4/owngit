@@ -208,8 +208,14 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 		return
 	}
 	var blob repository.Blob
+	var contentLength int64
 	if err == nil {
-		_, blob, err = app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, limits.RawBytes)
+		if request.Method == http.MethodHead {
+			contentLength, blob, err = app.Repositories.ReadBlobMetadata(request.Context(), stored.ID, query.Get("ref"), filePath)
+		} else {
+			_, blob, err = app.Repositories.ReadBlob(request.Context(), stored.ID, query.Get("ref"), filePath, limits.RawBytes)
+			contentLength = int64(len(blob.Content))
+		}
 	}
 	if err != nil {
 		if downloadNotFound(err) {
@@ -237,7 +243,7 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 		app.renderError(writer, request, http.StatusForbidden, code, "")
 		return
 	}
-	if blob.Truncated {
+	if blob.Truncated || contentLength > limits.RawBytes {
 		// The file view already hides the link for such a file; this answers
 		// an address typed or kept from before.
 		app.renderError(writer, request, http.StatusForbidden, webui.MsgCodeRawTooLarge, "")
@@ -254,13 +260,14 @@ func (app *App) handleRaw(writer http.ResponseWriter, request *http.Request, sto
 		disposition = "attachment"
 	}
 	header.Set("Content-Disposition", disposition)
-	header.Set("Content-Length", strconv.Itoa(len(blob.Content)))
+	header.Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	// The address names a branch or tag, which can move, and access can be
 	// withdrawn, so a browser keeps the file briefly and for itself only.
 	header.Set("Cache-Control", "private, max-age=60")
 	writer.WriteHeader(http.StatusOK)
-	// A HEAD request gets the same headers; the server drops the body.
-	_, _ = writer.Write(blob.Content)
+	if request.Method != http.MethodHead {
+		_, _ = writer.Write(blob.Content)
+	}
 }

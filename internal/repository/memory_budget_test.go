@@ -370,6 +370,7 @@ func TestBlobReadRefusesAFileWhoseStoredDeltaIsExpensive(t *testing.T) {
 	ctx := context.Background()
 	manager, _, work := newTestRepository(t)
 	commit, older, newer := deltaFixture(t, work)
+	runGit(t, "", "--git-dir", remotePath(t, manager), "update-ref", "refs/tags/delta", gitOutput(t, work, "rev-parse", "HEAD~1"))
 	size, err := strconv.ParseInt(gitOutput(t, work, "cat-file", "-s", older), 10, 64)
 	noErr(t, err)
 	entry := TreeEntry{Path: "file.txt", OID: older, Type: "blob", Size: size}
@@ -381,6 +382,10 @@ func TestBlobReadRefusesAFileWhoseStoredDeltaIsExpensive(t *testing.T) {
 	noErr(t, err)
 	if !blob.TooLarge || !blob.TooLargeMemory || len(blob.Content) != 0 {
 		t.Errorf("a file whose stored delta cannot be rebuilt here was read as %+v", blob)
+	}
+	metadataSize, metadata, err := manager.ReadBlobMetadata(ctx, "sample", "refs/tags/delta", "file.txt")
+	if err != nil || metadataSize != size || metadata.OID != older || !metadata.TooLarge || !metadata.TooLargeMemory || len(metadata.Content) != 0 {
+		t.Errorf("delta metadata size=%d blob=%+v err=%v; want the same memory refusal", metadataSize, metadata, err)
 	}
 	plain, err := manager.BlobAt(ctx, "sample", TreeEntry{Path: "file.txt", OID: newer, Type: "blob", Size: size}, 1<<20)
 	noErr(t, err)

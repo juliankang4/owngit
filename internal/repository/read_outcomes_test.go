@@ -304,6 +304,10 @@ func TestBlobAboveTheMemoryBoundIsRefusedWithoutRunningGit(t *testing.T) {
 	noErr(t, err)
 	_, failPath, _ := countGitProcesses(t, manager, "blob")
 	noErr(t, os.WriteFile(failPath, nil, 0o600))
+	size, metadata, err := manager.ReadBlobMetadata(context.Background(), "sample", "main", "big.txt")
+	if err != nil || size != view.File.Size || !metadata.TooLarge || metadata.TooLargeMemory || len(metadata.Content) != 0 {
+		t.Fatalf("metadata size=%d blob=%+v err=%v; want the size refusal without content", size, metadata, err)
+	}
 	if _, err := pinned.ReadBlob(context.Background(), PinnedHead, "big.txt", 0, 1<<20, 1<<20, 1<<20); !errors.Is(err, ErrPinnedBlobTooLarge) {
 		t.Fatalf("pinned chunk read = %v; want the bound refusal before cat-file", err)
 	}

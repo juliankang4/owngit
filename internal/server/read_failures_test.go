@@ -122,6 +122,14 @@ func TestRepositoryReadsTellMissingFromUnreadable(t *testing.T) {
 		if status != http.StatusServiceUnavailable || !strings.Contains(body, wantBody) {
 			t.Errorf("GET %s with failing %s status=%d, want 503 saying %q", check.path, check.pattern, status, wantBody)
 		}
+		if strings.HasPrefix(check.path, "/raw") {
+			head, err := http.NewRequest(http.MethodHead, base+check.path, nil)
+			noErr(t, err)
+			result := browserRequest(t, client, head)
+			if result.status != http.StatusServiceUnavailable || result.body != "" || result.header.Get("Retry-After") != "10" {
+				t.Errorf("HEAD %s with failing %s: status=%d body=%q headers=%v", check.path, check.pattern, result.status, result.body, result.header)
+			}
+		}
 		noErr(t, os.Remove(failPath))
 		if _, status := dashboardGET(t, client, base+check.path); status != http.StatusOK {
 			t.Errorf("GET %s after Git recovered status=%d, want 200", check.path, status)

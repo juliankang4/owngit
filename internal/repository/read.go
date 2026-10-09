@@ -773,28 +773,50 @@ func (m *Manager) PathPageAt(ctx context.Context, id, commitOID, filePath, after
 // ReadBlob reads filePath at requestedRef. It returns the commit ID the ref
 // resolved to.
 func (m *Manager) ReadBlob(ctx context.Context, id, requestedRef, filePath string, limit int64) (string, Blob, error) {
-	if err := validateTreePath(filePath); err != nil || filePath == "" {
-		if err == nil {
-			err = errors.New("file path is required")
-		}
-		return "", Blob{}, fmt.Errorf("%w: %w", errFileNotFound, err)
-	}
-	_, commitOID, err := m.ResolveRef(ctx, id, requestedRef)
+	commitOID, entry, err := m.blobEntry(ctx, id, requestedRef, filePath)
 	if err != nil {
 		return "", Blob{}, err
 	}
-	view, _, err := m.PathPageAt(ctx, id, commitOID, filePath, "")
-	if err != nil {
-		return "", Blob{}, err
-	}
-	if view.Folder {
-		return "", Blob{}, errFileNotFound
-	}
-	blob, err := m.BlobAt(ctx, id, view.File, limit)
+	blob, err := m.BlobAt(ctx, id, entry, limit)
 	if err != nil {
 		return "", Blob{}, err
 	}
 	return commitOID, blob, nil
+}
+
+// ReadBlobMetadata returns the file's size and read refusal without reading
+// content. It resolves the same paths and checks the same memory bounds as ReadBlob.
+func (m *Manager) ReadBlobMetadata(ctx context.Context, id, requestedRef, filePath string) (int64, Blob, error) {
+	_, entry, err := m.blobEntry(ctx, id, requestedRef, filePath)
+	if err != nil {
+		return 0, Blob{}, err
+	}
+	if entry.Size < 0 {
+		return 0, Blob{}, errors.New("Git returned an unknown blob size")
+	}
+	blob, err := m.blobReadInfo(ctx, id, entry)
+	return entry.Size, blob, err
+}
+
+func (m *Manager) blobEntry(ctx context.Context, id, requestedRef, filePath string) (string, TreeEntry, error) {
+	if err := validateTreePath(filePath); err != nil || filePath == "" {
+		if err == nil {
+			err = errors.New("file path is required")
+		}
+		return "", TreeEntry{}, fmt.Errorf("%w: %w", errFileNotFound, err)
+	}
+	_, commitOID, err := m.ResolveRef(ctx, id, requestedRef)
+	if err != nil {
+		return "", TreeEntry{}, err
+	}
+	view, _, err := m.PathPageAt(ctx, id, commitOID, filePath, "")
+	if err != nil {
+		return "", TreeEntry{}, err
+	}
+	if view.Folder {
+		return "", TreeEntry{}, errFileNotFound
+	}
+	return commitOID, view.File, nil
 }
 
 // PathView is what a path names in a commit: a folder with its entries, or
@@ -915,30 +937,12 @@ func (m *Manager) FileAt(ctx context.Context, id, commitOID, filePath string, li
 // because the delta it is stored as rebuilds a larger base (see
 // TooLargeMemory).
 func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit int64) (Blob, error) {
-	if !isOID(entry.OID) || entry.Type != "blob" {
-		return Blob{}, errFileNotFound
+	blob, err := m.blobReadInfo(ctx, id, entry)
+	if err != nil || blob.TooLarge {
+		return blob, err
 	}
 	if limit <= 0 {
 		limit = 2 << 20
-	}
-	// A file known to be larger than one Git process may use here is not
-	// read: Git would rebuild a large stored delta in memory before the
-	// output limit could stop it. The result says so explicitly instead of
-	// looking like an empty prefix. With an unknown memory ceiling nothing
-	// is refused this way.
-	if bound := m.Git.ReadBound(); bound > 0 && entry.Size > bound {
-		return Blob{Path: entry.Path, OID: entry.OID, TooLarge: true}, nil
-	}
-	// A file below that size can still be stored as a delta on a much larger
-	// base, and reading it makes Git rebuild that base in memory, which no
-	// size line bounds. The same memory line the change pages use refuses it
-	// here, before Git runs, and the page says why rather than showing an
-	// empty file. A chain whose cost cannot be bounded is an error, not a
-	// refusal: it is not this file's size that was judged.
-	if over, err := m.blobBelowMemoryLine(ctx, id, entry.OID); err != nil {
-		return Blob{}, err
-	} else if !over {
-		return Blob{Path: entry.Path, OID: entry.OID, TooLarge: true, TooLargeMemory: true}, nil
 	}
 	// A whole file fits in the cache only when its listed size does; a
 	// larger one is read up to limit and not kept.
@@ -960,12 +964,31 @@ func (m *Manager) BlobAt(ctx context.Context, id string, entry TreeEntry, limit 
 	if err != nil {
 		return Blob{}, err
 	}
-	blob := Blob{Path: entry.Path, OID: entry.OID, Content: result.data, Truncated: result.truncated}
+	blob.Content, blob.Truncated = result.data, result.truncated
 	if int64(len(blob.Content)) > limit {
 		blob.Content = blob.Content[:limit]
 		blob.Truncated = true
 	}
 	blob.Binary = bytes.IndexByte(blob.Content, 0) >= 0
+	return blob, nil
+}
+
+func (m *Manager) blobReadInfo(ctx context.Context, id string, entry TreeEntry) (Blob, error) {
+	if !isOID(entry.OID) || entry.Type != "blob" {
+		return Blob{}, errFileNotFound
+	}
+	blob := Blob{Path: entry.Path, OID: entry.OID}
+	// Git rebuilds stored deltas before an output limit can stop the read.
+	if bound := m.Git.ReadBound(); bound > 0 && entry.Size > bound {
+		blob.TooLarge = true
+		return blob, nil
+	}
+	// A small file can rebuild a larger base.
+	if within, err := m.blobBelowMemoryLine(ctx, id, entry.OID); err != nil {
+		return Blob{}, err
+	} else if !within {
+		blob.TooLarge, blob.TooLargeMemory = true, true
+	}
 	return blob, nil
 }
 
