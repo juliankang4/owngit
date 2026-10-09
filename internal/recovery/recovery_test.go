@@ -833,12 +833,18 @@ func TestRestoreRejectsCorruptionAndExistingDestination(t *testing.T) {
 
 type bundleFailingRunner struct {
 	delegate commandRunner
+	omitRefs bool
 }
 
 func (runner bundleFailingRunner) Run(ctx context.Context, directory string, stdin io.Reader, arguments ...string) (gitexec.Result, error) {
 	for index := 0; index+1 < len(arguments); index++ {
-		if arguments[index] == "bundle" && arguments[index+1] == "create" {
-			return gitexec.Result{}, errors.New("injected bundle failure")
+		if arguments[index] == "bundle" {
+			if arguments[index+1] == "create" && !runner.omitRefs {
+				return gitexec.Result{}, errors.New("injected bundle failure")
+			}
+			if arguments[index+1] == "list-heads" && runner.omitRefs {
+				return gitexec.Result{}, nil
+			}
 		}
 	}
 	return runner.delegate.Run(ctx, directory, stdin, arguments...)
@@ -867,20 +873,30 @@ func TestBackupPublishesOnlyAfterBundleSuccessAndCleansCanceledStages(t *testing
 	store, manager := newBackupStore(t, root)
 	defer store.Close()
 
-	failedOutput := filepath.Join(root, "failed-backup")
-	_, err := create(context.Background(), store, manager, bundleFailingRunner{delegate: manager.Git}, failedOutput, manifestLimit)
-	if err == nil || !strings.Contains(err.Error(), "injected bundle failure") {
-		t.Fatalf("bundle failure error=%v", err)
-	}
-	assertNoRecoveryOutputOrStages(t, failedOutput, ".owngit-backup-")
-
-	canceledOutput := filepath.Join(root, "canceled-backup")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if _, err := CreateWithReport(ctx, store, manager, canceledOutput); !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled backup error=%v, want context cancellation", err)
+	for _, test := range []struct {
+		name   string
+		ctx    context.Context
+		runner commandRunner
+		want   string
+	}{
+		{"bundle failure", context.Background(), bundleFailingRunner{delegate: manager.Git}, "injected bundle failure"},
+		{"missing bundle ref", context.Background(), bundleFailingRunner{delegate: manager.Git, omitRefs: true}, `bundle refs do not match the manifest: ref "refs/heads/main"`},
+		{"canceled", ctx, manager.Git, context.Canceled.Error()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output := filepath.Join(root, test.name)
+			_, err := create(test.ctx, store, manager, test.runner, output, manifestLimit)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("backup error=%v, want %q", err, test.want)
+			}
+			if test.ctx.Err() != nil && !errors.Is(err, context.Canceled) {
+				t.Fatalf("canceled backup error=%v, want context cancellation", err)
+			}
+			assertNoRecoveryOutputOrStages(t, output, ".owngit-backup-")
+		})
 	}
-	assertNoRecoveryOutputOrStages(t, canceledOutput, ".owngit-backup-")
 }
 
 func TestBackupRejectsDestinationThroughAncestorSymlinkIntoState(t *testing.T) {

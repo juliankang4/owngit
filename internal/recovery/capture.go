@@ -466,11 +466,16 @@ func bundleCaptured(ctx context.Context, runner commandRunner, captured captured
 			return err
 		}
 	}
-	arguments := []string{"--git-dir", ".", "bundle", "create", bundlePath, "--all"}
+	// Git otherwise omits even full refs with multiple interpretations.
+	// The captured full names and HEAD must resolve by their exact spelling.
+	arguments := []string{"--git-dir", ".", "-c", "core.warnAmbiguousRefs=false", "bundle", "create", bundlePath, "--all"}
 	if item.Head.OID != "" {
 		arguments = append(arguments, "HEAD")
 	}
 	if _, err := runner.Run(ctx, capturePath, nil, arguments...); err != nil {
+		return fmt.Errorf("bundle repository %q: %w", item.ID, err)
+	}
+	if err := checkBundleRefs(ctx, runner, bundlePath, item); err != nil {
 		return fmt.Errorf("bundle repository %q: %w", item.ID, err)
 	}
 	return os.RemoveAll(capturePath)

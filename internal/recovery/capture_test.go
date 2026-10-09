@@ -495,7 +495,8 @@ func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
 			noErr(t, err)
 			tip := gitOutput(t, project, "--git-dir", ".", "rev-parse", "refs/heads/main")
 			heads := map[string]Head{}
-			for _, name := range []string{"symbolic", "detached", "unborn"} {
+			collisionRefs := map[string][]Ref{}
+			for _, name := range []string{"symbolic", "detached", "unborn", "ambiguous-full-refs", "ambiguous-detached-head"} {
 				id := backend + "-" + name
 				path := filepath.Join(filepath.Dir(project), id+".git")
 				if output, err := gitCombined("", "init", "--bare", "--quiet", "--ref-format="+backend, "--initial-branch=main", path); err != nil {
@@ -512,6 +513,19 @@ func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
 					heads[id] = Head{OID: tip}
 				case "unborn":
 					heads[id] = Head{Symbolic: "refs/heads/main"}
+				case "ambiguous-full-refs", "ambiguous-detached-head":
+					runGit(t, project, "--git-dir", ".", "push", "--quiet", path, "refs/heads/main:refs/heads/main")
+					heads[id] = Head{Symbolic: "refs/heads/main"}
+					if name == "ambiguous-detached-head" {
+						heads[id] = Head{OID: commitInto(t, path, "detached HEAD")}
+						runGit(t, path, "--git-dir", ".", "update-ref", "--no-deref", "HEAD", heads[id].OID)
+					}
+					collisionRefs[id] = []Ref{{Name: "refs/heads/main", OID: tip}}
+					for _, full := range []string{"refs/heads/HEAD", "refs/heads/refs/heads/HEAD", "refs/refs/heads/HEAD", "refs/tags/refs/heads/HEAD", "refs/remotes/refs/heads/HEAD/HEAD", "refs/tags/HEAD"} {
+						ref := Ref{Name: full, OID: commitInto(t, path, full)}
+						runGit(t, path, "--git-dir", ".", "update-ref", ref.Name, ref.OID)
+						collisionRefs[id] = append(collisionRefs[id], ref)
+					}
 				}
 			}
 			noErr(t, manager.PrepareStorageIdentities(ctx))
@@ -521,6 +535,9 @@ func TestBackupReadsHeadInEachRefBackend(t *testing.T) {
 			manifest, err := readManifest(filepath.Join(backup, manifestName))
 			noErr(t, err)
 			for _, item := range manifest.Repositories {
+				if want, checked := collisionRefs[item.ID]; checked && !sameRefs(item.Refs, want) {
+					t.Fatalf("captured refs=%+v, want %+v", item.Refs, want)
+				}
 				want, checked := heads[item.ID]
 				if checked && (item.Head != want || item.Empty != strings.HasSuffix(item.ID, "unborn")) {
 					t.Fatalf("%s head=%+v empty=%v, want %+v", item.ID, item.Head, item.Empty, want)

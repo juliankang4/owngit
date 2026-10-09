@@ -1334,16 +1334,8 @@ func restoreRepository(ctx context.Context, runner commandRunner, input *backupI
 		if _, err := runner.Run(ctx, repositoryPath, nil, "--git-dir", ".", "bundle", "verify", bundlePath); err != nil {
 			return fmt.Errorf("verify bundle: %w", err)
 		}
-		heads, err := runner.Run(ctx, "", nil, "bundle", "list-heads", bundlePath)
-		if err != nil {
+		if err := checkBundleRefs(ctx, runner, bundlePath, item); err != nil {
 			return err
-		}
-		listed, bundledHead, err := parseBundleHeads(heads.Stdout)
-		if err != nil {
-			return err
-		}
-		if !sameRefs(listed, item.Refs) || (item.Head.OID != "" && bundledHead != item.Head.OID) {
-			return errors.New("bundle refs do not match the manifest")
 		}
 		arguments := []string{"--git-dir", ".", "fetch", "--no-tags", "--no-write-fetch-head", bundlePath}
 		for _, ref := range item.Refs {
@@ -2586,6 +2578,33 @@ func validateManifest(manifest Manifest) error {
 	}
 	if err := validateImportManifest(manifest, snapshot); err != nil {
 		return err
+	}
+	return nil
+}
+
+func checkBundleRefs(ctx context.Context, runner commandRunner, bundlePath string, item RepositoryManifest) error {
+	heads, err := runner.Run(ctx, "", nil, "bundle", "list-heads", bundlePath)
+	if err != nil {
+		return err
+	}
+	listed, bundledHead, err := parseBundleHeads(heads.Stdout)
+	if err != nil {
+		return err
+	}
+	if !sameRefs(listed, item.Refs) {
+		present := make(map[Ref]bool, len(listed))
+		for _, ref := range listed {
+			present[ref] = true
+		}
+		for _, ref := range item.Refs {
+			if !present[ref] {
+				return fmt.Errorf("bundle refs do not match the manifest: ref %q", ref.Name)
+			}
+		}
+		return errors.New("bundle refs do not match the manifest")
+	}
+	if item.Head.OID != "" && bundledHead != item.Head.OID {
+		return errors.New("bundle refs do not match the manifest: HEAD")
 	}
 	return nil
 }
