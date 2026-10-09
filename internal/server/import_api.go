@@ -54,7 +54,11 @@ func (app *App) handleImportAPI(writer http.ResponseWriter, request *http.Reques
 }
 
 func (app *App) handleImportSourceAPI(writer http.ResponseWriter, request *http.Request, repositoryID string) {
-	if !app.importRepositoryExists(writer, request, repositoryID) {
+	if request.Method == http.MethodGet {
+		if !app.importDiagnosticsExist(writer, request, repositoryID) {
+			return
+		}
+	} else if !app.importRepositoryExists(writer, request, repositoryID) {
 		return
 	}
 	switch request.Method {
@@ -292,7 +296,7 @@ func (app *App) handleImportHistoryAPI(writer http.ResponseWriter, request *http
 		writeAPIMethodError(writer, http.MethodGet)
 		return
 	}
-	if !app.importRepositoryExists(writer, request, repositoryID) {
+	if !app.importDiagnosticsExist(writer, request, repositoryID) {
 		return
 	}
 	limit := 20
@@ -453,6 +457,23 @@ func (app *App) writeImportCredentialState(writer http.ResponseWriter, request *
 		body.CredentialForm, body.CredentialBound = &status.CredentialForm, &status.CredentialBound
 	}
 	writeAPIJSON(writer, http.StatusOK, body)
+}
+
+func (app *App) importDiagnosticsExist(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {
+	_, exists, err := app.Store.ImportSource(request.Context(), repositoryID)
+	if err != nil && !exists {
+		writeAPIError(writer, unavailable(request, "import source read", err), importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		return false
+	}
+	if exists {
+		return true
+	}
+	runs, _, err := app.Store.ImportRuns(request.Context(), repositoryID, 1)
+	if err != nil {
+		writeAPIError(writer, unavailable(request, "import history read", err), importsync.CodeStateUnavailable, "OwnGit state is unavailable.", nil)
+		return false
+	}
+	return len(runs) > 0 || app.importRepositoryExists(writer, request, repositoryID)
 }
 
 func (app *App) importRepositoryExists(writer http.ResponseWriter, request *http.Request, repositoryID string) bool {

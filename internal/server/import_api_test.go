@@ -212,6 +212,12 @@ func TestImportRefreshWithoutARepositoryIsNotFound(t *testing.T) {
 	if err != nil || len(runs) != 0 {
 		t.Fatalf("a refresh without a repository recorded runs=%d err=%v", len(runs), err)
 	}
+	for _, suffix := range []string{"", "/history"} {
+		response := importAPIRequest(t, http.MethodGet, server.URL+"/api/v1/repositories/missing/import"+suffix, nil, "admin-password")
+		if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
+			t.Fatalf("unknown diagnostics %q status=%d", suffix, response.StatusCode)
+		}
+	}
 	// An add that names no source still reports the missing source.
 	added := importAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/missing/import/run", map[string]any{"name": "missing"}, "admin-password")
 	if added.StatusCode != http.StatusUnprocessableEntity || importAPICode(t, added) != importsync.CodeInvalidSource {
@@ -294,6 +300,29 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the first import did not start fetching")
 	}
+	checkDiagnostics := func(wantStatus string, configured bool) {
+		t.Helper()
+		for _, suffix := range []string{"", "/history"} {
+			response := importAPIRequest(t, http.MethodGet, base+suffix, nil, "admin-password")
+			var body struct {
+				Status importsync.Status    `json:"status"`
+				Runs   []importsync.RunView `json:"runs"`
+			}
+			err := json.NewDecoder(response.Body).Decode(&body)
+			response.Body.Close()
+			if err != nil || response.StatusCode != http.StatusOK {
+				t.Fatalf("%s diagnostics %q status=%d err=%v", wantStatus, suffix, response.StatusCode, err)
+			}
+			if suffix == "" {
+				if body.Status.Configured != configured || body.Status.RepositoryExists || body.Status.StagingIssues != 0 || (body.Status.ActiveRun != nil) != configured || body.Status.LastRun == nil || body.Status.LastRun.Status != wantStatus {
+					t.Fatalf("%s status=%+v", wantStatus, body.Status)
+				}
+			} else if len(body.Runs) != 1 || body.Runs[0].Status != wantStatus {
+				t.Fatalf("%s history=%+v", wantStatus, body.Runs)
+			}
+		}
+	}
+	checkDiagnostics(state.ImportRunFetching, true)
 	cancelled := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password")
 	if body := importAPIBody(t, cancelled); cancelled.StatusCode != http.StatusOK || !strings.Contains(body, `"cancelled":true`) {
 		t.Fatalf("cancel of a first import status=%d body=%s", cancelled.StatusCode, body)
@@ -313,7 +342,22 @@ func TestImportCancelStopsARunningFirstImport(t *testing.T) {
 	if _, exists, err := fixture.store.LoadImportCredentials(ctx, "arriving"); err != nil || exists {
 		t.Fatalf("the cancelled first import kept its token exists=%v err=%v", exists, err)
 	}
-	// With nothing running, a name without a repository is still not found.
+	checkDiagnostics(state.ImportRunCancelled, false)
+	if _, exists, err := fixture.store.Repository(ctx, "arriving"); err != nil || exists {
+		t.Fatalf("diagnostics created a repository exists=%v err=%v", exists, err)
+	}
+	empty := importAPIRequest(t, http.MethodGet, base+"/history?cursor=1", nil, "admin-password")
+	if body := importAPIBody(t, empty); empty.StatusCode != http.StatusOK || !strings.Contains(body, `"runs":[]`) {
+		t.Fatalf("older history status=%d body=%s", empty.StatusCode, body)
+	}
+	for _, test := range []struct{ method, suffix string }{
+		{http.MethodPut, ""}, {http.MethodPatch, ""}, {http.MethodPut, "/schedule"}, {http.MethodPost, "/run"},
+	} {
+		response := importAPIRequest(t, test.method, base+test.suffix, map[string]any{}, "admin-password")
+		if response.StatusCode != http.StatusNotFound || importAPICode(t, response) != "repository_not_found" {
+			t.Fatalf("unpublished mutation %s %q status=%d", test.method, test.suffix, response.StatusCode)
+		}
+	}
 	again := importAPIRequest(t, http.MethodPost, base+"/cancel", map[string]any{}, "admin-password")
 	if again.StatusCode != http.StatusNotFound || importAPICode(t, again) != "repository_not_found" {
 		t.Fatalf("cancel with nothing running status=%d", again.StatusCode)

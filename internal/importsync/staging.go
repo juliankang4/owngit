@@ -452,6 +452,49 @@ func (s *Service) registerUnknownStaging(ctx context.Context, item state.ImportS
 	return err
 }
 
+func (s *Service) stagingIssueCount(ctx context.Context) (int, error) {
+	var liveNames []string
+	var readErr error
+	s.active.Range(func(key, value any) bool {
+		execution, ok := value.(activeExecution)
+		if !ok {
+			return true
+		}
+		run, exists, err := s.Store.ImportRun(ctx, key.(string))
+		if err != nil {
+			readErr = err
+			return false
+		}
+		if !exists || terminalImportRun(run.Status) || run.RepositoryID != execution.repositoryID || run.StagingName != stagingNamePrefix+run.ID {
+			return true
+		}
+		row, exists, err := s.Store.ImportStaging(ctx, run.StagingName)
+		if err != nil {
+			readErr = err
+			return false
+		}
+		if !exists || row.State != state.ImportStagingActive || row.RunID != run.ID || row.RepositoryID != run.RepositoryID {
+			return true
+		}
+		root, err := s.currentRuntime("")
+		if err != nil {
+			return true
+		}
+		dir := stagingDir{
+			generation: root.generation, name: row.Name, path: filepath.Join(root.staging, row.Name),
+			runID: run.ID, repositoryID: run.RepositoryID, token: row.Token,
+		}
+		if s.proveStagingOwnership(ctx, dir) == nil && s.runIsLive(run.ID) {
+			liveNames = append(liveNames, row.Name)
+		}
+		return true
+	})
+	if readErr != nil {
+		return 0, readErr
+	}
+	return s.Store.ImportStagingIssueCount(ctx, liveNames...)
+}
+
 func terminalImportRun(status string) bool {
 	switch status {
 	case state.ImportRunComplete, state.ImportRunFailed, state.ImportRunCancelled,

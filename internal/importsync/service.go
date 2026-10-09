@@ -1206,6 +1206,16 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 	if err != nil && len(settingErrors(err)) == 0 {
 		return Status{}, sourceReadProblem(err)
 	}
+	last, active, accepted, runErr := s.boundedRunViews(ctx, repositoryID)
+	if runErr != nil {
+		return Status{}, runErr
+	}
+	status.LastRun, status.ActiveRun = last, active
+	count, stagingErr := s.stagingIssueCount(ctx)
+	if stagingErr != nil {
+		return Status{}, newProblem(CodeStateUnavailable, "import staging records could not be read", stagingErr)
+	}
+	status.StagingIssues = count
 	if !exists {
 		return status, nil
 	}
@@ -1239,11 +1249,6 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 		status.CredentialForm = "none"
 	}
 
-	last, active, accepted, err := s.boundedRunViews(ctx, repositoryID)
-	if err != nil {
-		return Status{}, err
-	}
-	status.LastRun, status.ActiveRun = last, active
 	if accepted != nil {
 		status.Content.LFSDetected = accepted.LFSDetected
 		status.Content.InspectionComplete = accepted.LFSInspectionDone
@@ -1255,11 +1260,6 @@ func (s *Service) Status(ctx context.Context, repositoryID string) (Status, erro
 		return Status{}, newProblem(CodeStateUnavailable, "unresolved import intents could not be counted", err)
 	} else {
 		status.UnresolvedIntents = count
-	}
-	if count, err := s.Store.ImportStagingIssueCount(ctx); err != nil {
-		return Status{}, newProblem(CodeStateUnavailable, "import staging records could not be read", err)
-	} else {
-		status.StagingIssues = count
 	}
 	if schedule, scheduleExists, err := s.Store.ImportSchedule(ctx, repositoryID); err != nil {
 		return Status{}, newProblem(CodeStateUnavailable, "import schedule could not be read", err)

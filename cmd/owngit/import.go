@@ -297,16 +297,16 @@ func importStatus(arguments []string) error {
 	if *asJSON {
 		return printIndentedJSON(envelope.Status)
 	}
-	if !status.Configured {
+	if status.Configured {
+		bound := "no"
+		if status.CredentialBound {
+			bound = "yes"
+		}
+		fmt.Printf("Import for %s\nURL: %s\nMode: %s\nCredential: %s, bound: %s\n", name, status.URL, status.Mode, status.CredentialForm, bound)
+		printImportOptions(status.Options)
+	} else {
 		fmt.Printf("Import for %s is not configured.\n", name)
-		return nil
 	}
-	bound := "no"
-	if status.CredentialBound {
-		bound = "yes"
-	}
-	fmt.Printf("Import for %s\nURL: %s\nMode: %s\nCredential: %s, bound: %s\n", name, status.URL, status.Mode, status.CredentialForm, bound)
-	printImportOptions(status.Options)
 	if status.Content.Incomplete {
 		fmt.Println("Content is incomplete.")
 	}

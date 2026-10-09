@@ -2,6 +2,7 @@ package importsync
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -419,6 +420,59 @@ func TestPartialRuntimeInitializationWithoutMarkerIsRefused(t *testing.T) {
 	require(t, errors.Is(err, ErrRuntimeUnsafe), "partial initialization was adopted: %v", err)
 	_, err = os.Lstat(filepath.Join(root, runtimeRootMarkerName))
 	require(t, errors.Is(err, os.ErrNotExist), "partial initialization created a marker: %v", err)
+}
+
+func TestStatusCountsOnlyStagingNeedingAttention(t *testing.T) {
+	for _, test := range []struct {
+		name, runStatus, stagingState string
+		live, mismatched              bool
+		want                          int
+	}{
+		{"live", state.ImportRunFetching, state.ImportStagingActive, true, false, 0},
+		{"interrupted", state.ImportRunInterrupted, state.ImportStagingActive, false, false, 1},
+		{"mismatched owner", state.ImportRunFetching, state.ImportStagingActive, true, true, 1},
+		{"abandoned", state.ImportRunFetching, state.ImportStagingActive, false, false, 1},
+		{"unknown", state.ImportRunFetching, state.ImportStagingUnknown, true, false, 1},
+		{"cleanup failed", state.ImportRunFetching, state.ImportStagingCleanupFailed, true, false, 1},
+		{"released", state.ImportRunFetching, state.ImportStagingReleased, true, false, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			source, err := f.store.ConfigureImportSource(ctx, state.ImportSourceInput{
+				RepositoryID: "project", URL: "https://example.invalid/project.git", Mode: state.ImportModeStandalone, Now: f.now,
+			})
+			noErr(t, err)
+			runID := strings.Repeat("1", 32)
+			dir, err := f.service.acquireStaging(ctx, runID, "project", f.now)
+			noErr(t, err)
+			run := state.ImportRun{
+				ID: runID, RepositoryID: "project", Kind: state.ImportKindInitial, Status: state.ImportRunFetching,
+				SourceGeneration: source.SourceGeneration, AuthorityRevision: source.AuthorityRevision,
+				StartedAt: f.now, CreatedAt: f.now, StagingName: dir.name,
+			}
+			noErr(t, f.store.BeginImportRun(ctx, run))
+			if test.runStatus == state.ImportRunInterrupted {
+				run.Status, run.FinishedAt = test.runStatus, f.now
+				noErr(t, f.store.FinishImportRun(ctx, run))
+			}
+			if test.live {
+				f.service.active.Store(runID, activeExecution{repositoryID: "project"})
+				defer f.service.active.Delete(runID)
+			}
+			noErr(t, f.store.ReleaseImportStaging(ctx, dir.name, test.stagingState, "", f.now))
+			if test.mismatched {
+				marker, err := readStagingMarker(dir.path)
+				noErr(t, err)
+				marker.RepositoryID = "other"
+				content, err := json.Marshal(marker)
+				noErr(t, err)
+				noErr(t, os.WriteFile(filepath.Join(dir.path, stagingMarkerName), content, 0o600))
+			}
+			status, err := f.service.Status(ctx, "project")
+			require(t, err == nil && status.StagingIssues == test.want, "staging issues=%d want=%d err=%v", status.StagingIssues, test.want, err)
+		})
+	}
 }
 
 // Passive reads never create the runtime tree; an explicit mutation does.

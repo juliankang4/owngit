@@ -1008,6 +1008,23 @@ func TestClaimImportStagingAdoptsInformationalRow(t *testing.T) {
 	if _, err := store.ClaimImportStaging(ctx, ImportStaging{Name: claimed.Name, Token: strings.Repeat("e", 32)}); err == nil {
 		t.Fatal("claim accepted a missing state")
 	}
+	for _, test := range []struct {
+		state          string
+		all, excluding int
+	}{
+		{ImportStagingActive, 1, 0},
+		{ImportStagingUnknown, 1, 1},
+		{ImportStagingCleanupFailed, 1, 1},
+		{ImportStagingReleased, 0, 0},
+	} {
+		noErr(t, store.ReleaseImportStaging(ctx, claimed.Name, test.state, "", testImportNow()))
+		all, err := store.ImportStagingIssueCount(ctx)
+		noErr(t, err)
+		excluding, err := store.ImportStagingIssueCount(ctx, claimed.Name, "unknown'name")
+		if err != nil || all != test.all || excluding != test.excluding {
+			t.Fatalf("%s issues=%d excluding live=%d err=%v", test.state, all, excluding, err)
+		}
+	}
 }
 
 func TestClaimImportStagingDoesNotAdoptAnotherRun(t *testing.T) {

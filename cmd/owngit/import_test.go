@@ -534,26 +534,41 @@ func TestImportOutputReportsRefsThatDifferFromTheSource(t *testing.T) {
 		t.Fatalf("clean run output=%q err=%v", output, err)
 	}
 
-	statusResult := `{"ok":true,"status":{"configured":true,"url":"https://example.invalid/team/project.git","mode":"standalone","credential_form":"none",
-		"last_run":{"kind":"refresh","status":"complete","refs_divergent":1},"active_run":{"kind":"refresh","status":"fetching"},
-		"refs":[{"name":"refs/heads/main","state":"diverged"},{"name":"refs/tags/v1","state":"deleted_at_source"},{"name":"refs/tags/v2","state":"tracked"}]}}`
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/json")
-		_, _ = writer.Write([]byte(statusResult))
-	}))
-	defer server.Close()
 	passwordPath := writePrivateTestFile(t, filepath.Join(t.TempDir(), "admin"), "admin-password\n")
-	output, err = captureStdout(func() error {
-		return importCommand([]string{"status", "project", "--server", server.URL, "--accept-insecure-http", "--password-file", passwordPath})
-	})
-	noErr(t, err)
-	for _, want := range []string{"Active run: refresh, fetching", "Last run: refresh, complete, 1 ref differs from the source",
-		"Refs that do not match the source: 2", "refs/heads/main: differs from the source", "refs/tags/v1: deleted at the source"} {
-		if !strings.Contains(output, want) {
-			t.Errorf("status output lacks %q: %q", want, output)
-		}
-	}
-	if strings.Contains(output, "refs/tags/v2") {
-		t.Errorf("status listed a tracked ref: %q", output)
+	for _, test := range []struct {
+		name, status string
+		want, absent []string
+	}{
+		{"configured", `{"configured":true,"url":"https://example.invalid/team/project.git","mode":"standalone","credential_form":"none",
+			"last_run":{"kind":"refresh","status":"complete","refs_divergent":1},"active_run":{"kind":"refresh","status":"fetching"},
+			"refs":[{"name":"refs/heads/main","state":"diverged"},{"name":"refs/tags/v1","state":"deleted_at_source"},{"name":"refs/tags/v2","state":"tracked"}]}`,
+			[]string{"Active run: refresh, fetching", "Last run: refresh, complete, 1 ref differs from the source",
+				"Refs that do not match the source: 2", "refs/heads/main: differs from the source", "refs/tags/v1: deleted at the source"},
+			[]string{"refs/tags/v2"}},
+		{"cancelled without source", `{"configured":false,"last_run":{"kind":"initial","status":"cancelled"},"staging_issues":1}`,
+			[]string{"Import for project is not configured.\n", "Scheduler: not running\n", "Staging issues: 1\n", "Last run: initial, cancelled\n"},
+			[]string{"URL:", "Mode:", "Credential:", "Active run:"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`{"ok":true,"status":` + test.status + `}`))
+			}))
+			defer server.Close()
+			output, err := captureStdout(func() error {
+				return importCommand([]string{"status", "project", "--server", server.URL, "--accept-insecure-http", "--password-file", passwordPath})
+			})
+			noErr(t, err)
+			for _, want := range test.want {
+				if !strings.Contains(output, want) {
+					t.Errorf("status output lacks %q: %q", want, output)
+				}
+			}
+			for _, absent := range test.absent {
+				if strings.Contains(output, absent) {
+					t.Errorf("status output contains %q: %q", absent, output)
+				}
+			}
+		})
 	}
 }

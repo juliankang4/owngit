@@ -1644,9 +1644,19 @@ func (s *Store) ImportStaging(ctx context.Context, name string) (ImportStaging, 
 	return record, true, rows.Err()
 }
 
-func (s *Store) ImportStagingIssueCount(ctx context.Context) (int, error) {
+// Live staging names must have their runtime ownership proven by the caller.
+func (s *Store) ImportStagingIssueCount(ctx context.Context, liveNames ...string) (int, error) {
+	query := `SELECT COUNT(*) FROM import_stagings WHERE state!=?`
+	args := []any{ImportStagingReleased}
+	if len(liveNames) > 0 {
+		query += ` AND (state!=? OR name NOT IN (` + strings.Repeat("?,", len(liveNames)-1) + `?))`
+		args = append(args, ImportStagingActive)
+		for _, name := range liveNames {
+			args = append(args, name)
+		}
+	}
 	var count int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM import_stagings WHERE state!=?`, ImportStagingReleased).Scan(&count)
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	return count, err
 }
 

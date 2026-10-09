@@ -251,8 +251,21 @@ func TestFetchPrivateCAIsExplicit(t *testing.T) {
 	_, trusted := startSource(t, source)
 	untrusted := trusted
 	untrusted.RootCAPEM = nil
-	if _, err := Fetch(context.Background(), untrusted, nil); !errors.Is(err, ErrConnection) {
-		t.Fatalf("untrusted error = %v, want connection failure", err)
+	plain, disconnected := startPlainSource(t, source)
+	plain.Close()
+	for _, test := range []struct {
+		name    string
+		request Request
+	}{
+		{"untrusted HTTPS", untrusted},
+		{"disconnected HTTP", disconnected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := Fetch(context.Background(), test.request, nil)
+			if !errors.Is(err, ErrConnection) || err.Error() != "import fetch request: source request failed" {
+				t.Fatalf("connection error = %v", err)
+			}
+		})
 	}
 	if _, err := Fetch(context.Background(), trusted, nil); err != nil {
 		t.Fatalf("trusted Fetch: %v", err)

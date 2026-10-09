@@ -19,7 +19,7 @@ var (
 	ErrInvalidRequest       = errors.New("invalid import fetch request")
 	ErrNameResolution       = errors.New("source name resolution failed")
 	ErrAddressPolicy        = errors.New("source address is forbidden by import policy")
-	ErrConnection           = errors.New("source HTTPS request failed")
+	ErrConnection           = errors.New("source request failed")
 	ErrRedirect             = errors.New("source redirect was refused")
 	ErrHTTPStatus           = errors.New("source returned an unexpected HTTP status")
 	ErrMediaType            = errors.New("source returned an unexpected media type")
