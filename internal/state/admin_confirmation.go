@@ -90,19 +90,9 @@ func adminConfirmation(ctx context.Context, query interface {
 	return ConfirmEveryTime, false, nil
 }
 
-// SetAdminConfirmation saves choice and, in the same transaction, shortens
-// the administrator sessions browsers hold when choice is stricter than
-// the saved one. life is how long a session started under a choice lasts.
-//
-// Sessions record no verification time, but every held session ends by
-// its verification time plus the life of the saved choice: it started
-// under that choice or a stricter one, a longer choice extends none, and
-// this function keeps the bound. Moving each end earlier by the difference
-// of the two lives therefore ends it by its verification time plus the new
-// life: exactly for a session started under the saved choice, and earlier,
-// so it only asks again sooner, for one started under a stricter one. A
-// saved value this build does not know bounds nothing, so every
-// administrator session ends.
+// SetAdminConfirmation saves choice and caps administrator session expiry
+// at verification time plus life(choice). It never extends a session.
+// Legacy sessions whose verification time is unknown keep their expiry.
 func (s *Store) SetAdminConfirmation(ctx context.Context, choice AdminConfirmation, life func(AdminConfirmation) time.Duration) error {
 	if _, ok := ParseAdminConfirmation(string(choice)); !ok {
 		return fmt.Errorf("invalid administrator confirmation setting %q", choice)
@@ -112,21 +102,12 @@ func (s *Store) SetAdminConfirmation(ctx context.Context, choice AdminConfirmati
 		return err
 	}
 	defer tx.Rollback()
-	saved, known, err := adminConfirmation(ctx, tx)
-	if err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, adminConfirmationKey, string(choice)); err != nil {
 		return err
 	}
-	if !known {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE kind='admin'`); err != nil {
-			return err
-		}
-	} else if cut := life(saved) - life(choice); cut > 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE sessions SET expires_at=expires_at-? WHERE kind='admin'`, int64(cut/time.Second)); err != nil {
-			return err
-		}
+	if _, err := tx.ExecContext(ctx, `UPDATE sessions SET expires_at=MIN(expires_at,verified_at+?)
+		WHERE kind='admin' AND verified_at IS NOT NULL`, int64(life(choice)/time.Second)); err != nil {
+		return err
 	}
 	return tx.Commit()
 }

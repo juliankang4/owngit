@@ -1574,6 +1574,12 @@ var schemaSteps = []schemaStep{
 			SELECT a.created_at,r.attempt_id FROM check_raw_logs r JOIN check_attempts a ON a.id=r.attempt_id`,
 	}},
 	{version: 17, statements: []string{
+		`ALTER TABLE sessions ADD COLUMN verified_at INTEGER`,
+		`UPDATE sessions SET verified_at=expires_at-CASE COALESCE(
+			(SELECT value FROM metadata WHERE key='admin_confirmation'),'30m')
+			WHEN '30m' THEN 1800 WHEN '1h' THEN 3600 WHEN '8h' THEN 28800
+			WHEN '1d' THEN 86400 WHEN '7d' THEN 604800 WHEN '30d' THEN 2592000
+			END WHERE kind='admin'`,
 		// Rebuild parents under new names so child foreign keys keep their targets.
 		`CREATE TABLE check_attempts_v17 (
 			id TEXT PRIMARY KEY,

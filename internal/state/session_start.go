@@ -35,7 +35,7 @@ func (s *Store) StartSession(ctx context.Context, replaced, token, kind, csrf st
 	if !current {
 		return ErrAccessChanged
 	}
-	if err := replaceSession(ctx, tx, replaced, token, kind, csrf, version, expires); err != nil {
+	if err := replaceSession(ctx, tx, replaced, token, kind, csrf, version, expires, nil); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -64,13 +64,14 @@ func (s *Store) StartAdminSession(ctx context.Context, replaced, token, csrf str
 		return time.Time{}, ErrAccessChanged
 	}
 	expires := now.Add(life(choice))
-	if err := replaceSession(ctx, tx, replaced, token, "admin", csrf, version, expires); err != nil {
+	verifiedAt := now.Unix()
+	if err := replaceSession(ctx, tx, replaced, token, "admin", csrf, version, expires, &verifiedAt); err != nil {
 		return time.Time{}, err
 	}
 	return expires, tx.Commit()
 }
 
-func replaceSession(ctx context.Context, tx *sql.Tx, replaced, token, kind, csrf string, version int64, expires time.Time) error {
+func replaceSession(ctx context.Context, tx *sql.Tx, replaced, token, kind, csrf string, version int64, expires time.Time, verifiedAt *int64) error {
 	if replaced != "" {
 		old := sha256.Sum256([]byte(replaced))
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE token_hash=? AND kind=?`, old[:], kind); err != nil {
@@ -78,6 +79,6 @@ func replaceSession(ctx context.Context, tx *sql.Tx, replaced, token, kind, csrf
 		}
 	}
 	hash := sha256.Sum256([]byte(token))
-	_, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,kind,csrf,version,expires_at) VALUES(?,?,?,?,?)`, hash[:], kind, csrf, version, expires.Unix())
+	_, err := tx.ExecContext(ctx, `INSERT INTO sessions(token_hash,kind,csrf,version,expires_at,verified_at) VALUES(?,?,?,?,?,?)`, hash[:], kind, csrf, version, expires.Unix(), verifiedAt)
 	return err
 }
