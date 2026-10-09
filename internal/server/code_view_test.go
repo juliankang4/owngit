@@ -144,27 +144,46 @@ func TestCodeViewRendersDocumentsWithoutRepositoryMarkup(t *testing.T) {
 
 func TestRawFilesNeverRunInThePage(t *testing.T) {
 	app := newConfiguredApp(t)
-	seedRepository(t, app, "raw-project", map[string]string{
+	work, mainOID := seedRepository(t, app, "raw-project", map[string]string{
 		"docs/pic.svg": hostileSVG,
 		"page.html":    "<script>alert('html')</script>",
 		"사진.png":       "\x89PNG\r\n\x1a\nfake",
 	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	for _, branch := range []string{"HEAD", "-dash"} {
+		oid := commitFiles(t, work, map[string]string{"branch.txt": branch + "\n"}, branch, time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))
+		apiRunGit(t, work, "push", "-q", "origin", oid+":refs/heads/"+branch)
+	}
+	apiRunGit(t, work, "push", "-q", "origin", mainOID+":refs/tags/HEAD")
 	server := serve(t, app.Handler())
 	client := &http.Client{}
 	raw := server.URL + "/repositories/raw-project/raw?ref=refs%2Fheads%2Fmain&path="
 
-	for path, wantType := range map[string]string{
-		"docs/pic.svg": "image/svg+xml",
-		"page.html":    "application/octet-stream",
-		"사진.png":       "image/png",
+	for _, test := range []struct{ path, wantType, body, branch, ref string }{
+		{"docs/pic.svg", "image/svg+xml", hostileSVG, "", "refs/heads/main"},
+		{"page.html", "application/octet-stream", "<script>alert('html')</script>", "", "refs/heads/main"},
+		{"사진.png", "image/png", "\x89PNG\r\n\x1a\nfake", "", "refs/heads/main"},
+		{"branch.txt", "application/octet-stream", "HEAD\n", "HEAD", ""},
+		{"branch.txt", "application/octet-stream", "HEAD\n", "HEAD", "refs/heads/HEAD"},
+		{"branch.txt", "application/octet-stream", "HEAD\n", "HEAD", "HEAD"},
+		{"branch.txt", "application/octet-stream", "-dash\n", "-dash", ""},
+		{"branch.txt", "application/octet-stream", "-dash\n", "-dash", "refs/heads/-dash"},
+		{"branch.txt", "application/octet-stream", "-dash\n", "-dash", "-dash"},
 	} {
-		result := browserGET(t, client, raw+strings.ReplaceAll(path, "/", "%2F"))
-		if result.status != http.StatusOK {
-			t.Fatalf("%s status=%d", path, result.status)
+		if test.branch != "" {
+			noErr(t, app.Repositories.SetDefaultBranch(t.Context(), "raw-project", test.branch))
 		}
+		query := url.Values{"path": {test.path}}
+		if test.ref != "" {
+			query.Set("ref", test.ref)
+		}
+		result := browserGET(t, client, server.URL+"/repositories/raw-project/raw?"+query.Encode())
+		if result.status != http.StatusOK || result.body != test.body {
+			t.Fatalf("%s ref=%q default=%q status=%d body=%q", test.path, test.ref, test.branch, result.status, result.body)
+		}
+		path := test.path
 		header := result.header
-		if got := header.Get("Content-Type"); got != wantType {
-			t.Errorf("%s Content-Type=%q, want %q", path, got, wantType)
+		if got := header.Get("Content-Type"); got != test.wantType {
+			t.Errorf("%s Content-Type=%q, want %q", path, got, test.wantType)
 		}
 		if got := header.Get("Content-Disposition"); !strings.HasPrefix(got, "attachment;") {
 			t.Errorf("%s Content-Disposition=%q, want an attachment", path, got)

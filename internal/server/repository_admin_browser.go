@@ -158,7 +158,7 @@ func hasBranch(summary repository.Summary, name string, exact bool) bool {
 		return false
 	}
 	for _, branch := range summary.Branches {
-		if (!exact && branch.Name == name) || (exact && "refs/heads/"+branch.Name == name) {
+		if repository.DefaultBranchEligible(branch.Name) && ((!exact && branch.Name == name) || (exact && "refs/heads/"+branch.Name == name)) {
 			return true
 		}
 	}
@@ -263,6 +263,9 @@ func (app *App) renderRepositorySettingsPage(writer http.ResponseWriter, request
 		page.Selected = summary.DefaultBranch
 	}
 	for _, branch := range summary.Branches {
+		if !repository.DefaultBranchEligible(branch.Name) {
+			continue
+		}
 		page.Branches = append(page.Branches, branch.Name)
 		// A refused submission keeps the administrator's choice when it is
 		// still offered. Anything else keeps the default, or no choice.

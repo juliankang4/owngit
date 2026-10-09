@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,15 +12,18 @@ func TestBranchSelectionIdentityAndControls(t *testing.T) {
 	manager, remote, work := newTestRepository(t)
 	commitFile(t, work, "one", "base", "2024-01-01T00:00:00Z")
 	base := gitOutput(t, work, "rev-parse", "HEAD")
-	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/x", "HEAD:refs/heads/topic/slash", "HEAD:refs/tags/topic/slash")
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/main", "HEAD:refs/heads/x", "HEAD:refs/heads/topic/slash", "HEAD:refs/tags/topic/slash", "HEAD:refs/heads/HEAD", "HEAD:refs/heads/-dash")
 	commitFile(t, work, "two", "long", "2024-01-02T00:00:00Z")
 	long := gitOutput(t, work, "rev-parse", "HEAD")
-	runGit(t, work, "push", "origin", "HEAD:refs/heads/refs/heads/x")
+	longName := strings.Repeat("a", 128) + "/" + strings.Repeat("b", 128)
+	runGit(t, work, "push", "origin", "HEAD:refs/heads/refs/heads/x", "HEAD:refs/heads/"+longName)
 	for _, check := range []struct {
 		input, full string
 		exact       bool
 	}{
 		{"main", "refs/heads/main", false},
+		{"HEAD", "refs/heads/HEAD", false},
+		{"-dash", "refs/heads/-dash", false},
 		{"refs/heads/main", "refs/heads/main", false},
 		{"topic/slash", "refs/heads/topic/slash", false},
 		{"refs/heads/topic/slash", "refs/heads/topic/slash", true},
@@ -27,6 +31,7 @@ func TestBranchSelectionIdentityAndControls(t *testing.T) {
 		{"refs/heads/x", "refs/heads/x", true},
 		{"refs/heads/refs/heads/x", "refs/heads/refs/heads/x", false},
 		{"refs/heads/refs/heads/x", "refs/heads/refs/heads/x", true},
+		{longName, "refs/heads/" + longName, false},
 	} {
 		full, err := manager.SetDefaultBranchInput(t.Context(), "sample", check.input, check.exact)
 		if err != nil || full != check.full {
@@ -55,6 +60,13 @@ func TestBranchSelectionIdentityAndControls(t *testing.T) {
 		{"refs/heads/refs/heads/x", "refs/heads/refs/heads/x", long},
 		{"topic/slash", "refs/heads/topic/slash", base},
 		{"refs/tags/topic/slash", "refs/tags/topic/slash", base},
+		{"HEAD", "refs/heads/HEAD", base},
+		{"refs/heads/HEAD", "refs/heads/HEAD", base},
+		{"-dash", "refs/heads/-dash", base},
+		{"refs/heads/-dash", "refs/heads/-dash", base},
+		{"", "refs/heads/" + longName, long},
+		{longName, "refs/heads/" + longName, long},
+		{"refs/heads/" + longName, "refs/heads/" + longName, long},
 	} {
 		full, oid, err := manager.ResolveRef(t.Context(), "sample", check.input)
 		if err != nil || full != check.full || oid != check.oid {

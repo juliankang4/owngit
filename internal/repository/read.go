@@ -83,8 +83,8 @@ func (m *Manager) ResolveRef(ctx context.Context, id, requested string) (string,
 		requested = "refs/heads/" + snapshot.Summary.DefaultBranch
 	}
 	short := strings.TrimPrefix(strings.TrimPrefix(requested, "refs/heads/"), "refs/tags/")
-	if err := validateShortRef(short); err != nil {
-		return "", "", fmt.Errorf("%w: %w", errRefNotFound, err)
+	if !DefaultBranchEligible(short) {
+		return "", "", fmt.Errorf("%w: invalid branch or tag name", errRefNotFound)
 	}
 	commitOID := ""
 	full, err := selectRefName(requested, strings.HasPrefix(requested, "refs/"), true, func(full string) (bool, error) {

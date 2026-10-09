@@ -159,13 +159,10 @@ func TestDefaultBranchAdviceRespectsCallerEligibility(t *testing.T) {
 	if !errors.As(err, &ambiguous) || problem["code"] != "ambiguous_branch" || problem["message"] != ambiguous.Error() {
 		t.Fatalf("API and shared advice disagree: %v / %v", problem, err)
 	}
-	if len(ambiguous.Values) != 2 || ambiguous.Values[0] != "" || ambiguous.Values[1] == "" {
-		t.Fatalf("advice offers an unsupported HEAD operand: %v", ambiguous.Values)
+	if len(ambiguous.Values) != 2 || ambiguous.Values[0] != "refs/heads/HEAD" || ambiguous.Values[1] == "" {
+		t.Fatalf("advice omits a legal HEAD operand: %v", ambiguous.Values)
 	}
 	for index, value := range ambiguous.Values {
-		if value == "" {
-			continue
-		}
 		response = adminAPIRequest(t, http.MethodPost, endpoint, map[string]string{"branch": value}, "admin-password")
 		if response.StatusCode != http.StatusOK {
 			t.Fatalf("offered value %q is refused: status=%d", value, response.StatusCode)
@@ -174,9 +171,6 @@ func TestDefaultBranchAdviceRespectsCallerEligibility(t *testing.T) {
 		if answer["default_branch"] != strings.TrimPrefix(ambiguous.Refs[index], "refs/heads/") || apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD") != ambiguous.Refs[index] {
 			t.Fatal("accepted advice selected a different branch")
 		}
-	}
-	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, endpoint, map[string]string{"branch": "refs/heads/HEAD"}, "admin-password")); status != http.StatusUnprocessableEntity || code != "branch_not_found" {
-		t.Fatalf("deferred HEAD grammar changed: status=%d code=%s", status, code)
 	}
 	full, err := fixture.app.Repositories.SetDefaultBranchInput(t.Context(), "project", first, true)
 	noErr(t, err)
@@ -360,26 +354,25 @@ func TestDefaultBranchRefusalKeepsExactChoice(t *testing.T) {
 func TestSettingsDefaultBranchExactIdentity(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	apiRunGit(t, fixture.work, "push", "origin", fixture.targetOID+":refs/heads/x")
-	apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":refs/heads/refs/heads/x")
+	apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":refs/heads/refs/heads/x", fixture.sourceOID+":refs/heads/HEAD", fixture.sourceOID+":refs/heads/-dash")
 	server, client, jar := openBrowser(t, fixture)
 	signInAdmin(t, fixture, server.URL, jar)
 	settings := server.URL + "/repositories/project/settings"
-	page := browserGET(t, client, settings)
-	field, value := "branch", "refs/heads/x"
-	if strings.Contains(page.body, `name="branch_ref"`) {
-		field, value = "branch_ref", "refs/heads/refs/heads/x"
-	}
-	if !strings.Contains(page.body, `<option value="`+value+`">refs/heads/x</option>`) {
-		t.Fatal("Settings did not offer the longer branch")
-	}
-	result := browserForm(t, client, settings+"/default-branch", url.Values{"csrf": {adminTestCSRF}, field: {value}}, server.URL)
-	if result.status != http.StatusSeeOther {
-		t.Fatalf("Settings save status=%d", result.status)
-	}
-	clone := filepath.Join(t.TempDir(), "clone")
-	apiRunGit(t, "", "clone", server.URL+"/git/project.git", clone)
-	if full, oid := apiGitOutput(t, clone, "symbolic-ref", "HEAD"), apiGitOutput(t, clone, "rev-parse", "HEAD"); full != "refs/heads/refs/heads/x" || oid != fixture.sourceOID {
-		t.Fatalf("Settings selected refs/heads/x, clone got %s at %s instead of refs/heads/refs/heads/x at %s", full, oid, fixture.sourceOID)
+	for _, name := range []string{"refs/heads/x", "HEAD", "-dash"} {
+		full := "refs/heads/" + name
+		page := browserGET(t, client, settings)
+		if !strings.Contains(page.body, `<option value="`+full+`">`+name+`</option>`) {
+			t.Fatalf("Settings did not offer %q", name)
+		}
+		result := browserForm(t, client, settings+"/default-branch", url.Values{"csrf": {adminTestCSRF}, "branch_ref": {full}}, server.URL)
+		if result.status != http.StatusSeeOther {
+			t.Fatalf("Settings save %q status=%d", name, result.status)
+		}
+		clone := filepath.Join(t.TempDir(), "clone")
+		apiRunGit(t, "", "clone", server.URL+"/git/project.git", clone)
+		if head, oid := apiGitOutput(t, clone, "symbolic-ref", "HEAD"), apiGitOutput(t, clone, "rev-parse", "HEAD"); head != full || oid != fixture.sourceOID {
+			t.Fatalf("Settings selected %s, clone got %s at %s instead of %s", full, head, oid, fixture.sourceOID)
+		}
 	}
 }
 

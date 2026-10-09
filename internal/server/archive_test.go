@@ -81,18 +81,28 @@ func archiveFixtureRefs(t *testing.T, fixture apiFixture) {
 func TestArchiveDownloadNamesAndContents(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	archiveFixtureRefs(t, fixture)
+	apiRunGit(t, fixture.work, "push", "-q", "origin", fixture.sourceOID+":refs/heads/HEAD", "HEAD:refs/heads/-dash", fixture.targetOID+":refs/tags/HEAD")
 	server := serve(t, fixture.app.Handler())
 	base := server.URL + "/repositories/project/archive?"
 	for _, test := range []struct {
-		query, filename, names string
+		query, filename, names, defaultBranch string
 	}{
-		{"ref=refs%2Fheads%2Fmain&format=zip", "project-main.zip", "project-main/,project-main/file.txt"},
-		{"format=zip", "project-main.zip", "project-main/,project-main/file.txt"},
-		{"ref=feature&format=tar.gz", "project-feature.tar.gz", "project-feature/,project-feature/feature.txt,project-feature/file.txt"},
-		{"ref=refs%2Ftags%2Fv1.0&format=zip", "project-v1.0.zip", "project-v1.0/,project-v1.0/feature.txt,project-v1.0/file.txt"},
-		{"ref=refs%2Fheads%2Ftopic%2Flogin&format=zip", "project-topic-login.zip", "project-topic-login/,project-topic-login/feature.txt,project-topic-login/file.txt"},
-		{"ref=" + fixture.targetOID + "&format=tar.gz", "project-" + fixture.targetOID + ".tar.gz", "project-" + fixture.targetOID + "/,project-" + fixture.targetOID + "/file.txt"},
+		{"ref=refs%2Fheads%2Fmain&format=zip", "project-main.zip", "project-main/,project-main/file.txt", ""},
+		{"format=zip", "project-main.zip", "project-main/,project-main/file.txt", ""},
+		{"ref=feature&format=tar.gz", "project-feature.tar.gz", "project-feature/,project-feature/feature.txt,project-feature/file.txt", ""},
+		{"ref=refs%2Ftags%2Fv1.0&format=zip", "project-v1.0.zip", "project-v1.0/,project-v1.0/feature.txt,project-v1.0/file.txt", ""},
+		{"ref=refs%2Fheads%2Ftopic%2Flogin&format=zip", "project-topic-login.zip", "project-topic-login/,project-topic-login/feature.txt,project-topic-login/file.txt", ""},
+		{"ref=" + fixture.targetOID + "&format=tar.gz", "project-" + fixture.targetOID + ".tar.gz", "project-" + fixture.targetOID + "/,project-" + fixture.targetOID + "/file.txt", ""},
+		{"format=zip", "project-HEAD.zip", "project-HEAD/,project-HEAD/feature.txt,project-HEAD/file.txt", "HEAD"},
+		{"ref=refs%2Fheads%2FHEAD&format=zip", "project-HEAD.zip", "project-HEAD/,project-HEAD/feature.txt,project-HEAD/file.txt", "HEAD"},
+		{"ref=HEAD&format=tar.gz", "project-HEAD.tar.gz", "project-HEAD/,project-HEAD/feature.txt,project-HEAD/file.txt", "HEAD"},
+		{"format=zip", "project--dash.zip", "project--dash/,project--dash/docs/,project--dash/docs/guide.md,project--dash/feature.txt,project--dash/file.txt", "-dash"},
+		{"ref=refs%2Fheads%2F-dash&format=zip", "project--dash.zip", "project--dash/,project--dash/docs/,project--dash/docs/guide.md,project--dash/feature.txt,project--dash/file.txt", "-dash"},
+		{"ref=-dash&format=tar.gz", "project--dash.tar.gz", "project--dash/,project--dash/docs/,project--dash/docs/guide.md,project--dash/feature.txt,project--dash/file.txt", "-dash"},
 	} {
+		if test.defaultBranch != "" {
+			noErr(t, fixture.app.Repositories.SetDefaultBranch(t.Context(), "project", test.defaultBranch))
+		}
 		response, body := getArchive(t, base+test.query)
 		if response.StatusCode != http.StatusOK || response.Header.Get("Content-Disposition") != "attachment; filename="+test.filename {
 			t.Fatalf("%s: status=%d disposition=%q", test.query, response.StatusCode, response.Header.Get("Content-Disposition"))

@@ -5,9 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/importgit"
 )
 
 // SetDefaultBranch points HEAD at an existing branch. It accepts a short name
@@ -66,11 +66,17 @@ func (m *Manager) SetDefaultBranchInput(ctx context.Context, id, value string, e
 	return ref, nil
 }
 
+// DefaultBranchEligible reports whether a branch name can be offered and saved.
+// Names are checked as full refs, so HEAD and a leading dash are legal.
+func DefaultBranchEligible(branch string) bool {
+	return importgit.ValidBranchName(branch)
+}
+
 // validateDefaultBranchInput is the save and advice eligibility rule. Its
 // namespace removal is validation only, never branch identity selection.
 func (m *Manager) validateDefaultBranchInput(ctx context.Context, value string, exact bool) error {
 	branch := strings.TrimPrefix(value, "refs/heads/")
-	if !utf8.ValidString(branch) || strings.ContainsAny(branch, "\x00\r\n\t") || branch == "HEAD" || validateShortRef(branch) != nil {
+	if !DefaultBranchEligible(branch) {
 		return fmt.Errorf("%w: invalid branch name", ErrBranchNotFound)
 	}
 	if exact && !strings.HasPrefix(value, "refs/heads/") {

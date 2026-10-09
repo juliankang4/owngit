@@ -208,12 +208,15 @@ func TestOwnerDefaultBranchAPIMatchesTheSettingsTab(t *testing.T) {
 	if status, code := checkStatus(t, adminAPIRequest(t, http.MethodPost, server.URL+"/api/v1/repositories/absent/default-branch", map[string]string{"branch": "main"}, "admin-password")); status != http.StatusNotFound || code != "repository_not_found" {
 		t.Fatalf("missing repository: status=%d code=%q", status, code)
 	}
-	answer := decodeAPIObject(t, adminAPIRequest(t, http.MethodPost, target, map[string]string{"branch": "feature"}, "admin-password"))
-	if answer["ok"] != true || answer["default_branch"] != "feature" || answer["repository"] != "project" {
-		t.Fatalf("change answered %v", answer)
-	}
-	if head := apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD"); head != "refs/heads/feature" {
-		t.Fatalf("default branch=%q", head)
+	apiRunGit(t, fixture.work, "push", "origin", fixture.sourceOID+":refs/heads/HEAD", fixture.sourceOID+":refs/heads/-dash")
+	for _, branch := range []string{"feature", "HEAD", "-dash"} {
+		answer := decodeAPIObject(t, adminAPIRequest(t, http.MethodPost, target, map[string]string{"branch": branch}, "admin-password"))
+		if answer["ok"] != true || answer["default_branch"] != branch || answer["repository"] != "project" {
+			t.Fatalf("change %q answered %v", branch, answer)
+		}
+		if head := apiGitOutput(t, fixture.remote, "symbolic-ref", "HEAD"); head != "refs/heads/"+branch {
+			t.Fatalf("default branch=%q", head)
+		}
 	}
 }
 
