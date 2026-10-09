@@ -2,6 +2,8 @@ module owngit
 
 go 1.27
 
+toolchain go1.27.2
+
 require (
 	github.com/yuin/goldmark v1.8.6
 	golang.org/x/crypto v0.57.0
