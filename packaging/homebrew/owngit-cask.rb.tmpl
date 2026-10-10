@@ -1,9 +1,7 @@
 # frozen_string_literal: true
 
-{{- if .HomebrewCaskUnready}}
-# UNREADY: {{.HomebrewCaskUnready}}
-{{- end}}
-cask "owngit" do
+{{if .HomebrewCaskUnready}}# UNREADY: {{.HomebrewCaskUnready}}
+{{end}}cask "owngit" do
   version "{{ruby .Version}}"
   sha256 "{{ruby .DarwinArm64.SHA256}}"
 
@@ -13,8 +11,8 @@ cask "owngit" do
   homepage "{{ruby .Homepage}}"
 
   depends_on arch: :arm64
-  depends_on macos: :ventura
   depends_on formula: "{{ruby .TapFormula}}"
+  depends_on macos: :ventura
 
   app "OwnGit.app"
 

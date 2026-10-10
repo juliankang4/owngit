@@ -1015,6 +1015,12 @@ func TestHomebrewCaskRendering(t *testing.T) {
 			if strings.Contains(cask, "UNREADY") == tc.app {
 				t.Fatalf("cask readiness:\n%s", cask)
 			}
+			if !strings.HasPrefix(cask, "# frozen_string_literal: true\n\n") {
+				t.Fatalf("cask has no blank line after magic comment:\n%s", cask)
+			}
+			if !strings.Contains(cask, "  depends_on arch: :arm64\n  depends_on formula: \"example/tap/owngit\"\n  depends_on macos: :ventura\n") {
+				t.Fatalf("cask dependencies are not in Homebrew stanza order:\n%s", cask)
+			}
 			for _, text := range []string{`cask "owngit"`, `depends_on formula: "example/tap/owngit"`, `app "OwnGit.app"`, `args:       ["--sign-in-off"]`, strings.Repeat("a", 64)} {
 				if !strings.Contains(cask, text) {
 					t.Fatalf("cask lacks %q:\n%s", text, cask)
