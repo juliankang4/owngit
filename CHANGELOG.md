@@ -37,6 +37,7 @@ This release fixes security problems rated Medium and Low and adds support for G
 
 ### Fixed
 
+- Setup links now work when opened in a browser tab where setup is already open.
 - Settings keep drafts after recoverable save or refresh failures and distinguish confirmed saves from unknown outcomes, without automatically resending changes. Repository creation failures keep the entered name and description, but not secrets.
 - Narrow layouts keep long values and controls inside the viewport, and the sidebar starts in its correct state before the page is shown. Page headings, setup labels and keyboard access to command regions are clearer.
 - Calendar keyboard navigation follows date order and brings the initial day into view; Escape during text composition no longer closes the narrow sidebar. English and Korean labels and file paging counts now distinguish history direction, lines and entries correctly.

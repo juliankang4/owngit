@@ -347,41 +347,45 @@
     var start = form.querySelector('[data-redeem-start]');
     var missing = form.querySelector('[data-redeem-missing]');
     var held = form.querySelector('[data-redeem-held]');
-    var fragment = window.location.hash ? window.location.hash.slice(1) : '';
-    var token = '';
+    function readFragment() {
+      var fragment = window.location.hash ? window.location.hash.slice(1) : '';
+      var token = '';
 
-    if (fragment) {
-      var params = new URLSearchParams(fragment);
-      token = params.get('token') || (fragment.indexOf('=') === -1 ? fragment : '');
-    }
+      if (fragment) {
+        var params = new URLSearchParams(fragment);
+        token = params.get('token') || (fragment.indexOf('=') === -1 ? fragment : '');
+      }
 
-    if (token && field) { field.value = token; }
+      if (token && field) { field.value = token; }
 
-    // The server rendered both statements hidden because it cannot see the
-    // fragment. Exactly one is shown here, and the button is enabled only
-    // when a code is actually in hand. While setup runs in the terminal the
-    // form is optional and appears only when the address held a code.
-    var haveToken = !!(field && field.value);
-    if (form.hasAttribute('data-redeem-optional')) { form.hidden = !haveToken; }
-    if (held) { held.hidden = !haveToken; }
-    if (missing) { missing.hidden = haveToken; }
-    if (start) {
-      if (haveToken) {
-        start.removeAttribute('disabled');
-      } else {
-        start.setAttribute('disabled', 'disabled');
+      // The server rendered both statements hidden because it cannot see the
+      // fragment. Exactly one is shown here, and the button is enabled only
+      // when a code is actually in hand. While setup runs in the terminal the
+      // form is optional and appears only when the address held a code.
+      var haveToken = !!(field && field.value);
+      if (form.hasAttribute('data-redeem-optional')) { form.hidden = !haveToken; }
+      if (held) { held.hidden = !haveToken; }
+      if (missing) { missing.hidden = haveToken; }
+      if (start) {
+        if (haveToken) {
+          start.removeAttribute('disabled');
+        } else {
+          start.setAttribute('disabled', 'disabled');
+        }
+      }
+
+      // Clear the fragment whether or not it held a code, so the address bar,
+      // the history entry, and anything the reader copies stay clean.
+      if (window.location.hash && window.history && window.history.replaceState) {
+        window.history.replaceState(
+          window.history.state,
+          '',
+          window.location.pathname + window.location.search
+        );
       }
     }
-
-    // Clear the fragment whether or not it held a code, so the address bar,
-    // the history entry, and anything the reader copies stay clean.
-    if (window.location.hash && window.history && window.history.replaceState) {
-      window.history.replaceState(
-        window.history.state,
-        '',
-        window.location.pathname + window.location.search
-      );
-    }
+    readFragment();
+    window.addEventListener('hashchange', readFragment);
   })();
 
   /* Folder navigation uses the setup session and its anti-forgery token.

@@ -1,9 +1,12 @@
 package webui
 
 import (
+	"context"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The interface must work as plain server-rendered HTML. The script improves
@@ -298,6 +301,58 @@ func TestScriptClearsTheSetupFragmentAndNeverStoresIt(t *testing.T) {
 		if strings.Contains(block, auto) {
 			t.Errorf("the setup page redeems the code without the owner acting: %q", auto)
 		}
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the setup fragment check")
+	}
+	const check = `
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+for (const optional of [false, true]) {
+  for (const initial of ['', '#token=first%2Bcode', '#legacy-code']) {
+    const field = {value: ''}, held = {}, missing = {};
+    const start = {disabled: true,
+      removeAttribute(name) { assert.equal(name, 'disabled'); this.disabled = false; },
+      setAttribute(name) { assert.equal(name, 'disabled'); this.disabled = true; }};
+    const form = {hasAttribute: () => optional, querySelector: selector => ({
+      'input[name="token"]': field, '[data-redeem-start]': start,
+      '[data-redeem-held]': held, '[data-redeem-missing]': missing
+    })[selector]};
+    const location = {hash: initial, pathname: '/setup', search: '?lang=ko'};
+    const state = {marker: true}, listeners = [];
+    const window = {location, addEventListener(event, callback) {
+      assert.equal(event, 'hashchange'); listeners.push(callback);
+    }, history: {state, replaceState(saved, title, url) {
+      assert.equal(saved, state); assert.equal(url, '/setup?lang=ko'); location.hash = '';
+    }}};
+    vm.runInNewContext(process.argv[1], {URLSearchParams, window,
+      document: {querySelector: () => form}});
+    function expect(value) {
+      assert.equal(field.value, value); assert.equal(location.hash, '');
+      assert.equal(start.disabled, !value); assert.equal(held.hidden, !value);
+      assert.equal(missing.hidden, !!value);
+      if (optional) assert.equal(form.hidden, !value);
+    }
+    expect(initial === '#legacy-code' ? 'legacy-code' : initial ? 'first+code' : '');
+    assert.equal(listeners.length, 1, 'one same-document handler');
+    for (const hash of ['#token=second%2Bcode', '#token=third-code', '', '#token=']) {
+      location.hash = hash; listeners[0]();
+      expect(hash.includes('second') ? 'second+code' : 'third-code');
+      assert.equal(listeners.length, 1);
+    }
+  }
+}
+const location = {hash: '#L12'};
+vm.runInNewContext(process.argv[1], {window: {location}, document: {querySelector: () => null}});
+assert.equal(location.hash, '#L12', 'non-setup anchors stay intact');
+`
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	script := section(t, js, "(function handleSetupFragment()", "  /* Folder navigation")
+	if output, err := exec.CommandContext(ctx, node, "-e", check, script).CombinedOutput(); err != nil {
+		t.Fatalf("setup fragment: %v\n%s", err, output)
 	}
 }
 
