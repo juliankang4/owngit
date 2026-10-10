@@ -473,8 +473,10 @@ func (app *App) handleRunnerAPI(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		writer.Header().Set("Cache-Control", "no-store")
+		answer := app.attemptJSON(request, attempt)
+		answer.ResultFacts = []string{checkapi.OutputLimitExceededFact}
 		status, encoded := encodeAPIJSONLimit(http.StatusOK, checkapi.RunnerStartResponse{
-			JobResponse: checkapi.JobResponse{OK: true, Job: jobJSON(started, attempt.Checks), Attempt: app.attemptJSON(request, attempt)},
+			JobResponse: checkapi.JobResponse{OK: true, Job: jobJSON(started, attempt.Checks), Attempt: answer},
 			Actions:     grant,
 		}, checkapi.MaximumRunnerStartBytes)
 		writeEncodedAPIJSON(writer, status, encoded)
@@ -889,7 +891,7 @@ func writeRunnerError(writer http.ResponseWriter, request *http.Request, err err
 	switch {
 	case errors.Is(err, state.ErrCheckJobNotFound):
 		writeAPIError(writer, http.StatusNotFound, "check_job_not_found", "The configured-check job does not exist.", nil)
-	case errors.Is(err, state.ErrInvalidCheckJob):
+	case errors.Is(err, state.ErrInvalidCheckJob), errors.Is(err, state.ErrResultMismatch):
 		writeAPIError(writer, http.StatusUnprocessableEntity, "invalid_runner_request", "The runner request has invalid fields.", nil)
 	case errors.Is(err, state.ErrCheckJobLease):
 		writeAPIError(writer, http.StatusConflict, "check_job_lease", "The configured-check job lease is stale or foreign.", nil)

@@ -44,7 +44,8 @@ func Runner(gitPath string) actions.ScriptRunner {
 		})
 		result := results[0]
 		return actions.ScriptResult{Status: result.Status, ExitCode: result.ExitCode, Duration: result.Duration,
-			Output: result.Output, OutputGap: result.OutputGap, Truncated: result.Truncated, CleanupError: result.CleanupError}
+			Output: result.Output, OutputGap: result.OutputGap, Truncated: result.Truncated, CleanupError: result.CleanupError,
+			ExceededOutputLimit: result.ExceededOutputLimit}
 	}
 }
 

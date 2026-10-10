@@ -593,6 +593,9 @@ func browserCheckEvidence(address string, checks pullrequest.Checks, staleOID fu
 		ReadFailure:          browserEvidenceReadFailure(checks.ReadFailure, webui.MsgCheckRecordUnreadable),
 		CleanupFailed:        checks.CleanupFailed,
 	}
+	if checks.Outcome != nil {
+		evidence.Outcome = browserOutcome(*checks.Outcome)
+	}
 	if checks.FinishedAt != nil {
 		evidence.FinishedAt = *checks.FinishedAt
 	}
@@ -600,7 +603,7 @@ func browserCheckEvidence(address string, checks pullrequest.Checks, staleOID fu
 		evidence.RegisteredAt = *checks.RegisteredAt
 	}
 	if checks.LogExpiresAt != nil {
-		evidence.LogExpiresAt = *checks.LogExpiresAt
+		evidence.LogExpiresAt = checks.LogExpiresAt.Local()
 	}
 	evidence.CredentialProvenance = browserProvenance(checks.JobID, checks.CredentialID, checks.ExecutionScope)
 	if checks.TaskID != "" {

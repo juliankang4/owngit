@@ -78,6 +78,8 @@ type Result struct {
 	// of Output passes it on so the final count refers to the real output.
 	OutputGap checkapi.Gap
 	Truncated bool
+	// ExceededOutputLimit is positive only when execution passed the applied limit.
+	ExceededOutputLimit int64
 	// CleanupError reports that the owned process group or its handle could not
 	// be confirmed released. It makes the result non-success while ExitCode
 	// still describes the command itself.
@@ -252,12 +254,7 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 	result.Output, result.OutputGap = output.textAndGap()
 	result.Truncated = output.exceeded()
 	if result.Truncated {
-		note := fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit)
-		result.Output = note + result.Output
-		if result.OutputGap.Omitted > 0 {
-			result.OutputGap.Start += len(note)
-			result.OutputGap.End += len(note)
-		}
+		result.ExceededOutputLimit = limit
 	}
 	setExitCode(&result, wait)
 
@@ -291,6 +288,25 @@ func runOne(ctx context.Context, definition Definition, options Options) (Result
 		result.Status = StatusError
 	}
 	return result, cancelled
+}
+
+// OutputLimitNote is the durable raw-log notice, not command output.
+func OutputLimitNote(limit int64) string {
+	if limit <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("[OwnGit stopped this check: its output passed the limit of %d bytes.]\n", limit)
+}
+
+// NotedOutput reconstructs the legacy excerpt and its gap for older servers.
+func (result Result) NotedOutput() (string, checkapi.Gap) {
+	gap := result.OutputGap
+	note := OutputLimitNote(result.ExceededOutputLimit)
+	if gap.Omitted > 0 {
+		gap.Start += len(note)
+		gap.End += len(note)
+	}
+	return note + result.Output, gap
 }
 
 func killProcess(process *os.Process) error {

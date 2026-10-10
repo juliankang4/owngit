@@ -178,15 +178,28 @@ func TestWorkflowBrowserRunJourney(t *testing.T) {
 	noErr(t, err)
 	jobs, err := fixture.store.ActionsRunJobs(ctx, "project", runID)
 	noErr(t, err)
-	var waiting string
+	var waiting, completedSummary string
 	for _, job := range jobs {
-		if job.ID != claimed.ID {
+		if job.ID == claimed.ID {
+			completedSummary = job.Summary
+		} else {
 			waiting = job.ID
 		}
 	}
 
 	runURL := workflowRunURL("project", runID)
 	jobURL := workflowJobURL("project", runID, claimed.ID)
+	for _, row := range []struct{ lang, want string }{
+		{"en", `data-en="1 step: 1 failed" data-ko="단계 1개: 실패 1개">1 step: 1 failed</span>`},
+		{"ko", `data-en="1 step: 1 failed" data-ko="단계 1개: 실패 1개">단계 1개: 실패 1개</span>`},
+	} {
+		t.Run("run job outcome "+row.lang, func(t *testing.T) {
+			page := browserGET(t, general, base+runURL+"?lang="+row.lang)
+			if page.status != http.StatusOK || !strings.Contains(page.body, row.want) {
+				t.Fatalf("run outcome status=%d want=%q found=%v", page.status, row.want, strings.Contains(page.body, row.want))
+			}
+		})
+	}
 	unknown := strings.Repeat("0", 32)
 	for _, row := range []struct {
 		name, path   string
@@ -220,6 +233,17 @@ func TestWorkflowBrowserRunJourney(t *testing.T) {
 			}
 		})
 	}
+
+	const recordedSummary = "Recorded <custom> job summary"
+	noErr(t, fixture.store.Exec(ctx, `UPDATE check_jobs SET summary=? WHERE id=?`, recordedSummary, claimed.ID))
+	for _, lang := range []string{"en", "ko"} {
+		page := browserGET(t, general, base+runURL+"?lang="+lang)
+		if page.status != http.StatusOK || !strings.Contains(page.body, "Recorded &lt;custom&gt; job summary") ||
+			strings.Contains(page.body, `data-en="1 step: 1 failed" data-ko="단계 1개: 실패 1개"`) {
+			t.Fatalf("%s recorded fallback status=%d", lang, page.status)
+		}
+	}
+	noErr(t, fixture.store.Exec(ctx, `UPDATE check_jobs SET summary=? WHERE id=?`, completedSummary, claimed.ID))
 
 	for _, row := range []struct{ action, notice string }{{"cancel", "workflow_cancel"}, {"rerun", "workflow_rerun"}, {"rerun", "workflow_rerun_existing"}} {
 		t.Run(row.notice, func(t *testing.T) {

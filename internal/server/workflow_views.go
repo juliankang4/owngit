@@ -7,6 +7,7 @@ import (
 	"owngit/internal/actions"
 	"owngit/internal/checkapi"
 	"owngit/internal/state"
+	"owngit/internal/webui"
 )
 
 type workflowJobMetadata struct {
@@ -42,6 +43,7 @@ type workflowStepSummary struct {
 }
 
 type workflowJobView struct {
+	Outcome          *webui.CheckOutcome   `json:"-"`
 	Job              *workflowJobMetadata  `json:"job"`
 	Attempt          *checkapi.Attempt     `json:"attempt,omitempty"`
 	Steps            []workflowStepSummary `json:"steps,omitempty"`
@@ -74,6 +76,7 @@ func (app *App) workflowJobRecord(request *http.Request, job state.CheckJob) (wo
 		if err != nil {
 			return workflowJobView{}, err
 		}
+		item.Outcome = browserJobOutcome(job.AttemptID, job.Summary, attempt)
 		item.Attempt = app.attemptJSON(request, attempt)
 		for i := range item.Attempt.Results {
 			result := &item.Attempt.Results[i]
@@ -86,7 +89,7 @@ func (app *App) workflowJobRecord(request *http.Request, job state.CheckJob) (wo
 func workflowJobSummary(record workflowJobView) workflowJobView {
 	job := *record.Job
 	job.Checks = nil
-	summary := workflowJobView{Job: &job, Steps: []workflowStepSummary{}}
+	summary := workflowJobView{Job: &job, Outcome: record.Outcome, Steps: []workflowStepSummary{}}
 	if record.Attempt != nil {
 		attempt := *record.Attempt
 		attempt.Results = nil

@@ -505,7 +505,7 @@ func (app *App) browserWorkflowRun(request *http.Request, address string, run st
 
 func browserWorkflowJob(address, runID string, record workflowJobView, job state.CheckJob) webui.WorkflowJobRow {
 	row := webui.WorkflowJobRow{ID: job.ID, Key: job.JobKey, MatrixIndex: job.MatrixIndex, URL: workflowJobURL(address, runID, job.ID), Status: job.Status,
-		Tolerated: job.Tolerated, CancelRequested: job.CancelRequestedAt != nil, Summary: job.Summary}
+		Tolerated: job.Tolerated, CancelRequested: job.CancelRequestedAt != nil, Summary: job.Summary, Outcome: record.Outcome}
 	if job.StartedAt != nil {
 		row.StartedAt = job.StartedAt.Local()
 	}
@@ -515,7 +515,7 @@ func browserWorkflowJob(address, runID string, record workflowJobView, job state
 	if record.Attempt != nil && len(record.Attempt.Results) > 0 {
 		for _, result := range record.Attempt.Results {
 			step := webui.WorkflowStepRow{Name: result.Name, Command: result.Command, Status: result.Status, Role: result.Role, DurationMS: result.DurationMS,
-				Excerpt: result.OutputExcerpt, Truncated: result.Truncated, CleanupError: result.CleanupError, CleanupFailed: result.CleanupError != ""}
+				Excerpt: result.OutputExcerpt, Truncated: result.Truncated, OutputLimitExceededBytes: result.OutputLimitExceededBytes, CleanupError: result.CleanupError, CleanupFailed: result.CleanupError != ""}
 			if result.ExitCode != nil {
 				step.ExitCode = strconv.Itoa(*result.ExitCode)
 			}
@@ -607,7 +607,7 @@ func (app *App) renderWorkflowJob(writer http.ResponseWriter, request *http.Requ
 			if retention, err := app.Store.CheckLogRetention(request.Context()); err == nil {
 				view.LogStatus = webui.LogStatusOf(app.Store.CheckLogState(attempt, retention, app.now()))
 				if expires := retention.LogExpiry(attempt); expires != nil {
-					view.LogExpiresAt = *expires
+					view.LogExpiresAt = expires.Local()
 				}
 			}
 			if view.LogStatus == webui.LogAvailable {

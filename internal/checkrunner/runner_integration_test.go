@@ -53,6 +53,26 @@ func TestExternalRunnerClaimsExactSourceExecutesAndCompletes(t *testing.T) {
 	}
 }
 
+func TestExternalRunnerRecordsOutputLimitFact(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture runs a POSIX shell")
+	}
+	fixture := newRunnerIntegrationFixture(t, "yes RUNNER_OVERFLOW | head -c 131072")
+	httpServer, origin := fixture.startHTTPServer(nil)
+	defer httpServer.Close()
+	noErr(t, fixture.runner(fixture.client(origin)).Run(fixture.ctx))
+	job := fixture.readJob()
+	attempt, exists, err := fixture.store.CheckAttemptByID(fixture.ctx, fixture.repository.ID, job.AttemptID)
+	if err != nil || !exists || job.Status != state.CheckJobIncomplete || len(attempt.Results) != 1 ||
+		attempt.Results[0].OutputLimitExceededBytes != 65536 || strings.Contains(attempt.Results[0].OutputExcerpt, "OwnGit stopped this check") {
+		t.Fatalf("runner job=%+v attempt=%+v exists=%v err=%v", job, attempt, exists, err)
+	}
+	log, _, err := fixture.store.ReadCheckLog(attempt, state.DefaultCheckLogRetention, time.Now())
+	if err != nil || !strings.Contains(string(log), "[OwnGit stopped this check: its output passed the limit of 65536 bytes.]") {
+		t.Fatalf("runner log note=%v err=%v", strings.Contains(string(log), "OwnGit stopped this check"), err)
+	}
+}
+
 // A claim answer that reaches the runner late leaves little of a short lease.
 // The runner must renew the lease before it ends; waiting its one-second
 // default used to arrive after the lease had expired and turned a check that

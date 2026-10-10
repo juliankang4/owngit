@@ -80,16 +80,19 @@ func TestRunCountsOutputBeyondTheKeptText(t *testing.T) {
 	results, _ := Run(context.Background(), outputChecks(1), Options{
 		Timeout: time.Minute, OutputLimit: limit, Env: outputEnvironment(limit),
 	})
-	if result := results[0]; result.Status != StatusPassed || result.Truncated || !keptWithMarker(result.Output) {
+	if result := results[0]; result.Status != StatusPassed || result.Truncated || result.ExceededOutputLimit != 0 || !keptWithMarker(result.Output) {
 		t.Fatalf("at the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
 	}
 	results, _ = Run(context.Background(), outputChecks(1), Options{
 		Timeout: time.Minute, OutputLimit: limit, Env: outputEnvironment(limit + 1),
 	})
-	note := "[OwnGit stopped this check: its output passed the limit of 1048576 bytes.]\n"
-	if result := results[0]; result.Status != StatusIncomplete || !result.Truncated ||
-		!strings.HasPrefix(result.Output, note) || !keptWithMarker(strings.TrimPrefix(result.Output, note)) {
-		t.Fatalf("past the limit: status=%s truncated=%v output=%d", result.Status, result.Truncated, len(result.Output))
+	result := results[0]
+	note := OutputLimitNote(limit)
+	noted, gap := result.NotedOutput()
+	if result.Status != StatusIncomplete || !result.Truncated || result.ExceededOutputLimit != limit ||
+		strings.Contains(result.Output, note) || !strings.HasPrefix(noted, note) || !keptWithMarker(result.Output) ||
+		gap.Omitted != result.OutputGap.Omitted || gap.Start != result.OutputGap.Start+len(note) || gap.End != result.OutputGap.End+len(note) {
+		t.Fatalf("past the limit: status=%s truncated=%v output=%d gap=%+v", result.Status, result.Truncated, len(result.Output), gap)
 	}
 }
 

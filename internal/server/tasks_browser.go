@@ -147,6 +147,7 @@ func (app *App) browserAttemptRecord(ctx context.Context, attempt state.CheckAtt
 		StartedAt:            attempt.StartedAt,
 		DurationMS:           attempt.DurationMS,
 		Summary:              attempt.Summary,
+		Outcome:              browserAttemptOutcome(attempt),
 		OutputTruncated:      attempt.LogTruncated,
 		Protection:           browserProtection(attempt.JobID, attempt.Protection, attempt.ExecutionScope),
 		LogError:             attempt.LogError,
@@ -164,20 +165,21 @@ func (app *App) browserAttemptRecord(ctx context.Context, attempt state.CheckAtt
 		if retention, err := app.Store.CheckLogRetention(ctx); err == nil {
 			record.LogStatus = webui.LogStatusOf(app.Store.CheckLogState(attempt, retention, app.now()))
 			if expires := retention.LogExpiry(attempt); expires != nil {
-				record.LogExpiresAt = *expires
+				record.LogExpiresAt = expires.Local()
 			}
 		}
 	}
 	record.CredentialProvenance = browserProvenance(attempt.JobID, attempt.CredentialID, attempt.ExecutionScope)
 	for _, result := range attempt.Results {
 		line := webui.CheckResultLine{
-			Name:          result.Name,
-			Command:       result.Command,
-			Status:        result.Status,
-			DurationMS:    result.DurationMS,
-			OutputExcerpt: result.OutputExcerpt,
-			Truncated:     result.Truncated,
-			CleanupError:  result.CleanupError,
+			Name:                     result.Name,
+			Command:                  result.Command,
+			Status:                   result.Status,
+			DurationMS:               result.DurationMS,
+			OutputExcerpt:            result.OutputExcerpt,
+			Truncated:                result.Truncated,
+			OutputLimitExceededBytes: result.OutputLimitExceededBytes,
+			CleanupError:             result.CleanupError,
 		}
 		if result.ExitCode != nil {
 			line.ExitCode = *result.ExitCode

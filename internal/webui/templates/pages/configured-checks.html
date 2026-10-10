@@ -37,7 +37,7 @@
       <p class="ev__warn">{{icon "warning"}}<span>{{bi $lang "cc.job.cancel_requested"}}</span></p>
     {{end}}
 
-    {{with .Job.Summary}}<p class="ev__summary">{{.}}</p>{{end}}
+    {{if .Job.Outcome}}<p class="ev__summary">{{biCheckOutcome $lang .Job.Outcome}}</p>{{else}}{{with .Job.Summary}}<p class="ev__summary">{{.}}</p>{{end}}{{end}}
 
     {{template "jobFacts" dict "Lang" $lang "J" .Job}}
 

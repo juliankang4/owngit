@@ -45,6 +45,8 @@ func TestFormat12Content(t *testing.T) {
 		{name: "schedule job", version: 12, edit: func(m *Manifest) { m.CheckJobs = []CheckJobManifest{{Trigger: state.ActionsEventSchedule}} }},
 		{name: "skipped attempt", version: 12, edit: func(m *Manifest) { m.CheckAttempts = []CheckAttemptManifest{{Status: "skipped"}} }},
 		{name: "result role", version: 12, edit: func(m *Manifest) { m.CheckResults = []CheckResultManifest{{Role: "run"}} }},
+		{name: "output-limit fact", version: 12, edit: func(m *Manifest) { m.CheckResults = []CheckResultManifest{{OutputLimitExceededBytes: 65536}} }},
+		{name: "absent output-limit fact", version: 10, edit: func(m *Manifest) { m.CheckResults = []CheckResultManifest{{}} }},
 		{name: "skipped result", version: 12, edit: func(m *Manifest) { m.CheckResults = []CheckResultManifest{{Status: "skipped"}} }},
 		{name: "not-run result", version: 12, edit: func(m *Manifest) { m.CheckResults = []CheckResultManifest{{Status: "not_run"}} }},
 	} {
@@ -59,6 +61,49 @@ func TestFormat12Content(t *testing.T) {
 			}
 
 		})
+	}
+}
+
+func TestOutputLimitFactBackupRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	store, manager := newBackupStore(t, root)
+	defer store.Close()
+	now := time.Unix(1_800_000_000, 0)
+	task, err := store.CreateTask(ctx, "project", "Output", now)
+	noErr(t, err)
+	attempt := state.CheckAttempt{ID: "0123456789abcdef0123456789abcdef", TaskID: task.ID, RepositoryID: "project",
+		RevisionOID: strings.Repeat("a", 40), WorktreeState: state.WorktreeClean, StartedAt: now, CreatedAt: now,
+		Protection: state.ProtectionUnknown, ExecutionScope: state.ExecutionScopeInherited, OutputLimitBytes: 65536,
+		Checks: []state.CheckDefinition{{Name: "output", Command: "print"}}}
+	_, attempt, err = store.RegisterCheckAttempt(ctx, attempt)
+	noErr(t, err)
+	_, attempt, err = store.CompleteCheckAttempt(ctx, state.CheckCompletion{AttemptID: attempt.ID, RepositoryID: "project", TaskID: task.ID,
+		Results:       []state.CheckResult{{Name: "output", Command: "print", Status: state.AttemptIncomplete, OutputExcerpt: "user output", Truncated: true, OutputLimitExceededBytes: 65536}},
+		WorktreeState: state.WorktreeClean, FinishedAt: now.Add(time.Second), Log: "user output\n[OwnGit stopped this check: its output passed the limit of 65536 bytes.]\n"}, now)
+	noErr(t, err)
+	backup := filepath.Join(root, "backup")
+	_, err = CreateWithReport(ctx, store, manager, backup)
+	noErr(t, err)
+	manifest, err := readManifest(filepath.Join(backup, manifestName))
+	noErr(t, err)
+	if manifest.Version != backupVersion || len(manifest.CheckResults) != 1 || manifest.CheckResults[0].OutputLimitExceededBytes != 65536 {
+		t.Fatalf("backup version=%d results=%+v", manifest.Version, manifest.CheckResults)
+	}
+	older := manifest
+	older.Version = recordsBackupVersion
+	if err := validateManifest(older); err == nil || !strings.Contains(err.Error(), "output-limit result facts") {
+		t.Fatalf("version 11 fact validation: %v", err)
+	}
+	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
+	_, err = RestoreWithReport(ctx, backup, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), "")
+	noErr(t, err)
+	restored, err := state.Open(ctx, restoredState)
+	noErr(t, err)
+	defer restored.Close()
+	got, found, err := restored.CheckAttemptByID(ctx, "project", attempt.ID)
+	if err != nil || !found || got.CompletionDigest != attempt.CompletionDigest || len(got.Results) != 1 || got.Results[0].OutputLimitExceededBytes != 65536 {
+		t.Fatalf("restored attempt=%+v found=%v err=%v", got, found, err)
 	}
 }
 

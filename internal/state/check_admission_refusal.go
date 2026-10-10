@@ -99,7 +99,7 @@ func (s *Store) recordJSONAdmissionRefusalTx(ctx context.Context, tx *sql.Tx, re
 		logError, attempt.ID); err != nil {
 		return err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role) VALUES(?,0,?,?,?,NULL,0,?,0,'','')`,
+	_, err = tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role,output_limit_exceeded_bytes) VALUES(?,0,?,?,?,NULL,0,?,0,'','',0)`,
 		attempt.ID, result.Name, result.Command, result.Status, result.OutputExcerpt)
 	return err
 }

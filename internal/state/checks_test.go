@@ -621,6 +621,69 @@ func TestCompletionRejectsResultsThatDoNotMatchTheDeclaredChecks(t *testing.T) {
 	}
 }
 
+func TestOutputLimitFactSurvivesCompletionAndRejectsContradictions(t *testing.T) {
+	store, ctx, now := newProjectStore(t)
+	task := newProjectTask(t, store, ctx, now)
+	attempt := attemptFor(task, strings.Repeat("a", 40), now, AttemptIncomplete)
+	attempt.OutputLimitBytes = 4096
+	_, registered, err := store.RegisterCheckAttempt(ctx, attempt)
+	noErr(t, err)
+	baseline := completionFor(attempt, "raw user output")
+	for _, test := range []struct {
+		name      string
+		limit     int64
+		status    string
+		truncated bool
+	}{
+		{"negative", -1, AttemptIncomplete, true},
+		{"above applied", 4097, AttemptIncomplete, true},
+		{"passing", 4096, AttemptPassed, true},
+		{"clip only", 4096, AttemptIncomplete, false},
+	} {
+		invalid := baseline
+		invalid.Results = append([]CheckResult(nil), baseline.Results...)
+		invalid.Results[0].OutputLimitExceededBytes, invalid.Results[0].Status, invalid.Results[0].Truncated = test.limit, test.status, test.truncated
+		if _, _, err := store.CompleteCheckAttempt(ctx, invalid, now); err == nil {
+			t.Fatalf("%s contradiction was accepted", test.name)
+		}
+	}
+	baseline.Results = append([]CheckResult(nil), baseline.Results...)
+	baseline.Results[0].OutputLimitExceededBytes, baseline.Results[0].Truncated = 4096, true
+	_, stored, err := store.CompleteCheckAttempt(ctx, baseline, now)
+	noErr(t, err)
+	if stored.Results[0].OutputLimitExceededBytes != 4096 || stored.CompletionDigest == "" {
+		t.Fatalf("fact not stored: %+v", stored)
+	}
+	_, replayed, err := store.CompleteCheckAttempt(ctx, baseline, now)
+	noErr(t, err)
+	if replayed.CompletionDigest != stored.CompletionDigest {
+		t.Fatal("identical replay changed the digest")
+	}
+	changed := baseline
+	changed.Results = append([]CheckResult(nil), baseline.Results...)
+	changed.Results[0].OutputLimitExceededBytes = 2048
+	if _, _, err := store.CompleteCheckAttempt(ctx, changed, now); !errors.Is(err, ErrAttemptConflict) {
+		t.Fatalf("changed fact replay: %v", err)
+	}
+	if registered.OutputLimitBytes != 4096 {
+		t.Fatalf("registered limit=%d", registered.OutputLimitBytes)
+	}
+	completeTestSetup(t, store)
+	snapshot, err := store.RecoverySnapshot(ctx)
+	noErr(t, err)
+	if err := ValidateCheckRecovery(snapshot); err != nil {
+		t.Fatalf("stored state recovery: %v", err)
+	}
+	for _, invalid := range []int64{-1, 4097} {
+		mutated := snapshot
+		mutated.CheckResults = append([]CheckResultRecord(nil), snapshot.CheckResults...)
+		mutated.CheckResults[0].OutputLimitExceededBytes = invalid
+		if err := ValidateCheckRecovery(mutated); err == nil {
+			t.Fatalf("restore accepted limit %d", invalid)
+		}
+	}
+}
+
 func TestHelperCredentialsAreScopedHashedAndRevocable(t *testing.T) {
 	store, ctx, now := newProjectStore(t)
 	token := "synthetic-helper-token"

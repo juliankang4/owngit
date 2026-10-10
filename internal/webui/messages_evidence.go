@@ -6,6 +6,21 @@ package webui
 // one large map does not have to be edited for every new screen. They are
 // merged at startup and are indistinguishable afterwards: Text and Has see one catalog.
 
+const (
+	MsgOutcomeCheck           MessageCode = "evidence.outcome.check"
+	MsgOutcomeChecks          MessageCode = "evidence.outcome.checks"
+	MsgOutcomeStep            MessageCode = "evidence.outcome.step"
+	MsgOutcomeSteps           MessageCode = "evidence.outcome.steps"
+	MsgOutcomeNothingRan      MessageCode = "evidence.outcome.nothing_ran"
+	MsgOutcomeTolerated       MessageCode = "evidence.outcome.tolerated"
+	MsgOutcomeToleratedPlural MessageCode = "evidence.outcome.tolerated_plural"
+	MsgOutcomeRefusal         MessageCode = "evidence.outcome.refusal"
+	MsgOutcomeDirty           MessageCode = "evidence.outcome.dirty"
+	MsgOutcomeUnknown         MessageCode = "evidence.outcome.unknown"
+	MsgOutcomeConfigChanged   MessageCode = "evidence.outcome.config_changed"
+	MsgOutputLimitExceeded    MessageCode = "evidence.log.limit_exceeded"
+)
+
 // Shared evidence vocabulary.
 const (
 	MsgEvidenceUnknownState MessageCode = "evidence.unknown_state"
@@ -323,7 +338,19 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Checks and reviews are information. They never stop you from merging.",
 		ko: "테스트, 린트, 빌드 같은 자동 체크와 코드 리뷰는 참고 정보이며 병합을 막지 않습니다.",
 	},
-	MsgEvidenceNotStated: {en: "Not stated", ko: "기록 없음"},
+	MsgEvidenceNotStated:      {en: "Not stated", ko: "기록 없음"},
+	MsgOutcomeCheck:           {en: "%s check", ko: "체크 %s개"},
+	MsgOutcomeChecks:          {en: "%s checks", ko: "체크 %s개"},
+	MsgOutcomeStep:            {en: "%s step", ko: "단계 %s개"},
+	MsgOutcomeSteps:           {en: "%s steps", ko: "단계 %s개"},
+	MsgOutcomeNothingRan:      {en: "Nothing ran: every step was skipped or built in.", ko: "실행한 단계가 없습니다. 모든 단계가 건너뛰기 또는 내장 단계입니다."},
+	MsgOutcomeTolerated:       {en: "%s tolerated failure", ko: "허용된 실패 %s개"},
+	MsgOutcomeToleratedPlural: {en: "%s tolerated failures", ko: "허용된 실패 %s개"},
+	MsgOutcomeRefusal:         {en: "Check unavailable: %s", ko: "체크 실행 불가: %s"},
+	MsgOutcomeDirty:           {en: "worktree dirty", ko: "작업 트리에 변경 사항 있음"},
+	MsgOutcomeUnknown:         {en: "worktree state unknown", ko: "작업 트리 상태 알 수 없음"},
+	MsgOutcomeConfigChanged:   {en: "The check configuration changed.", ko: "체크 구성이 변경되었습니다."},
+	MsgOutputLimitExceeded:    {en: "Execution stopped because output exceeded the %s-byte limit.", ko: "출력이 %s바이트 제한을 초과하여 실행을 중단했습니다."},
 
 	MsgCheckTitle:            {en: "Checks", ko: "체크"},
 	MsgCheckStateAbsent:      {en: "No check has run for this revision", ko: "이 커밋에서 실행된 체크가 없습니다"},

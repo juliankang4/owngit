@@ -51,6 +51,7 @@ func (runner *Runner) runActions(ctx context.Context, job *checkapi.Job, content
 		result := &results[step.Index]
 		result.Status, result.ExitCode, result.Duration = facts[index].Status, step.ExitCode, step.Duration
 		result.Output, result.OutputGap, result.Truncated, result.CleanupError = step.Output, step.OutputGap, step.Truncated, step.CleanupError
+		result.ExceededOutputLimit = step.ExceededOutputLimit
 		roles[step.Index] = facts[index].Role
 		for _, note := range step.Notes {
 			notes.Add(note.Code + ": " + note.Detail + "\n")
@@ -58,6 +59,7 @@ func (runner *Runner) runActions(ctx context.Context, job *checkapi.Job, content
 	}
 	if execution.Error != "" {
 		results[0].Status, results[0].Output = actions.StatusError, execution.Error
+		results[0].ExceededOutputLimit = 0
 	}
 	text, _ := notes.Result()
 	return results, roles, execution.Cancelled, text, nil

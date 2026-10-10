@@ -569,6 +569,9 @@ func TestCoordinatorHostActions(t *testing.T) {
 		{"pull request ref and guarded step", "on: pull_request\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - if: github.ref == 'refs/heads/main'\n        run: echo MUST_NOT_RUN\n      - run: printenv GITHUB_REF\n", "passed", "refs/pull/7/head", 1, false, false, ""},
 		{"builtin only", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n", "skipped", "", 1, false, false, ""},
 		{"JSON keeps later command", "", "failed", "JSON_CONTINUED", 1, true, false, ""},
+		{"JSON output overflow", "", "incomplete", "JSON_OVERFLOW", 1, true, false, ""},
+		{"host output overflow", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: yes OVERFLOW | head -c 131072\n", "incomplete", "OVERFLOW", 1, false, false, ""},
+		{"container output overflow", "on: push\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: yes OVERFLOW | head -c 131072\n", "incomplete", "OVERFLOW", 1, false, true, ""},
 		{"control character source", simpleWorkflow, "unavailable", "", 2, false, false, "unsafe/bell\a.txt"},
 		{"invalid UTF-8 source", simpleWorkflow, "unavailable", "", 2, false, false, "unsafe/invalid\xff.txt"},
 		{"container passes", "on: push\njobs:\n  test:\n    runs-on: windows-latest\n    steps:\n      - run: test \"$GITHUB_WORKSPACE\" = /workspace; test \"$RUNNER_OS\" = Linux; echo state > \"$HOME/job-state\"\n      - run: test -f \"$HOME/job-state\"; echo CONTAINER_PASSED\n", "passed", "CONTAINER_PASSED", 1, false, true, ""},
@@ -622,6 +625,9 @@ func TestCoordinatorHostActions(t *testing.T) {
 				files[test.sourcePath] = "unsupported source name"
 			} else if test.json {
 				files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"fail","command":"exit 1"},{"name":"later","command":"echo JSON_CONTINUED"}]}`
+				if test.name == "JSON output overflow" {
+					files[".owngit/checks.json"] = `{"version":1,"events":{"push":{}},"checks":[{"name":"overflow","command":"yes JSON_OVERFLOW | head -c 131072"}]}`
+				}
 			} else {
 				files[".github/workflows/ci.yml"] = test.workflow
 			}
@@ -672,6 +678,10 @@ func TestCoordinatorHostActions(t *testing.T) {
 						t.Fatalf("attempt=%+v", attempt)
 					}
 					for _, step := range attempt.Results {
+						if strings.Contains(test.name, "output overflow") && (step.OutputLimitExceededBytes != 65536 || !step.Truncated ||
+							strings.Contains(step.OutputExcerpt, "OwnGit stopped this check") || !strings.Contains(log, "[OwnGit stopped this check: its output passed the limit of 65536 bytes.]")) {
+							t.Fatalf("overflow step=%+v log note=%v", step, strings.Contains(log, "OwnGit stopped this check"))
+						}
 						if strings.Contains(step.OutputExcerpt, "MUST_NOT_RUN") {
 							t.Fatalf("skipped script executed: %+v", step)
 						}

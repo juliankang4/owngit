@@ -19,13 +19,14 @@ import (
 const maximumStepOutput = 256 << 10
 
 type ScriptResult struct {
-	Status       string
-	ExitCode     *int
-	Duration     time.Duration
-	Output       string
-	OutputGap    checkoutput.Gap
-	Truncated    bool
-	CleanupError string
+	Status              string
+	ExitCode            *int
+	Duration            time.Duration
+	Output              string
+	OutputGap           checkoutput.Gap
+	Truncated           bool
+	ExceededOutputLimit int64
+	CleanupError        string
 }
 
 // RunIdentity comes from the admitted run, never from a persisted plan.
@@ -450,6 +451,7 @@ func executeStep(ctx context.Context, root *os.Root, plan JobPlan, step Step, op
 		Timeout: timeout, OutputLimit: options.OutputLimit, Output: stream})
 	output, gap, streamErr := stream.finish()
 	result.Status, result.ExitCode, result.Duration, result.Truncated, result.CleanupError = native.Status, native.ExitCode, native.Duration, native.Truncated, native.CleanupError
+	result.ExceededOutputLimit = native.ExceededOutputLimit
 	log := checkoutput.LogBuffer{Limit: maximumStepOutput}
 	log.AddClipped(output, gap)
 	log.Add(mask.text(native.Output))

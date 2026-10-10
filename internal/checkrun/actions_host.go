@@ -11,6 +11,7 @@ import (
 	"owngit/internal/actions/container"
 	"owngit/internal/actions/host"
 	"owngit/internal/checkapi"
+	"owngit/internal/checkexec"
 	"owngit/internal/checksource"
 	"owngit/internal/state"
 )
@@ -190,9 +191,11 @@ func actionsStateResults(attempt state.CheckAttempt, result actions.JobResult) [
 		var cut bool
 		stored.OutputExcerpt, cut = checkapi.ClipLog(step.Output, state.MaximumCheckExcerptBytes, step.OutputGap)
 		stored.Truncated = step.Truncated || cut
+		stored.OutputLimitExceededBytes = step.ExceededOutputLimit
 	}
 	if result.Error != "" && len(results) != 0 {
 		results[0].Status = actions.StatusError
+		results[0].OutputLimitExceededBytes = 0
 		results[0].OutputExcerpt, results[0].Truncated = checkapi.ClipText(result.Error, state.MaximumCheckExcerptBytes)
 	}
 	return results
@@ -218,6 +221,12 @@ func actionsLog(result actions.JobResult) (string, bool) {
 	for _, step := range result.Steps {
 		log.Add("\n=== " + step.Name + " ===\n")
 		log.AddClipped(step.Output, step.OutputGap)
+		if step.ExceededOutputLimit > 0 {
+			if !strings.HasSuffix(step.Output, "\n") {
+				log.Add("\n")
+			}
+			log.Add(checkexec.OutputLimitNote(step.ExceededOutputLimit))
+		}
 		log.Add("\n")
 		for _, note := range step.Notes {
 			log.Add(note.Code + ": " + note.Detail + "\n")

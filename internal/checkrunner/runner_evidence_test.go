@@ -7,6 +7,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"owngit/internal/checkapi"
 	"owngit/internal/checkexec"
 	"owngit/internal/state"
 )
@@ -21,7 +22,7 @@ func TestRunnerEvidenceStaysWithinServerBoundsAfterJSON(t *testing.T) {
 		// A three-byte rune straddles every byte bound after the two-byte prefix.
 		{Name: "korean", Command: "korean", Status: checkexec.StatusPassed, Output: "xy" + strings.Repeat("가", 100_000)},
 	}
-	converted := runnerResults(results)
+	converted := runnerResults(results, true)
 	if converted[0].OutputExcerpt != "ok 가\n" || converted[0].Truncated {
 		t.Fatalf("small excerpt changed: %+v", converted[0])
 	}
@@ -38,6 +39,32 @@ func TestRunnerEvidenceStaysWithinServerBoundsAfterJSON(t *testing.T) {
 	}
 	if log, truncated := runnerLog(results[:1]); truncated || log != "[passed] small\nok 가\n\n" {
 		t.Fatalf("small log=%q truncated=%v", log, truncated)
+	}
+}
+
+func TestRunnerUploadUsesStartCapability(t *testing.T) {
+	result := checkexec.Result{Name: "step", Command: "print", Status: checkexec.StatusIncomplete, Output: "user output", Truncated: true, ExceededOutputLimit: 4096}
+	for _, test := range []struct {
+		start string
+		limit int64
+	}{
+		{`{"attempt":{"result_facts":["output_limit_exceeded_bytes"]}}`, 4096},
+		{`{"attempt":{}}`, 0},
+		{`{bad`, 0},
+	} {
+		var answer checkapi.JobResponse
+		_ = json.Unmarshal([]byte(test.start), &answer)
+		facts := runnerResults([]checkexec.Result{result}, answer.Attempt.AcceptsResultFact(checkapi.OutputLimitExceededFact), "run")
+		encoded, err := json.Marshal(facts[0])
+		noErr(t, err)
+		if facts[0].OutputLimitExceededBytes != test.limit || strings.Contains(string(encoded), checkapi.OutputLimitExceededFact) != (test.limit > 0) ||
+			strings.Contains(facts[0].OutputExcerpt, checkexec.OutputLimitNote(4096)) != (test.limit == 0) || facts[0].Role != "run" {
+			t.Fatalf("start=%q upload=%s", test.start, encoded)
+		}
+	}
+	log, _ := runnerLog([]checkexec.Result{result})
+	if !strings.Contains(log, checkexec.OutputLimitNote(4096)) {
+		t.Fatalf("raw log lost the limit note: %q", log)
 	}
 }
 

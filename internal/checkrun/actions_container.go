@@ -167,5 +167,6 @@ func (container *ActionsContainer) runScript(ctx context.Context, script actions
 		result.CleanupError = "Container execution stopped because its ownership could not be established."
 	}
 	return actions.ScriptResult{Status: result.Status, ExitCode: result.ExitCode, Duration: result.Duration,
-		Output: result.Output, OutputGap: result.OutputGap, Truncated: result.Truncated, CleanupError: result.CleanupError}
+		Output: result.Output, OutputGap: result.OutputGap, Truncated: result.Truncated, CleanupError: result.CleanupError,
+		ExceededOutputLimit: result.ExceededOutputLimit}
 }

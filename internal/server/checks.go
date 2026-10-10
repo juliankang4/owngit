@@ -188,7 +188,9 @@ func (app *App) registerAttempt(writer http.ResponseWriter, request *http.Reques
 		}
 		return
 	}
-	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: app.attemptJSON(request, stored)})
+	answer := app.attemptJSON(request, stored)
+	answer.ResultFacts = []string{checkapi.OutputLimitExceededFact}
+	writeAPIJSON(writer, http.StatusOK, checkapi.TaskResponse{OK: true, Task: taskJSON(task), Attempt: answer})
 }
 
 // completeAttempt stores the results and the raw log of a registered attempt.
@@ -564,7 +566,7 @@ func completionFromUpload(upload checkapi.AttemptCompletion, repositoryID, taskI
 		if !validResultStatus(result.Status) {
 			return state.CheckCompletion{}, pullrequest.NewProblem("invalid_attempt", "A check result has an unknown status.")
 		}
-		if result.DurationMS < 0 {
+		if result.DurationMS < 0 || !state.ValidOutputLimitFact(result.OutputLimitExceededBytes, result.Status, result.Truncated) {
 			return state.CheckCompletion{}, pullrequest.NewProblem("invalid_attempt", "A check result has an invalid duration or excerpt.")
 		}
 		excerpt, excerptCut := checkapi.ClipLog(result.OutputExcerpt, state.MaximumCheckExcerptBytes, checkapi.Gap{})
@@ -574,7 +576,7 @@ func completionFromUpload(upload checkapi.AttemptCompletion, repositoryID, taskI
 		results = append(results, state.CheckResult{
 			Name: result.Name, Command: result.Command, Status: result.Status, ExitCode: result.ExitCode,
 			DurationMS: result.DurationMS, OutputExcerpt: excerpt, Truncated: result.Truncated || excerptCut,
-			CleanupError: result.CleanupError, Role: result.Role,
+			CleanupError: result.CleanupError, Role: result.Role, OutputLimitExceededBytes: result.OutputLimitExceededBytes,
 		})
 	}
 	return state.CheckCompletion{
@@ -666,7 +668,7 @@ func (app *App) attemptJSON(request *http.Request, attempt state.CheckAttempt) *
 		response.Results = append(response.Results, checkapi.Result{
 			Name: result.Name, Command: result.Command, Status: result.Status, ExitCode: result.ExitCode,
 			DurationMS: result.DurationMS, OutputExcerpt: result.OutputExcerpt, Truncated: result.Truncated,
-			CleanupError: result.CleanupError, Role: result.Role,
+			CleanupError: result.CleanupError, Role: result.Role, OutputLimitExceededBytes: result.OutputLimitExceededBytes,
 		})
 	}
 	return response

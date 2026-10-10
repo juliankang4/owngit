@@ -658,6 +658,7 @@ func (app *App) browserCheckJobDetail(request *http.Request, stored state.Reposi
 	}
 	record := app.browserAttemptRecord(request.Context(), attempt)
 	detail.Attempt = &record
+	detail.Job.Outcome = browserJobOutcome(job.AttemptID, job.Summary, attempt)
 	detail.Log = app.browserCheckJobLog(request.Context(), attempt)
 	return detail
 }
@@ -684,7 +685,7 @@ func (app *App) browserCheckJobLog(ctx context.Context, attempt state.CheckAttem
 		return view
 	}
 	if expires := retention.LogExpiry(attempt); expires != nil {
-		view.ExpiresAt = *expires
+		view.ExpiresAt = expires.Local()
 	}
 	// One call decides everything: it answers missing for an absent or
 	// unusable identity, expired past the retention bound, and found only when

@@ -17,7 +17,8 @@ type FeedRecord struct {
 	// ID names the record among those of its kind: the pull request's
 	// repository and number, or the check job's, import run's or backup
 	// run's ID.
-	ID string
+	ID        string
+	AttemptID string
 	// RepositoryID and RepositoryName are "" for a backup. RepositoryName
 	// is RepositoryID when the repository is gone.
 	RepositoryID, RepositoryName string
@@ -39,21 +40,17 @@ type FeedRecord struct {
 	At time.Time
 }
 
-// feedQueries select, for each kind, the records written at or after the
-// first and before the second argument, the oldest first; the time is the
-// eighth column and the repository address the last. Times are Unix seconds except for check jobs, which keep
-// nanoseconds.
 var feedQueries = map[string]string{
-	NotifyPullRequest: `SELECT p.repository_id || '/' || p.number, p.repository_id, r.name, p.number, p.title, p.source_branch, '', p.created_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = p.repository_id AND n.kind = 'current'), p.repository_id)
+	NotifyPullRequest: `SELECT p.repository_id || '/' || p.number, p.repository_id, r.name, p.number, p.title, p.source_branch, '', p.created_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = p.repository_id AND n.kind = 'current'), p.repository_id), ''
 		FROM pull_requests p JOIN repositories r ON r.id = p.repository_id
 		WHERE p.status != 'creating' AND p.created_at >= ? AND p.created_at < ? ORDER BY p.created_at, p.repository_id, p.number`,
-	NotifyCheckFailed: `SELECT j.id, j.repository_id, r.name, j.pull_request_number, '', j.trigger_ref, j.summary, j.finished_at / 1000000000, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = j.repository_id AND n.kind = 'current'), j.repository_id)
+	NotifyCheckFailed: `SELECT j.id, j.repository_id, r.name, j.pull_request_number, '', j.trigger_ref, j.summary, j.finished_at / 1000000000, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = j.repository_id AND n.kind = 'current'), j.repository_id), j.attempt_id
 		FROM check_jobs j JOIN repositories r ON r.id = j.repository_id
 		WHERE j.status IN ('failed','error') AND j.finished_at >= ? * 1000000000 AND j.finished_at < ? * 1000000000 ORDER BY j.finished_at, j.id`,
-	NotifyImportFailed: `SELECT i.id, i.repository_id, COALESCE(r.name, i.repository_id), 0, '', '', i.message, i.finished_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = i.repository_id AND n.kind = 'current'), i.repository_id)
+	NotifyImportFailed: `SELECT i.id, i.repository_id, COALESCE(r.name, i.repository_id), 0, '', '', i.message, i.finished_at, COALESCE((SELECT n.name FROM repository_names n WHERE n.repository_id = i.repository_id AND n.kind = 'current'), i.repository_id), ''
 		FROM import_runs i LEFT JOIN repositories r ON r.id = i.repository_id
 		WHERE i.status IN ('failed','interrupted','unresolved') AND i.finished_at >= ? AND i.finished_at < ? ORDER BY i.finished_at, i.id`,
-	NotifyBackupFailed: `SELECT b.id, '', '', 0, '', '', b.message, COALESCE(b.finished_at, b.started_at), ''
+	NotifyBackupFailed: `SELECT b.id, '', '', 0, '', '', b.message, COALESCE(b.finished_at, b.started_at), '', ''
 		FROM backup_runs b
 		WHERE b.status IN ('failed','interrupted') AND COALESCE(b.finished_at, b.started_at) >= ? AND COALESCE(b.finished_at, b.started_at) < ? ORDER BY 8, b.id`,
 }
@@ -76,7 +73,7 @@ func (s *Store) FeedRecords(ctx context.Context, kind string, from, until time.T
 	for rows.Next() {
 		record := FeedRecord{Kind: kind}
 		var at int64
-		if err := rows.Scan(&record.ID, &record.RepositoryID, &record.RepositoryName, &record.Number, &record.Title, &record.Branch, &record.Message, &at, &record.RepositoryAddress); err != nil {
+		if err := rows.Scan(&record.ID, &record.RepositoryID, &record.RepositoryName, &record.Number, &record.Title, &record.Branch, &record.Message, &at, &record.RepositoryAddress, &record.AttemptID); err != nil {
 			return nil, 0, err
 		}
 		record.At = time.Unix(at, 0)

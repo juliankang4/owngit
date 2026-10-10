@@ -442,6 +442,7 @@ type CheckRuntimeView struct {
 
 // CheckJobRow is one recorded job.
 type CheckJobRow struct {
+	Outcome *CheckOutcome
 	ID      string
 	ShortID string
 	// URL opens this job on the same screen. Empty renders no link.

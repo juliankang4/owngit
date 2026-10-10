@@ -315,7 +315,7 @@ func (app *App) trayEvents(request *http.Request, feed trayFeedRequest) (TrayEve
 		if err != nil {
 			return TrayEvents{}, err
 		}
-		events.Notifications = append(events.Notifications, app.recordNotifications(feed, kind, records, total)...)
+		events.Notifications = append(events.Notifications, app.recordNotifications(request.Context(), feed, kind, records, total)...)
 		cursor.Times[kind] = until.Unix()
 	}
 	if starting {
@@ -481,7 +481,7 @@ func repositoryPath(address string) string {
 // recordNotifications words the records of one kind that the icon shows,
 // total of them of which records are the first: one notification each, or
 // one for all when there are more than trayFeedSeparate.
-func (app *App) recordNotifications(feed trayFeedRequest, kind string, records []state.FeedRecord, total int) []TrayNotification {
+func (app *App) recordNotifications(ctx context.Context, feed trayFeedRequest, kind string, records []state.FeedRecord, total int) []TrayNotification {
 	text := func(code webui.MessageCode, args ...any) string {
 		return fmt.Sprintf(webui.Text(feed.lang, code), args...)
 	}
@@ -506,6 +506,14 @@ func (app *App) recordNotifications(feed trayFeedRequest, kind string, records [
 				notification.Subtitle = text(webui.MsgNotifyOpenedElsewhere)
 			}
 		case state.NotifyCheckFailed:
+			if record.AttemptID != "" {
+				attempt, found, err := app.Store.CheckAttemptByID(ctx, record.RepositoryID, record.AttemptID)
+				if err == nil && found {
+					if outcome := browserJobOutcome(record.AttemptID, record.Message, attempt); outcome != nil {
+						notification.Body = webui.CheckOutcomeText(feed.lang, *outcome)
+					}
+				}
+			}
 			notification.Title = text(webui.MsgNotifyCheckFailed, record.RepositoryName)
 			notification.Subtitle = shortRefName(record.Branch)
 			notification.Path = repositoryPath(record.RepositoryAddress) + "/tasks"

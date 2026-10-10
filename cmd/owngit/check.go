@@ -378,21 +378,22 @@ func (request checkRunRequest) validate() error {
 // Each step honors its own context. Give complete a context that outlives a
 // cancellation of execute, so a cancelled run is still recorded.
 type checkAttempt struct {
-	target       *connection
-	request      checkRunRequest
-	definitions  []checkexec.Definition
-	revision     string
-	worktree     string
-	started      time.Time
-	registration checkapi.AttemptRegistration
-	registered   bool
-	output       checkRunOutput
-	results      []checkexec.Result
-	cancelled    bool
-	status       string
-	finished     time.Time
-	log          string
-	logTruncated bool
+	target              *connection
+	request             checkRunRequest
+	definitions         []checkexec.Definition
+	revision            string
+	worktree            string
+	started             time.Time
+	registration        checkapi.AttemptRegistration
+	registered          bool
+	resultFactsAccepted bool
+	output              checkRunOutput
+	results             []checkexec.Result
+	cancelled           bool
+	status              string
+	finished            time.Time
+	log                 string
+	logTruncated        bool
 	// stopSignal is the signal that stopped the run, as 128 plus its number is
 	// the exit status. It is nil when no signal stopped the run, and it is read
 	// where the exit status is decided, after the result is recorded.
@@ -462,6 +463,7 @@ func (run *checkAttempt) register(ctx context.Context) error {
 		return nil
 	}
 	run.registered = true
+	run.resultFactsAccepted = response.Attempt.AcceptsResultFact(checkapi.OutputLimitExceededFact)
 	run.output.Registered = true
 	run.output.Task = response.Task
 	if response.Task != nil {
@@ -495,7 +497,7 @@ func (run *checkAttempt) execute(ctx context.Context) {
 	}
 	run.worktreeNote = note
 	run.log, run.logTruncated = buildCheckLog(run.results, note)
-	run.output.Results = checkResultsJSON(run.results)
+	run.output.Results = checkResultsJSON(run.results, run.target == nil || run.resultFactsAccepted)
 }
 
 // complete records the outcome of a registered attempt, or describes a
@@ -902,16 +904,23 @@ func cleanupFailed(results []checkexec.Result) bool {
 	return false
 }
 
-func checkResultsJSON(results []checkexec.Result) []checkapi.Result {
+func checkResultsJSON(results []checkexec.Result, supportsFacts bool) []checkapi.Result {
 	output := make([]checkapi.Result, 0, len(results))
 	for _, result := range results {
-		excerpt, cut := checkapi.ClipLog(result.Output, state.MaximumCheckExcerptBytes, result.OutputGap)
+		outputText, gap := result.Output, result.OutputGap
+		limit := int64(0)
+		if supportsFacts {
+			limit = result.ExceededOutputLimit
+		} else {
+			outputText, gap = result.NotedOutput()
+		}
+		excerpt, cut := checkapi.ClipLog(outputText, state.MaximumCheckExcerptBytes, gap)
 		truncated := result.Truncated || cut
 		cleanupError, _ := checkapi.ClipText(result.CleanupError, state.MaximumCleanupErrorBytes)
 		output = append(output, checkapi.Result{
 			Name: result.Name, Command: result.Command, Status: result.Status, ExitCode: result.ExitCode,
 			DurationMS: result.Duration.Milliseconds(), OutputExcerpt: excerpt, Truncated: truncated,
-			CleanupError: cleanupError,
+			CleanupError: cleanupError, OutputLimitExceededBytes: limit,
 		})
 	}
 	return output
@@ -944,7 +953,8 @@ func buildCheckLog(results []checkexec.Result, worktreeNote string) (string, boo
 	log.Add(worktreeNote)
 	for _, result := range results {
 		log.Add(fmt.Sprintf("== %s: %s (exit %s)\n", result.Name, result.Status, exitCodeText(result.ExitCode)))
-		log.AddClipped(result.Output, result.OutputGap)
+		outputText, gap := result.NotedOutput()
+		log.AddClipped(outputText, gap)
 		if result.Truncated {
 			log.Add("\n[output truncated]\n")
 		}

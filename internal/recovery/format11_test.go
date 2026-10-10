@@ -73,6 +73,11 @@ func TestFormat11RecordsSurviveBackupAndRestore(t *testing.T) {
 	if manifest.Version != recordsBackupVersion || format11Content(manifest) == "" {
 		t.Fatalf("backup version=%d content=%q, want %d", manifest.Version, format11Content(manifest), recordsBackupVersion)
 	}
+	olderWithFact := manifest
+	olderWithFact.CheckResults = []CheckResultManifest{{OutputLimitExceededBytes: 65536}}
+	if err := validateManifest(olderWithFact); err == nil || !strings.Contains(err.Error(), "version 11 backup contains output-limit result facts") {
+		t.Fatalf("version 11 fact validation: %v", err)
+	}
 
 	restoredState := canonicalTestTarget(t, filepath.Join(root, "restored-state"))
 	if _, err := RestoreWithReport(ctx, backup, restoredState, canonicalTestTarget(t, filepath.Join(root, "restored-repositories")), ""); err != nil {
@@ -371,7 +376,7 @@ func TestEveryFormat11FieldNeedsFormat11(t *testing.T) {
 		reflect.TypeFor[Manifest](): 25, reflect.TypeFor[RepositoryManifest](): 13, reflect.TypeFor[RepositoryNameManifest](): 4, reflect.TypeFor[RepositoryPolicyManifest](): 4,
 		reflect.TypeFor[Head](): 2, reflect.TypeFor[Ref](): 2, reflect.TypeFor[PullRequestManifest](): 19, reflect.TypeFor[PullRequestRevisionManifest](): 5,
 		reflect.TypeFor[PullRequestReviewManifest](): 12, reflect.TypeFor[PullRequestMergeManifest](): 11, reflect.TypeFor[TaskManifest](): 5, reflect.TypeFor[CheckConfigurationManifest](): 5,
-		reflect.TypeFor[CheckDefinitionManifest](): 2, reflect.TypeFor[CheckCycleManifest](): 6, reflect.TypeFor[CheckAttemptManifest](): 32, reflect.TypeFor[CheckResultManifest](): 11,
+		reflect.TypeFor[CheckDefinitionManifest](): 2, reflect.TypeFor[CheckCycleManifest](): 6, reflect.TypeFor[CheckAttemptManifest](): 32, reflect.TypeFor[CheckResultManifest](): 12,
 		reflect.TypeFor[CheckPolicyManifest](): 17, reflect.TypeFor[CheckJobManifest](): 44, reflect.TypeFor[CheckJobLimitsManifest](): 2, reflect.TypeFor[state.CheckExecutionSettings](): 14,
 		reflect.TypeFor[ImportSourceManifest](): 11, reflect.TypeFor[ImportRunManifest](): 30, reflect.TypeFor[ImportObservationManifest](): 7, reflect.TypeFor[ImportIntentManifest](): 18,
 		reflect.TypeFor[state.Actor](): 3,

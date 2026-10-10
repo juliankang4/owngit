@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"owngit/internal/actions"
 	"owngit/internal/checkexec"
 	"owngit/internal/state"
 )
@@ -36,6 +37,42 @@ func TestAutomaticEvidenceIsValidUTF8WithinBounds(t *testing.T) {
 	}
 	if log, truncated := buildLog(small); log != "[passed] small\nok 가\n" || truncated {
 		t.Fatalf("small log=%q truncated=%v", log, truncated)
+	}
+}
+
+func TestExecutionLimitIsDistinctFromExcerptClipping(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		status    string
+		output    string
+		limit     int64
+		wantLimit int64
+	}{
+		{"clipped excerpt", checkexec.StatusPassed, strings.Repeat("x", state.MaximumCheckExcerptBytes+1), 0, 0},
+		{"timeout and clipped excerpt", checkexec.StatusIncomplete, strings.Repeat("x", state.MaximumCheckExcerptBytes+1), 0, 0},
+		{"execution overflow", checkexec.StatusIncomplete, "user output", 4096, 4096},
+		{"cleanup error", checkexec.StatusError, "user output", 4096, 4096},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			check := checkexec.Result{Name: "run", Command: "print", Status: test.status, Output: test.output,
+				Truncated: test.limit > 0, ExceededOutputLimit: test.limit}
+			jsonResult := stateResults([]checkexec.Result{check})[0]
+			step := actions.StepResult{ScriptResult: actions.ScriptResult{Status: check.Status, Output: check.Output,
+				Truncated: check.Truncated, ExceededOutputLimit: check.ExceededOutputLimit}, Index: 0, Role: actions.RoleRun}
+			actionResult := actionsStateResults(state.CheckAttempt{Checks: []state.CheckDefinition{{Name: "run", Command: "print"}}},
+				actions.JobResult{Steps: []actions.StepResult{step}})[0]
+			for _, result := range []state.CheckResult{jsonResult, actionResult} {
+				if result.OutputLimitExceededBytes != test.wantLimit || !result.Truncated ||
+					strings.Contains(result.OutputExcerpt, "OwnGit stopped this check") {
+					t.Fatalf("result=%+v", result)
+				}
+			}
+		})
+	}
+	log, _ := actionsLog(actions.JobResult{Steps: []actions.StepResult{{ScriptResult: actions.ScriptResult{
+		Status: actions.StatusIncomplete, Output: "user output", ExceededOutputLimit: 4096}}}})
+	if !strings.Contains(log, "user output\n"+strings.TrimSpace(checkexec.OutputLimitNote(4096))) {
+		t.Fatalf("Actions raw log lost the notice line: %q", log)
 	}
 }
 

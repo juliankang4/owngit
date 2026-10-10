@@ -245,6 +245,7 @@ type WorkflowSecretUse struct {
 }
 
 type WorkflowJobRow struct {
+	Outcome         *CheckOutcome
 	ID              string
 	Key             string
 	MatrixIndex     int
@@ -261,16 +262,17 @@ type WorkflowJobRow struct {
 // WorkflowStepRow is one step's outcome. Command and Excerpt are set only on
 // the job page.
 type WorkflowStepRow struct {
-	Name          string
-	Command       string
-	Status        string
-	Role          string
-	ExitCode      string
-	DurationMS    int64
-	Excerpt       string
-	Truncated     bool
-	CleanupError  string
-	CleanupFailed bool
+	OutputLimitExceededBytes int64
+	Name                     string
+	Command                  string
+	Status                   string
+	Role                     string
+	ExitCode                 string
+	DurationMS               int64
+	Excerpt                  string
+	Truncated                bool
+	CleanupError             string
+	CleanupFailed            bool
 }
 
 type WorkflowJobView struct {

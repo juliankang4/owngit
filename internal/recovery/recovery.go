@@ -174,17 +174,18 @@ type CheckAttemptManifest struct {
 }
 
 type CheckResultManifest struct {
-	AttemptID     string `json:"attempt_id"`
-	Position      int    `json:"position"`
-	Name          string `json:"name"`
-	Command       string `json:"command"`
-	Status        string `json:"status"`
-	ExitCode      *int   `json:"exit_code,omitempty"`
-	DurationMS    int64  `json:"duration_ms"`
-	OutputExcerpt string `json:"output_excerpt,omitempty"`
-	Truncated     bool   `json:"truncated,omitempty"`
-	CleanupError  string `json:"cleanup_error,omitempty"`
-	Role          string `json:"role,omitempty"`
+	AttemptID                string `json:"attempt_id"`
+	Position                 int    `json:"position"`
+	Name                     string `json:"name"`
+	Command                  string `json:"command"`
+	Status                   string `json:"status"`
+	ExitCode                 *int   `json:"exit_code,omitempty"`
+	DurationMS               int64  `json:"duration_ms"`
+	OutputExcerpt            string `json:"output_excerpt,omitempty"`
+	Truncated                bool   `json:"truncated,omitempty"`
+	CleanupError             string `json:"cleanup_error,omitempty"`
+	Role                     string `json:"role,omitempty"`
+	OutputLimitExceededBytes int64  `json:"output_limit_exceeded_bytes,omitempty"`
 }
 
 type CheckPolicyManifest struct {
@@ -2154,6 +2155,9 @@ func format12Content(manifest Manifest) string {
 		}
 	}
 	for _, result := range manifest.CheckResults {
+		if result.OutputLimitExceededBytes > 0 {
+			return "output-limit result facts"
+		}
 		if result.Role != "" || result.Status == "skipped" || result.Status == "not_run" {
 			return "workflow step facts"
 		}
@@ -2214,6 +2218,7 @@ func addCheckState(manifest *Manifest, snapshot state.RecoveryState) {
 			AttemptID: result.AttemptID, Position: result.Position, Name: result.Name, Command: result.Command,
 			Status: result.Status, ExitCode: result.ExitCode, DurationMS: result.DurationMS,
 			OutputExcerpt: result.OutputExcerpt, Truncated: result.Truncated, CleanupError: result.CleanupError, Role: result.Role,
+			OutputLimitExceededBytes: result.OutputLimitExceededBytes,
 		})
 	}
 	for _, policy := range snapshot.CheckPolicies {
@@ -2353,6 +2358,7 @@ func recoveryState(manifest Manifest) state.RecoveryState {
 				Position: result.Position, Name: result.Name, Command: result.Command, Status: result.Status,
 				ExitCode: result.ExitCode, DurationMS: result.DurationMS, OutputExcerpt: result.OutputExcerpt,
 				Truncated: result.Truncated, CleanupError: result.CleanupError, Role: result.Role,
+				OutputLimitExceededBytes: result.OutputLimitExceededBytes,
 			},
 		})
 	}

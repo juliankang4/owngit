@@ -3,6 +3,7 @@ package state
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/actions"
 )
@@ -52,6 +53,65 @@ func TestAggregateAttemptStatus(t *testing.T) {
 				t.Fatalf("status=%q, want %q", got, test.want)
 			}
 		})
+	}
+}
+
+func TestAttemptOutcomeUsesOnlyVerifiedFacts(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		results            []CheckResult
+		worktree           string
+		credential         string
+		cancelled          bool
+		wantCancelled      bool
+		wantError          int
+		wantCancelledCount int
+		wantTolerated      int
+		wantRefusal        string
+		wantNothing        bool
+	}{
+		{"JSON failure", []CheckResult{{Status: AttemptFailed}}, WorktreeClean, "", false, false, 0, 0, 0, "", false},
+		{"refusal", []CheckResult{{Status: AttemptUnavailable, OutputExcerpt: "source missing"}}, WorktreeClean, jsonAdmissionRefusalCredentialID, false, false, 0, 0, 0, "source missing", false},
+		{"workflow tolerated", []CheckResult{{Status: AttemptFailed, Role: actions.RoleTolerated}}, WorktreeClean, "", false, false, 0, 0, 1, "", false},
+		{"workflow skipped", []CheckResult{{Status: actions.StatusSkipped, Role: actions.RoleRun}}, WorktreeClean, "", false, false, 0, 0, 0, "", true},
+		{"dirty", []CheckResult{{Status: AttemptPassed}}, WorktreeDirty, "", false, false, 0, 0, 0, "", false},
+		{"cancelled", []CheckResult{{Status: AttemptCancelled}}, WorktreeUnknown, "", true, true, 0, 1, 0, "", false},
+		{"submitted cancellation with cleanup error", []CheckResult{{Status: AttemptCancelled, CleanupError: "cleanup failed"}}, WorktreeClean, "", true, false, 1, 0, 0, "", false},
+		{"cancelled result without submitted cancellation", []CheckResult{{Status: AttemptCancelled}}, WorktreeClean, "", false, true, 0, 1, 0, "", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := len(test.results) > 0 && test.results[0].Role != ""
+			status, summary := checkAttemptOutcome(test.results, test.cancelled, test.worktree, workflow, test.credential)
+			attempt := CheckAttempt{Status: status, Summary: summary, Results: test.results, SubmittedCancelled: test.cancelled,
+				WorktreeState: test.worktree, CredentialID: test.credential, FinishedAt: time.Now()}
+			outcome, ok := attempt.Outcome()
+			if !ok || outcome.Total != len(test.results) || outcome.Workflow != workflow || outcome.Worktree != test.worktree ||
+				outcome.Tolerated != test.wantTolerated || outcome.Refusal != test.wantRefusal || outcome.NothingRan != test.wantNothing ||
+				outcome.Cancelled != test.wantCancelled || outcome.Error != test.wantError || outcome.CancelledCount != test.wantCancelledCount {
+				t.Fatalf("outcome=%+v ok=%v summary=%q", outcome, ok, summary)
+			}
+			attempt.Summary = "custom summary"
+			if _, ok := attempt.Outcome(); ok {
+				t.Fatal("custom text was claimed as typed")
+			}
+			attempt.Summary, attempt.Status = summary, AttemptPending
+			if _, ok := attempt.Outcome(); ok {
+				t.Fatal("pending attempt has an outcome")
+			}
+		})
+	}
+}
+
+func TestResultLimitDigestKeepsAbsentFieldBytes(t *testing.T) {
+	attempt := CheckAttempt{ID: "attempt", SubmittedWorktreeState: WorktreeClean, FinishedAt: time.Unix(0, 7), SubmittedLogDigest: "log"}
+	result := CheckResult{Name: "unit", Command: "print", Status: AttemptIncomplete, DurationMS: 10, OutputExcerpt: "user", Truncated: true}
+	old := digestFields("attempt", WorktreeClean, "false", "7", "false", "log", "unit", "print", AttemptIncomplete, "nil", "10", "user", "true", "")
+	if got := completionDigest(attempt, []CheckResult{result}); got != old {
+		t.Fatalf("historical digest changed: %s != %s", got, old)
+	}
+	result.OutputLimitExceededBytes = 4096
+	if got := completionDigest(attempt, []CheckResult{result}); got == old || got != digestFields("attempt", WorktreeClean, "false", "7", "false", "log", "unit", "print", AttemptIncomplete, "nil", "10", "user", "true", "", "output_limit", "4096") {
+		t.Fatalf("tagged digest=%s", got)
 	}
 }
 

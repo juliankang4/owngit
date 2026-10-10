@@ -185,6 +185,7 @@ type ReviewNote struct {
 }
 
 type Checks struct {
+	Outcome       *state.AttemptOutcome        `json:"-"`
 	Evidence      *state.RevisionCheckEvidence `json:"evidence,omitempty"`
 	AdmissionNote *actions.Message             `json:"admission_note,omitempty"`
 	DisplayChecks *Checks                      `json:"-"`

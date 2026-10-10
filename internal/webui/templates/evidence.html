@@ -91,7 +91,7 @@
 
     {{/* A pending attempt has a registration and nothing else, so the summary
          and outcome facts below are simply absent rather than blank. */}}
-    {{if not $e.Pending}}{{with $e.Summary}}<p class="ev__summary">{{.}}</p>{{end}}{{end}}
+    {{if not $e.Pending}}{{if $e.Outcome}}<p class="ev__summary">{{biCheckOutcome $lang $e.Outcome}}{{if $e.Stale}} {{bi $lang "evidence.outcome.config_changed"}}{{end}}</p>{{else}}{{with $e.Summary}}<p class="ev__summary">{{.}}</p>{{end}}{{end}}{{end}}
 
     <ul class="ev__notes">
       {{range checkNotes $e}}<li>{{bi $lang .}}</li>{{end}}
@@ -259,7 +259,7 @@
     {{if notZero $a.FinishedAt}}<span class="attempt__when">{{biDateTime $lang $a.FinishedAt}}</span>{{end}}
   </div>
 
-  {{if not $a.Pending}}{{with $a.Summary}}<p class="attempt__sum">{{.}}</p>{{end}}{{end}}
+  {{if not $a.Pending}}{{if $a.Outcome}}<p class="attempt__sum">{{biCheckOutcome $lang $a.Outcome}}</p>{{else}}{{with $a.Summary}}<p class="attempt__sum">{{.}}</p>{{end}}{{end}}{{end}}
 
   <ul class="ev__notes">
     {{range attemptNotes $a}}<li>{{bi $lang .}}</li>{{end}}
@@ -322,6 +322,7 @@
         {{/* The command is recorded data. It is shown as text so a reader can
              see exactly what ran, and it is never treated as markup. */}}
         <p class="result__cmd mono" dir="auto">{{.Command}}</p>
+        {{if gt .OutputLimitExceededBytes 0}}<p class="ev__note">{{biOutputLimit $lang .OutputLimitExceededBytes}}</p>{{end}}
         {{if .OutputExcerpt}}
           <div class="codebox codebox--short" tabindex="0" role="region" aria-label="{{.Name}}">
             <pre class="result__out">{{.OutputExcerpt}}</pre>

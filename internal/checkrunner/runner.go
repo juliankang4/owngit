@@ -288,6 +288,11 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 		return runner.notHandedOver(ctx, base, checkapi.ClaimedJob{JobID: job.ID, LeaseID: job.LeaseID}, err)
 	}
 
+	var started checkapi.JobResponse
+	if json.Unmarshal(startContent, &started) != nil {
+		started.Attempt = nil
+	}
+	supportsFacts := started.Attempt.AcceptsResultFact(checkapi.OutputLimitExceededFact)
 	var results []checkexec.Result
 	var roles []string
 	var cancelled bool
@@ -352,11 +357,13 @@ func (runner *Runner) runOne(ctx context.Context, workspaceRoot *checksource.Wor
 	}
 	log, logTruncated := runnerLog(results, notes)
 	completion := checkapi.AttemptCompletion{
-		Results: runnerResults(results, roles...), Cancelled: cancelled, FinishedAt: time.Now().UTC(),
+		Results: runnerResults(results, supportsFacts, roles...), Cancelled: cancelled, FinishedAt: time.Now().UTC(),
 		WorktreeState: submittedWorktree, Log: log, LogTruncated: logTruncated,
 	}
 	input := checkapi.RunnerCompletionInput{LeaseID: job.LeaseID, Completion: completion}
-	_, err = runner.Client.DoWithHeaders(context.WithoutCancel(ctx), http.MethodPost, base+"/jobs/"+job.ID+"/complete", input, leaseHeaders(job.LeaseID))
+	uploadClient := *runner.Client
+	uploadClient.MaximumRequest = checkapi.MaximumUploadBytes
+	_, err = uploadClient.DoWithHeaders(context.WithoutCancel(ctx), http.MethodPost, base+"/jobs/"+job.ID+"/complete", input, leaseHeaders(job.LeaseID))
 	if err == nil {
 		runner.log("completed configured-check job %s", job.ID)
 	}
@@ -522,14 +529,21 @@ func (source *remoteSource) CommitOID() string {
 
 func leaseHeaders(leaseID string) map[string]string { return map[string]string{leaseHeader: leaseID} }
 
-func runnerResults(results []checkexec.Result, roles ...string) []checkapi.Result {
+func runnerResults(results []checkexec.Result, supportsFacts bool, roles ...string) []checkapi.Result {
 	converted := make([]checkapi.Result, 0, len(results))
 	for index, result := range results {
 		role := ""
 		if index < len(roles) {
 			role = roles[index]
 		}
-		excerpt, cut := checkapi.ClipLog(result.Output, state.MaximumCheckExcerptBytes, result.OutputGap)
+		output, gap := result.Output, result.OutputGap
+		limit := int64(0)
+		if supportsFacts {
+			limit = result.ExceededOutputLimit
+		} else {
+			output, gap = result.NotedOutput()
+		}
+		excerpt, cut := checkapi.ClipLog(output, state.MaximumCheckExcerptBytes, gap)
 		truncated := result.Truncated || cut
 		cleanupError := result.CleanupError
 		if cleanupError != "" {
@@ -538,7 +552,7 @@ func runnerResults(results []checkexec.Result, roles ...string) []checkapi.Resul
 		converted = append(converted, checkapi.Result{
 			Name: result.Name, Command: result.Command, Status: result.Status, ExitCode: result.ExitCode, Role: role,
 			DurationMS: result.Duration.Milliseconds(), OutputExcerpt: excerpt, Truncated: truncated,
-			CleanupError: cleanupError,
+			CleanupError: cleanupError, OutputLimitExceededBytes: limit,
 		})
 	}
 	return converted
@@ -553,7 +567,8 @@ func runnerLog(results []checkexec.Result, notes ...string) (string, bool) {
 		// Output may be far larger than the log, so it is added as its own part
 		// rather than copied whole into one string before the cut.
 		log.Add("[" + result.Status + "] " + result.Command + "\n")
-		log.AddClipped(result.Output, result.OutputGap)
+		output, gap := result.NotedOutput()
+		log.AddClipped(output, gap)
 		log.Add("\n")
 	}
 	return log.Result()

@@ -410,6 +410,7 @@ type EvidenceReadFailure struct {
 // stale, not a result for the revision on screen. A dirty or unknown tree is
 // never shown as a tested commit, whatever TestedCommit says.
 type CheckEvidence struct {
+	Outcome  *CheckOutcome
 	Evidence *EvidenceLanes
 	Status   string
 	// Configured is false when the repository has no recorded check
@@ -656,14 +657,15 @@ type CheckConfigurationView struct {
 
 // CheckResultLine is one check inside an attempt.
 type CheckResultLine struct {
-	Name          string
-	Command       string
-	Status        string
-	ExitCode      int
-	HasExitCode   bool
-	DurationMS    int64
-	OutputExcerpt string
-	Truncated     bool
+	OutputLimitExceededBytes int64
+	Name                     string
+	Command                  string
+	Status                   string
+	ExitCode                 int
+	HasExitCode              bool
+	DurationMS               int64
+	OutputExcerpt            string
+	Truncated                bool
 	// CleanupError is the backend's untranslated reason a process this check
 	// started could not be cleaned up. Empty means no cleanup failure was
 	// reported. It is shown as recorded text, separate from the output, and
@@ -676,6 +678,7 @@ func (l CheckResultLine) CleanupFailed() bool { return l.CleanupError != "" }
 
 // AttemptRecord is one recorded check run.
 type AttemptRecord struct {
+	Outcome              *CheckOutcome
 	ID                   string
 	ShortID              string
 	Status               string

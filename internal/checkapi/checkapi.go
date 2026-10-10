@@ -82,15 +82,31 @@ type Task struct {
 	LastAppliedAttemptID   string `json:"last_applied_attempt_id,omitempty"`
 }
 
+const OutputLimitExceededFact = "output_limit_exceeded_bytes"
+
+// AcceptsResultFact checks the pre-execution answer, not an app version.
+func (attempt *Attempt) AcceptsResultFact(name string) bool {
+	if attempt == nil {
+		return false
+	}
+	for _, accepted := range attempt.ResultFacts {
+		if accepted == name {
+			return true
+		}
+	}
+	return false
+}
+
 type Result struct {
-	Name          string `json:"name"`
-	Command       string `json:"command"`
-	Status        string `json:"status"`
-	Role          string `json:"role,omitempty"`
-	ExitCode      *int   `json:"exit_code,omitempty"`
-	DurationMS    int64  `json:"duration_ms"`
-	OutputExcerpt string `json:"output_excerpt,omitempty"`
-	Truncated     bool   `json:"truncated,omitempty"`
+	Name                     string `json:"name"`
+	Command                  string `json:"command"`
+	Status                   string `json:"status"`
+	Role                     string `json:"role,omitempty"`
+	ExitCode                 *int   `json:"exit_code,omitempty"`
+	DurationMS               int64  `json:"duration_ms"`
+	OutputExcerpt            string `json:"output_excerpt,omitempty"`
+	Truncated                bool   `json:"truncated,omitempty"`
+	OutputLimitExceededBytes int64  `json:"output_limit_exceeded_bytes,omitempty"`
 	// CleanupError reports that the owned process group could not be confirmed
 	// released. The status is error while ExitCode stays the command code.
 	CleanupError string `json:"cleanup_error,omitempty"`
@@ -126,12 +142,14 @@ type Attempt struct {
 	// submitted the attempt.
 	CredentialID string `json:"credential_id,omitempty"`
 	// TimeoutMS and OutputLimitBytes are the execution limits that applied.
-	TimeoutMS        int64      `json:"timeout_ms"`
-	OutputLimitBytes int64      `json:"output_limit_bytes"`
-	LogID            string     `json:"log_id,omitempty"`
-	LogExpiresAt     *time.Time `json:"log_expires_at,omitempty"`
-	LogTruncated     bool       `json:"log_truncated"`
-	LogError         string     `json:"log_error,omitempty"`
+	TimeoutMS        int64 `json:"timeout_ms"`
+	OutputLimitBytes int64 `json:"output_limit_bytes"`
+	// ResultFacts is present only in registration and runner-start answers.
+	ResultFacts  []string   `json:"result_facts,omitempty"`
+	LogID        string     `json:"log_id,omitempty"`
+	LogExpiresAt *time.Time `json:"log_expires_at,omitempty"`
+	LogTruncated bool       `json:"log_truncated"`
+	LogError     string     `json:"log_error,omitempty"`
 	// CleanupFailed is the aggregate of the per-result cleanup errors, so a
 	// renderer that omits result rows still sees the failure.
 	CleanupFailed bool     `json:"cleanup_failed,omitempty"`

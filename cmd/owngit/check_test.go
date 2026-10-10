@@ -424,7 +424,7 @@ func TestCleanupFailureOutranksSeparateCancellationInCLI(t *testing.T) {
 			if status != checkexec.StatusError {
 				t.Fatalf("cleanup plus separate cancellation status=%q", status)
 			}
-			facts := checkResultsJSON(test.results)
+			facts := checkResultsJSON(test.results, true)
 			if len(facts) != 2 || facts[0].Status != test.results[0].Status || facts[1].Status != test.results[1].Status || facts[0].CleanupError != test.results[0].CleanupError || facts[1].CleanupError != test.results[1].CleanupError {
 				t.Fatalf("CLI conversion changed submitted facts: got=%+v want=%+v", facts, test.results)
 			}

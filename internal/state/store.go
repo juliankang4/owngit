@@ -1637,6 +1637,7 @@ var schemaSteps = []schemaStep{
 			truncated INTEGER NOT NULL DEFAULT 0,
 			cleanup_error TEXT NOT NULL DEFAULT '',
 			role TEXT NOT NULL DEFAULT '' CHECK (role IN ('','run','tolerated','builtin')),
+			output_limit_exceeded_bytes INTEGER NOT NULL DEFAULT 0 CHECK (output_limit_exceeded_bytes >= 0),
 			PRIMARY KEY (attempt_id, position),
 			FOREIGN KEY (attempt_id) REFERENCES check_attempts(id) ON DELETE CASCADE
 		)`,

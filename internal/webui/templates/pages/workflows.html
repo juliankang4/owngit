@@ -335,7 +335,7 @@
   </div>
   {{if $j.CancelRequested}}<p class="ev__note">{{bi $lang "wf.run.cancel_requested"}}</p>{{end}}
   {{if $j.Tolerated}}<p class="ev__note">{{wfMessage $lang (wfCode "note.tolerated")}}</p>{{end}}
-  {{with $j.Summary}}<p class="attempt__sum wfname" dir="auto">{{.}}</p>{{end}}
+  {{if $j.Outcome}}<p class="attempt__sum wfname" dir="auto">{{biCheckOutcome $lang $j.Outcome}}</p>{{else}}{{with $j.Summary}}<p class="attempt__sum wfname" dir="auto">{{.}}</p>{{end}}{{end}}
   {{if $j.Steps}}
   <div class="results">
     <p class="results__h">{{bi $lang "wf.job.steps"}}</p>
@@ -351,6 +351,7 @@
       </div>
       {{if $detail}}
         {{with .Command}}<p class="result__cmd mono" dir="auto">{{.}}</p>{{end}}
+        {{if gt .OutputLimitExceededBytes 0}}<p class="ev__note">{{biOutputLimit $lang .OutputLimitExceededBytes}}</p>{{end}}
         {{if .Excerpt}}
           <div class="codebox codebox--short" tabindex="0" role="region" aria-label="{{.Name}}">
             <pre class="result__out">{{.Excerpt}}</pre>

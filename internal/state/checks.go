@@ -172,6 +172,8 @@ type CheckResult struct {
 	DurationMS    int64
 	OutputExcerpt string
 	Truncated     bool
+	// Zero means the execution limit is not stated, not that it was not reached.
+	OutputLimitExceededBytes int64
 	// CleanupError reports that the owned process group could not be confirmed
 	// released. It makes the result an error while ExitCode stays visible.
 	CleanupError string
@@ -862,6 +864,9 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		if !validCheckResultStatus(result, workflow) {
 			return Task{}, CheckAttempt{}, errors.New("check result role or status does not match its execution lane")
 		}
+		if result.OutputLimitExceededBytes > registered.OutputLimitBytes {
+			return Task{}, CheckAttempt{}, fmt.Errorf("%w: check result output limit exceeds the attempt limit", ErrResultMismatch)
+		}
 	}
 	registered.Checks = configuration.Checks
 	if err := matchResults(registered.Checks, completion.Results); err != nil {
@@ -960,8 +965,8 @@ func (s *Store) completeCheckAttemptTx(ctx context.Context, completion CheckComp
 		return Task{}, CheckAttempt{}, err
 	}
 	for position, result := range completion.Results {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			registered.ID, position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode), result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role,output_limit_exceeded_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+			registered.ID, position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode), result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role, result.OutputLimitExceededBytes); err != nil {
 			if rawStored {
 				return Task{}, CheckAttempt{}, rawLogTransactionError(err)
 			}
@@ -1303,7 +1308,7 @@ func scanCheckAttempt(scanner rowScanner) (CheckAttempt, error) {
 }
 
 func loadCheckResults(ctx context.Context, queryer querier, attempt *CheckAttempt) error {
-	rows, err := queryer.QueryContext(ctx, `SELECT position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role FROM check_results WHERE attempt_id=? ORDER BY position`, attempt.ID)
+	rows, err := queryer.QueryContext(ctx, `SELECT position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role,output_limit_exceeded_bytes FROM check_results WHERE attempt_id=? ORDER BY position`, attempt.ID)
 	if err != nil {
 		return err
 	}
@@ -1312,7 +1317,7 @@ func loadCheckResults(ctx context.Context, queryer querier, attempt *CheckAttemp
 		var result CheckResult
 		var exitCode sql.NullInt64
 		var truncated int
-		if err := rows.Scan(&result.Position, &result.Name, &result.Command, &result.Status, &exitCode, &result.DurationMS, &result.OutputExcerpt, &truncated, &result.CleanupError, &result.Role); err != nil {
+		if err := rows.Scan(&result.Position, &result.Name, &result.Command, &result.Status, &exitCode, &result.DurationMS, &result.OutputExcerpt, &truncated, &result.CleanupError, &result.Role, &result.OutputLimitExceededBytes); err != nil {
 			return err
 		}
 		if exitCode.Valid {
@@ -1390,7 +1395,7 @@ func validateCompletion(completion CheckCompletion) error {
 		return errors.New("invalid check result count")
 	}
 	for _, result := range completion.Results {
-		if !validCheckText(result.Name, MaximumCheckNameBytes) || !validCheckText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result, result.Role != "") || result.DurationMS < 0 {
+		if !validCheckText(result.Name, MaximumCheckNameBytes) || !validCheckText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result, result.Role != "") || result.DurationMS < 0 || !ValidOutputLimitFact(result.OutputLimitExceededBytes, result.Status, result.Truncated) {
 			return errors.New("invalid check result")
 		}
 		if len(result.OutputExcerpt) > MaximumCheckExcerptBytes {
@@ -1562,6 +1567,9 @@ func completionDigest(attempt CheckAttempt, results []CheckResult) string {
 			strconv.FormatInt(result.DurationMS, 10), result.OutputExcerpt, strconv.FormatBool(result.Truncated), result.CleanupError)
 		if result.Role != "" {
 			fields = append(fields, "role", result.Role)
+		}
+		if result.OutputLimitExceededBytes > 0 {
+			fields = append(fields, "output_limit", strconv.FormatInt(result.OutputLimitExceededBytes, 10))
 		}
 	}
 	return digestFields(fields...)
@@ -2010,7 +2018,7 @@ func ValidateCheckRecovery(snapshot RecoveryState) error {
 		if !validText(result.Name, MaximumCheckNameBytes) || !validText(result.Command, MaximumCheckCommandBytes) || !validCheckResultStatus(result.CheckResult, jobs[attempt.JobID].RunID != "") {
 			return errors.New("invalid check result record")
 		}
-		if result.DurationMS < 0 || len(result.OutputExcerpt) > MaximumCheckExcerptBytes || len(result.CleanupError) > MaximumCleanupErrorBytes {
+		if result.DurationMS < 0 || len(result.OutputExcerpt) > MaximumCheckExcerptBytes || len(result.CleanupError) > MaximumCleanupErrorBytes || !ValidOutputLimitFact(result.OutputLimitExceededBytes, result.Status, result.Truncated) || result.OutputLimitExceededBytes > attempt.OutputLimitBytes {
 			return errors.New("invalid check result contents")
 		}
 		configuration := configurations[configurationKey(attempt.RepositoryID, attempt.ConfigurationVersion)]
@@ -2166,7 +2174,7 @@ func readCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState)
 		return err
 	}
 
-	rows, err = tx.QueryContext(ctx, `SELECT attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role FROM check_results ORDER BY attempt_id,position`)
+	rows, err = tx.QueryContext(ctx, `SELECT attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role,output_limit_exceeded_bytes FROM check_results ORDER BY attempt_id,position`)
 	if err != nil {
 		return err
 	}
@@ -2174,7 +2182,7 @@ func readCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot *RecoveryState)
 		var record CheckResultRecord
 		var exitCode sql.NullInt64
 		var truncated int
-		if err := rows.Scan(&record.AttemptID, &record.Position, &record.Name, &record.Command, &record.Status, &exitCode, &record.DurationMS, &record.OutputExcerpt, &truncated, &record.CleanupError, &record.Role); err != nil {
+		if err := rows.Scan(&record.AttemptID, &record.Position, &record.Name, &record.Command, &record.Status, &exitCode, &record.DurationMS, &record.OutputExcerpt, &truncated, &record.CleanupError, &record.Role, &record.OutputLimitExceededBytes); err != nil {
 			rows.Close()
 			return err
 		}
@@ -2232,9 +2240,9 @@ func restoreCheckRecovery(ctx context.Context, tx *sql.Tx, snapshot RecoveryStat
 		}
 	}
 	for _, result := range snapshot.CheckResults {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO check_results(attempt_id,position,name,command,status,exit_code,duration_ms,output_excerpt,truncated,cleanup_error,role,output_limit_exceeded_bytes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
 			result.AttemptID, result.Position, result.Name, result.Command, result.Status, nullableInt(result.ExitCode),
-			result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role); err != nil {
+			result.DurationMS, result.OutputExcerpt, boolInt(result.Truncated), result.CleanupError, result.Role, result.OutputLimitExceededBytes); err != nil {
 			return fmt.Errorf("restore check result %s/%d: %w", result.AttemptID, result.Position, err)
 		}
 	}

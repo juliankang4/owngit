@@ -1226,7 +1226,7 @@ func stateResults(results []checkexec.Result) []state.CheckResult {
 		converted = append(converted, state.CheckResult{
 			Position: index, Name: result.Name, Command: result.Command, Status: result.Status,
 			ExitCode: result.ExitCode, DurationMS: result.Duration.Milliseconds(), OutputExcerpt: excerpt,
-			Truncated: truncated, CleanupError: cleanupError,
+			Truncated: truncated, CleanupError: cleanupError, OutputLimitExceededBytes: result.ExceededOutputLimit,
 		})
 	}
 	return converted
@@ -1238,7 +1238,8 @@ func buildLog(results []checkexec.Result) (string, bool) {
 		// Output may be far larger than the log, so it is added as its own part
 		// rather than copied whole into one string before the cut.
 		log.Add("[" + result.Status + "] " + result.Command + "\n")
-		log.AddClipped(result.Output, result.OutputGap)
+		output, gap := result.NotedOutput()
+		log.AddClipped(output, gap)
 		log.Add("\n")
 	}
 	return log.Result()

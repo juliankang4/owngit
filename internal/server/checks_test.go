@@ -20,6 +20,52 @@ import (
 	"owngit/internal/state"
 )
 
+func TestOutputLimitFactUploadAndRegistrationCapability(t *testing.T) {
+	fixture := newAPIFixture(t, false)
+	base, token := helperAPI(t, fixture, "laptop", time.Now())
+	created := checkRequest(t, http.MethodPost, base+"/tasks", map[string]any{"title": "Output"}, token)
+	var task checkapi.TaskResponse
+	decodeCheckJSON(t, created, &task)
+	body := attemptUploadBodyWithID(fixture.sourceOID, state.WorktreeClean, state.AttemptIncomplete, "0123456789abcdef0123456789abcdef")
+	registered := registerAttempt(t, base, task.Task.ID, token, body)
+	var answer checkapi.TaskResponse
+	decodeCheckJSON(t, registered, &answer)
+	if !answer.Attempt.AcceptsResultFact(checkapi.OutputLimitExceededFact) {
+		t.Fatal("registration did not advertise the result fact")
+	}
+	status := checkRequest(t, http.MethodGet, base+"/tasks/"+task.Task.ID, nil, token)
+	var read checkapi.TaskResponse
+	decodeCheckJSON(t, status, &read)
+	if read.Attempt != nil && len(read.Attempt.ResultFacts) != 0 {
+		t.Fatal("ordinary status advertised a pre-execution capability")
+	}
+	result := body["results"].([]map[string]any)[0]
+	result["truncated"], result[checkapi.OutputLimitExceededFact] = true, int64(65536)
+	for _, invalid := range []int64{-1, 65537} {
+		result[checkapi.OutputLimitExceededFact] = invalid
+		response := completeAttempt(t, base, task.Task.ID, answer.Attempt.ID, token, body)
+		if response.StatusCode != http.StatusUnprocessableEntity {
+			response.Body.Close()
+			t.Fatalf("invalid limit %d answered %d, want 422", invalid, response.StatusCode)
+		}
+		response.Body.Close()
+	}
+	result[checkapi.OutputLimitExceededFact], result["status"] = int64(65536), state.AttemptPassed
+	if response := completeAttempt(t, base, task.Task.ID, answer.Attempt.ID, token, body); response.StatusCode == http.StatusOK {
+		response.Body.Close()
+		t.Fatal("accepted a passing result with an execution limit fact")
+	} else {
+		response.Body.Close()
+	}
+	result["status"] = state.AttemptIncomplete
+	completed := completeAttempt(t, base, task.Task.ID, answer.Attempt.ID, token, body)
+	var saved checkapi.TaskResponse
+	decodeCheckJSON(t, completed, &saved)
+	if saved.Attempt == nil || saved.Attempt.Results[0].OutputLimitExceededBytes != 65536 || len(saved.Attempt.ResultFacts) != 0 {
+		t.Fatalf("completed fact=%+v", saved.Attempt)
+	}
+}
+
 func TestHelperCredentialAuthAndAttemptUpload(t *testing.T) {
 	fixture := newAPIFixture(t, false)
 	ctx := context.Background()

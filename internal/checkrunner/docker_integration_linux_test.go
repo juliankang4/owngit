@@ -170,7 +170,7 @@ func TestRealDockerConfiguredChecks(t *testing.T) {
 		}
 		attempt, exists, err := fixture.store.CheckAttemptByID(fixture.ctx, fixture.repository.ID, completed.AttemptID)
 		if err != nil || !exists || attempt.Status != state.AttemptIncomplete || len(attempt.Results) != 1 || !attempt.Results[0].Truncated ||
-			!strings.Contains(attempt.Results[0].OutputExcerpt, "its output passed the limit of 65536 bytes") || strings.Contains(attempt.Results[0].OutputExcerpt, "late") {
+			attempt.Results[0].OutputLimitExceededBytes != 65536 || strings.Contains(attempt.Results[0].OutputExcerpt, "its output passed the limit") || strings.Contains(attempt.Results[0].OutputExcerpt, "late") {
 			t.Fatalf("over-limit attempt=%+v exists=%v err=%v", attempt, exists, err)
 		}
 		fixture.assertContainerRemoved("owngit-check-" + job.ID + "-0")

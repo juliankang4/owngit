@@ -196,6 +196,9 @@ func TestRunnerWorkflowExecution(t *testing.T) {
 			{ID: "first", Name: "secret", Run: "echo ${{ secrets.NAMED }}\necho answer=ready >> \"$GITHUB_OUTPUT\"", Shell: "bash"},
 			{Name: "output", Run: "echo ${{ steps.first.outputs.answer }}", Shell: "bash"},
 		}, roles: []string{actions.RoleRun, actions.RoleRun}},
+		{name: "output overflow", status: state.CheckJobIncomplete, steps: []actions.Step{
+			{Name: "overflow", Run: "yes RUNNER_OVERFLOW | head -c 131072", Shell: "bash"},
+		}, roles: []string{actions.RoleRun}},
 		{name: "failure stops ordinary steps", status: state.CheckJobFailed, steps: []actions.Step{
 			{Name: "fail", Run: "exit 7"}, {Name: "skipped", Run: "echo NEVER_RUN"},
 			{Name: "failure", If: "failure()", Run: "echo failure-observed"},
@@ -238,6 +241,14 @@ func TestRunnerWorkflowExecution(t *testing.T) {
 			attempt, exists, err := fixture.store.CheckAttemptByID(fixture.ctx, fixture.repository.ID, stored.AttemptID)
 			if err != nil || !exists || attempt.Status != row.status || len(attempt.Results) != len(row.roles) {
 				t.Fatalf("attempt exists=%v status=%s want=%s results=%d err=%v", exists, attempt.Status, row.status, len(attempt.Results), err)
+			}
+			if row.name == "output overflow" {
+				result := attempt.Results[0]
+				log, _, err := fixture.store.ReadCheckLog(attempt, state.DefaultCheckLogRetention, time.Now())
+				if err != nil || result.OutputLimitExceededBytes != 65536 || !result.Truncated || strings.Contains(result.OutputExcerpt, "OwnGit stopped this check") ||
+					!strings.Contains(string(log), "[OwnGit stopped this check: its output passed the limit of 65536 bytes.]") {
+					t.Fatalf("runner workflow fact=%d log note=%v err=%v", result.OutputLimitExceededBytes, strings.Contains(string(log), "OwnGit stopped this check"), err)
+				}
 			}
 			if row.name == "secret and step output" && (!strings.Contains(attempt.Results[0].OutputExcerpt, "[redacted]") || !strings.Contains(attempt.Results[1].OutputExcerpt, "ready")) {
 				t.Fatalf("runtime delivery: masked=%v output_resolved=%v", strings.Contains(attempt.Results[0].OutputExcerpt, "[redacted]"), strings.Contains(attempt.Results[1].OutputExcerpt, "ready"))

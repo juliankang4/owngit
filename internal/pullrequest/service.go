@@ -1038,6 +1038,7 @@ func (service *Service) attemptChecksForRevision(ctx context.Context, repository
 			checks = service.checksFromAttempt(ctx, latest, source.OID)
 			checks.Status = "stale"
 			checks.Stale = true
+			checks.Outcome = nil
 			checks.Summary = "Latest check ran for " + shortOID(latest.RevisionOID) + " (" + latest.Status + ")"
 		}
 		return checks
@@ -1076,6 +1077,9 @@ func (service *Service) checksFromAttempt(ctx context.Context, attempt state.Che
 		CredentialID: attempt.CredentialID, JobID: attempt.JobID,
 		LogTruncated: attempt.LogTruncated, LogError: attempt.LogError,
 		RegisteredAt: &registered, CleanupFailed: attempt.CleanupFailed(),
+	}
+	if outcome, ok := attempt.Outcome(); ok {
+		checks.Outcome = &outcome
 	}
 	if attempt.Status != state.AttemptPending {
 		finished := attempt.FinishedAt
