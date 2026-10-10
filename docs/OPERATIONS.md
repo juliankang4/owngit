@@ -67,7 +67,7 @@ The one-line command runs the script before anything checks it. `SHA256SUMS` cov
 Every route needs Git with `git-http-backend` on the host. Homebrew and the Arch Linux package install Git for you.
 
 - Homebrew (macOS on Apple silicon, Linux x64 and ARM64): `brew install juliankang4/tap/owngit`
-- Homebrew menu bar app (optional; macOS 13 or later on Apple silicon): `brew install --cask juliankang4/tap/owngit`, then `owngit service install`. The cask puts OwnGit.app in `/Applications` and installs the formula above if it is missing; it is not a second copy of the program or the service. With the formula alone, the app stays in Homebrew's own folder and works as before.
+- Homebrew menu bar app (macOS 13 or later on Apple silicon): `brew install --cask juliankang4/tap/owngit`, then `owngit service install`. The cask puts OwnGit.app in `/Applications` and installs the formula above if it is missing. The formula provides the command and server; the cask supplies the app without adding another service. The icon needs an app with the same version as the command. Without one, the command and server work without an icon.
 - npm (macOS on Apple silicon, Linux x64 and ARM64, Windows x64; needs Node.js): `npm install -g owngit`
 - Arch Linux or Omarchy (x64, ARM64): build the `PKGBUILD` attached to each release.
 - Any of these platforms: the archive from [GitHub Releases](https://github.com/juliankang4/owngit/releases), checked against `SHA256SUMS`.
@@ -185,7 +185,7 @@ To update, install the new release outside `%ProgramFiles%\OwnGit` and run its `
 - The log is in `~/Library/Logs/owngit` ([Log files on macOS](#log-files-on-macos)).
 - If you turn OwnGit off under System Settings, General, Login Items & Extensions, the agent does not start.
 - After `npm update -g owngit`, run `owngit service install` again.
-- The service also opens the menu bar icon; [OwnGit icon and notifications](#owngit-icon-and-notifications) says which copy of OwnGit.app it uses.
+- The service also opens the menu bar icon when a usable app is installed. Homebrew needs a matching app in `/Applications`; see [OwnGit icon and notifications](#owngit-icon-and-notifications).
 
 ### Log files on macOS
 
@@ -300,16 +300,20 @@ When a service under your account runs this program, the printed command also ru
 
 With Homebrew, `owngit service install` after `brew upgrade owngit` hands the restart to `brew services restart owngit` without opening the state first, so the new version backs up the state and then upgrades it.
 
-If you also installed the optional Homebrew cask, update the program and the app together, then restart the service and the icon:
+If you use the Homebrew menu bar app, update both the formula and the cask so their versions match, then restart the service and the icon:
 
 ```sh
-brew upgrade --formula owngit && brew upgrade --cask owngit
+brew upgrade --formula juliankang4/tap/owngit && brew upgrade --cask juliankang4/tap/owngit
 owngit service install
 ```
 
-Until the two have the same version, OwnGit uses the app in Homebrew's own folder instead of the one in `/Applications`. `brew uninstall --cask juliankang4/tap/owngit` removes only the app in `/Applications`; the formula, the state and the repositories stay.
+If you have not installed the cask, use `brew install --cask juliankang4/tap/owngit` before running `owngit service install`. If the app is newer than the command, update the formula too; upgrading only the cask does not fix that mismatch. Until the versions match, the service runs without opening an icon. OwnGit does not fall back to the app in Homebrew's Cellar folder or replace an existing app itself.
 
-`owngit uninstall` removes the service, quits the menu bar icon and prints how to remove the program. On Windows, it also removes OwnGit's registration for [Windows notifications](#windows-notifications). When OwnGit used the app in `/Applications`, it also prints how to remove that app: `brew uninstall --cask juliankang4/tap/owngit` for a Homebrew install, or moving the app to the Trash otherwise. An app in `/Applications` of another version is not named, because it may belong to another install. `owngit uninstall` never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
+`brew uninstall --cask juliankang4/tap/owngit` removes the app in `/Applications`; the formula, the state and the repositories stay. Later service commands do not open the Cellar app.
+
+`owngit uninstall` removes the service and tries to quit the menu bar icon, then prints how to remove the program. On Windows, it also removes OwnGit's registration for [Windows notifications](#windows-notifications). When OwnGit used the app in `/Applications`, it also prints how to remove that app: `brew uninstall --cask juliankang4/tap/owngit` for a Homebrew install, or moving the app to the Trash otherwise. An app in `/Applications` of another version is not named, because it may belong to another install. `owngit uninstall` never deletes the state directory or the repositories, and it prints where they are. A later install uses them again.
+
+On macOS, a failure to confirm icon exit or turn off opening at sign-in is reported as an error even if the service was removed. Follow the reported instructions before removing the app.
 
 ### Backup versions
 
@@ -476,12 +480,15 @@ To end the confirmation of a browser you can no longer access, change the admini
 On a computer with a desktop, the OwnGit icon shows in the macOS menu bar, the Windows notification area or the Linux desktop's panel. Its panel shows whether OwnGit runs, the clone address, the three latest pushes, and the command to run when OwnGit needs attention. Hiding or quitting the icon never stops OwnGit.
 
 - `owngit tray off` hides the icon until `owngit tray on`. `owngit tray status` says whether it is shown and, if not, why. The General tab of Settings has the same switch.
-- macOS: the icon is OwnGit.app. `owngit service install` opens it and registers it to open at sign-in. Where the app is depends on how you installed OwnGit:
+- macOS: the icon is OwnGit.app. When a usable app is installed, `owngit service install` opens it and registers it to open at sign-in. Where the app is depends on how you installed OwnGit:
   - The one-line installer puts it in `/Applications` when your account can write that folder, and otherwise beside the program.
-  - The Homebrew formula keeps it in Homebrew's own folder, beside the formula's `bin` folder.
-  - The optional Homebrew cask puts it in `/Applications`.
+  - For Homebrew, install the app in `/Applications` with `brew install --cask juliankang4/tap/owngit`. The formula alone runs the command and server without opening an icon.
 
-  OwnGit uses the app in `/Applications` only when it is OwnGit's own app, has the same version as the program, and holds its launcher and built-in program. Otherwise it uses the app that came with the program. Before `owngit service install` opens the chosen app, it quits your account's running OwnGit icon from `/Applications` or from beside the program, whatever its version, so only one icon shows. It knows these apps by OwnGit's bundle identifier and leaves other apps alone. If an earlier icon does not quit, the command does not open another one and says so. On macOS 27, a menu bar manager such as Hidden Bar can hide the icon of an app outside `/Applications`.
+  OwnGit uses the app in `/Applications` only when it is OwnGit's own app, has the same version as the program, and holds its executable launcher and built-in program. The app must also pass OwnGit's path protection checks. A matching manually installed app works too; OwnGit does not check for a cask receipt. A missing, damaged or mismatched app leaves a Homebrew installation without an icon. A link into Homebrew's Cellar folder is not accepted, and OwnGit does not replace an existing app itself. For non-Homebrew installations, OwnGit falls back to the app that came with the program.
+
+  The formula keeps its bundled app only to clean up known older icons and login items; it is not a launch fallback.
+
+  Before `owngit service install` opens the chosen app, it quits your account's running OwnGit icon from `/Applications` or from beside the program, whatever its version, so only one icon shows. It knows these apps by OwnGit's bundle identifier and leaves other apps alone. If an earlier icon does not quit, the command does not open another one and says so. On macOS 27, a menu bar manager such as Hidden Bar can hide the icon of an app outside `/Applications`.
 
   When the one-line installer moves the app to `/Applications`, the OwnGit.app that an earlier version put beside the program stays there. `owngit service install` quits its icon but does not delete the app. Once the new icon works, you can move the old app to the Trash. If an old icon still opens when you sign in, turn off its entry under Open at Login in System Settings, General, Login Items & Extensions. Do not remove the app in Homebrew's folder by hand; Homebrew manages it.
 - Windows: the `OwnGit icon` task starts it at sign-in. Click opens the dashboard; right-click opens the panel.

@@ -1031,10 +1031,20 @@ func TestHomebrewCaskRendering(t *testing.T) {
 				t.Fatal("the formula must not infer its version from arm64 in the URL")
 			}
 			if tc.app && !strings.Contains(formula, `prefix.install "OwnGit.app"`) {
-				t.Fatal("the formula lost its menu bar app")
+				t.Fatal("the formula lost its legacy login item cleanup bundle")
 			}
-			if !strings.Contains(formula, "brew install --cask example/tap/owngit") {
-				t.Fatal("the formula has no cask guidance")
+			for _, want := range []string{
+				"formula runs the owngit command and server without a menu bar icon",
+				"brew install --cask example/tap/owngit",
+				"brew upgrade --cask example/tap/owngit",
+				"Then run: owngit service install",
+			} {
+				if !strings.Contains(formula, want) {
+					t.Fatalf("the formula lacks %q", want)
+				}
+			}
+			if !strings.Contains(cask, "Without a matching cask, the command and server") || !strings.Contains(cask, "does not open the formula's Cellar app") {
+				t.Fatal("the cask still promises a formula icon fallback")
 			}
 		})
 	}

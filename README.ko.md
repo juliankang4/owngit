@@ -53,8 +53,8 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 | 방법 | 명령 |
 | --- | --- |
-| Homebrew(macOS, Linux) | `brew install juliankang4/tap/owngit` |
-| Homebrew 메뉴 막대 앱(macOS, 선택) | `brew install --cask juliankang4/tap/owngit` 실행 후 `owngit service install` |
+| Homebrew 명령줄 프로그램과 서버(macOS, Linux) | `brew install juliankang4/tap/owngit` |
+| Homebrew 메뉴 막대 앱(macOS) | `brew install --cask juliankang4/tap/owngit` 실행 후 `owngit service install` |
 | npm(Node.js 필요) | `npm install -g owngit` |
 | Arch Linux | [최신 릴리스](https://github.com/juliankang4/owngit/releases/latest)의 `PKGBUILD`로 `makepkg -si` |
 | Docker Compose | [`compose.yaml`](packaging/container/compose.yaml)을 두고 `docker compose up -d`, 이어서 `docker compose exec -it owngit owngit setup-link` |
@@ -85,9 +85,11 @@ irm -MaximumRedirection 0 https://owngit.app/install.ps1 | iex
 
 ### OwnGit 아이콘
 
-macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 OwnGit 아이콘을 가릴 수 있습니다. 한 줄 설치는 가능하면 앱을 `/Applications`에 넣습니다. Homebrew 사용자는 선택 사항인 cask로 같은 효과를 얻습니다. cask는 formula가 없으면 함께 설치합니다.
+macOS의 Homebrew 설치에서 메뉴 막대 아이콘을 쓰려면 명령줄 프로그램과 버전이 같은 OwnGit.app이 `/Applications`에 있어야 합니다. `brew install --cask juliankang4/tap/owngit`으로 앱을 설치한 뒤 `owngit service install`을 실행하세요. cask는 formula가 없으면 함께 설치합니다. formula만 설치해도 명령줄 프로그램과 서버는 아이콘 없이 동작합니다. 업데이트할 때는 두 패키지를 함께 업데이트하세요([업데이트와 제거](docs/OPERATIONS.ko.md#업데이트와-제거)).
 
-데스크톱에서는 서비스가 메뉴 막대, 알림 영역, 패널에 OwnGit 아이콘도 띄웁니다. 아이콘에서 상태, 클론 주소, 최근 푸시를 보고 대시보드를 엽니다. GNOME에서는 AppIndicator 확장이 있어야 보입니다.
+macOS 27에서는 Hidden Bar 같은 메뉴 막대 관리 앱이 `/Applications` 밖에 있는 앱의 OwnGit 아이콘을 가릴 수 있습니다. 한 줄 설치는 가능하면 앱을 `/Applications`에 넣습니다.
+
+다른 방법으로 데스크톱에 설치하면 서비스가 메뉴 막대, 알림 영역, 패널에 OwnGit 아이콘도 띄웁니다. 아이콘에서 상태, 클론 주소, 최근 푸시를 보고 대시보드를 엽니다. GNOME에서는 AppIndicator 확장이 있어야 보입니다.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/tray-panels.ko.dark.png">

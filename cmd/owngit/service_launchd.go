@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -175,8 +176,10 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 		host.printf("OwnGit was installed with npm, so the service runs the executable of its platform package directly: %s\n", host.agentExecutable)
 	}
 	plan := host.agentPlan(stateDir, headlessFlag, existing, found)
-	if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable, applicationsFolder); err != nil {
-		return fmt.Errorf("the OwnGit icon app of %s is damaged: %w; install OwnGit again", plan.Executable, err)
+	if host.homebrew == "" || host.iconAppPath() != "" {
+		if plan.App, err = service.AppBundleID(context.Background(), serviceRunner, plan.Executable, applicationsFolder); err != nil {
+			return fmt.Errorf("the OwnGit icon app of %s is damaged: %w; install OwnGit again", plan.Executable, err)
+		}
 	}
 	agent, err := service.RenderLaunchAgent(plan)
 	if err != nil {
@@ -193,6 +196,9 @@ func (host *launchAgentHost) install(stateDirFlag string, headlessFlag *bool) er
 	}
 	if err := host.reportStarted(plan.Mode, host.agentPath, stateDir); err != nil {
 		return err
+	}
+	if host.homebrew != "" && (plan.Headless || !host.env.GraphicalSession) && host.iconAppPath() == "" {
+		host.printCaskGuidance()
 	}
 	host.openIcon(stateDir, plan.Headless)
 	return nil
@@ -211,6 +217,12 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 	if headless {
 		return
 	}
+	if host.homebrew != "" && host.iconAppPath() == "" {
+		if host.env.GraphicalSession && host.env.Getenv("OWNGIT_FROM_ICON") == "" {
+			host.printCaskGuidance()
+		}
+		return
+	}
 	if host.restartIcon() || trayHiddenIn(stateDir) {
 		return
 	}
@@ -225,10 +237,52 @@ func (host *launchAgentHost) openIcon(stateDir string, headless bool) {
 	host.printf("The OwnGit icon is in the menu bar and opens when you sign in. \"owngit tray off\" hides it; OwnGit keeps running.\n")
 }
 
+func (host *launchAgentHost) iconAppPath() string {
+	app := service.AppPath(host.agentExecutable, applicationsFolder)
+	if host.homebrew == "" {
+		return app
+	}
+	if app != filepath.Join(applicationsFolder, service.AppName) {
+		return ""
+	}
+	resolved, err := filepath.EvalSymlinks(app)
+	if err != nil {
+		return ""
+	}
+	cellar, err := os.Stat(filepath.Join(host.homebrew, "Cellar"))
+	if err != nil || !cellar.IsDir() {
+		return ""
+	}
+	for dir := resolved; ; dir = filepath.Dir(dir) {
+		info, err := os.Stat(dir)
+		if err != nil || os.SameFile(info, cellar) {
+			return ""
+		}
+		parent := filepath.Dir(dir)
+		if strings.EqualFold(filepath.Base(parent), "Cellar") && strings.EqualFold(filepath.Base(dir), "owngit") {
+			formula, err := os.Stat(filepath.Join(filepath.Dir(parent), "Cellar", "owngit"))
+			if err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					return ""
+				}
+			} else if os.SameFile(info, formula) {
+				return ""
+			}
+		}
+		if parent == dir {
+			return app
+		}
+	}
+}
+
+func (host *launchAgentHost) printCaskGuidance() {
+	host.printf("The Homebrew menu bar icon needs a matching app in /Applications. Install or update it with brew install --cask owngit (or brew upgrade --cask owngit), then run owngit service install. The formula's command and server work without the icon.\n")
+}
+
 // iconApp returns the OwnGit.app of the service's program, resolved to
 // the place macOS runs it from, when this command may open it.
 func (host *launchAgentHost) iconApp() (string, bool) {
-	app := service.AppPath(host.agentExecutable, applicationsFolder)
+	app := host.iconAppPath()
 	if app == "" || !host.env.GraphicalSession || host.env.Getenv("OWNGIT_FROM_ICON") != "" {
 		return "", false
 	}
@@ -237,6 +291,9 @@ func (host *launchAgentHost) iconApp() (string, bool) {
 	}
 	if err := requireProtectedPath(service.AppLauncher(app)); err != nil {
 		host.printf("OwnGit does not open its menu bar icon at %s, because %v. OwnGit runs without it.\n", app, err)
+		if host.homebrew != "" {
+			host.printCaskGuidance()
+		}
 		return "", false
 	}
 	return app, true
@@ -259,8 +316,12 @@ func (host *launchAgentHost) restartIcon() bool {
 		return false
 	}
 	_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
-	if !iconExited(ctx, account, running) {
-		host.printf("An earlier OwnGit icon did not quit, so it still runs until you quit it or sign in again.\n")
+	if exited, err := iconExited(ctx, account, running); !exited {
+		if err != nil {
+			host.printf("Could not check whether the earlier OwnGit icon quit (%v). Quit it or sign in again.\n", err)
+		} else {
+			host.printf("An earlier OwnGit icon did not quit, so it still runs until you quit it or sign in again.\n")
+		}
 		return true
 	}
 	if output, err := serviceRunner(ctx, "/usr/bin/open", app, "--args", service.AppAtSignIn); err != nil {
@@ -285,12 +346,11 @@ func iconPattern(apps ...string) string {
 // closeIcon quits OwnGit.app, the menu bar icon, of the given programs and
 // turns off its opening at sign-in, since the service it shows is gone.
 // macOS runs an app at its resolved path, such as Homebrew's versioned
-// Cellar folder behind the opt link, so the icon is found there. Each app
-// is asked once, and each result is reported as checked; a failure does
-// not undo the uninstall.
-func (host *launchAgentHost) closeIcon(programs ...string) {
+// Cellar folder behind the opt link, so the icon is found there.
+func (host *launchAgentHost) closeIcon(programs ...string) error {
 	ctx := context.Background()
 	done := map[string]bool{}
+	var failures []error
 	for _, program := range programs {
 		for _, app := range service.AppPaths(program, applicationsFolder) {
 			if resolved, err := filepath.EvalSymlinks(app); err == nil {
@@ -307,40 +367,61 @@ func (host *launchAgentHost) closeIcon(programs ...string) {
 			// no icon runs; whether one is left is checked after it.
 			account := strconv.Itoa(host.uid)
 			_, _ = serviceRunner(ctx, "/usr/bin/pkill", "-U", account, "-f", running)
-			if iconExited(ctx, account, running) {
-				host.printf("The OwnGit icon at %s is closed.\n", app)
-			} else {
-				host.printf("The OwnGit icon at %s is still running. Quit it with the gear in its panel, then Quit the icon.\n", app)
+			exited, err := iconExited(ctx, account, running)
+			switch {
+			case err != nil:
+				failures = append(failures, fmt.Errorf("check icon at %s: %w", app, err))
+			case !exited:
+				failures = append(failures, fmt.Errorf("icon at %s is still running; quit it in its panel", app))
+			}
+			// macOS can launch a quarantined app at a random read-only path.
+			translocated := `^/private/var/folders/[^ ]+/AppTranslocation/[^ /]+/d/OwnGit\.app/Contents/MacOS/OwnGitLauncher( |$)`
+			if output, checkErr := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", translocated); strings.TrimSpace(string(output)) != "" {
+				failures = append(failures, fmt.Errorf("a launcher in AppTranslocation may still be running; quit the icon in its panel before removing %s", app))
+			} else if checkErr != nil && !noProcessMatch(checkErr) {
+				failures = append(failures, fmt.Errorf("check translocated launcher: %w", checkErr))
 			}
 			if err := requireProtectedPath(launcher); err != nil {
-				host.printf("OwnGit did not turn off opening its icon at %s at sign-in, because %v. Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", app, err)
+				failures = append(failures, fmt.Errorf("turn off opening the icon at %s at sign-in: %w; turn it off under Open at Login in System Settings, General, Login Items & Extensions", app, err))
 				continue
 			}
 			// The launcher exits 0 only when macOS reports the icon's sign-in
 			// item as not enabled any more.
-			if output, err := serviceRunner(ctx, launcher, service.AppSignInOff); err != nil {
-				host.printf("The OwnGit icon at %s could not be kept from opening at sign-in (%v: %s). Turn off OwnGit under Open at Login in System Settings, General, Login Items & Extensions.\n", app, err, strings.TrimSpace(string(output)))
+			helperCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			output, helperErr := serviceRunner(helperCtx, launcher, service.AppSignInOff)
+			cancel()
+			if helperErr != nil {
+				failures = append(failures, fmt.Errorf("turn off opening the icon at %s at sign-in: %w (%s); turn it off under Open at Login in System Settings, General, Login Items & Extensions", app, helperErr, strings.TrimSpace(string(output))))
 				continue
 			}
 			host.printf("The OwnGit icon at %s no longer opens at sign-in.\n", app)
 		}
 	}
+	return errors.Join(failures...)
 }
 
 // iconExited waits up to three seconds for no process of the account to
 // match running.
-func iconExited(ctx context.Context, account, running string) bool {
+func iconExited(ctx context.Context, account, running string) (bool, error) {
 	for attempt := 0; ; attempt++ {
-		// pgrep prints the matching process IDs and exits 1 without any.
-		output, _ := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", running)
-		if strings.TrimSpace(string(output)) == "" {
-			return true
+		// pgrep exits 1 when no process matches. Any other error is unknown.
+		output, err := serviceRunner(ctx, "/usr/bin/pgrep", "-U", account, "-f", running)
+		if err != nil && !noProcessMatch(err) {
+			return false, err
+		}
+		if strings.TrimSpace(string(output)) == "" && (err == nil || noProcessMatch(err)) {
+			return true, nil
 		}
 		if attempt == 10 {
-			return false
+			return false, nil
 		}
 		time.Sleep(300 * time.Millisecond)
 	}
+}
+
+func noProcessMatch(err error) bool {
+	var exited *exec.ExitError
+	return errors.As(err, &exited) && exited.ExitCode() == 1
 }
 
 // trayHiddenIn reports whether the owner hid the icon for stateDir. A state
@@ -466,9 +547,9 @@ func (host *launchAgentHost) uninstall() error {
 		if err := host.brewServices("stop"); err != nil {
 			return err
 		}
-		host.closeIcon(host.agentExecutable)
+		iconErr := host.closeIcon(host.agentExecutable)
 		host.printf("The Homebrew service is stopped and no longer starts. The data stays in %s.\n", mustAbs(defaultStateDir()))
-		return nil
+		return iconErr
 	case !found:
 		host.printf("OwnGit is not installed as a service.\n")
 		if line := describeOtherJob(host.otherJobs()); line != "" {
@@ -480,13 +561,13 @@ func (host *launchAgentHost) uninstall() error {
 	if err := service.UninstallLaunchAgent(context.Background(), serviceRunner, host.uid, installed.UnitPath); err != nil {
 		return err
 	}
-	host.closeIcon(installed.Executable, host.agentExecutable)
+	iconErr := host.closeIcon(installed.Executable, host.agentExecutable)
 	host.printf("The OwnGit service is stopped and removed. The state stays in %s", installed.StateDir)
 	if repositories := savedRepositoryRoot(installed.StateDir); repositories != "" {
 		host.printf(", the repositories in %s", repositories)
 	}
 	host.printf(" and the log in %s.\nRun \"owngit service install\" to use it again.\n", host.logHint(service.ModeLaunchAgent))
-	return nil
+	return iconErr
 }
 
 func (host *launchAgentHost) status() error {

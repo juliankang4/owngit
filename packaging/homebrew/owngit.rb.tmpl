@@ -36,8 +36,6 @@ class Owngit < Formula
   def install
     bin.install "owngit"
 {{- if .DarwinApp}}
-    # OwnGit.app, the menu bar icon, next to the bin folder of the program;
-    # "owngit service install" opens it from there.
     prefix.install "OwnGit.app" if OS.mac?
 {{- end}}
     prefix.install "LICENSE"
@@ -69,9 +67,11 @@ class Owngit < Formula
     return unless OS.mac?
 
     <<~EOS
-      To keep the menu bar icon visible with menu bar managers on macOS 27,
-      install the app in /Applications:
+      The formula runs the owngit command and server without a menu bar icon.
+      To use the icon, install the matching cask app in /Applications:
         brew install --cask {{ruby .TapFormula}}
+      After a formula update, update the cask too:
+        brew upgrade --cask {{ruby .TapFormula}}
       Then run: owngit service install
     EOS
   end

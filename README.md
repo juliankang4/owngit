@@ -53,8 +53,8 @@ Other ways to install:
 
 | Route | Command |
 | --- | --- |
-| Homebrew (macOS, Linux) | `brew install juliankang4/tap/owngit` |
-| Homebrew menu bar app (macOS, optional) | `brew install --cask juliankang4/tap/owngit`, then `owngit service install` |
+| Homebrew command and server (macOS, Linux) | `brew install juliankang4/tap/owngit` |
+| Homebrew menu bar app (macOS) | `brew install --cask juliankang4/tap/owngit`, then `owngit service install` |
 | npm (needs Node.js) | `npm install -g owngit` |
 | Arch Linux | `makepkg -si` with the `PKGBUILD` from the [latest release](https://github.com/juliankang4/owngit/releases/latest) |
 | Docker Compose | `docker compose up -d` with [`compose.yaml`](packaging/container/compose.yaml), then `docker compose exec -it owngit owngit setup-link` |
@@ -85,9 +85,11 @@ When something does not work, run `owngit doctor`. It reports what it found and 
 
 ### The OwnGit icon
 
-On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when its app is outside `/Applications`. The one-line installer puts the app there when it can. Homebrew users get the same with the optional cask, which also installs the formula if it is missing.
+For a Homebrew installation on macOS, the menu bar icon needs OwnGit.app in `/Applications` with the same version as the command. Install it with `brew install --cask juliankang4/tap/owngit`, then run `owngit service install`. The cask also installs the formula if it is missing. The formula alone provides the command and server without an icon. Keep both packages up to date ([Update and uninstall](docs/OPERATIONS.md#update-and-uninstall)).
 
-On a desktop, the service also adds an OwnGit icon to the menu bar, notification area or panel. It shows the status, the clone address and the latest pushes, and opens the dashboard. On GNOME it needs the AppIndicator extension.
+On macOS 27, a menu bar manager such as Hidden Bar can hide the OwnGit icon when its app is outside `/Applications`. The one-line installer puts the app there when it can.
+
+On other desktop installations, the service also adds an OwnGit icon to the menu bar, notification area or panel. It shows the status, the clone address and the latest pushes, and opens the dashboard. On GNOME it needs the AppIndicator extension.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/tray-panels.dark.png">

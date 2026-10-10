@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"owngit/internal/service"
 	"owngit/internal/state"
@@ -76,10 +77,10 @@ func recordLaunchctl(t *testing.T, loaded ...string) *fakeLaunchctl {
 			}
 			return nil, nil
 		case name == "/usr/bin/pgrep":
-			if fake.iconRunning || slices.ContainsFunc(fake.iconCommands, regexp.MustCompile(args[len(args)-1]).MatchString) {
+			if fake.iconRunning && !strings.Contains(args[len(args)-1], "AppTranslocation/") || slices.ContainsFunc(fake.iconCommands, regexp.MustCompile(args[len(args)-1]).MatchString) {
 				return []byte("4242\n"), nil
 			}
-			return nil, errors.New("exit status 1")
+			return nil, nil
 		case len(args) == 0:
 		case args[0] == "enable":
 			return nil, nil
@@ -252,6 +253,10 @@ func TestLaunchAgentInstallOfAHomebrewBinaryWithoutADesktop(t *testing.T) {
 	fake := recordLaunchctl(t)
 	prefix := fakeBrewPrefix(t)
 	host, out := testLaunchAgentHost(t, macWithoutDesktop(), prefix)
+	formula := filepath.Join(prefix, "Cellar", "owngit", "1.1.1")
+	writeIconApp(t, filepath.Join(formula, service.AppName), "app.owngit.OwnGit", version.Version, true)
+	noErr(t, os.MkdirAll(filepath.Join(prefix, "opt"), 0o755))
+	noErr(t, os.Symlink(formula, filepath.Join(prefix, "opt", "owngit")))
 	err := host.install("", nil)
 	if !errors.Is(err, service.ErrNotLoaded) {
 		t.Fatalf("install: %v (calls %q)", err, fake.calls)
@@ -263,6 +268,9 @@ func TestLaunchAgentInstallOfAHomebrewBinaryWithoutADesktop(t *testing.T) {
 		if !strings.Contains(fake.bootstrapped, want) {
 			t.Fatalf("the agent lacks %s:\n%s", want, fake.bootstrapped)
 		}
+	}
+	if strings.Contains(fake.bootstrapped, "AssociatedBundleIdentifiers") {
+		t.Fatalf("the formula's Cellar app was registered: %s", fake.bootstrapped)
 	}
 	if !strings.Contains(out.String(), "Homebrew's service starts only in a desktop login") {
 		t.Fatalf("install printed %q", out.String())
@@ -575,6 +583,105 @@ func TestLaunchAgentOpensTheIcon(t *testing.T) {
 	}
 }
 
+func TestLaunchAgentHomebrewIconRequiresCask(t *testing.T) {
+	for _, tc := range []struct {
+		name, identifier, release                                          string
+		cask, manualLink, damaged, wantOpen                                bool
+		cellarLink, cellarCaseLink, secondPrefixLink, secondPrefixCaseLink bool
+	}{
+		{name: "formula only"},
+		{name: "matching app in Applications", cask: true, identifier: "app.owngit.OwnGit", release: version.Version, wantOpen: true},
+		{name: "manual app linked in Applications", manualLink: true, wantOpen: true},
+		{name: "outdated cask", cask: true, identifier: "app.owngit.OwnGit", release: "0.0.0"},
+		{name: "damaged app", cask: true, damaged: true, identifier: "app.owngit.OwnGit", release: version.Version},
+		{name: "unrelated app", cask: true, identifier: "example.other", release: version.Version},
+		{name: "Cellar symlink in Applications", cellarLink: true},
+		{name: "case-variant Cellar symlink in Applications", cellarCaseLink: true},
+		{name: "second-prefix Cellar symlink in Applications", secondPrefixLink: true},
+		{name: "second-prefix case-variant Cellar symlink in Applications", secondPrefixCaseLink: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := recordLaunchctl(t)
+			prefix := t.TempDir()
+			host, out := testLaunchAgentHost(t, macDesktop(), prefix)
+			formula := filepath.Join(prefix, "Cellar", "owngit", "1.1.1")
+			cellarApp := filepath.Join(formula, service.AppName)
+			writeIconApp(t, cellarApp, "app.owngit.OwnGit", version.Version, true)
+			noErr(t, os.MkdirAll(filepath.Join(prefix, "opt"), 0o755))
+			noErr(t, os.Symlink(formula, filepath.Join(prefix, "opt", "owngit")))
+			cask := filepath.Join(applicationsFolder, service.AppName)
+			if tc.cellarLink || tc.cellarCaseLink || tc.secondPrefixLink || tc.secondPrefixCaseLink {
+				target := cellarApp
+				cellarPrefix := prefix
+				if tc.secondPrefixLink || tc.secondPrefixCaseLink {
+					cellarPrefix = t.TempDir()
+					target = filepath.Join(cellarPrefix, "Cellar", "owngit", "1.1.1", service.AppName)
+					writeIconApp(t, target, "app.owngit.OwnGit", version.Version, true)
+				}
+				if tc.cellarCaseLink || tc.secondPrefixCaseLink {
+					actual, err := os.Stat(target)
+					noErr(t, err)
+					target = filepath.Join(cellarPrefix, "CELLAR", "OWNGIT", "1.1.1", service.AppName)
+					alias, err := os.Stat(target)
+					if errors.Is(err, os.ErrNotExist) {
+						t.Skip("the test volume is case-sensitive")
+					}
+					noErr(t, err)
+					if !os.SameFile(actual, alias) {
+						t.Fatal("case-variant path is not the formula app")
+					}
+					t.Log("case-variant target identifies the same formula app")
+				}
+				if tc.secondPrefixLink || tc.secondPrefixCaseLink {
+					noErr(t, state.RequireProtectedPath(service.AppLauncher(target)))
+				}
+				noErr(t, os.Symlink(target, cask))
+			} else if tc.manualLink {
+				manual := filepath.Join(t.TempDir(), service.AppName)
+				writeIconApp(t, manual, "app.owngit.OwnGit", version.Version, true)
+				noErr(t, os.Symlink(manual, cask))
+			} else if tc.cask {
+				writeIconApp(t, cask, tc.identifier, tc.release, !tc.damaged)
+			}
+			resolvedCellar, err := filepath.EvalSymlinks(cellarApp)
+			noErr(t, err)
+			fake.iconCommands = []string{service.AppLauncher(resolvedCellar)}
+			fake.iconQuits = tc.wantOpen
+			if tc.cellarLink || tc.cellarCaseLink || tc.secondPrefixLink || tc.secondPrefixCaseLink {
+				host.env.GraphicalSession = false
+				if err := host.install("", nil); !errors.Is(err, service.ErrNotLoaded) {
+					t.Fatalf("install: %v (calls %v)", err, fake.calls)
+				}
+				if strings.Contains(fake.bootstrapped, "AssociatedBundleIdentifiers") {
+					t.Fatalf("formula alias was registered: %s", fake.bootstrapped)
+				}
+				host.env.GraphicalSession = true
+			}
+			host.openIcon(t.TempDir(), false)
+			opened := slices.ContainsFunc(fake.calls, func(call string) bool { return strings.HasPrefix(call, "/usr/bin/open ") })
+			if tc.wantOpen {
+				resolvedCask, err := filepath.EvalSymlinks(cask)
+				noErr(t, err)
+				opened = slices.Contains(fake.calls, "/usr/bin/open "+resolvedCask+" --args "+service.AppAtSignIn)
+			}
+			if opened != tc.wantOpen || slices.ContainsFunc(fake.calls, func(call string) bool { return strings.HasPrefix(call, "/usr/bin/open "+resolvedCellar) }) {
+				t.Fatalf("open calls: %v (output %s)", fake.calls, out)
+			}
+			if tc.wantOpen {
+				if len(fake.iconCommands) != 0 || !strings.Contains(out.String(), "restarted with this version") {
+					t.Fatalf("older Cellar icon was not replaced by the cask: %v (output %s)", fake.calls, out)
+				}
+			} else {
+				if host.restartIcon() || len(fake.iconCommands) != 1 || slices.ContainsFunc(fake.calls, func(call string) bool {
+					return strings.HasPrefix(call, "/usr/bin/pkill ")
+				}) || !strings.Contains(out.String(), "brew install --cask owngit") || !strings.Contains(out.String(), "formula's command and server work") {
+					t.Fatalf("Cellar icon changed or cask advice missing: %v (output %s)", fake.calls, out)
+				}
+			}
+		})
+	}
+}
+
 // service uninstall quits the icon of the removed service and turns off its
 // opening at sign-in, as the Windows uninstall removes the icon's task.
 func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
@@ -583,12 +690,13 @@ func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		name, systemRelease string
-		quits               bool
+		quits, translocated bool
 	}{
-		{"resolved Cellar path", "", true},
-		{"icon stays running", "", false},
-		{"preferred system app and old sibling", version.Version, true},
-		{"outdated system app and old sibling", "0.0.0", true},
+		{"resolved Cellar path", "", true, false},
+		{"icon stays running", "", false, false},
+		{"translocated icon remains", "", true, true},
+		{"preferred system app and old sibling", version.Version, true, false},
+		{"outdated system app and old sibling", "0.0.0", true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			fake := recordLaunchctl(t)
@@ -606,11 +714,17 @@ func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
 			resolved, err := filepath.EvalSymlinks(service.AppLauncher(app))
 			noErr(t, err)
 			fake.iconCommands, fake.iconQuits = []string{resolved}, tc.quits
+			if tc.translocated {
+				fake.iconCommands = []string{"/private/var/folders/abc/AppTranslocation/1234/d/OwnGit.app/Contents/MacOS/OwnGitLauncher"}
+			}
 			agent, err := service.RenderLaunchAgent(host.agentPlan(filepath.Join(t.TempDir(), "state"), nil, service.Installed{}, false))
 			noErr(t, err)
 			noErr(t, os.MkdirAll(filepath.Dir(host.agentPath), 0o755))
 			noErr(t, os.WriteFile(host.agentPath, []byte(agent), 0o644))
-			noErr(t, host.uninstall())
+			err = host.uninstall()
+			if (err != nil) != (!tc.quits || tc.translocated) {
+				t.Fatalf("uninstall result: %v", err)
+			}
 			calls := map[string]int{}
 			for _, call := range fake.calls {
 				calls[call]++
@@ -626,13 +740,83 @@ func TestLaunchAgentUninstallClosesTheIcon(t *testing.T) {
 					t.Fatalf("uninstall removed the app: %v", err)
 				}
 			}
-			if got := out.String(); (len(fake.iconCommands) == 0) != tc.quits || strings.Contains(got, "is closed") != tc.quits || !strings.Contains(got, "no longer opens at sign-in") || !strings.Contains(got, "stopped and removed") || (!tc.quits && !strings.Contains(got, "is still running")) {
+			if got := out.String(); !strings.Contains(got, "no longer opens at sign-in") || !strings.Contains(got, "stopped and removed") {
 				t.Fatalf("uninstall printed:\n%s", got)
+			}
+			if tc.translocated && (err == nil || !strings.Contains(err.Error(), "AppTranslocation")) {
+				t.Fatalf("translocated process not reported: %v", err)
+			}
+			if !tc.quits && (err == nil || !strings.Contains(err.Error(), "still running")) {
+				t.Fatalf("running icon not reported: %v", err)
 			}
 			if _, err := os.Stat(host.agentPath); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("the agent is still there: %v", err)
 			}
 		})
+	}
+}
+
+func TestLaunchAgentHomebrewUninstallReportsIconFailure(t *testing.T) {
+	fake := recordLaunchctl(t)
+	prefix := t.TempDir()
+	brew := filepath.Join(prefix, "bin", "brew")
+	noErr(t, os.MkdirAll(filepath.Dir(brew), 0o755))
+	noErr(t, os.WriteFile(brew, []byte("#!/bin/sh\necho \"$*\" >\"$0.calls\"\n"), 0o755))
+	host, out := testLaunchAgentHost(t, macDesktop(), prefix)
+	app := filepath.Join(filepath.Dir(host.agentExecutable), service.AppName)
+	writeIconApp(t, app, "app.owngit.OwnGit", version.Version, true)
+	fake.iconCommands = []string{"/private/var/folders/abc/T/AppTranslocation/1234/d/OwnGit.app/Contents/MacOS/OwnGitLauncher"}
+	fake.iconQuits = true
+	if err := host.uninstall(); err == nil || !strings.Contains(err.Error(), "AppTranslocation") {
+		t.Fatalf("Homebrew cleanup hid the remaining icon: %v, output=%s", err, out)
+	}
+	calls, err := os.ReadFile(brew + ".calls")
+	noErr(t, err)
+	if string(calls) != "services stop owngit\n" || !strings.Contains(out.String(), "Homebrew service is stopped") {
+		t.Fatalf("Homebrew service was not stopped: calls=%q output=%s", calls, out)
+	}
+}
+
+func TestLaunchAgentIconCheckError(t *testing.T) {
+	recordLaunchctl(t)
+	host, _ := testLaunchAgentHost(t, macDesktop(), "")
+	app := filepath.Join(filepath.Dir(host.agentExecutable), service.AppName)
+	writeIconApp(t, app, "app.owngit.OwnGit", version.Version, true)
+	runner := serviceRunner
+	serviceRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "/usr/bin/pgrep" {
+			return nil, errors.New("process inspection unavailable")
+		}
+		return runner(ctx, name, args...)
+	}
+	if err := host.closeIcon(host.agentExecutable); err == nil || !strings.Contains(err.Error(), "process inspection unavailable") {
+		t.Fatalf("failed process check was reported as closed: %v", err)
+	}
+}
+
+func TestLaunchAgentSignInOffDeadline(t *testing.T) {
+	fake := recordLaunchctl(t)
+	host, out := testLaunchAgentHost(t, macDesktop(), "")
+	app := filepath.Join(filepath.Dir(host.agentExecutable), service.AppName)
+	writeIconApp(t, app, "app.owngit.OwnGit", version.Version, true)
+	launcher, err := filepath.EvalSymlinks(service.AppLauncher(app))
+	noErr(t, err)
+	runner := serviceRunner
+	serviceRunner = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == launcher {
+			deadline, ok := ctx.Deadline()
+			if !ok || time.Until(deadline) > 15*time.Second || time.Until(deadline) <= 0 {
+				t.Errorf("sign-in helper has no usable deadline: %v, %t", deadline, ok)
+			}
+			return nil, context.DeadlineExceeded
+		}
+		return runner(ctx, name, args...)
+	}
+	if err := host.closeIcon(host.agentExecutable); !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "Open at Login") {
+		t.Fatalf("helper timeout was hidden: %v, output=%s, calls=%v", err, out, fake.calls)
+	}
+	if strings.Contains(out.String(), "no longer opens at sign-in") {
+		t.Fatalf("timeout was reported as successful: %s", out)
 	}
 }
 

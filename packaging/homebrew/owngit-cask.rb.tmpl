@@ -27,7 +27,8 @@
     Run owngit service install to use the app in /Applications.
     The formula supplies the command and brew services. The cask supplies
     the menu bar app. OwnGit uses the /Applications app when its version
-    matches the command, and otherwise uses the formula's app.
+    matches the command. Without a matching cask, the command and server
+    still work, but OwnGit does not open the formula's Cellar app.
     To update both, run: brew upgrade --formula owngit && brew upgrade --cask owngit
     Removing the cask leaves the formula, state and repositories in place.
   EOS

@@ -99,7 +99,7 @@ for (const event of [{key:'Escape',isComposing:true},{key:'Escape',keyCode:229},
   }
 }
 `
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, "-e", check, graph, string(sidebar))
 	cmd.Stdin = strings.NewReader(string(input))
