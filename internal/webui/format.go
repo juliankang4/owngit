@@ -59,14 +59,10 @@ func templateFuncs() template.FuncMap {
 		"themeIcon":    themeIcon,
 		"date":         formatDate,
 		"dateTime":     formatDateTime,
-		"relative":     formatRelative,
-		"dayHeading":   formatDayHeading,
 		"clock":        formatClock,
 		"bytes":        formatBytes,
 		"number":       formatNumber,
 		"count":        formatCount,
-		"withLang":     withLang,
-		"withQuery":    withQuery,
 		"listOrders":   ListOrders,
 		"level":        activityLevel,
 		// Known import words switch in place like any other catalog text; an
@@ -76,9 +72,6 @@ func templateFuncs() template.FuncMap {
 		},
 		"importError":  func(lang Lang, class string) template.HTML { return bi(lang, ImportErrorCode(class)) },
 		"weeks":        activityWeeks,
-		"monthLabel":   monthLabel,
-		"dayLabel":     dayLabel,
-		"dayLabels":    weekdayLabels,
 		"dict":         dict,
 		"noteID":       noteID,
 		"forAction":    noticesForAction,
@@ -126,7 +119,6 @@ func templateFuncs() template.FuncMap {
 		"revisionNote":    revisionNote,
 		"prNumber":        pullRequestNumber,
 		"prSelectionURL":  pullRequestSelectionURL,
-		"shortID":         shortID,
 		"duration":        formatDuration,
 		"budget":          budgetText,
 		"exitCode":        exitCodeText,
@@ -142,13 +134,11 @@ func templateFuncs() template.FuncMap {
 		// recorded value and let Go decide what it means, exactly as the
 		// evidence screens do.
 		"jobState":               jobState,
-		"consentState":           consentState,
 		"policyState":            policyState,
 		"runtimeState":           runtimeState,
 		"runtimeReason":          runtimeReason,
 		"executorName":           executorName,
 		"triggerName":            triggerName,
-		"networkName":            networkName,
 		"savePolicyAction":       savePolicyAction,
 		"fieldRange":             fieldRange,
 		"fieldDefault":           fieldDefault,
@@ -180,10 +170,7 @@ func templateFuncs() template.FuncMap {
 		"reviewSaveEnableAction": func() string { return ActionReviewSaveAndEnable },
 		"saveAndEnableAction":    func() string { return ActionSaveAndEnable },
 		"biValue":                func(lang Lang, value BiValue) template.HTML { return biText(lang, value.EN, value.KO) },
-		"pushEvent":              pushEvent,
-		"pullRequestEvent":       pullRequestEvent,
 		"forRunnerCredential":    forRunnerCredential,
-		"hasPrefix":              strings.HasPrefix,
 		"add":                    func(a, b int) int { return a + b },
 		"sub":                    func(a, b int) int { return a - b },
 		"workflowState":          workflowState,
@@ -838,15 +825,6 @@ func weekdayLabel(lang Lang, weekday int) string {
 		return weekdayNamesKO[weekday]
 	}
 	return time.Weekday(weekday).String()[:3]
-}
-
-// weekdayLabels lists the seven row labels in order.
-func weekdayLabels(lang Lang) []string {
-	out := make([]string, 7)
-	for i := range out {
-		out[i] = weekdayLabel(lang, i)
-	}
-	return out
 }
 
 // diffTotals sums the line counts of the changed files.

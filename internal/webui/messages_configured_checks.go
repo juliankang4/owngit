@@ -14,7 +14,6 @@ package webui
 // The configured-check policy screen.
 const (
 	MsgCCTitle    MessageCode = "cc.title"
-	MsgCCTab      MessageCode = "cc.tab"
 	MsgCCIntro    MessageCode = "cc.intro"
 	MsgCCOpen     MessageCode = "cc.open"
 	MsgCCManual   MessageCode = "cc.manual_helper"
@@ -145,7 +144,6 @@ const (
 	MsgCCContainerLimits MessageCode = "cc.policy.container_limits"
 	MsgCCImage           MessageCode = "cc.policy.container.image"
 	MsgCCImageHelp       MessageCode = "cc.policy.container.image_help"
-	MsgCCRuntimeName     MessageCode = "cc.policy.container.runtime"
 	MsgCCNetwork         MessageCode = "cc.policy.container.network"
 	MsgCCNetworkNone     MessageCode = "cc.policy.container.network_none"
 	MsgCCNetworkBridge   MessageCode = "cc.policy.container.network_bridge"
@@ -266,7 +264,6 @@ const (
 	MsgCCChecksUnread  MessageCode = "cc.job.commands_unreadable"
 	MsgCCJobFullOID    MessageCode = "cc.job.source_full"
 	MsgCCJobBaseOID    MessageCode = "cc.job.base"
-	MsgCCCopyHint      MessageCode = "cc.job.copy_hint"
 	MsgCCJobLog        MessageCode = "cc.job.log"
 	MsgCCJobLogCut     MessageCode = "cc.job.log_display_truncated"
 	MsgCCJobCancelAsk  MessageCode = "cc.job.cancel_requested"
@@ -335,7 +332,6 @@ const (
 	MsgCCSavedEnabled       MessageCode = "cc.result.saved_enabled"
 	MsgCCEnabled            MessageCode = "cc.result.enabled"
 	MsgCCDisabled           MessageCode = "cc.result.disabled"
-	MsgCCConsentRevoked     MessageCode = "cc.result.consent_revoked"
 	MsgCCJobCancelled       MessageCode = "cc.result.job_cancelled"
 	MsgCCJobAlreadyFinished MessageCode = "cc.result.job_already_finished"
 	MsgCCJobRerunQueued     MessageCode = "cc.result.job_rerun"
@@ -389,7 +385,6 @@ const (
 var configuredCheckCatalog = map[MessageCode]message{
 	// -- the screen itself ---------------------------------------------
 	MsgCCTitle: {en: "Automatic checks", ko: "자동 체크"},
-	MsgCCTab:   {en: "Automatic checks", ko: "자동 체크"},
 	MsgCCOpen:  {en: "Automatic checks", ko: "자동 체크"},
 	MsgCCIntro: {
 		en: "When you push or open a pull request, OwnGit runs the commands in your repository's check file and shows whether each one passed or failed.",
@@ -711,7 +706,6 @@ var configuredCheckCatalog = map[MessageCode]message{
 		ko: "허용한 자원은 체크가 이 컴퓨터에서 한도보다 많이 쓸 수 있습니다.",
 	},
 	MsgCCSwap:          {en: "Swap", ko: "스왑"},
-	MsgCCRuntimeName:   {en: "Runtime", ko: "런타임"},
 	MsgCCNetwork:       {en: "Network", ko: "네트워크"},
 	MsgCCNetworkNone:   {en: "No network access", ko: "네트워크 사용 안 함"},
 	MsgCCNetworkBridge: {en: "Allow network access (Docker bridge)", ko: "네트워크 허용 (Docker 브리지)"},
@@ -848,12 +842,8 @@ var configuredCheckCatalog = map[MessageCode]message{
 	},
 	MsgCCJobFullOID: {en: "Full commit", ko: "전체 커밋 ID"},
 	MsgCCJobBaseOID: {en: "Compared against", ko: "비교 기준"},
-	MsgCCCopyHint: {
-		en: "Select the value to copy it.",
-		ko: "값을 선택하면 복사할 수 있습니다.",
-	},
-	MsgCCJobBack: {en: "Back to jobs", ko: "작업 목록으로"},
-	MsgCCJobOpen: {en: "Open", ko: "열기"},
+	MsgCCJobBack:    {en: "Back to jobs", ko: "작업 목록으로"},
+	MsgCCJobOpen:    {en: "Open", ko: "열기"},
 
 	MsgCCJobTrigger:    {en: "Trigger", ko: "실행 계기"},
 	MsgCCJobRef:        {en: "Ref", ko: "참조"},
@@ -1002,10 +992,6 @@ var configuredCheckCatalog = map[MessageCode]message{
 	MsgCCDisabled: {
 		en: "Checks are off. No new jobs will start.",
 		ko: "체크를 껐습니다. 새 작업을 시작하지 않습니다.",
-	},
-	MsgCCConsentRevoked: {
-		en: "The settings changed, so checks were turned off.",
-		ko: "설정이 바뀌어 체크가 꺼졌습니다.",
 	},
 	MsgCCJobCancelled: {en: "A cancellation was recorded.", ko: "취소를 기록했습니다."},
 	// A cancel that arrives after the work finished is recorded, but it stops

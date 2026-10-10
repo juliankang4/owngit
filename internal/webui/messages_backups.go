@@ -48,14 +48,11 @@ const (
 	MsgBackupRestoreLimit         MessageCode = "backup.restore_limit"
 	MsgBackupRunsTitle            MessageCode = "backup.runs_title"
 	MsgBackupRunsEmpty            MessageCode = "backup.runs_empty"
-	MsgBackupStartedAt            MessageCode = "backup.started_at"
 	MsgBackupKind                 MessageCode = "backup.kind"
-	MsgBackupStatus               MessageCode = "backup.status"
 	MsgBackupVerification         MessageCode = "backup.verification"
 	MsgBackupHold                 MessageCode = "backup.hold"
 	MsgBackupHoldValue            MessageCode = "backup.hold_value"
 	MsgBackupHoldNone             MessageCode = "backup.hold_none"
-	MsgBackupMessage              MessageCode = "backup.message"
 	MsgBackupNotKept              MessageCode = "backup.not_kept"
 	MsgBackupKindScheduled        MessageCode = "backup.kind_scheduled"
 	MsgBackupKindManual           MessageCode = "backup.kind_manual"
@@ -66,7 +63,6 @@ const (
 	MsgBackupVerifyPassed         MessageCode = "backup.verify_passed"
 	MsgBackupVerifyFailed         MessageCode = "backup.verify_failed"
 	MsgBackupVerifyNotRun         MessageCode = "backup.verify_not_run"
-	MsgBackupActions              MessageCode = "backup.actions"
 	MsgBackupVerifyAgain          MessageCode = "backup.verify_again"
 	MsgBackupCheckStarted         MessageCode = "backup.check_started"
 	MsgBackupCheckTitle           MessageCode = "backup.check_title"
@@ -284,17 +280,9 @@ var backupsCatalog = map[MessageCode]message{
 		en: "No backups yet.",
 		ko: "아직 백업이 없습니다.",
 	},
-	MsgBackupStartedAt: {
-		en: "Started",
-		ko: "시작",
-	},
 	MsgBackupKind: {
 		en: "Kind",
 		ko: "종류",
-	},
-	MsgBackupStatus: {
-		en: "Result",
-		ko: "결과",
 	},
 	MsgBackupVerification: {
 		en: "Verification",
@@ -311,10 +299,6 @@ var backupsCatalog = map[MessageCode]message{
 	MsgBackupHoldNone: {
 		en: "No repositories",
 		ko: "저장소 없음",
-	},
-	MsgBackupMessage: {
-		en: "Message",
-		ko: "메시지",
 	},
 	MsgBackupNotKept: {
 		en: "OwnGit keeps no backup of this run.",
@@ -355,10 +339,6 @@ var backupsCatalog = map[MessageCode]message{
 	MsgBackupVerifyNotRun: {
 		en: "Not verified",
 		ko: "검사 안 함",
-	},
-	MsgBackupActions: {
-		en: "Use this backup",
-		ko: "이 백업 사용",
 	},
 	MsgBackupVerifyAgain: {
 		en: "Verify again",

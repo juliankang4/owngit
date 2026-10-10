@@ -11,8 +11,6 @@ const (
 	MsgPublicShareURL           MessageCode = "settings.public_share.url"
 	MsgPublicShareURLHelp       MessageCode = "settings.public_share.url_help"
 	MsgPublicShareOff           MessageCode = "settings.public_share.off"
-	MsgPublicShareNow           MessageCode = "settings.public_share.now"
-	MsgPublicShareNowOff        MessageCode = "settings.public_share.now_off"
 	MsgPublicShareFailed        MessageCode = "settings.public_share.failed"
 	MsgPublicShareInvalid       MessageCode = "settings.public_share.invalid"
 	MsgPublicShareWarnOn        MessageCode = "settings.public_share.warn_on"
@@ -43,8 +41,6 @@ var publicShareCatalog = map[MessageCode]message{
 		en: "Leave both empty to turn the public address off.",
 		ko: "공개 주소를 끄려면 두 칸을 모두 비우세요.",
 	},
-	MsgPublicShareNow:    {en: "The running server answers share links on", ko: "실행 중인 서버가 공유 링크에 답하는 주소:"},
-	MsgPublicShareNowOff: {en: "The running server has no public address.", ko: "실행 중인 서버에는 공개 주소가 없습니다."},
 	MsgPublicShareFailed: {
 		en: "The public address could not listen when OwnGit started, so share links answer only on OwnGit's own address:",
 		ko: "OwnGit이 시작할 때 공개 주소에서 수신하지 못해 공유 링크는 OwnGit 자체 주소에서만 열립니다:",

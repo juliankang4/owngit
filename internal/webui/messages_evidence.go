@@ -25,7 +25,6 @@ const (
 const (
 	MsgEvidenceUnknownState MessageCode = "evidence.unknown_state"
 	MsgEvidenceAdvisory     MessageCode = "evidence.advisory"
-	MsgEvidenceNotStated    MessageCode = "evidence.not_stated"
 
 	// Which revision a result describes, as one short label per row.
 	MsgRelevanceCurrent MessageCode = "evidence.relevance.current"
@@ -59,7 +58,6 @@ const (
 	MsgCheckStaleDetail   MessageCode = "evidence.checks.stale_detail"
 	MsgCheckTestedCommit  MessageCode = "evidence.checks.tested_commit"
 	MsgCheckNotTested     MessageCode = "evidence.checks.not_tested"
-	MsgCheckExitPassed    MessageCode = "evidence.checks.exit_passed"
 	MsgCheckRanAt         MessageCode = "evidence.checks.ran_at"
 	MsgCheckRevision      MessageCode = "evidence.checks.revision"
 	MsgCheckConfigVersion MessageCode = "evidence.checks.configuration"
@@ -79,7 +77,6 @@ const (
 	MsgCheckLogExpiresAt   MessageCode = "evidence.log.expires_at"
 	MsgCheckOutputCut      MessageCode = "evidence.log.output_truncated"
 
-	MsgCheckProtectionTitle     MessageCode = "evidence.protection.title"
 	MsgCheckProtectionInherited MessageCode = "evidence.protection.inherited"
 	MsgCheckProtectionUnknown   MessageCode = "evidence.protection.unknown"
 	MsgCheckProvenanceHelper    MessageCode = "evidence.provenance.helper"
@@ -135,7 +132,6 @@ const (
 	MsgPRListEmpty       MessageCode = "pr.list.empty"
 	MsgPRListStart       MessageCode = "pr.list.start"
 	MsgPRListUnavailable MessageCode = "pr.list.unavailable"
-	MsgPRNumberLabel     MessageCode = "pr.number"
 	MsgPRBranchFlow      MessageCode = "pr.branch_flow"
 	MsgPRUpdatedAt       MessageCode = "pr.updated_at"
 
@@ -157,7 +153,6 @@ const (
 	MsgPRNewSubmit         MessageCode = "pr.new.submit"
 	MsgPRNewChangeBranches MessageCode = "pr.new.change_branches"
 	MsgPRNewObservedTips   MessageCode = "pr.new.observed_tips"
-	MsgPRNewSameBranch     MessageCode = "pr.new.same_branch"
 	MsgPRNewNoCommit       MessageCode = "pr.new.no_commit"
 	MsgPRNewNoBranches     MessageCode = "pr.new.no_branches"
 
@@ -263,16 +258,15 @@ const (
 	MsgTaskStateResolved  MessageCode = "tasks.state.resolved"
 	MsgTaskStateExhausted MessageCode = "tasks.state.exhausted"
 
-	MsgTaskBudget       MessageCode = "tasks.budget"
-	MsgTaskBudgetHelp   MessageCode = "tasks.budget_help"
-	MsgTaskRoundsHelp   MessageCode = "tasks.rounds_help"
-	MsgTaskManualRerun  MessageCode = "tasks.manual_rerun"
-	MsgTaskInitialCheck MessageCode = "tasks.initial_check"
-	MsgTaskInitialNone  MessageCode = "tasks.initial_check_none"
-	MsgTaskExhausted    MessageCode = "tasks.exhausted_help"
-	MsgTaskCreatedAt    MessageCode = "tasks.created_at"
-	MsgTaskUpdatedAt    MessageCode = "tasks.updated_at"
-	MsgTaskIdentifier   MessageCode = "tasks.identifier"
+	MsgTaskBudget      MessageCode = "tasks.budget"
+	MsgTaskBudgetHelp  MessageCode = "tasks.budget_help"
+	MsgTaskRoundsHelp  MessageCode = "tasks.rounds_help"
+	MsgTaskManualRerun MessageCode = "tasks.manual_rerun"
+	MsgTaskInitialNone MessageCode = "tasks.initial_check_none"
+	MsgTaskExhausted   MessageCode = "tasks.exhausted_help"
+	MsgTaskCreatedAt   MessageCode = "tasks.created_at"
+	MsgTaskUpdatedAt   MessageCode = "tasks.updated_at"
+	MsgTaskIdentifier  MessageCode = "tasks.identifier"
 
 	MsgAttemptsTitle   MessageCode = "tasks.attempts.title"
 	MsgAttemptsNone    MessageCode = "tasks.attempts.none"
@@ -282,7 +276,6 @@ const (
 	MsgAttemptExitCode MessageCode = "tasks.attempts.exit_code"
 	MsgAttemptOrder    MessageCode = "tasks.attempts.order"
 	MsgAttemptOrderGap MessageCode = "tasks.attempts.order_gap"
-	MsgAttemptOutput   MessageCode = "tasks.attempts.output"
 	MsgAttemptNoOutput MessageCode = "tasks.attempts.no_output"
 
 	MsgConfigTitle      MessageCode = "tasks.config.title"
@@ -338,7 +331,6 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Checks and reviews are information. They never stop you from merging.",
 		ko: "테스트, 린트, 빌드 같은 자동 체크와 코드 리뷰는 참고 정보이며 병합을 막지 않습니다.",
 	},
-	MsgEvidenceNotStated:      {en: "Not stated", ko: "기록 없음"},
 	MsgOutcomeCheck:           {en: "%s check", ko: "체크 %s개"},
 	MsgOutcomeChecks:          {en: "%s checks", ko: "체크 %s개"},
 	MsgOutcomeStep:            {en: "%s step", ko: "단계 %s개"},
@@ -416,10 +408,6 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "The result does not prove this commit was the code that ran.",
 		ko: "이 커밋이 실제로 실행된 코드였는지는 증명하지 못합니다.",
 	},
-	MsgCheckExitPassed: {
-		en: "The commands finished successfully.",
-		ko: "명령이 성공으로 끝났습니다.",
-	},
 	MsgCheckRanAt:         {en: "Finished", ko: "종료 시각"},
 	MsgCheckRevision:      {en: "Tested revision", ko: "대상 커밋"},
 	MsgCheckConfigVersion: {en: "Check configuration", ko: "체크 설정"},
@@ -453,7 +441,6 @@ var evidenceCatalog = map[MessageCode]message{
 		ko: "저장된 출력은 일부만 잘라 둔 것입니다. 전체 로그가 아닙니다.",
 	},
 
-	MsgCheckProtectionTitle: {en: "How it ran", ko: "실행 환경"},
 	MsgCheckProtectionInherited: {
 		en: "In your own development environment, with your permissions. It is not a sandbox.",
 		ko: "본인의 개발 환경에서 본인 권한으로 실행되었습니다. 샌드박스가 아닙니다.",
@@ -545,9 +532,8 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Pull request records could not be read, so this list is not complete.",
 		ko: "풀 리퀘스트 기록을 읽지 못해 목록이 완전하지 않습니다.",
 	},
-	MsgPRNumberLabel: {en: "Number", ko: "번호"},
-	MsgPRBranchFlow:  {en: "into", ko: "→"},
-	MsgPRUpdatedAt:   {en: "Updated", ko: "업데이트"},
+	MsgPRBranchFlow: {en: "into", ko: "→"},
+	MsgPRUpdatedAt:  {en: "Updated", ko: "업데이트"},
 
 	MsgPRNewTitle: {en: "New pull request", ko: "새 풀 리퀘스트"},
 	MsgPRNewIntro: {
@@ -584,10 +570,6 @@ var evidenceCatalog = map[MessageCode]message{
 	MsgPRNewObservedTips: {
 		en: "These are the commits OwnGit read just now. If either branch moves before you submit, creating fails instead of using the wrong commit.",
 		ko: "방금 읽은 커밋입니다. 제출 전에 브랜치가 움직이면 잘못된 커밋을 쓰지 않고 실패합니다.",
-	},
-	MsgPRNewSameBranch: {
-		en: "Pick two different branches.",
-		ko: "서로 다른 브랜치를 골라 주세요.",
 	},
 	MsgPRNewNoCommit: {
 		en: "One of these branches does not point at a commit, so there is nothing to compare.",
@@ -795,7 +777,6 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Running the checks yourself does not use a round.",
 		ko: "직접 체크를 실행해도 라운드를 소모하지 않습니다.",
 	},
-	MsgTaskInitialCheck: {en: "First check", ko: "첫 체크"},
 	MsgTaskInitialNone: {
 		en: "The first check for this task has not been recorded yet.",
 		ko: "이 작업의 첫 체크는 아직 기록되지 않았습니다.",
@@ -831,7 +812,6 @@ var evidenceCatalog = map[MessageCode]message{
 		en: "Counted across the whole repository, so numbers within one task can skip.",
 		ko: "저장소 전체 기준 순번이라 한 작업 안에서는 번호가 건너뛸 수 있습니다.",
 	},
-	MsgAttemptOutput:   {en: "Output", ko: "출력"},
 	MsgAttemptNoOutput: {en: "No output was kept for this command.", ko: "이 명령의 출력은 보관되지 않았습니다."},
 
 	MsgConfigTitle:   {en: "Latest recorded check configuration", ko: "가장 최근에 기록된 체크 구성"},

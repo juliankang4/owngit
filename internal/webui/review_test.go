@@ -274,11 +274,11 @@ func TestGraphReadoutIsInsideTheBehaviourScope(t *testing.T) {
 	r := newRenderer(t)
 	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN), Activity: graphWithDayLinks()})
 
-	start := strings.Index(out, "data-graph ")
-	if start < 0 {
+	marker := regexp.MustCompile(`\sdata-graph(?:\s|=|>)`).FindStringIndex(out)
+	if marker == nil {
 		t.Fatal("the graph has no behaviour scope")
 	}
-	scopeStart := strings.LastIndex(out[:start], "<div")
+	scopeStart := strings.LastIndex(out[:marker[0]], "<div")
 	depth, i := 0, scopeStart
 	for i < len(out) {
 		switch {

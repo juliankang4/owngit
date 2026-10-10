@@ -43,7 +43,7 @@
     {{$layout := weeks $g}}
     {{/* data-graph scopes the keyboard behaviour, and the readout below is
          inside it, so the script can find the element it updates. */}}
-    <div class="hm__body" data-graph data-weeks="{{$layout.Weeks}}">
+    <div class="hm__body" data-graph>
     <div class="hm__scroll" tabindex="0" role="region" {{biAttr $lang "aria-label" "app.graph_region"}}>
       <div class="hm__inner" style="--weeks:{{$layout.Weeks}}">
         <div class="hm__months" aria-hidden="true">

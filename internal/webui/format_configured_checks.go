@@ -47,17 +47,6 @@ func jobState(status string) stateLabel {
 	}
 }
 
-// consentState names whether execution is on.
-//
-// It is deliberately not a pass or a failure: it is a permission, and its two
-// values are "enabled" and "not enabled" rather than good and bad.
-func consentState(policy CheckPolicyView) stateLabel {
-	if policy.ConsentActive {
-		return known(MsgCCConsentOn, "check", "ok")
-	}
-	return known(MsgCCConsentOff, "minus", "quiet")
-}
-
 // policyState names whether a usable policy is stored. A legacy policy is
 // stored history that cannot be enabled, which is its own state.
 func policyState(policy CheckPolicyView) stateLabel {
@@ -206,8 +195,6 @@ func containerExecutor() string  { return ExecutorContainer }
 func runnerExecutor() string     { return ExecutorExternalRunner }
 func noneNetwork() string        { return ContainerNetworkNone }
 func bridgeNetwork() string      { return ContainerNetworkBridge }
-func pushEvent() string          { return CheckEventPush }
-func pullRequestEvent() string   { return CheckEventPullRequest }
 
 // forRunnerCredential keeps a refused revocation on the row it was typed
 // into. Every row submits the same action, so the action alone cannot say

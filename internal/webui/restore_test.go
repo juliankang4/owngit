@@ -259,7 +259,7 @@ func TestRestoreCannotBeAppliedWhenTheBackendSaysSo(t *testing.T) {
 	// not the protection: the reason must also be readable.
 	r := newRenderer(t)
 	c := fullChrome(LangEN)
-	c.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRestorePreviewStale}}
+	c.Notices = []Notice{{Kind: NoticeWarning, Code: MsgRestoreConflict}}
 	page := restorePage(c, true)
 	page.CanApply = false
 	out := render(t, r, page)
@@ -268,7 +268,7 @@ func TestRestoreCannotBeAppliedWhenTheBackendSaysSo(t *testing.T) {
 	if strings.Count(apply, "disabled") < 2 {
 		t.Error("the confirmation and the restore button are not both disabled")
 	}
-	if !strings.Contains(out, wantText(LangEN, MsgRestorePreviewStale)) {
+	if !strings.Contains(out, wantText(LangEN, MsgRestoreConflict)) {
 		t.Error("the page does not say why restoring is unavailable")
 	}
 }
@@ -1277,7 +1277,7 @@ func TestRestoreScreenStates(t *testing.T) {
 				page: restore(lang, true, branch("added/after-the-list", false)), absent: []MessageCode{MsgRestoreTargetNew}})
 		// A field error is rendered with the note its control points at.
 		for _, fieldError := range []Notice{
-			Error("target", MsgRestoreTargetEmpty), Error("path", MsgRestoreFilesNone),
+			Error("target", MsgRestoreInvalid), Error("path", MsgRestoreFilesNone),
 			Error("mode", MsgRestoreInvalid), Error("confirm", MsgRestoreConflict),
 		} {
 			screens = append(screens, screen{name: string(lang) + " the " + fieldError.Field + " error has its note", lang: lang,

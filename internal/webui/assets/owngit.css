@@ -34,15 +34,12 @@
 
   --accent: #0a62c9;
   --accent-soft: #e4eefb;
-  --accent-line: #0a62c9;
   --accent-hover: #0a56ae;
   --on-accent: #ffffff;
-  --on-accent-dim: rgba(255, 255, 255, 0.82);
 
   --ok: #1a6b3c;
   --warn: #855200;
   --bad: #b32b1c;
-  --calm: #4a5568;
 
   --ok-soft: #e7f4ec;
   --warn-soft: #fdf1dc;
@@ -99,15 +96,12 @@
 
   --accent: #4c9bf5;
   --accent-soft: #1c2f47;
-  --accent-line: #4c9bf5;
   --accent-hover: #6aaef7;
   --on-accent: #0c1626;
-  --on-accent-dim: rgba(12, 22, 38, 0.72);
 
   --ok: #63d492;
   --warn: #e9b45c;
   --bad: #ff8a7a;
-  --calm: #a7b4c6;
 
   --ok-soft: #16301f;
   --warn-soft: #362a12;
@@ -157,15 +151,12 @@
 
     --accent: #4c9bf5;
     --accent-soft: #1c2f47;
-    --accent-line: #4c9bf5;
     --accent-hover: #6aaef7;
     --on-accent: #0c1626;
-    --on-accent-dim: rgba(12, 22, 38, 0.72);
 
     --ok: #63d492;
     --warn: #e9b45c;
     --bad: #ff8a7a;
-    --calm: #a7b4c6;
 
     --ok-soft: #16301f;
     --warn-soft: #362a12;
@@ -946,7 +937,6 @@ span.hm__cell { cursor: default; }
 .row__ref > svg,
 .row__ref > .pill { flex: none; }
 .row__time { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.row__note { font-size: 11.5px; color: var(--text-3); }
 
 /* Every list of rows has one shape: name (repository or commit) | branch |
    message | time at the right. The column headings above a list use the
@@ -1279,7 +1269,6 @@ span.hm__cell { cursor: default; }
   font-size: 11.5px;
 }
 .tree__n { margin-left: auto; flex: none; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-.tree__empty { padding: 12px; font-size: 12px; color: var(--text-3); }
 
 /* A picture in the file view sits on the code surface at its own size and
    scales down to the column; nothing fixes its height. */
@@ -1871,7 +1860,6 @@ span.hm__cell { cursor: default; }
 /* The file list above the buttons can be hidden, so the buttons keep their
    own distance from whatever precedes them. */
 .restore .card > .actions { margin-top: 18px; }
-.restore__entry { margin: 16px 0 0; }
 
 /* Source and target read as one sentence across the top: take from here, put
    it there. On a narrow screen they stack in that same order. */

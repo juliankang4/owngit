@@ -228,15 +228,6 @@ func pullRequestNumber(number int64) string {
 	return "#" + strconv.FormatInt(number, 10)
 }
 
-// shortID abbreviates an opaque identifier for display. The full value stays
-// available where it is needed, for example in a form field.
-func shortID(id string) string {
-	if len(id) > 12 {
-		return id[:12]
-	}
-	return id
-}
-
 // formatDuration renders a recorded run length. Milliseconds are useless to
 // read for a long build and a second is too coarse for a fast one, so the unit
 // follows the size.

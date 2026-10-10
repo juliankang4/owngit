@@ -61,7 +61,7 @@ func fullChrome(lang Lang) Chrome {
 			NewRepoURL:   "/repositories/new",
 			ActiveRepoID: "r1",
 			Repositories: []NavRepository{
-				{ID: "r1", Name: "forge-cli", URL: "/repositories/r1", CommitCount: 12, CountKnown: true},
+				{ID: "r1", Name: "forge-cli", URL: "/repositories/r1"},
 				{ID: "r2", Name: "cedar-config", URL: "/repositories/r2"},
 			},
 		},
@@ -114,7 +114,7 @@ func allPages(lang Lang) map[string]Page {
 		},
 		"setup-unavailable": SetupPage{
 			Chrome: bare, Stage: SetupUnavailable,
-			Reason: MsgSetupLinkExpired, RecoveryHint: MsgSetupReissueHint,
+			Reason: MsgSetupLinkInvalid, RecoveryHint: MsgSetupReissueHint,
 		},
 		"setup-approval": SetupPage{
 			Chrome: bare, Stage: SetupApproval, ApprovalURL: "/setup/approval", RedeemURL: "/setup/redeem",
@@ -787,7 +787,7 @@ func TestEveryMessageCodeUsedByPagesExists(t *testing.T) {
 	// Codes the page types carry must resolve, otherwise a handler reporting
 	// them would render the generic fallback instead of the real explanation.
 	codes := []MessageCode{
-		MsgSetupLinkExpired, MsgSetupReissueHint, MsgPrereqGitMissing,
+		MsgSetupLinkInvalid, MsgSetupReissueHint, MsgPrereqGitMissing,
 		MsgLoginFailed, MsgAdminFailed, MsgSettingsSaved,
 		MsgRepoNameTaken, MsgRepoNameBusy, MsgRepoUnreadable, MsgCodePathMissing,
 		MsgCommitDiffMerge, MsgActivityLimit, MsgErrCSRF,
@@ -1377,8 +1377,8 @@ func TestRepositoryAndActivityStatesAreHonest(t *testing.T) {
 			page: ActivityPage{Chrome: fullChrome(LangEN), Activity: incomplete},
 			want: []MessageCode{MsgActivityIncomplete, MsgActivityLimit}},
 		screen{name: "unavailable activity explains instead of drawing an empty graph",
-			page: OverviewPage{Chrome: fullChrome(LangEN), Activity: ActivityGraph{Year: 2026, Available: false, UnavailableReason: MsgActivityNotBuilt}},
-			want: []MessageCode{MsgActivityNotBuilt}, noMarkup: []string{`class="hm__cell"`}},
+			page: OverviewPage{Chrome: fullChrome(LangEN), Activity: ActivityGraph{Year: 2026, Available: false, UnavailableReason: MsgActivityRepoFail}},
+			want: []MessageCode{MsgActivityRepoFail}, noMarkup: []string{`class="hm__cell"`}},
 		screen{name: "activity does not claim checks ran", page: overview(unchanged),
 			want: []MessageCode{MsgActivityNoChecks}, noMarkup: []string{"Checks passed", "All checks", "Build succeeded"}},
 		screen{name: "the empty dashboard invites without forcing a repository", page: overview(unchanged),

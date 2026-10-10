@@ -84,7 +84,6 @@
    * cookie names are also read until this address has its own choice. */
 
   var APPEARANCE_KEY = 'owngit_appearance';
-  var darkQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
 
   function validAppearance(value) {
     return value === 'light' || value === 'dark' || value === 'system';
@@ -99,17 +98,11 @@
     return stored === 'light' || stored === 'dark' ? stored : 'system';
   }
 
-  function resolvedAppearance(choice) {
-    if (choice === 'light' || choice === 'dark') { return choice; }
-    return darkQuery && darkQuery.matches ? 'dark' : 'light';
-  }
-
   function applyAppearance(choice) {
     root.classList.toggle('theme-light', choice === 'light');
     root.classList.toggle('theme-dark', choice === 'dark');
     root.classList.toggle('theme-system', choice === 'system');
     root.setAttribute('data-appearance', choice);
-    root.setAttribute('data-appearance-resolved', resolvedAppearance(choice));
     all('[data-appearance-set]').forEach(function (link) {
       if (link.getAttribute('data-appearance-set') === choice) {
         link.setAttribute('aria-current', 'true');
@@ -154,17 +147,6 @@
     setAppearance(link.getAttribute('data-appearance-set'));
   });
 
-  if (darkQuery) {
-    var followSystem = function () {
-      if (currentAppearance() === 'system') { applyAppearance('system'); }
-    };
-    if (darkQuery.addEventListener) {
-      darkQuery.addEventListener('change', followSystem);
-    } else if (darkQuery.addListener) {
-      darkQuery.addListener(followSystem);
-    }
-  }
-
   /* ------------------------------------------------------------------ */
   /* 2. language                                                         */
   /* ------------------------------------------------------------------ */
@@ -190,8 +172,6 @@
    * parameter left the reader on a URL that answers 404 when reloaded or
    * shared, and dropped the selection the link carried. */
   function applyLanguage(lang, target) {
-    var other = lang === 'ko' ? 'en' : 'ko';
-
     all('[data-' + lang + ']').forEach(function (node) {
       var text = node.getAttribute('data-' + lang);
       if (text !== null) { node.textContent = text; }
@@ -238,7 +218,6 @@
     writeCookie(root.getAttribute('data-lang-cookie') || 'owngit_lang', lang);
     // Name order depends on the language, so the lists follow it.
     all('[data-order-list]').forEach(orderRows);
-    void other;
   }
 
   document.addEventListener('click', function (event) {
@@ -269,7 +248,6 @@
     if (!cells.length) { return; }
 
     var readout = graph.querySelector('[data-graph-readout]');
-    var weeks = parseInt(graph.getAttribute('data-weeks') || '0', 10);
     var focused = null;
 
     cells.forEach(function (cell) {
@@ -349,8 +327,6 @@
       cell.setAttribute('tabindex', '0');
       focused = cell;
     });
-
-    void weeks;
   });
 
   /* ------------------------------------------------------------------ */

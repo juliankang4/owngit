@@ -235,10 +235,6 @@ type NavRepository struct {
 	ID   string
 	Name string
 	URL  string
-	// CommitCount is displayed only when CountKnown is true, so an
-	// uncomputed count never renders as zero.
-	CommitCount int
-	CountKnown  bool
 	// LastActivity is the author date of the default branch tip, when the
 	// backend already knows it. Zero shows no time and sorts last in both
 	// time orders.

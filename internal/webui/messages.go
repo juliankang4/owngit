@@ -11,11 +11,9 @@ type MessageCode string
 // Shared interface chrome. These live in the same catalog as everything else
 // so the client-side language switch has a single source of text.
 const (
-	MsgAppName        MessageCode = "app.name"
 	MsgSkipToContent  MessageCode = "app.skip_to_content"
 	MsgNavPrimary     MessageCode = "app.nav.primary"
 	MsgNavRepos       MessageCode = "app.nav.repositories"
-	MsgNavAll         MessageCode = "app.nav.all"
 	MsgNavNoRepos     MessageCode = "app.nav.no_repositories"
 	MsgSearchRepos    MessageCode = "app.search.repositories"
 	MsgAppearance     MessageCode = "app.appearance"
@@ -40,7 +38,6 @@ const (
 	MsgRepoTabOver    MessageCode = "app.repo_tab.overview"
 	MsgRepoTabCode    MessageCode = "app.repo_tab.code"
 	MsgRepoTabCommits MessageCode = "app.repo_tab.commits"
-	MsgRepoTabsLabel  MessageCode = "app.repo_tabs_label"
 	MsgBranchLabel    MessageCode = "app.branch_label"
 	MsgRefLabel       MessageCode = "app.ref_label"
 	MsgBranches       MessageCode = "app.branches"
@@ -48,13 +45,10 @@ const (
 	MsgRootFolder     MessageCode = "app.root_folder"
 	MsgUpOneLevel     MessageCode = "app.up_one_level"
 	MsgFilesLabel     MessageCode = "app.files_label"
-	MsgLatestCommit   MessageCode = "app.latest_commit"
 	MsgLatestActivity MessageCode = "app.latest_activity"
 	MsgSeeAll         MessageCode = "app.see_all"
 	MsgChangedFiles   MessageCode = "app.changed_files"
 	MsgCommitHistory  MessageCode = "app.commit_history"
-	MsgAuthoredBy     MessageCode = "app.authored_by"
-	MsgNoDescription  MessageCode = "app.no_description"
 	MsgOverviewEmpty  MessageCode = "app.overview_empty"
 	MsgOverviewStart  MessageCode = "app.overview_start"
 	MsgNoMatches      MessageCode = "app.no_matches"
@@ -161,7 +155,6 @@ const (
 	// folder or its claim changed while OwnGit was serving.
 	MsgStorageChanged      MessageCode = "storage.changed"
 	MsgSetupStorageOverlap MessageCode = "setup.storage.overlaps_state"
-	MsgSetupStorageRemote  MessageCode = "setup.storage.network_share"
 	MsgSetupStorageShared  MessageCode = "setup.storage.shared_warning"
 
 	MsgSetupAccessLabel     MessageCode = "setup.access.label"
@@ -219,8 +212,6 @@ const (
 	// could not be removed.
 	MsgSetupFileRemains MessageCode = "setup.completed.file_remains"
 
-	MsgSetupLinkExpired  MessageCode = "setup.unavailable.expired"
-	MsgSetupLinkUsed     MessageCode = "setup.unavailable.used"
 	MsgSetupLinkInvalid  MessageCode = "setup.unavailable.invalid"
 	MsgSetupAlreadyDone  MessageCode = "setup.unavailable.already_configured"
 	MsgSetupRaceLost     MessageCode = "setup.unavailable.race_lost"
@@ -244,7 +235,6 @@ const (
 
 	MsgPrereqGitFound   MessageCode = "setup.prereq.git_found"
 	MsgPrereqGitMissing MessageCode = "setup.prereq.git_missing"
-	MsgPrereqGitOld     MessageCode = "setup.prereq.git_too_old"
 	MsgPrereqHTTPFound  MessageCode = "setup.prereq.http_backend_found"
 	MsgPrereqHTTPMiss   MessageCode = "setup.prereq.http_backend_missing"
 )
@@ -258,7 +248,6 @@ const (
 	MsgLoginFailed      MessageCode = "login.failed"
 	MsgLoginEmpty       MessageCode = "login.empty"
 	MsgLoginLocked      MessageCode = "login.locked"
-	MsgLoginNotRequired MessageCode = "login.not_required"
 	MsgLogoutDone       MessageCode = "login.logged_out"
 	MsgLogoutFailed     MessageCode = "login.logout_failed"
 	MsgLogoutSecureKept MessageCode = "login.logout_secure_kept"
@@ -270,7 +259,6 @@ const (
 	MsgAdminEmpty            MessageCode = "admin.empty"
 	MsgAdminLocked           MessageCode = "admin.locked"
 	MsgAdminLockedServerWide MessageCode = "admin.locked_server_wide"
-	MsgAdminConfirmed        MessageCode = "admin.confirmed"
 	MsgAdminEnded            MessageCode = "admin.ended"
 	MsgAdminSecureKept       MessageCode = "admin.secure_kept"
 	MsgAdminForgot           MessageCode = "admin.forgot"
@@ -305,7 +293,6 @@ const (
 	MsgSettingsStorageTitle MessageCode = "settings.storage.title"
 	MsgSettingsStorageHelp  MessageCode = "settings.storage.help"
 	MsgSettingsCloneTitle   MessageCode = "settings.clone.title"
-	MsgSettingsCloneHelp    MessageCode = "settings.clone.help"
 
 	MsgSettingsConnTitle  MessageCode = "settings.connection.title"
 	MsgSettingsAckSubmit  MessageCode = "settings.connection.acknowledge"
@@ -345,13 +332,11 @@ const (
 	MsgRepoDescLabel          MessageCode = "repo.new.description"
 	MsgRepoDescHelp           MessageCode = "repo.new.description_help"
 	MsgRepoCreate             MessageCode = "repo.new.submit"
-	MsgRepoNameEmpty          MessageCode = "repo.new.name_empty"
 	MsgRepoNameInvalid        MessageCode = "repo.new.name_invalid"
 	MsgRepoNameReserved       MessageCode = "repo.new.name_reserved"
 	MsgRepoNameTaken          MessageCode = "repo.new.name_taken"
 	MsgRepoNameBusy           MessageCode = "repo.new.name_busy"
 	MsgRepoDescriptionTooLong MessageCode = "repo.new.description_too_long"
-	MsgRepoNameLong           MessageCode = "repo.new.name_long"
 	MsgRepoCreateFail         MessageCode = "repo.new.failed"
 	MsgRepoCreationKept       MessageCode = "repo.new.kept_after_failure"
 	MsgRepoCreated            MessageCode = "repo.new.created"
@@ -372,7 +357,6 @@ const (
 	MsgActivitySkipped      MessageCode = "activity.skipped"
 	MsgActivityLeftOut      MessageCode = "activity.left_out"
 	MsgRepoNoBranches       MessageCode = "repo.no_branches"
-	MsgRepoNoTags           MessageCode = "repo.no_tags"
 	MsgRepoDefaultGone      MessageCode = "repo.default_branch_missing"
 	MsgRepoDefaultGoneShort MessageCode = "repo.default_branch_missing.short"
 	MsgRepoEmptyShort       MessageCode = "repo.empty.short"
@@ -402,14 +386,11 @@ const (
 	MsgCodeReceivingPage MessageCode = "code.receiving_page"
 	MsgCodeRawLink       MessageCode = "code.raw_link"
 	MsgCodeRawCurrentRef MessageCode = "code.raw_current_ref"
-	MsgCodeSubmodule     MessageCode = "code.submodule"
-	MsgCodeSymlink       MessageCode = "code.symlink"
 
 	MsgCommitsEmpty            MessageCode = "commits.empty"
 	MsgCommitNotFound          MessageCode = "commits.not_found"
 	MsgCommitUnreadable        MessageCode = "commits.unreadable"
 	MsgCommitDiffBig           MessageCode = "commits.diff_truncated"
-	MsgCommitDiffNone          MessageCode = "commits.diff_unavailable"
 	MsgCommitDiffMerge         MessageCode = "commits.diff_merge"
 	MsgCommitBinaryFile        MessageCode = "commits.binary_file"
 	MsgDiffTextUnavailable     MessageCode = "diff.text_unavailable"
@@ -446,7 +427,6 @@ const (
 	MsgRestoreTargetHelp   MessageCode = "restore.target.help"
 	MsgRestoreTargetChoose MessageCode = "restore.target.choose"
 	MsgRestoreTargetNew    MessageCode = "restore.target.recreated"
-	MsgRestoreTargetEmpty  MessageCode = "restore.target.empty"
 
 	MsgRestoreScopeLabel     MessageCode = "restore.scope.label"
 	MsgRestoreModeAll        MessageCode = "restore.scope.all"
@@ -464,7 +444,6 @@ const (
 	MsgRestorePreviewSubmit MessageCode = "restore.preview.submit"
 	MsgRestorePreviewTitle  MessageCode = "restore.preview.title"
 	MsgRestorePreviewHelp   MessageCode = "restore.preview.help"
-	MsgRestorePreviewStale  MessageCode = "restore.preview.stale"
 	MsgRestoreDeletesLabel  MessageCode = "restore.preview.deletes"
 	MsgRestoreDiffTruncated MessageCode = "restore.preview.diff_truncated"
 	MsgRestoreBinaryFile    MessageCode = "restore.preview.binary_file"
@@ -487,7 +466,6 @@ const (
 	MsgActivityScanFail   MessageCode = "activity.incomplete.scan_failed"
 	MsgActivityRepoFail   MessageCode = "activity.repository_unreadable"
 	MsgActivityUnavail    MessageCode = "activity.unavailable"
-	MsgActivityNotBuilt   MessageCode = "activity.unavailable.not_built"
 	MsgActivityNoChecks   MessageCode = "activity.no_check_claim"
 	MsgActivityTruncated  MessageCode = "activity.truncated"
 	MsgActivityDayCut     MessageCode = "activity.truncated_day"
@@ -495,19 +473,14 @@ const (
 
 // Generic and HTTP errors.
 const (
-	MsgErrNotFound     MessageCode = "error.not_found"
-	MsgErrForbidden    MessageCode = "error.forbidden"
-	MsgErrBadRequest   MessageCode = "error.bad_request"
-	MsgErrCSRF         MessageCode = "error.csrf"
-	MsgErrHostRejected MessageCode = "error.host_rejected"
+	MsgErrNotFound   MessageCode = "error.not_found"
+	MsgErrBadRequest MessageCode = "error.bad_request"
+	MsgErrCSRF       MessageCode = "error.csrf"
 	// MsgErrRefused heads a page that answers a refused request whose own
 	// message says why, such as an archive this computer cannot unpack in
 	// memory; the message is shown as the page detail.
 	MsgErrRefused      MessageCode = "error.refused"
-	MsgErrMethod       MessageCode = "error.method_not_allowed"
-	MsgErrTooLarge     MessageCode = "error.payload_too_large"
 	MsgErrFormTooLarge MessageCode = "error.form_too_large"
-	MsgErrRateLimited  MessageCode = "error.rate_limited"
 	MsgErrInternal     MessageCode = "error.internal"
 	MsgErrUnavailable  MessageCode = "error.unavailable"
 	MsgErrGeneric      MessageCode = "error.generic"
@@ -548,12 +521,10 @@ var catalog = map[MessageCode]message{
 		ko: "다른 브랜치를 가리키는 별칭 브랜치는 같은 커밋의 보통 브랜치로 백업됩니다. 복원한 뒤에는 대상 브랜치가 바뀌어도 따라가지 않습니다. 아래에는 저장소, 별칭 -> 대상, 다시 연결하는 명령이 나옵니다. 복원한 해당 저장소에서 POSIX 셸(예: sh, bash, zsh, Git Bash)로 명령을 실행하세요.",
 	},
 	// -- chrome --------------------------------------------------------
-	MsgAppName:        {en: "OwnGit", ko: "OwnGit"},
 	MsgSkipToContent:  {en: "Skip to content", ko: "본문으로 건너뛰기"},
 	MsgAppHome:        {en: "OwnGit home", ko: "OwnGit 홈"},
 	MsgNavPrimary:     {en: "Primary", ko: "주 메뉴"},
 	MsgNavRepos:       {en: "Repositories", ko: "저장소"},
-	MsgNavAll:         {en: "All", ko: "전체"},
 	MsgNavNoRepos:     {en: "No repositories yet", ko: "아직 저장소가 없습니다"},
 	MsgSearchRepos:    {en: "Search repositories", ko: "저장소 검색"},
 	MsgAppearance:     {en: "Appearance", ko: "화면 모드"},
@@ -578,7 +549,6 @@ var catalog = map[MessageCode]message{
 	MsgRepoTabOver:    {en: "Overview", ko: "개요"},
 	MsgRepoTabCode:    {en: "Code", ko: "코드"},
 	MsgRepoTabCommits: {en: "Commits", ko: "커밋"},
-	MsgRepoTabsLabel:  {en: "Repository sections", ko: "저장소 메뉴"},
 	MsgBranchLabel:    {en: "Branch", ko: "브랜치"},
 	// The picker lists branches and tags together, and its closed state shows
 	// only the chosen short name, so the label cannot promise a branch. This
@@ -589,13 +559,10 @@ var catalog = map[MessageCode]message{
 	MsgRootFolder:     {en: "Root folder", ko: "최상위 폴더"},
 	MsgUpOneLevel:     {en: "Up one level", ko: "상위 폴더로"},
 	MsgFilesLabel:     {en: "Files", ko: "파일"},
-	MsgLatestCommit:   {en: "Latest commit", ko: "최근 커밋"},
 	MsgLatestActivity: {en: "Latest activity", ko: "최근 활동"},
 	MsgSeeAll:         {en: "See all activity", ko: "전체 활동 보기"},
 	MsgChangedFiles:   {en: "Changed files", ko: "변경된 파일"},
 	MsgCommitHistory:  {en: "Commit history", ko: "커밋 기록"},
-	MsgAuthoredBy:     {en: "Written by", ko: "작성자"},
-	MsgNoDescription:  {en: "No description", ko: "설명 없음"},
 	MsgOverviewEmpty:  {en: "No repositories yet.", ko: "아직 저장소가 없습니다."},
 	MsgOverviewStart:  {en: "Create one, then push an existing project into it.", ko: "저장소를 만든 뒤 기존 프로젝트를 푸시하세요."},
 	MsgNoMatches:      {en: "No repository matches that search.", ko: "검색과 일치하는 저장소가 없습니다."},
@@ -704,10 +671,6 @@ var catalog = map[MessageCode]message{
 	MsgSetupStorageOverlap: {
 		en: "That folder is inside OwnGit's own data folder, or holds it. Enter a separate folder.",
 		ko: "그 폴더는 OwnGit의 데이터 폴더 안에 있거나, 그 안에 데이터 폴더가 있습니다. 다른 폴더를 입력하세요.",
-	},
-	MsgSetupStorageRemote: {
-		en: "That folder looks like a network share. Repositories can be kept there while only one OwnGit uses it at a time. The database always stays on this computer.",
-		ko: "네트워크 공유 폴더로 보입니다. 한 번에 OwnGit 하나만 쓴다면 저장소를 그곳에 둘 수 있습니다. 데이터베이스는 항상 이 컴퓨터에 둡니다.",
 	},
 	MsgSetupStorageShared: {
 		en: "Setup continued, but other accounts can change the repository folder you chose, or OwnGit could not verify that they cannot. Run owngit doctor on this computer to see the folder and how to make it private.",
@@ -854,14 +817,6 @@ var catalog = map[MessageCode]message{
 		en: "OwnGit could not remove the used setup file from its state folder. The file no longer opens setup; remove it when convenient. The server log names it and why.",
 		ko: "이미 쓴 설정 파일을 OwnGit 상태 폴더에서 지우지 못했습니다. 이 파일로는 이제 설정 화면을 열 수 없으니 편할 때 지우세요. 파일 위치와 이유는 서버 로그에 있습니다.",
 	},
-	MsgSetupLinkExpired: {
-		en: "This setup link expired.",
-		ko: "이 설정 링크는 기한이 지났습니다.",
-	},
-	MsgSetupLinkUsed: {
-		en: "This setup link was already used.",
-		ko: "이미 사용한 설정 링크입니다.",
-	},
 	MsgSetupLinkInvalid: {
 		en: "This setup link is not valid for this installation.",
 		ko: "이 서버에서는 쓸 수 없는 설정 링크입니다.",
@@ -949,10 +904,6 @@ var catalog = map[MessageCode]message{
 		en: "Git was not found. Install Git on this computer, then reload this page.",
 		ko: "Git을 찾지 못했습니다. 이 컴퓨터에 Git을 설치한 뒤 이 페이지를 새로 고치세요.",
 	},
-	MsgPrereqGitOld: {
-		en: "The installed Git is older than OwnGit needs.",
-		ko: "설치된 Git이 OwnGit에 필요한 버전보다 낮습니다.",
-	},
 	MsgPrereqHTTPFound: {
 		en: "Git's HTTP service was found.",
 		ko: "Git의 HTTP 서비스를 찾았습니다.",
@@ -990,10 +941,6 @@ var catalog = map[MessageCode]message{
 	MsgLoginLocked: {
 		en: "Too many attempts. Try again shortly.",
 		ko: "시도가 너무 많았습니다. 잠시 후 다시 시도하세요.",
-	},
-	MsgLoginNotRequired: {
-		en: "This installation does not use a shared password.",
-		ko: "이 서버는 공용 비밀번호를 쓰지 않습니다.",
 	},
 	MsgLogoutDone: {
 		en: "Signed out of shared access.",
@@ -1034,10 +981,6 @@ var catalog = map[MessageCode]message{
 	MsgAdminLockedServerWide: {
 		en: "Too many wrong administrator passwords were sent from all devices, so every administrator password check is paused. Wait and try again. If you cannot wait, run owngit reset-admin on the computer that runs OwnGit.",
 		ko: "모든 기기에서 관리자 비밀번호가 너무 많이 틀려, 관리자 비밀번호 확인을 모두 잠시 멈췄습니다. 잠시 기다린 뒤 다시 시도하세요. 기다릴 수 없으면 OwnGit을 실행하는 컴퓨터에서 owngit reset-admin을 실행하세요.",
-	},
-	MsgAdminConfirmed: {
-		en: "Confirmed as administrator.",
-		ko: "관리자로 확인되었습니다.",
 	},
 	MsgAdminEnded: {
 		en: "Administrator confirmation ended.",
@@ -1144,10 +1087,6 @@ var catalog = map[MessageCode]message{
 	MsgSettingsCloneTitle: {
 		en: "Clone address",
 		ko: "클론 주소",
-	},
-	MsgSettingsCloneHelp: {
-		en: "Add the repository name to this address when cloning.",
-		ko: "클론할 때 이 주소 뒤에 저장소 이름을 붙이세요.",
 	},
 	MsgSettingsConnTitle: {
 		en: "Connection",
@@ -1423,10 +1362,6 @@ var catalog = map[MessageCode]message{
 		en: "Create repository",
 		ko: "저장소 만들기",
 	},
-	MsgRepoNameEmpty: {
-		en: "Enter a repository name.",
-		ko: "저장소 이름을 입력하세요.",
-	},
 	MsgRepoNameInvalid: {
 		en: "Use 1 to 100 letters, numbers, dots, dashes, and underscores, starting with a letter or number. The name cannot end in .git or be a Windows device name such as con.",
 		ko: "영문자나 숫자로 시작해 영문자, 숫자, 점, 하이픈, 밑줄로 1자에서 100자까지 입력하세요. .git으로 끝나거나 con 같은 Windows 장치 이름은 쓸 수 없습니다.",
@@ -1448,10 +1383,6 @@ var catalog = map[MessageCode]message{
 	MsgRepoDescriptionTooLong: {
 		en: "Keep the description to 500 bytes or fewer: up to 500 characters in English, or about 160 in Korean.",
 		ko: "설명은 500바이트 이내로 입력하세요. 영문은 500자, 한글은 약 160자입니다.",
-	},
-	MsgRepoNameLong: {
-		en: "That name is too long.",
-		ko: "이름이 너무 깁니다.",
 	},
 	MsgRepoCreateFail: {
 		en: "The repository could not be created. Run owngit doctor on the server computer and check the server log.",
@@ -1512,10 +1443,6 @@ var catalog = map[MessageCode]message{
 	MsgRepoNoBranches: {
 		en: "No branches.",
 		ko: "브랜치가 없습니다.",
-	},
-	MsgRepoNoTags: {
-		en: "No tags.",
-		ko: "태그가 없습니다.",
 	},
 	MsgRepoDefaultGone: {
 		en: "The default branch no longer exists. Choose another branch, or push one with this name again.",
@@ -1618,14 +1545,6 @@ var catalog = map[MessageCode]message{
 		en: "Download this file",
 		ko: "이 파일 내려받기",
 	},
-	MsgCodeSubmodule: {
-		en: "Submodule",
-		ko: "서브모듈",
-	},
-	MsgCodeSymlink: {
-		en: "Symbolic link",
-		ko: "심볼릭 링크",
-	},
 	MsgCommitsEmpty: {
 		en: "No commits on this branch.",
 		ko: "이 브랜치에는 커밋이 없습니다.",
@@ -1641,10 +1560,6 @@ var catalog = map[MessageCode]message{
 	MsgCommitDiffBig: {
 		en: "This change is too large to show completely.",
 		ko: "변경 내용이 너무 커서 전부 표시하지 못했습니다.",
-	},
-	MsgCommitDiffNone: {
-		en: "The changes for this commit could not be read.",
-		ko: "이 커밋의 변경 내용을 읽지 못했습니다.",
 	},
 	MsgCommitDiffMerge: {
 		en: "This is a merge commit. Open a parent commit to see its changes.",
@@ -1665,9 +1580,6 @@ var catalog = map[MessageCode]message{
 	// the author date, and two names can share one instant. Naming the field
 	// and showing its value lets the reader judge; claiming an amend, a rebase,
 	// or "later" would assert more than the data supports.
-	// Parallel to MsgAuthoredBy ("Written by" / "작성자"), naming the other
-	// identity Git stores. "커밋 기록" is already the commit history label, so
-	// the Korean names the person instead.
 	MsgCommitCommitter: {
 		en: "Committed by",
 		ko: "커밋한 사람",
@@ -1788,10 +1700,6 @@ var catalog = map[MessageCode]message{
 		en: "This branch does not exist yet. Restoring creates it from the selected commit's history.",
 		ko: "아직 없는 브랜치입니다. 선택한 커밋의 기록을 이어 새로 만듭니다.",
 	},
-	MsgRestoreTargetEmpty: {
-		en: "Choose the branch to restore onto.",
-		ko: "되돌릴 브랜치를 고르세요.",
-	},
 
 	MsgRestoreScopeLabel: {
 		en: "What to restore",
@@ -1855,10 +1763,6 @@ var catalog = map[MessageCode]message{
 	MsgRestorePreviewHelp: {
 		en: "Read this list before restoring. Only the changes listed here are applied.",
 		ko: "되돌리기 전에 이 목록을 확인하세요. 여기 있는 변경만 적용됩니다.",
-	},
-	MsgRestorePreviewStale: {
-		en: "The selection changed after this preview. Preview again before restoring.",
-		ko: "미리 보기 뒤에 선택이 바뀌었습니다. 되돌리기 전에 다시 미리 보세요.",
 	},
 	MsgRestoreDeletesLabel: {
 		en: "Files that will be deleted",
@@ -1949,10 +1853,6 @@ var catalog = map[MessageCode]message{
 		en: "Activity is not available.",
 		ko: "활동 기록을 표시할 수 없습니다.",
 	},
-	MsgActivityNotBuilt: {
-		en: "The activity index has not been built yet.",
-		ko: "활동 색인을 아직 만들지 않았습니다.",
-	},
 	MsgActivityTruncated: {
 		en: "Only the newest %s commits are shown. Choose a date to see others.",
 		ko: "최신 커밋 %s개만 보여 줍니다. 다른 커밋을 보려면 날짜를 고르세요.",
@@ -1975,10 +1875,6 @@ var catalog = map[MessageCode]message{
 		en: "That page does not exist.",
 		ko: "그 페이지는 없습니다.",
 	},
-	MsgErrForbidden: {
-		en: "You do not have access to that.",
-		ko: "그 항목에 접근할 수 없습니다.",
-	},
 	MsgErrBadRequest: {
 		en: "That request could not be understood.",
 		ko: "요청을 이해할 수 없습니다.",
@@ -1987,25 +1883,9 @@ var catalog = map[MessageCode]message{
 		en: "This form expired. Open the page again and resubmit.",
 		ko: "이 양식은 기한이 지났습니다. 페이지를 다시 열고 제출하세요.",
 	},
-	MsgErrHostRejected: {
-		en: "This address is not approved for this installation. Open it from an already approved address.",
-		ko: "이 서버에서 승인하지 않은 주소입니다. 이미 승인한 주소로 여세요.",
-	},
-	MsgErrMethod: {
-		en: "That action is not allowed here.",
-		ko: "여기서는 그 동작을 사용할 수 없습니다.",
-	},
-	MsgErrTooLarge: {
-		en: "That upload is larger than this installation accepts.",
-		ko: "이 서버가 받을 수 있는 크기를 넘었습니다.",
-	},
 	MsgErrFormTooLarge: {
 		en: "This form is larger than 1 MiB, so nothing was read or saved. What you entered cannot be shown here again. Go back, shorten the text, and send it again.",
 		ko: "양식이 1MiB보다 커서 아무것도 읽거나 저장하지 않았습니다. 입력한 내용은 여기서 다시 보여 줄 수 없습니다. 이전 페이지로 돌아가 내용을 줄인 뒤 다시 보내세요.",
-	},
-	MsgErrRateLimited: {
-		en: "Too many requests. Try again shortly.",
-		ko: "요청이 너무 많습니다. 잠시 후 다시 시도하세요.",
 	},
 	MsgErrInternal: {
 		en: "Something went wrong on the server.",

@@ -453,7 +453,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 				continue
 			}
 			item := webui.NavRepository{
-				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.Address), CountKnown: false,
+				ID: repository.ID, Name: repository.Name, URL: "/repositories/" + url.PathEscape(repository.Address),
 			}
 			item.LastActivity, _ = app.Repositories.CachedHeadDate(repository.ID)
 			nav.Repositories = append(nav.Repositories, item)

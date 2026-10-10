@@ -24,7 +24,6 @@ const (
 	MsgCodingCredsNone      MessageCode = "coding.credentials.none"
 	MsgCodingCredsAdmin     MessageCode = "coding.credentials.admin"
 	MsgCodingCredsUnreadble MessageCode = "coding.credentials.unavailable"
-	MsgCodingCredsManage    MessageCode = "coding.credentials.manage"
 	MsgCodingTasksTitle     MessageCode = "coding.tasks.title"
 	MsgCodingTasksNone      MessageCode = "coding.tasks.none"
 	MsgCodingTasksCut       MessageCode = "coding.tasks.truncated"
@@ -84,9 +83,8 @@ var codingToolsCatalog = map[MessageCode]message{
 		en: "Helper credentials could not be read. Reload the page to try again.",
 		ko: "체크 에이전트 토큰을 읽지 못했습니다. 페이지를 새로 고쳐 다시 시도하세요.",
 	},
-	MsgCodingCredsManage: {en: "Manage", ko: "관리"},
-	MsgCodingTasksTitle:  {en: "Recent tasks", ko: "최근 체크 에이전트 작업"},
-	MsgCodingTasksNone:   {en: "No task has been recorded yet.", ko: "아직 기록된 작업이 없습니다."},
+	MsgCodingTasksTitle: {en: "Recent tasks", ko: "최근 체크 에이전트 작업"},
+	MsgCodingTasksNone:  {en: "No task has been recorded yet.", ko: "아직 기록된 작업이 없습니다."},
 	MsgCodingTasksCut: {
 		en: "Only the %s most recently updated tasks are shown. Each repository's Checks tab lists all of its tasks.",
 		ko: "가장 최근에 바뀐 작업 %s개만 보여 줍니다. 저장소마다 체크 탭에서 모든 작업을 볼 수 있습니다.",

@@ -101,9 +101,18 @@ func TestAssetPins(t *testing.T) {
 		// Dark is its own palette, and System yields to an explicit choice.
 		{name: "System appearance is subordinate to a choice", src: sheet,
 			has:   []string{"@media (prefers-color-scheme: dark)", ".theme-system {", ".theme-dark {"},
-			lacks: []string{"filter: invert"}},
-		{name: "the script keeps an explicit appearance over the system", src: js,
-			has: []string{`var APPEARANCE_KEY = 'owngit_appearance';`, "prefers-color-scheme: dark", `currentAppearance() === 'system'`}},
+			lacks: []string{"filter: invert"},
+			extra: func(t *testing.T, css string) {
+				block := mediaBlock(t, css, "@media (prefers-color-scheme: dark)")
+				if !strings.Contains(block, ".theme-system {") || strings.Contains(block, ".theme-light") || strings.Contains(block, ".theme-dark") {
+					t.Error("system appearance rules must affect only the System choice")
+				}
+			}},
+		{name: "the script keeps only the selected appearance class", src: js,
+			has: []string{`var APPEARANCE_KEY = 'owngit_appearance';`,
+				`root.classList.toggle('theme-light', choice === 'light')`,
+				`root.classList.toggle('theme-dark', choice === 'dark')`,
+				`root.classList.toggle('theme-system', choice === 'system')`}},
 		// All text comes from server-rendered data-en and data-ko, so the two
 		// languages cannot drift from the Go catalog.
 		{name: "the script translates from rendered text only", src: js,
