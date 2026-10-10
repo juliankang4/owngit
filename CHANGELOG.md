@@ -6,6 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-10-10
+
+This release fixes security problems rated Medium and Low and adds support for GitHub Actions workflows without GitHub. Upgrading is recommended.
+
+**Upgrading:**
+
+- This upgrade moves the state database to schema 17, which earlier versions cannot open; keep a compatible backup from before the upgrade if you need to go back. Backups containing workflow records, a policy with workflows or their manual or scheduled events enabled, or a positive `output_limit_exceeded_bytes` result use format 12 and require OwnGit 1.1.8 or later ([Backup versions](docs/OPERATIONS.md#backup-versions)).
+- Existing check policies keep workflows off; turn them on for each repository on the Checks tab, or set `"run_workflows": true` and save the policy with `owngit check-policy set --enable`. Policies saved for the first time in 1.1.8 enable workflows by default unless explicitly disabled; manual and scheduled runs also need their events allowed ([Turn workflows on](docs/WORKFLOWS.md#turn-workflows-on)).
+- Update `owngit` on external runner computers too: runners from 1.1.7 or earlier still run `.owngit/checks.json` jobs but cannot run workflow jobs ([Old runners](docs/WORKFLOWS.md#old-runners)).
+- Host checks, external runner checks and `owngit check` no longer inherit the full server, runner or shell environment; container checks no longer inherit proxy settings from Docker client configuration or the image. Set any required variables in the check command, without committing secrets ([Environment variables](docs/AUTOMATIC_CHECKS.md#environment-variables)).
+- On macOS 27, a menu bar manager can still hide the icon when OwnGit.app stays outside `/Applications`; the one-line installer now puts it there when your account can write that folder and warns otherwise. With Homebrew, run `brew install --cask juliankang4/tap/owngit`, then `owngit service install`, to use the app in `/Applications` ([OwnGit icon and notifications](docs/OPERATIONS.md#owngit-icon-and-notifications)).
+- The one-line installer leaves the old OwnGit.app beside the program after moving to `/Applications`; once the new icon works, move the old app to the Trash and disable any old Open at Login entry. If you use the Homebrew cask, update it and the formula together so their versions match ([Update and uninstall](docs/OPERATIONS.md#update-and-uninstall)).
+
+### Added
+
+- GitHub Actions workflow files in `.github/workflows` can run on the host, in a container or on an external runner, with push, pull request, manual and scheduled events, filters, dependencies and matrices. `actions/checkout` is supported; `actions/setup-go`, `actions/setup-node`, `actions/setup-python`, `actions/setup-java`, `actions/cache` and `actions/upload-artifact` are accepted without performing their usual work, and other actions are refused with guidance ([Workflows](docs/WORKFLOWS.md)).
+- The Checks tab lists workflows and runs, previews jobs, and lets anyone with general access start, cancel or rerun a workflow; CLI, API and MCP interfaces support the same tasks. Manual and scheduled runs require a retained accepted push for the current branch and commit; schedules use UTC on the default branch, at most every five minutes ([Runs, cancel and rerun](docs/WORKFLOWS.md#runs-cancel-and-rerun)).
+- Administrators can manage per-repository workflow secrets in the dashboard or with `owngit workflow-secret`; OwnGit masks them in logs and results. They are stored separately from the database and are not included in backups ([Secrets](docs/WORKFLOWS.md#secrets)).
+- An optional Homebrew cask installs OwnGit.app in `/Applications` and installs the formula if needed: `brew install --cask juliankang4/tap/owngit`.
+
+### Changed
+
+- Commit, pull request and task check results include every job of every workflow run, including incomplete and skipped work. Verified counts and output-limit notices display in English or Korean, while stored summaries, raw output and logs keep their text ([Results](docs/WORKFLOWS.md#results)).
+- Custom helpers and runners can send `output_limit_exceeded_bytes` only when the pre-execution response advertises it in `result_facts` ([Client compatibility](docs/CODING_TOOLS.md#output-limits-and-client-compatibility)).
+- Host checks receive a fixed list of environment variables, `CI=true` and a private temporary folder removed after the run; failure logs name omitted variables without their values, excluding sensitive names. Container checks receive empty proxy variables ([Environment variables](docs/AUTOMATIC_CHECKS.md#environment-variables)).
+- OwnGit.app in the macOS archive contains its own `owngit` program and can be moved to `/Applications`; OwnGit selects that app only when its version matches the program. Recent push times in its panel now refresh without replacing the controls.
+- On Windows 10 version 1809 or later, notifications use the notification center and open their page when clicked, even after the OwnGit icon quits. Earlier Windows versions and unavailable or failed notification registration keep the balloon fallback ([Windows notifications](docs/OPERATIONS.md#windows-notifications)).
+- `owngit doctor` and an unconfirmed `owngit health` check no longer change state files or permissions; they report what the next server start will make private. `owngit doctor --json` includes `state_protection` entries ([State directory permissions](docs/OPERATIONS.md#state-directory-permissions)).
+
+### Fixed
+
+- Settings keep drafts after recoverable save or refresh failures and distinguish confirmed saves from unknown outcomes, without automatically resending changes. Repository creation failures keep the entered name and description, but not secrets.
+- Narrow layouts keep long values and controls inside the viewport, and the sidebar starts in its correct state before the page is shown. Page headings, setup labels and keyboard access to command regions are clearer.
+- Calendar keyboard navigation follows date order and brings the initial day into view; Escape during text composition no longer closes the narrow sidebar. English and Korean labels and file paging counts now distinguish history direction, lines and entries correctly.
+- Repository filters match canonically equivalent Unicode text, including composed and decomposed characters, without changing stored names, addresses or repository identities.
+- Saving the first backup folder enables Back up now without a reload, and backup sections refresh after running work ends without interrupting active input. A backup that runs out of disk space names the destination folder.
+- Backups preserve the exact captured branch and tag names when their short names are ambiguous. Interrupted imports resume recovery after storage preparation, and diagnostics remain available for imports that have not published a repository.
+- Deleting a repository whose folder is already missing can remove only OwnGit's records after storage checks, with an explicit notice; `owngit repo delete` reports `folder_missing` and `message`.
+- Changing the shared password keeps general access in the browser that made the change. Administrator confirmation time is measured from password verification when the confirmation window changes.
+- Default branch settings accept valid Git branch names, including names with slashes, and `owngit pr review` help lists only the options each action accepts.
+
+### Security
+
+- Medium: container-check users whose Docker proxy settings contain credentials could expose those credentials in check logs. Affects 1.1.7 and earlier; upgrade to 1.1.8.
+- Low: Windows users whose temporary folder can be changed by another local account risked unsafe folder ownership changes during service installation. Affects 1.1.7 and earlier; upgrade to 1.1.8.
+- Low: on Macs shared with other local accounts, OwnGit could treat folders as safe even when another account had permission to change their attributes. Affects 1.1.7 and earlier; upgrade to 1.1.8.
+
 ## [1.1.7] - 2026-10-09
 
 This release fixes security problems rated Medium and Low by building OwnGit with Go 1.27.2. It has no other changes. Upgrading is recommended.
@@ -26,7 +73,6 @@ This release fixes security problems rated Low, lowers memory use, and makes the
 **Upgrading:**
 
 - At every start, OwnGit now makes its state directory private to its own account and logs each change, so access that other accounts had to it is removed.
-- On macOS 27, a menu bar manager such as Hidden Bar can still hide the OwnGit icon when OwnGit.app runs from outside `/Applications`, as it does after the installers or Homebrew. Keep the menu bar manager expanded to see the icon; a fix is planned for 1.1.7.
 
 **Changes for scripts:**
 

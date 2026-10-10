@@ -10,11 +10,6 @@ import (
 	"owngit/internal/testfixture"
 )
 
-// Databases that released builds wrote upgrade once to the current schema,
-// end at exactly the catalog of a new database and keep every row. The
-// fixtures are SQL dumps of stopped states made from the shared synthetic
-// test data (testdata/released/README.md says how), so their catalogs are the
-// text those releases stored, not text rebuilt from the schema steps.
 func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 	ctx := context.Background()
 	for _, test := range []struct {
@@ -29,6 +24,7 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 		{file: "schema15-1.1.2.sql", version: 15},
 		{file: "schema15-1.1.2-upgraded-from-1.0.2.sql", version: 15},
 		{file: "schema16-1.1.6-populated.sql", version: 16},
+		{file: "schema17-1.1.8-candidate.sql", version: 17},
 	} {
 		t.Run(test.file, func(t *testing.T) {
 			directory := filepath.Join(t.TempDir(), "state")
@@ -44,7 +40,10 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 			if err != nil {
 				t.Fatalf("open released schema %d: %v", test.version, err)
 			}
-			want := "state database upgraded from schema " + strconv.Itoa(test.version) + " to " + strconv.Itoa(currentSchemaVersion())
+			want := ""
+			if test.version != currentSchemaVersion() {
+				want = "state database upgraded from schema " + strconv.Itoa(test.version) + " to " + strconv.Itoa(currentSchemaVersion())
+			}
 			if upgrade := store.SchemaUpgrade(); upgrade != want {
 				store.Close()
 				t.Fatalf("upgrade reported %q, want %q", upgrade, want)
@@ -69,9 +68,32 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 				store.Close()
 				t.Fatalf("raw logs=%d starts=%d unindexed=%d", before["check_raw_logs"], after["check_raw_log_starts"], unindexed)
 			}
-			if _, err := store.RecoverySnapshot(ctx); err != nil {
+			snapshot, err := store.RecoverySnapshot(ctx)
+			if err != nil {
 				store.Close()
-				t.Fatalf("snapshot of the upgraded state: %v", err)
+				t.Fatalf("snapshot of the opened state: %v", err)
+			}
+			if test.version == 17 {
+				if err := ValidateCheckRecovery(snapshot); err != nil {
+					store.Close()
+					t.Fatalf("candidate recovery facts: %v", err)
+				}
+				var workflowJobs, limitedResults int
+				noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM actions_runs r JOIN check_jobs j ON j.run_id=r.id
+					WHERE r.repository_id='workflow-fixture' AND r.event='pull_request' AND r.facts_json LIKE '%"pull_request_action":"opened"%' AND j.plan_digest!=''`).Scan(&workflowJobs))
+				noErr(t, store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM check_results WHERE status='incomplete' AND truncated=1 AND output_limit_exceeded_bytes=4096`).Scan(&limitedResults))
+				if workflowJobs != 1 || limitedResults != 1 {
+					store.Close()
+					t.Fatalf("candidate workflow jobs=%d output-limited results=%d", workflowJobs, limitedResults)
+				}
+				rows, err := store.db.QueryContext(ctx, `PRAGMA foreign_key_check`)
+				noErr(t, err)
+				if rows.Next() {
+					rows.Close()
+					store.Close()
+					t.Fatal("candidate has foreign key violations")
+				}
+				noErr(t, closeRows(rows))
 			}
 			noErr(t, store.Close())
 
@@ -80,6 +102,13 @@ func TestReleasedDatabasesUpgradeOnce(t *testing.T) {
 			defer reopened.Close()
 			if upgrade := reopened.SchemaUpgrade(); upgrade != "" {
 				t.Fatalf("second open reported %q", upgrade)
+			}
+			if test.version == 17 {
+				for table, count := range after {
+					if got, err := reopened.TableRowCount(ctx, table); err != nil || got != count {
+						t.Fatalf("candidate reopened table %s rows=%d want=%d err=%v", table, got, count, err)
+					}
+				}
 			}
 		})
 	}
