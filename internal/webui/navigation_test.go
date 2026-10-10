@@ -1,10 +1,13 @@
 package webui
 
 import (
+	"context"
 	"fmt"
 	"html/template"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sidebarOfOutput returns the rendered sidebar.
@@ -67,6 +70,52 @@ func TestSidebarFilterAppearsForManyRepositories(t *testing.T) {
 	menu := sidebarOfOutput(t, render(t, r, ActivityPage{Chrome: chrome}))
 	if !strings.Contains(menu, `data-sb-filter hidden`) || !strings.Contains(menu, `data-ko-aria-label="저장소 찾기"`) {
 		t.Errorf("nine repositories have no filter, hidden until the script runs:\n%s", menu)
+	}
+}
+
+func TestSidebarFilterMatchesCanonicalNamesWithoutChangingRows(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("Node.js is required for the sidebar filter check")
+	}
+	script := section(t, scriptSource(t), "  var sideFilter =", "  /* File list drawer.")
+	const check = `
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const names = ['café', 'cafe\u0301', '한글', '\u1112\u1161\u11ab\u1100\u1173\u11af', 'ﬁle', 'Tools', 'İstanbul', 'I\u0307stanbul'];
+const rows = names.map((name, index) => ({
+  name, href: '/repositories/repo-' + index, hidden: false,
+  getAttribute(attribute) { assert.equal(attribute, 'data-sb-name'); return this.name; }
+}));
+const filter = {value: '', hidden: true, addEventListener(event, callback) { assert.equal(event, 'input'); this.input = callback; }};
+const noMatch = {hidden: true};
+vm.runInNewContext(process.argv[1], {
+  document: {querySelector(selector) { return selector === '[data-sb-filter]' ? filter : noMatch; }},
+  all(selector) { assert.equal(selector, '[data-sb-name]'); return rows; }
+});
+assert.equal(filter.hidden, false);
+for (const [query, expected] of [
+  ['café', [0,1]], ['cafe\u0301', [0,1]], ['한글', [2,3]],
+  ['\u1112\u1161\u11ab\u1100\u1173\u11af', [2,3]], [' CAFÉ ', [0,1]],
+  [' tools ', [5]], ['İstanbul', [6,7]], ['I\u0307stanbul', [6,7]],
+  ['', [0,1,2,3,4,5,6,7]], ['cafe', []],
+  ['file', []], ['ﬁle', [4]]
+]) {
+  filter.value = query;
+  filter.input();
+  assert.deepEqual(rows.flatMap((row, index) => row.hidden ? [] : [index]), expected, query);
+  assert.equal(noMatch.hidden, expected.length !== 0, query);
+  rows.forEach((row, index) => {
+    assert.equal(row.name, names[index]);
+    assert.equal(row.href, '/repositories/repo-' + index);
+  });
+}
+`
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, node, "-e", check, script)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("sidebar filter: %v\n%s", err, output)
 	}
 }
 

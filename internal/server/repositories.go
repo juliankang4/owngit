@@ -17,6 +17,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/text/unicode/norm"
+
 	"owngit/internal/gitexec"
 	"owngit/internal/logtext"
 	"owngit/internal/markdown"
@@ -54,7 +56,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 	}
 	ctx := request.Context()
 	snapshots, snapshotErrs := app.Repositories.RefSnapshotsWithin(ctx, repositories, repositoryListWait)
-	query := strings.ToLower(strings.TrimSpace(request.URL.Query().Get("q")))
+	query := strings.ToLower(norm.NFC.String(strings.TrimSpace(request.URL.Query().Get("q"))))
 	var summaries []webui.RepositorySummary
 	// updated holds the time each listed row shows, for the sidebar below.
 	updated := make(map[string]time.Time, len(repositories))
@@ -113,7 +115,7 @@ func (app *App) handleOverview(writer http.ResponseWriter, request *http.Request
 			}
 		}
 		updated[stored.ID] = summary.Updated()
-		if query == "" || strings.Contains(strings.ToLower(stored.Name), query) || strings.Contains(strings.ToLower(stored.Description), query) {
+		if query == "" || strings.Contains(strings.ToLower(norm.NFC.String(stored.Name)), query) || strings.Contains(strings.ToLower(norm.NFC.String(stored.Description)), query) {
 			summaries = append(summaries, summary)
 		}
 	}

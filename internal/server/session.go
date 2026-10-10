@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/unicode/norm"
+
 	"owngit/internal/auth"
 	"owngit/internal/requestctx"
 	"owngit/internal/state"
@@ -437,6 +439,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			return webui.Chrome{}, fmt.Errorf("repository list read: %w", err)
 		}
 		query := strings.TrimSpace(request.URL.Query().Get("q"))
+		wanted := strings.ToLower(norm.NFC.String(query))
 		nav := webui.Nav{
 			Section: section, ActiveRepoID: activeRepository, Total: len(repositories), Query: query, Order: app.listOrder(writer, request),
 			OverviewURL: "/", ActivityURL: "/activity", CodingURL: codingToolsPath, SettingsURL: "/settings", NewRepoURL: "/repositories/new", NewImportURL: "/repositories/new-import",
@@ -446,7 +449,7 @@ func (app *App) chrome(writer http.ResponseWriter, request *http.Request, sectio
 			nav.LogoutURL = "/logout"
 		}
 		for _, repository := range repositories {
-			if query != "" && !strings.Contains(strings.ToLower(repository.Name), strings.ToLower(query)) {
+			if query != "" && !strings.Contains(strings.ToLower(norm.NFC.String(repository.Name)), wanted) {
 				continue
 			}
 			item := webui.NavRepository{

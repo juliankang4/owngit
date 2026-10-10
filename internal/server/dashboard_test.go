@@ -3,8 +3,10 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,7 +16,9 @@ import (
 	"time"
 
 	"owngit/internal/gitexec"
+	"owngit/internal/recovery"
 	"owngit/internal/repository"
+	"owngit/internal/state"
 	"owngit/internal/testfixture"
 	"owngit/internal/webui"
 )
@@ -54,6 +58,142 @@ func TestDashboardPreservesCollidingBranchAndTagIdentity(t *testing.T) {
 	activityBody, activityStatus := dashboardGET(t, client, server.URL+"/activity")
 	if activityStatus != http.StatusOK || !strings.Contains(activityBody, "ref=refs%2Fheads%2Fsame") {
 		t.Fatalf("activity link did not preserve canonical branch identity: status=%d", activityStatus)
+	}
+}
+
+func TestOverviewSearchMatchesCanonicalDescriptionsWithoutChangingRepositories(t *testing.T) {
+	app := newConfiguredApp(t)
+	const composed = "café 한글 ﬁ İstanbul Alpha"
+	const decomposed = "cafe\u0301 \u1112\u1161\u11ab\u1100\u1173\u11af ﬁ I\u0307stanbul Beta"
+	for _, item := range []struct{ name, description string }{
+		{"alpha-repo", composed}, {"beta-repo", decomposed},
+	} {
+		if _, err := app.Repositories.Create(context.Background(), item.name, item.description); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server := serve(t, app.Handler())
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	for _, test := range []struct {
+		query       string
+		alpha, beta bool
+	}{
+		{"café", true, true}, {"cafe\u0301", true, true},
+		{"한글", true, true}, {"\u1112\u1161\u11ab\u1100\u1173\u11af", true, true},
+		{"CAFÉ", true, true}, {"İstanbul", true, true}, {"I\u0307stanbul", true, true},
+		{" ALPHA-REPO ", true, false},
+		{"", true, true}, {"cafe", false, false},
+		{"fi", false, false}, {"ﬁ", true, true},
+	} {
+		body, status := dashboardGET(t, client, server.URL+"/?q="+url.QueryEscape(test.query))
+		if status != http.StatusOK {
+			t.Fatalf("query %q: status=%d", test.query, status)
+		}
+		for _, row := range []struct {
+			name string
+			want bool
+		}{{"alpha-repo", test.alpha}, {"beta-repo", test.beta}} {
+			link := `class="row row--repo" href="/repositories/` + row.name + `"`
+			if got := strings.Contains(body, link); got != row.want {
+				t.Errorf("query %q: %s listed=%t, want %t", test.query, row.name, got, row.want)
+			}
+		}
+		wantRows := 0
+		if test.alpha {
+			wantRows++
+		}
+		if test.beta {
+			wantRows++
+		}
+		if got := strings.Count(body, `class="row row--repo"`); got != wantRows {
+			t.Errorf("query %q: rows=%d, want %d", test.query, got, wantRows)
+		}
+	}
+	for _, item := range []struct{ name, description string }{
+		{"alpha-repo", composed}, {"beta-repo", decomposed},
+	} {
+		stored, exists, err := app.Store.Repository(context.Background(), item.name)
+		if err != nil || !exists || stored.ID != item.name || stored.Name != item.name || stored.Address != item.name || stored.Description != item.description {
+			t.Errorf("repository %q changed after search: %+v, exists=%t, err=%v", item.name, stored, exists, err)
+		}
+	}
+}
+
+func TestRestoredUnicodeDisplayNamesReachSidebarWithoutChangingAddresses(t *testing.T) {
+	ctx := context.Background()
+	app := newConfiguredApp(t)
+	for _, id := range []string{"alpha-repo", "beta-repo"} {
+		if _, err := app.Repositories.Create(ctx, id, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	noErr(t, err)
+	backup := filepath.Join(root, "backup")
+	if _, err := recovery.CreateWithReport(ctx, app.Store, app.Repositories, backup); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(backup, "manifest.json")
+	content, err := os.ReadFile(manifestPath)
+	noErr(t, err)
+	var manifest recovery.Manifest
+	noErr(t, json.Unmarshal(content, &manifest))
+	for index := range manifest.Repositories {
+		item := &manifest.Repositories[index]
+		item.Name = "İstanbul"
+		if item.ID == "beta-repo" {
+			item.Name = "I\u0307stanbul"
+		}
+	}
+	content, err = json.Marshal(manifest)
+	noErr(t, err)
+	noErr(t, os.WriteFile(manifestPath, content, 0o600))
+	statePath, repositoriesPath := filepath.Join(root, "state"), filepath.Join(root, "repositories")
+	if _, err := recovery.RestoreWithReport(ctx, backup, statePath, repositoriesPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := state.Open(ctx, statePath)
+	noErr(t, err)
+	t.Cleanup(func() { noErr(t, restored.Close()) })
+	for _, item := range []struct{ id, name string }{{"alpha-repo", "İstanbul"}, {"beta-repo", "I\u0307stanbul"}} {
+		repo, exists, err := restored.Repository(ctx, item.id)
+		if err != nil || !exists || repo.Name != item.name || repo.ID != item.id || repo.Address != item.id {
+			t.Fatalf("restored repository %q: %+v exists=%t err=%v", item.id, repo, exists, err)
+		}
+	}
+	app.Store = restored
+	manager := newRepositoryManager(t, restored, filepath.Join(root, "runtime"))
+	manager.SetRoot(repositoriesPath)
+	app.Repositories = manager
+	app.Auth.Store = restored
+	server := serve(t, app.Handler())
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+	body, status := dashboardGET(t, client, server.URL+"/")
+	if status != http.StatusOK {
+		t.Fatalf("restored dashboard: status=%d", status)
+	}
+	for _, item := range []struct{ id, name string }{{"alpha-repo", "İstanbul"}, {"beta-repo", "I\u0307stanbul"}} {
+		if !strings.Contains(body, `href="/repositories/`+item.id+`" data-sb-name="`+item.name+`"`) {
+			t.Errorf("restored sidebar is missing %q at original address %q", item.name, item.id)
+		}
+	}
+	if strings.Contains(body, `class="pill pill--missing"`) {
+		t.Fatal("restored repositories were reported as unreadable")
+	}
+	t.Log("restored sidebar contains both exact display spellings at /repositories/alpha-repo and /repositories/beta-repo")
+	for _, query := range []string{"İstanbul", "I\u0307stanbul", " İSTANBUL "} {
+		body, status := dashboardGET(t, client, server.URL+"/?q="+url.QueryEscape(query))
+		if status != http.StatusOK {
+			t.Fatalf("restored query %q: status=%d", query, status)
+		}
+		for _, id := range []string{"alpha-repo", "beta-repo"} {
+			if !strings.Contains(body, `class="row row--repo" href="/repositories/`+id+`"`) ||
+				!strings.Contains(body, `href="/repositories/`+id+`" data-sb-name=`) {
+				t.Errorf("restored query %q does not keep %s in both lists", query, id)
+			}
+		}
 	}
 }
 

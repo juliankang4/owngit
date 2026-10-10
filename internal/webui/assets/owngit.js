@@ -936,10 +936,10 @@
     var noMatch = document.querySelector('[data-sb-nomatch]');
     sideFilter.hidden = false;
     sideFilter.addEventListener('input', function () {
-      var wanted = sideFilter.value.trim().toLowerCase();
+      var wanted = sideFilter.value.trim().normalize('NFC').toLowerCase();
       var shown = 0;
       sideRows.forEach(function (row) {
-        var hit = !wanted || row.getAttribute('data-sb-name').toLowerCase().indexOf(wanted) !== -1;
+        var hit = !wanted || row.getAttribute('data-sb-name').normalize('NFC').toLowerCase().indexOf(wanted) !== -1;
         row.hidden = !hit;
         if (hit) { shown++; }
       });
