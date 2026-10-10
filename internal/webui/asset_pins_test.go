@@ -43,10 +43,15 @@ func TestAssetPins(t *testing.T) {
 	pins := []assetPin{
 		{name: "the current place is marked by more than colour", src: rule(`.sb__item[aria-current="page"]`),
 			has: []string{"box-shadow: inset 3px 0 0", "font-weight: 600"}},
-		{name: "the sidebar script only folds, filters and closes", src: jsFrom("var sidebar = document.querySelector('[data-sidebar]')", "/* File list drawer."),
-			has:   []string{"sideToggle.hidden = false", "sidebar.classList.add('sidebar--folds')", "'Escape'", "sideToggle.focus()", "row.hidden = !hit", "sideFilter.hidden = false"},
+		{name: "the sidebar filter preserves its input", src: jsFrom("var sideFilter =", "/* File list drawer."),
+			has:   []string{"row.hidden = !hit", "sideFilter.hidden = false"},
 			lacks: []string{"innerHTML", "textContent", ".value =", "scrollIntoView", "window.scrollTo"}},
 
+		{name: "sidebar actions can wrap beside a full count", src: rule(".sb__head"), has: []string{"flex-wrap: wrap"}},
+		{name: "content text wraps without clipping the page", src: rule(".content"), has: []string{"overflow-wrap: anywhere"}, lacks: []string{"overflow: hidden", "overflow-x: hidden"}},
+		{name: "key-value grids can shrink inside forms", src: rule(".kv"), has: []string{"min-width: 0"}},
+		{name: "native ref pickers shrink within their row", src: rule(".refbar select"), has: []string{"min-width: 0"}},
+		{name: "native select painting stays within the control", src: rule("select"), has: []string{"contain: paint"}, lacks: []string{"appearance: none"}},
 		{name: "the wrap switch is remembered per browser and starts off", src: jsFrom("var WRAP_KEY", "/* Diff files fold"),
 			has:   []string{"var WRAP_KEY = 'owngit_wrap';", "applyWrap(storedWrap === '1')", "button.hidden = false"},
 			lacks: []string{"document.cookie", "writeCookie"}},

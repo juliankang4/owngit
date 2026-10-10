@@ -23,6 +23,16 @@ func sidebarOfOutput(t *testing.T, out string) string {
 
 func TestSidebarOutsideARepositoryListsPlacesThenRepositories(t *testing.T) {
 	r := newRenderer(t)
+	out := render(t, r, OverviewPage{Chrome: fullChrome(LangEN)})
+	early := strings.Index(out, `<script src="/assets/sidebar.js?v=`)
+	body := strings.Index(out, `<body>`)
+	if early < 0 || early > body {
+		t.Fatal("the sidebar must initialize before the body")
+	}
+	opening := out[early : early+strings.Index(out[early:], ">")]
+	if strings.Contains(opening, "defer") || strings.Contains(opening, "async") {
+		t.Fatal("the sidebar initializer must not wait for body parsing")
+	}
 	for _, lang := range Langs() {
 		chrome := fullChrome(lang)
 		chrome.Nav.NewImportURL = "/repositories/new-import"
@@ -51,9 +61,7 @@ func TestSidebarOutsideARepositoryListsPlacesThenRepositories(t *testing.T) {
 			if !strings.Contains(menu, `<span class="sb__total">2</span>`) || !strings.Contains(menu, `class="sb__when"`) {
 				t.Errorf("%s %s: the repository count or recent time is missing", lang, name)
 			}
-			// Eight or fewer repositories need no filter; the menu button waits
-			// for the script.
-			if strings.Contains(menu, "data-sb-filter") || !strings.Contains(menu, `data-sidebar-toggle hidden`) {
+			if strings.Contains(menu, "data-sb-filter") || !strings.Contains(menu, `data-sidebar-toggle>`) {
 				t.Errorf("%s %s: filter or menu button state is wrong", lang, name)
 			}
 		}

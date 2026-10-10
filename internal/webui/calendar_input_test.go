@@ -49,7 +49,8 @@ func TestCalendarKeyboardAndComposingEscape(t *testing.T) {
 	noErr(t, err)
 	script := scriptSource(t)
 	graph := section(t, script, "  all('[data-graph]')", "  /* 4. setup link")
-	sidebar := section(t, script, "  var sideToggle =", "  /* Repository filter.")
+	sidebar, err := assetFS.ReadFile("assets/sidebar.js")
+	noErr(t, err)
 	const check = `
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
@@ -90,8 +91,9 @@ for (const event of [{key:'Escape',isComposing:true},{key:'Escape',keyCode:229},
     const handlers={};
     const toggle={offsetParent:visible?{}:null,setAttribute(){},addEventListener(){},focus(){focused=true;}};
     const sidebar={querySelector:()=>toggle,classList:{add(){},contains:()=>open,toggle:(name,value)=>{open=value;}},addEventListener:(name,handler)=>{handlers[name]=handler;}};
-    vm.runInNewContext(process.argv[2],{sidebar});
-    handlers.keydown(event);
+    const document={documentElement:{classList:{add(name){assert.equal(name,'sidebar-ready');}}},addEventListener:(name,handler)=>{handlers[name]=handler;}};
+    vm.runInNewContext(process.argv[2],{document});
+    handlers.keydown({...event,target:{closest:()=>sidebar}});
     const closes=visible && event.key==='Escape' && !event.isComposing && event.keyCode!==229;
     assert.equal(open,!closes); assert.equal(focused,closes);
   }
@@ -99,7 +101,7 @@ for (const event of [{key:'Escape',isComposing:true},{key:'Escape',keyCode:229},
 `
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, node, "-e", check, graph, sidebar)
+	cmd := exec.CommandContext(ctx, node, "-e", check, graph, string(sidebar))
 	cmd.Stdin = strings.NewReader(string(input))
 	output, err := cmd.CombinedOutput()
 	if err != nil {

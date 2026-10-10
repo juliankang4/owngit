@@ -901,31 +901,6 @@
   /* 5. sidebar, file view and diffs                                     */
   /* ------------------------------------------------------------------ */
 
-  /* Narrow window: fold the sidebar behind its menu button. The button is
-   * rendered hidden and the menu open, so without this file the menu is
-   * simply shown in full. The fold itself only applies below 900px. */
-
-  var sidebar = document.querySelector('[data-sidebar]');
-  var sideToggle = sidebar && sidebar.querySelector('[data-sidebar-toggle]');
-  if (sideToggle) {
-    var setSideOpen = function (open) {
-      sidebar.classList.toggle('is-open', open);
-      sideToggle.setAttribute('aria-expanded', String(open));
-    };
-    sidebar.classList.add('sidebar--folds');
-    sideToggle.hidden = false;
-    sideToggle.addEventListener('click', function () {
-      setSideOpen(!sidebar.classList.contains('is-open'));
-    });
-    sidebar.addEventListener('keydown', function (event) {
-      if (event.isComposing || event.keyCode === 229) { return; }
-      if (event.key !== 'Escape' || !sidebar.classList.contains('is-open')) { return; }
-      if (sideToggle.offsetParent === null) { return; } // wide window: nothing is folded
-      setSideOpen(false);
-      sideToggle.focus();
-    });
-  }
-
   /* Repository filter. It only hides rows already on the page, so nothing is
    * written into the field or the list while the reader types, which keeps
    * an input method's composition intact. */

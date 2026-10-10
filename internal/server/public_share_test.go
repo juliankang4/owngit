@@ -59,6 +59,7 @@ func TestPublicShareAddressAnswersShareLinksOnly(t *testing.T) {
 		HealthPath, TrayStatusPath, TrayEventsPath,
 		"/assets/", "/assets/owngit.css.map", "/assets/owngit.js.map", "/assets/fonts/PRETENDARD-LICENSE.txt", "/assets/../settings",
 		"/assets/page-complete.css.map", "/assets/page-complete.css/", "/assets/other-complete.css",
+		"/assets/sidebar.js.map", "/assets/sidebar.js/", "/assets/sidebar.css",
 		"/share", "/sharex", "/share/x/../../settings",
 	} {
 		for name, header := range map[string]http.Header{"plain": nil, "Funnel": withFunnel, "administrator": withAdmin} {
@@ -91,6 +92,9 @@ func TestPublicShareAddressAnswersShareLinksOnly(t *testing.T) {
 	linked := regexp.MustCompile(`(?:href|src|action)="(/[^"]*|\?[^"]*)"`)
 	for _, page := range []string{home, home + "/code", home + "/commits"} {
 		body := browserGET(t, client, page).body
+		if !strings.Contains(body, `<nav class="sidebar"`) || !strings.Contains(body, `<script src="/assets/sidebar.js?v=`) {
+			t.Errorf("%s lacks its repository sidebar or initializer", page)
+		}
 		for _, match := range linked.FindAllStringSubmatch(body, -1) {
 			target := html.UnescapeString(match[1])
 			if strings.HasPrefix(target, "?") {

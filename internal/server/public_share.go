@@ -20,9 +20,7 @@ import (
 
 type publicShareKey struct{}
 
-// publicAssets are the files the share pages load: the stylesheet, its
-// font, the script and the logo.
-var publicAssets = []string{"/assets/owngit.css", "/assets/fonts/PretendardVariable.woff2", "/assets/owngit.js", "/assets/logo.svg", "/assets/page-complete.css"}
+var publicAssets = []string{"/assets/owngit.css", "/assets/fonts/PretendardVariable.woff2", "/assets/owngit.js", "/assets/sidebar.js", "/assets/logo.svg", "/assets/page-complete.css"}
 
 type publicRoute int
 

@@ -699,6 +699,14 @@ func TestAllScreensRenderInBothLanguages(t *testing.T) {
 			t.Run(string(lang)+"/"+name, func(t *testing.T) {
 				t.Parallel()
 				out := render(t, r, page)
+				early := strings.Index(out, `<script src="/assets/sidebar.js?v=`)
+				hasSidebar := strings.Contains(out, `<nav class="sidebar"`)
+				if (early >= 0) != hasSidebar {
+					t.Error("the sidebar initializer must load exactly when a sidebar is rendered")
+				}
+				if early >= 0 && early > strings.Index(out, "<body>") {
+					t.Error("the sidebar initializer must precede the body")
+				}
 				ptr := reflect.New(reflect.TypeOf(page))
 				ptr.Elem().Set(reflect.ValueOf(page))
 				byPointer := render(t, r, ptr.Interface().(Page))

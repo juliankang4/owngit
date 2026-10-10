@@ -201,6 +201,9 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 					t.Fatalf("redemption page reveals %q", secret)
 				}
 			}
+			if strings.Contains(page, "/assets/sidebar.js") || strings.Contains(page, `<nav class="sidebar"`) {
+				t.Fatal("the redemption page must not load a sidebar")
+			}
 			// Every file the page loads is served, and nothing else.
 			assets := regexpAssets.FindAllStringSubmatch(page, -1)
 			if len(assets) == 0 {
@@ -225,6 +228,8 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 				{http.MethodGet, "/login"}, {http.MethodGet, "/api/v1/repositories"}, {http.MethodGet, "/git/demo.git/info/refs?service=git-upload-pack"},
 				{http.MethodGet, "/assets/fonts/PRETENDARD-LICENSE.txt"}, {http.MethodGet, "/assets/"},
 				{http.MethodGet, "/assets/page-complete.css.map"}, {http.MethodPost, "/assets/page-complete.css"},
+				{http.MethodGet, "/assets/sidebar.js"}, {http.MethodHead, "/assets/sidebar.js"}, {http.MethodPost, "/assets/sidebar.js"},
+				{http.MethodGet, "/assets/sidebar.js.map"}, {http.MethodGet, "/assets/sidebar.js/"},
 			} {
 				if status := browser.status(refused.method, refused.path, nil); status != http.StatusMisdirectedRequest {
 					t.Fatalf("%s %s status=%d, want 421", refused.method, refused.path, status)
@@ -248,6 +253,9 @@ func TestUnknownHostReachesSetupOnlyWithTheSetupLink(t *testing.T) {
 			}
 
 			page = browser.redeem("synthetic-owner-token")
+			if strings.Contains(page, "/assets/sidebar.js") || strings.Contains(page, `<nav class="sidebar"`) {
+				t.Fatal("the setup wizard must not load a sidebar")
+			}
 			if !strings.Contains(page, `name="storage_path"`) || !strings.Contains(page, `<span class="mono">192.168.1.20</span>`) ||
 				!strings.Contains(page, "only to finish setup") {
 				t.Fatal("the redeemed session did not open the wizard with the keep offer for a setup-only address")

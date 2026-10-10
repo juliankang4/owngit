@@ -10,6 +10,7 @@
 <title>{{.Title}}</title>
 <link rel="icon" href="{{.Asset "logo.svg"}}" type="image/svg+xml">
 <link rel="stylesheet" href="{{.Asset "owngit.css"}}">
+{{if or .Chrome.Nav.OverviewURL .Sidebar.InRepo}}<script src="{{.Asset "sidebar.js"}}"></script>{{end}}
 <script src="{{.Asset "owngit.js"}}" defer></script>
 </head>
 <body>
@@ -117,13 +118,9 @@
 {{$nav := .Chrome.Nav}}{{$sb := .Sidebar}}{{$lang := .Lang}}
 {{/* One sidebar, two contents. Outside a repository it lists places and then
      the repositories; inside one it lists that repository's sections, so the
-     page itself needs no tab strip.
-
-     Below 900px the script folds the menu behind one button that names the
-     current place. The button starts hidden, so without the script the menu
-     is simply shown in full. */}}
+     page itself needs no tab strip. */}}
 <nav class="sidebar" {{biAttr $lang "aria-label" "app.nav.primary"}} data-sidebar>
-  <button type="button" class="sb__toggle" aria-expanded="false" aria-controls="sb-menu" data-sidebar-toggle hidden>
+  <button type="button" class="sb__toggle" aria-expanded="false" aria-controls="sb-menu" data-sidebar-toggle>
     {{icon "menu"}}<span class="sb__toggle-l">{{bi $lang "app.nav.menu"}}:</span>
     <span class="sb__toggle-cur">{{if $sb.InRepo}}{{$sb.RepoName}}{{with $sb.Current}}, {{bi $lang .}}{{end}}{{else}}{{with $sb.Current}}{{bi $lang .}}{{end}}{{end}}</span>
     <span class="sb__toggle-chev">{{icon "chevron"}}</span>
