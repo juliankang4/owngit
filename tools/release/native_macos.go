@@ -19,6 +19,8 @@ import (
 // bar icon, in packaging/macos.
 var macLauncherSources = []string{"Launcher.swift", "Notifications.swift", "Panel.swift", "ProtectedPath.swift", "TrayStatus.swift"}
 
+const macMinimumSystemVersion = "13.0"
+
 var appleBundleVersionPattern = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,2}$`)
 
 func buildMacPrototype(inputs nativeInputs, outDir string) (nativeArtifact, error) {
@@ -193,7 +195,7 @@ func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 	if err := os.MkdirAll(filepath.Dir(launcherPath), 0o755); err != nil {
 		return err
 	}
-	infoPlist, err := renderNativeTemplate(filepath.Join(root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version, BundleID string }{version, appleBundleID})
+	infoPlist, err := renderNativeTemplate(filepath.Join(root, "packaging", "macos", "Info.plist.tmpl"), struct{ Version, BundleID, MinimumSystemVersion string }{version, appleBundleID, macMinimumSystemVersion})
 	if err != nil {
 		return err
 	}
@@ -206,7 +208,7 @@ func buildIconApp(run commandRunner, xcrun, root, app, version string) error {
 	if err := buildAppIcon(run, root, filepath.Join(contents, "Resources", "AppIcon.icns")); err != nil {
 		return fmt.Errorf("build the app icon: %w", err)
 	}
-	arguments := []string{"swiftc", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
+	arguments := []string{"swiftc", "-target", "arm64-apple-macosx" + macMinimumSystemVersion, "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcherPath}
 	for _, source := range macLauncherSources {
 		arguments = append(arguments, filepath.Join(root, "packaging", "macos", source))
 	}

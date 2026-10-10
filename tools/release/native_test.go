@@ -553,16 +553,50 @@ func assertDesktopLaunchCommand(t *testing.T, body string) {
 }
 
 func TestMacLauncherTypechecks(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("Swift AppKit launcher is a macOS input")
-	}
-	arguments := []string{"swiftc", "-typecheck"}
-	for _, source := range macLauncherSources {
-		arguments = append(arguments, filepath.Join(repoRoot(t), "packaging", "macos", source))
-	}
-	if output, err := exec.Command("xcrun", arguments...).CombinedOutput(); err != nil {
-		t.Fatalf("swiftc typecheck: %v\n%s", err, output)
-	}
+	root := repoRoot(t)
+	t.Run("packaging", func(t *testing.T) {
+		app := filepath.Join(t.TempDir(), "OwnGit.app")
+		launcher := filepath.Join(app, "Contents", "MacOS", "OwnGitLauncher")
+		want := []string{"swiftc", "-target", "arm64-apple-macosx13.0", "-O", "-gnone", "-framework", "AppKit", "-framework", "ServiceManagement", "-o", launcher}
+		for _, source := range macLauncherSources {
+			want = append(want, filepath.Join(root, "packaging", "macos", source))
+		}
+		compiled := false
+		run := func(name string, arguments []string, _ []string) (string, error) {
+			if name == "xcrun" {
+				if strings.Join(arguments, "\n") != strings.Join(want, "\n") {
+					t.Fatalf("launcher compiler arguments = %q, want %q", arguments, want)
+				}
+				compiled = true
+				return "", os.WriteFile(launcher, []byte("launcher"), 0o755)
+			}
+			return "", nil
+		}
+		noErr(t, buildIconApp(run, "xcrun", root, app, "1.2.3"))
+		if !compiled {
+			t.Fatal("the app did not compile its launcher")
+		}
+		plist := readText(t, filepath.Join(app, "Contents", "Info.plist"))
+		if !strings.Contains(plist, "<key>LSMinimumSystemVersion</key>\n  <string>13.0</string>") {
+			t.Fatalf("the app does not declare macOS 13.0: %s", plist)
+		}
+		cask := readText(t, filepath.Join(root, "packaging", "homebrew", "owngit-cask.rb.tmpl"))
+		if !strings.Contains(cask, "depends_on macos: :ventura") {
+			t.Fatal("the cask does not require macOS Ventura")
+		}
+	})
+	t.Run("swift", func(t *testing.T) {
+		if runtime.GOOS != "darwin" {
+			t.Skip("Swift AppKit launcher is a macOS input")
+		}
+		arguments := []string{"swiftc", "-target", "arm64-apple-macosx" + macMinimumSystemVersion, "-typecheck"}
+		for _, source := range macLauncherSources {
+			arguments = append(arguments, filepath.Join(root, "packaging", "macos", source))
+		}
+		if output, err := exec.Command("xcrun", arguments...).CombinedOutput(); err != nil {
+			t.Fatalf("swiftc typecheck: %v\n%s", err, output)
+		}
+	})
 }
 
 // The icon's decisions, compiled from TrayStatus.swift with a fixture that

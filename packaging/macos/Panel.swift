@@ -47,7 +47,11 @@ enum PanelSize: Int, CaseIterable {
         switch self {
         case .standard: return .regular
         case .large: return .large
-        case .larger: return .extraLarge
+        case .larger:
+            if #available(macOS 26.0, *) {
+                return .extraLarge
+            }
+            return .large
         }
     }
 }
@@ -718,7 +722,9 @@ final class PanelViewController: NSViewController {
         button.font = .systemFont(ofSize: body)
         button.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: body, weight: .regular)
         if !inline {
-            button.borderShape = size == .standard ? .automatic : .capsule
+            if #available(macOS 26.0, *) {
+                button.borderShape = size == .standard ? .automatic : .capsule
+            }
             button.heightAnchor.constraint(equalToConstant: Self.pushHeight * scale).isActive = true
         }
         return button
